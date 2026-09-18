@@ -234,7 +234,7 @@ NSString *NSStringFromStd(
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — Full Load Probe v10.4";
+        @"PvZ2forIOS — Full Load Probe v10.5";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -243,7 +243,7 @@ NSString *NSStringFromStd(
         NO;
 
     title.text =
-        @"PvZ2forIOS — full Android library startup diagnostic v10.4";
+        @"PvZ2forIOS — full Android library startup diagnostic v10.5";
 
     title.font =
         [UIFont
@@ -260,7 +260,7 @@ NSString *NSStringFromStd(
 
     explanation.text =
         @"v9 proved the real 2013 PvZ2 JNI_OnLoad completes under Dynarmic and returns JNI 1.4. "
-         @"v10.4 keeps the Bundle-ID JIT flow and completes ARM exclusive atomics used by PvZ2 constructors: Dynarmic now has both an ExclusiveMonitor and working MemoryWriteExclusive callbacks, so guest STREX operations can actually succeed: "
+         @"v10.5 keeps the working ARM exclusive atomics and adds a guest-native pthread_once implementation. The once initializer is now called as real ARMv7 guest code, then its control word is marked complete before constructor execution continues: "
          @"it executes every non-null .init_array constructor in order, preserving guest global state, "
          @"then runs JNI_OnLoad again in that initialized process. Unsupported Android/libc imports halt safely with their name.";
 
@@ -439,7 +439,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 full-load probe v10.4 session started; PID=%d ===",
+                    @"=== PvZ2 full-load probe v10.5 session started; PID=%d ===",
                     getpid()]];
 
     [self
@@ -758,7 +758,7 @@ NSString *NSStringFromStd(
 
     [self
         appendUI:
-            @"STEP 3: select the same original PvZ2 1.5.252752 APK. v10.4 will execute all non-null .init_array constructors with complete LDREX/STREX support, persist every checkpoint, then JNI_OnLoad."];
+            @"STEP 3: select the same original PvZ2 1.5.252752 APK. v10.5 will execute all non-null .init_array constructors with complete LDREX/STREX plus pthread_once support, persist every checkpoint, then JNI_OnLoad."];
 
     [self
         presentViewController:
