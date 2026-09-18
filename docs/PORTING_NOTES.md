@@ -306,3 +306,32 @@ The compatibility layer now provides deterministic probe semantics for the stand
 The specific JNI functions already modeled with richer semantics (`FindClass`, `NewGlobalRef`, `GetObjectClass`, `GetMethodID`, `RegisterNatives`) remain on their dedicated handlers.
 
 The goal of v14 is diagnostic progression: broad JNI calls should no longer require one IPA per newly reached table slot. Later milestones will replace probe fallbacks with real Java/surface/input/filesystem behavior where PvZ2 actually depends on semantics.
+
+
+## On-device v14 result
+
+On 2026-09-18, the physical iPad 10th generation / A14 / iPadOS 26.6.1 completed the real registered `Native_GameAppInitialize` under Dynarmic.
+
+Verified on-device:
+
+- all 618 non-null constructors completed;
+- `JNI_OnLoad` returned `0x00010004`;
+- the complete ELF-import baseline remained stable;
+- the bulk JNIEnv compatibility baseline removed the prior slot-24 (`IsSameObject`) blocker;
+- `Native_GameAppInitialize` at guest `0x109EAF60` returned `jboolean = 1`.
+
+This proves the game accepts the compatibility environment through its main native initialization entry point.
+
+## v15 lifecycle + first-frame probe
+
+v15 continues from the successful v14 state through the exact native lifecycle/surface functions recovered from the original 1.5.252752 JNINativeMethod tables:
+
+1. `Native_applicationWillFinishLaunching` — `0x109EBF80`;
+2. `Native_applicationDidFinishLaunching` — `0x109EC0A0`;
+3. `Native_applicationWillBecomeForeground` — `0x109EC0BC`;
+4. `Native_applicationDidBecomeActive` — `0x109EC0C8`;
+5. `Native_onSurfaceCreated` — `0x109F1840`;
+6. `Native_onSurfaceChanged` — `0x109F18DC`;
+7. `Native_onDrawFrame` — `0x109F190C`.
+
+The initial probe surface size is 1180×820 logical pixels for the target iPad. The current GLES compatibility layer remains diagnostic/no-op; a successful `Native_onDrawFrame` return therefore proves frame-path execution, not yet visible rendering.
