@@ -164,18 +164,18 @@ NSString *StageName() {
     [super viewDidLoad];
 
     self.view.backgroundColor = UIColor.systemBackgroundColor;
-    self.title = @"PvZ2forIOS — JIT Probe v4";
+    self.title = @"PvZ2forIOS — JIT Probe v5";
 
     UILabel *title = [[UILabel alloc] init];
     title.translatesAutoresizingMaskIntoConstraints = NO;
-    title.text = @"PvZ2forIOS — iPadOS 26 JIT probe v4";
+    title.text = @"PvZ2forIOS — iPadOS 26 JIT probe v5";
     title.font = [UIFont boldSystemFontOfSize:26.0];
     title.numberOfLines = 0;
 
     UILabel *explanation = [[UILabel alloc] init];
     explanation.translatesAutoresizingMaskIntoConstraints = NO;
     explanation.text =
-        @"Diagnostic build v4: StikDebug launches this app itself under debug (Bundle ID only, no stale PID), then a custom script handles iPadOS 26 JIT breakpoints and RX allocation.";
+        @"Diagnostic build v5: StikDebug launches this app under debug, and the custom script uses Number(...) for the native memory-preparation bridge to avoid JavaScript BigInt/UInt64 bridging stalls.";
     explanation.numberOfLines = 0;
     explanation.font = [UIFont systemFontOfSize:16.0];
 
@@ -251,7 +251,7 @@ NSString *StageName() {
 
     [self refreshStatus];
     [self appendUI:[NSString stringWithFormat:
-        @"=== Probe v4 session started; PID=%d; stage=%@ ===",
+        @"=== Probe v5 session started; PID=%d; stage=%@ ===",
         getpid(), StageName()]];
 }
 
@@ -320,9 +320,9 @@ NSString *StageName() {
          @"function le32(h){return parseInt(h.match(/../g).reverse().join(''),16)>>>0;}\n"
          @"function toLE64(n){let a=[];for(let i=0;i<8;i++){a.push(Number(n&255n));n>>=8n;}return a.map(x=>x.toString(16).padStart(2,'0')).join('');}\n"
          @"function brkImm(v){return (v>>>5)&65535;}\n"
-         @"const pid=get_pid();log('PvZ2forIOS v4 custom JIT script; pid='+pid);let a=send_command('vAttach;'+pid.toString(16));log('attach='+a);let done=false;\n"
+         @"const pid=get_pid();log('PvZ2forIOS v5 custom JIT script; pid='+pid);let a=send_command('vAttach;'+pid.toString(16));log('attach='+a);let done=false;\n"
          @"while(!done){let r=send_command('c');log('stop='+r);let tm=/T[0-9a-f]+thread:(?<tid>[0-9a-f]+);/.exec(r);let tid=tm?tm.groups.tid:null;let pm=/20:(?<reg>[0-9a-f]{16});/.exec(r);let xm=/10:(?<reg>[0-9a-f]{16});/.exec(r);let m0=/00:(?<reg>[0-9a-f]{16});/.exec(r);let m1=/01:(?<reg>[0-9a-f]{16});/.exec(r);if(!tid||!pm||!xm||!m0||!m1){log('parse failed; detaching safely');send_command('D');break;}let pc=le64(pm.groups.reg),x16=le64(xm.groups.reg),x0=le64(m0.groups.reg),x1=le64(m1.groups.reg);let at=send_command('m'+pc.toString(16)+',4');let v=at&&at.length>=8?le32(at):0;let brkPc=pc;let pcAlreadyAfter=false;if((v&0xFFE0001F)!==0xD4200000){let prev=pc>=4n?pc-4n:pc;let ph=send_command('m'+prev.toString(16)+',4');let pv=ph&&ph.length>=8?le32(ph):0;if((pv&0xFFE0001F)===0xD4200000){brkPc=prev;v=pv;pcAlreadyAfter=true;log('BRK located at PC-4 (debugger reported post-BRK PC)');}else{log('unexpected stop: pc=0x'+pc.toString(16)+' at='+at+' prev='+ph+'; detaching instead of re-delivering SIGTRAP');send_command('D');break;}}\n"
-         @"let imm=brkImm(v);log('BRK imm=0x'+imm.toString(16)+' x16='+x16+' x0=0x'+x0.toString(16)+' x1='+x1);if(imm!==0xf00d){log('not our BRK; detaching safely');send_command('D');break;}if(!pcAlreadyAfter){let pr=send_command('P20='+toLE64(brkPc+4n)+';thread:'+tid+';');log('advancePC='+pr);}if(x16===1n){if(x1===0n){log('prepare requested with zero length');send_command('P0='+toLE64(0n)+';thread:'+tid+';');continue;}let addr=x0;if(addr===0n){let mr=send_command('_M'+x1.toString(16)+',rx');log('allocRX='+mr);if(!mr){send_command('P0='+toLE64(0n)+';thread:'+tid+';');continue;}addr=BigInt('0x'+mr);}let prep=prepare_memory_region(addr,x1);log('prepare='+prep+' addr=0x'+addr.toString(16));let wr=send_command('P0='+toLE64(addr)+';thread:'+tid+';');log('setX0='+wr);continue;}if(x16===0n){let d=send_command('D');log('detach='+d);done=true;break;}log('unknown command '+x16+'; detaching safely');send_command('D');done=true;}\n";
+         @"let imm=brkImm(v);log('BRK imm=0x'+imm.toString(16)+' x16='+x16+' x0=0x'+x0.toString(16)+' x1='+x1);if(imm!==0xf00d){log('not our BRK; detaching safely');send_command('D');break;}if(!pcAlreadyAfter){let pr=send_command('P20='+toLE64(brkPc+4n)+';thread:'+tid+';');log('advancePC='+pr);}if(x16===1n){if(x1===0n){log('prepare requested with zero length');send_command('P0='+toLE64(0n)+';thread:'+tid+';');continue;}let addr=x0;if(addr===0n){let mr=send_command('_M'+x1.toString(16)+',rx');log('allocRX='+mr);if(!mr){send_command('P0='+toLE64(0n)+';thread:'+tid+';');continue;}addr=BigInt('0x'+mr);}log('calling prepare_memory_region with Number(addr)='+Number(addr)+' Number(size)='+Number(x1));let prep=prepare_memory_region(Number(addr),Number(x1));log('prepare='+prep+' addr=0x'+addr.toString(16));let wr=send_command('P0='+toLE64(addr)+';thread:'+tid+';');log('setX0='+wr);continue;}if(x16===0n){let d=send_command('D');log('detach='+d);done=true;break;}log('unknown command '+x16+'; detaching safely');send_command('D');done=true;}\n";
 
     NSData *scriptData = [script dataUsingEncoding:NSUTF8StringEncoding];
     NSString *base64 = [scriptData base64EncodedStringWithOptions:0];
@@ -335,7 +335,7 @@ NSString *StageName() {
     components.host = @"enable-jit";
     components.queryItems = @[
         [NSURLQueryItem queryItemWithName:@"bundle-id" value:bundleID],
-        [NSURLQueryItem queryItemWithName:@"script-name" value:@"pvz2forios-v4.js"],
+        [NSURLQueryItem queryItemWithName:@"script-name" value:@"pvz2forios-v5.js"],
         [NSURLQueryItem queryItemWithName:@"script-data" value:base64],
     ];
 
