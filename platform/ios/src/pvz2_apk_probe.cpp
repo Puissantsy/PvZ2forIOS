@@ -13,6 +13,7 @@
 #include <unordered_map>
 
 #include <dynarmic/interface/A32/a32.h>
+#include <dynarmic/interface/exclusive_monitor.h>
 #include <zlib.h>
 
 namespace {
@@ -2054,8 +2055,12 @@ PvZ2JniProbeResult RunPvZ2JniOnLoadProbe(
             return result;
         }
 
+        Dynarmic::ExclusiveMonitor exclusive_monitor{1};
+
         Dynarmic::A32::UserConfig config;
         config.callbacks = &callbacks;
+        config.processor_id = 0;
+        config.global_monitor = &exclusive_monitor;
         config.arch_version =
             Dynarmic::A32::ArchVersion::v7;
         config.always_little_endian = true;
@@ -2245,8 +2250,12 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
             static_cast<std::uint32_t>(
                 constructors.size());
 
+        Dynarmic::ExclusiveMonitor exclusive_monitor{1};
+
         Dynarmic::A32::UserConfig config;
         config.callbacks = &callbacks;
+        config.processor_id = 0;
+        config.global_monitor = &exclusive_monitor;
         config.arch_version =
             Dynarmic::A32::ArchVersion::v7;
         config.always_little_endian = true;
