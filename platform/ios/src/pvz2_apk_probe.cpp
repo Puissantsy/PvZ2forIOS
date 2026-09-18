@@ -1221,6 +1221,8 @@ public:
     std::uint32_t env_object = 0;
     std::uint32_t supported_calls = 0;
     std::uint64_t ticks_left = 1000000;
+    std::uint64_t ticks_consumed = 0;
+    std::uint64_t next_tick_report = 5000000;
     ReturnMode return_mode = ReturnMode::JniOnLoad;
     bool control_returned = false;
     std::uint32_t current_constructor_index = 0;
@@ -3904,15 +3906,35 @@ public:
     }
 
     void AddTicks(std::uint64_t ticks) override {
+        ticks_consumed += ticks;
+
+        if (return_mode == ReturnMode::Constructor &&
+            ticks_consumed >= next_tick_report) {
+
+            Append(
+                "constructor[" +
+                std::to_string(current_constructor_index) +
+                "] long-run progress: ticks=" +
+                std::to_string(ticks_consumed) +
+                " PC=0x" +
+                JniProbeHex(jit ? jit->Regs()[15] : 0u));
+
+            while (next_tick_report <= ticks_consumed) {
+                next_tick_report += 5000000ull;
+            }
+        }
+
         if (ticks >= ticks_left) {
             ticks_left = 0;
             result.message =
                 return_mode == ReturnMode::Constructor
                     ? ("Constructor[" +
                        std::to_string(current_constructor_index) +
-                       "] exceeded the probe instruction budget at guest PC 0x" +
+                       "] exceeded the extended 50M-tick budget at guest PC 0x" +
                        JniProbeHex(jit ? jit->Regs()[15] : 0u) +
-                       ".")
+                       " after " +
+                       std::to_string(ticks_consumed) +
+                       " ticks.")
                     : "JNI_OnLoad exceeded the probe instruction budget.";
 
             if (jit) {
@@ -4677,7 +4699,9 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
             callbacks.control_returned = false;
             callbacks.current_constructor_index = index;
             callbacks.current_constructor_address = function;
-            callbacks.ticks_left = 1000000;
+            callbacks.ticks_left = 50000000ull;
+            callbacks.ticks_consumed = 0;
+            callbacks.next_tick_report = 5000000ull;
 
             result.message.clear();
             result.first_unsupported_import.clear();
@@ -4776,7 +4800,9 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
             PvZ2JniCallbacks::ReturnMode::JniOnLoad;
 
         callbacks.control_returned = false;
-        callbacks.ticks_left = 1000000;
+        callbacks.ticks_left = 5000000ull;
+        callbacks.ticks_consumed = 0;
+        callbacks.next_tick_report = 5000000ull;
 
         result.message.clear();
         result.first_unsupported_import.clear();
