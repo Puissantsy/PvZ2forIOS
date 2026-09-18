@@ -4455,10 +4455,31 @@ bool JniProbePrepareRuntime(
             trampoline_slot++,
             kJniProbeSvcRegisterNatives);
 
+    const std::uint32_t new_global_ref =
+        JniProbeMakeTrampoline(
+            memory,
+            trampoline_slot++,
+            kJniProbeSvcNewGlobalRef);
+
+    const std::uint32_t get_object_class =
+        JniProbeMakeTrampoline(
+            memory,
+            trampoline_slot++,
+            kJniProbeSvcGetObjectClass);
+
+    const std::uint32_t get_method_id =
+        JniProbeMakeTrampoline(
+            memory,
+            trampoline_slot++,
+            kJniProbeSvcGetMethodID);
+
     if (!return_trampoline ||
         !get_env ||
         !find_class ||
-        !register_natives) {
+        !register_natives ||
+        !new_global_ref ||
+        !get_object_class ||
+        !get_method_id) {
         error =
             "JNI probe could not allocate control trampolines.";
         return false;
@@ -4492,12 +4513,50 @@ bool JniProbePrepareRuntime(
         env_object,
         env_table);
 
+    // Populate every JNIEnv slot with a controlled trap first. This turns an
+    // unimplemented JNI call into a precise slot/offset diagnostic instead of
+    // a jump through a null pointer.
+    for (std::uint32_t slot = 0;
+         slot < kJniProbeJniSlotCount;
+         ++slot) {
+
+        const std::uint32_t generic =
+            JniProbeMakeTrampoline(
+                memory,
+                trampoline_slot++,
+                kJniProbeSvcUnsupportedJniBase +
+                    slot);
+
+        if (!generic) {
+            error =
+                "JNI probe could not allocate generic JNIEnv trampolines.";
+            return false;
+        }
+
+        memory.Write32Guest(
+            env_table + slot * 4u,
+            generic);
+    }
+
+    // JNI function-table slots from jni.h.
     memory.Write32Guest(
-        env_table + 0x18u,
+        env_table + 6u * 4u,
         find_class);
 
     memory.Write32Guest(
-        env_table + 0x35cu,
+        env_table + 21u * 4u,
+        new_global_ref);
+
+    memory.Write32Guest(
+        env_table + 31u * 4u,
+        get_object_class);
+
+    memory.Write32Guest(
+        env_table + 33u * 4u,
+        get_method_id);
+
+    memory.Write32Guest(
+        env_table + 215u * 4u,
         register_natives);
 
     callbacks.vm_object = vm_object;
