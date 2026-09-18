@@ -5,6 +5,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <cctype>
+#include <cwctype>
+#include <cstdlib>
 #include <limits>
 #include <sstream>
 #include <string>
@@ -1100,14 +1103,75 @@ public:
                 break;
             }
 
-            if (ch >= 0x20 && ch <= 0x7e) {
-                result.push_back(ch);
-            } else {
-                result.push_back('?');
-            }
+            result.push_back(ch);
         }
 
         return result;
+    }
+
+    std::vector<std::uint32_t> ReadWStringGuest(
+        std::uint32_t address,
+        std::size_t max_length = 4096) const {
+
+        std::vector<std::uint32_t> result;
+        result.reserve(
+            std::min<std::size_t>(
+                max_length,
+                128));
+
+        for (std::size_t i = 0;
+             i < max_length;
+             ++i) {
+
+            const std::uint32_t ch =
+                Read32Guest(
+                    address +
+                    static_cast<std::uint32_t>(i * 4u));
+
+            if (ch == 0) {
+                break;
+            }
+
+            result.push_back(ch);
+        }
+
+        return result;
+    }
+
+    bool WriteWStringGuest(
+        std::uint32_t address,
+        const std::vector<std::uint32_t>& value,
+        std::size_t capacity) {
+
+        if (capacity == 0) {
+            return false;
+        }
+
+        const std::size_t count =
+            std::min(
+                value.size(),
+                capacity - 1);
+
+        if (!Ptr(address, capacity * 4u)) {
+            return false;
+        }
+
+        for (std::size_t i = 0;
+             i < count;
+             ++i) {
+
+            Write32Guest(
+                address +
+                    static_cast<std::uint32_t>(i * 4u),
+                value[i]);
+        }
+
+        Write32Guest(
+            address +
+                static_cast<std::uint32_t>(count * 4u),
+            0);
+
+        return true;
     }
 };
 
