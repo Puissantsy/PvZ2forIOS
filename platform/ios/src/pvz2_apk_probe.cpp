@@ -6237,12 +6237,215 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                 callbacks.Trace();
 
             if (result.returned_game_app_initialize) {
+                if ((result.game_app_initialize_return & 0xffu) == 0u) {
+                    result.message =
+                        "Native_GameAppInitialize returned JNI_FALSE; lifecycle probe not started.";
+                    return result;
+                }
+
+                callbacks.Append(
+                    "Native_GameAppInitialize returned JNI_TRUE; entering real PvZ2 lifecycle/surface sequence.");
+
+                auto run_lifecycle =
+                    [&](const char* name,
+                        std::uint32_t function,
+                        std::uint32_t thiz,
+                        std::uint32_t arg2,
+                        std::uint32_t arg3,
+                        bool first_draw) -> bool {
+
+                        callbacks.return_mode =
+                            PvZ2JniCallbacks::ReturnMode::Lifecycle;
+                        callbacks.current_lifecycle_name =
+                            name;
+                        callbacks.control_returned = false;
+                        callbacks.ticks_left = 50000000ull;
+                        callbacks.ticks_consumed = 0;
+                        callbacks.next_tick_report = 5000000ull;
+
+                        result.message.clear();
+                        result.first_unsupported_import.clear();
+                        result.unsupported_jni_slot = 0xffffffffu;
+
+                        jit.ClearHalt(
+                            Dynarmic::HaltReason::UserDefined1);
+
+                        jit.Regs().fill(0);
+                        jit.Regs()[0] =
+                            callbacks.env_object;
+                        jit.Regs()[1] =
+                            thiz;
+                        jit.Regs()[2] =
+                            arg2;
+                        jit.Regs()[3] =
+                            arg3;
+                        jit.Regs()[13] =
+                            kJniProbeStackBase +
+                            kJniProbeStackSize -
+                            0x200u;
+                        jit.Regs()[14] =
+                            return_trampoline;
+                        jit.Regs()[15] =
+                            function & ~1u;
+
+                        jit.SetCpsr(
+                            (function & 1u)
+                                ? 0x30u
+                                : 0x10u);
+
+                        if (first_draw) {
+                            result.reached_first_draw_frame = true;
+                        }
+
+                        callbacks.Append(
+                            "Entering " +
+                            std::string{name} +
+                            " at 0x" +
+                            JniProbeHex(function));
+
+                        const Dynarmic::HaltReason lifecycle_halt =
+                            jit.Run();
+
+                        result.final_pc =
+                            jit.Regs()[15];
+
+                        result.halt_reason =
+                            static_cast<std::uint32_t>(
+                                lifecycle_halt);
+
+                        result.supported_import_calls =
+                            callbacks.supported_calls;
+
+                        result.trace =
+                            callbacks.Trace();
+
+                        if (callbacks.control_returned &&
+                            Dynarmic::Has(
+                                lifecycle_halt,
+                                Dynarmic::HaltReason::UserDefined1)) {
+
+                            ++result.lifecycle_calls_completed;
+
+                            if (first_draw) {
+                                result.returned_first_draw_frame = true;
+                            }
+
+                            return true;
+                        }
+
+                        result.lifecycle_failure_name =
+                            name;
+
+                        if (result.message.empty()) {
+                            result.message =
+                                std::string{name} +
+                                " halted before returning at guest PC 0x" +
+                                JniProbeHex(result.final_pc) +
+                                ".";
+                        }
+
+                        return false;
+                    };
+
+                constexpr std::uint32_t kGameAppThis =
+                    kAndroidGameApp;
+                constexpr std::uint32_t kSurfaceThis =
+                    kAndroidSurfaceView;
+
+                constexpr std::uint32_t kNativeWillFinishLaunching =
+                    kGuestBase + 0x009ebf80u;
+                constexpr std::uint32_t kNativeDidFinishLaunching =
+                    kGuestBase + 0x009ec0a0u;
+                constexpr std::uint32_t kNativeWillBecomeForeground =
+                    kGuestBase + 0x009ec0bcu;
+                constexpr std::uint32_t kNativeDidBecomeActive =
+                    kGuestBase + 0x009ec0c8u;
+                constexpr std::uint32_t kNativeOnSurfaceCreated =
+                    kGuestBase + 0x009f1840u;
+                constexpr std::uint32_t kNativeOnSurfaceChanged =
+                    kGuestBase + 0x009f18dcu;
+                constexpr std::uint32_t kNativeOnDrawFrame =
+                    kGuestBase + 0x009f190cu;
+
+                // Null launch-string is an accepted path in the original
+                // native function and avoids inventing a fake Java String.
+                if (!run_lifecycle(
+                        "Native_applicationWillFinishLaunching",
+                        kNativeWillFinishLaunching,
+                        kGameAppThis,
+                        0,
+                        0,
+                        false)) {
+                    return result;
+                }
+
+                if (!run_lifecycle(
+                        "Native_applicationDidFinishLaunching",
+                        kNativeDidFinishLaunching,
+                        kGameAppThis,
+                        0,
+                        0,
+                        false)) {
+                    return result;
+                }
+
+                if (!run_lifecycle(
+                        "Native_applicationWillBecomeForeground",
+                        kNativeWillBecomeForeground,
+                        kGameAppThis,
+                        0,
+                        0,
+                        false)) {
+                    return result;
+                }
+
+                if (!run_lifecycle(
+                        "Native_applicationDidBecomeActive",
+                        kNativeDidBecomeActive,
+                        kGameAppThis,
+                        0,
+                        0,
+                        false)) {
+                    return result;
+                }
+
+                if (!run_lifecycle(
+                        "Native_onSurfaceCreated",
+                        kNativeOnSurfaceCreated,
+                        kSurfaceThis,
+                        0,
+                        0,
+                        false)) {
+                    return result;
+                }
+
+                // iPad 10th generation logical landscape size. The first-frame
+                // probe only needs a sane positive surface size; real drawable
+                // pixel dimensions will come from the Metal/GLES presentation
+                // bridge.
+                if (!run_lifecycle(
+                        "Native_onSurfaceChanged",
+                        kNativeOnSurfaceChanged,
+                        kSurfaceThis,
+                        1180,
+                        820,
+                        false)) {
+                    return result;
+                }
+
+                if (!run_lifecycle(
+                        "Native_onDrawFrame",
+                        kNativeOnDrawFrame,
+                        kSurfaceThis,
+                        0,
+                        0,
+                        true)) {
+                    return result;
+                }
+
                 result.ok = true;
                 result.message =
-                    "Native_GameAppInitialize executed to return under Dynarmic; jboolean result=" +
-                    std::to_string(
-                        result.game_app_initialize_return & 0xffu) +
-                    ".";
+                    "PvZ2 completed GameAppInitialize, lifecycle, surface creation/change, and one real Native_onDrawFrame call under Dynarmic.";
                 return result;
             }
 
