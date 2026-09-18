@@ -1222,6 +1222,7 @@ public:
         JniOnLoad,
         Constructor,
         GameAppInitialize,
+        Lifecycle,
     };
 
     std::uint32_t vm_object = 0;
@@ -1234,6 +1235,7 @@ public:
     bool control_returned = false;
     std::uint32_t current_constructor_index = 0;
     std::uint32_t current_constructor_address = 0;
+    std::string current_lifecycle_name;
     std::uint32_t next_pthread_key = 1;
     std::uint32_t next_synthetic_thread = 1;
     std::uint32_t next_synthetic_class = 1;
@@ -1532,6 +1534,10 @@ public:
                 Append(
                     "Native_GameAppInitialize returned 0x" +
                     JniProbeHex(regs[0]));
+            } else if (return_mode == ReturnMode::Lifecycle) {
+                Append(
+                    current_lifecycle_name +
+                    " returned.");
             } else {
                 result.returned_from_jni_onload = true;
                 result.return_value = regs[0];
