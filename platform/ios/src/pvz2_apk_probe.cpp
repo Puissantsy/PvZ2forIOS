@@ -1134,8 +1134,11 @@ class PvZ2JniCallbacks final :
 public:
     PvZ2JniCallbacks(
         JniProbeGuestMemory& memory,
-        PvZ2JniProbeResult& output)
-        : mem(memory), result(output) {}
+        PvZ2JniProbeResult& output,
+        PvZ2ProbeProgress progress = {})
+        : mem(memory),
+          result(output),
+          progress_callback(std::move(progress)) {}
 
     Dynarmic::A32::Jit* jit = nullptr;
     std::unordered_map<std::uint32_t, JniProbeImportBinding>
@@ -1723,6 +1726,10 @@ public:
 
     void Append(const std::string& line) {
         trace << line << '\n';
+
+        if (progress_callback) {
+            progress_callback(line);
+        }
     }
 
     std::string Trace() const {
@@ -1732,6 +1739,7 @@ public:
 private:
     JniProbeGuestMemory& mem;
     PvZ2JniProbeResult& result;
+    PvZ2ProbeProgress progress_callback;
     std::ostringstream trace;
 };
 
@@ -2031,7 +2039,8 @@ PvZ2JniProbeResult RunPvZ2JniOnLoadProbe(
         JniProbeGuestMemory memory;
         PvZ2JniCallbacks callbacks(
             memory,
-            result);
+            result,
+            std::move(progress));
 
         std::uint32_t return_trampoline = 0;
 
@@ -2145,7 +2154,8 @@ PvZ2JniProbeResult RunPvZ2JniOnLoadProbe(
 
 PvZ2JniProbeResult RunPvZ2FullLoadProbe(
     const std::uint8_t* apk_data,
-    std::size_t apk_size) {
+    std::size_t apk_size,
+    PvZ2ProbeProgress progress) {
 
     PvZ2JniProbeResult result;
 
@@ -2260,6 +2270,12 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
 
             const std::uint32_t function =
                 constructors[index];
+
+            callbacks.Append(
+                "CHECKPOINT constructor[" +
+                std::to_string(index) +
+                "] begin @ 0x" +
+                JniProbeHex(function));
 
             callbacks.return_mode =
                 PvZ2JniCallbacks::ReturnMode::Constructor;
