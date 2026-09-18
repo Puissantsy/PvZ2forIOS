@@ -1,16 +1,17 @@
 #import <UIKit/UIKit.h>
 #import <Foundation/Foundation.h>
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
 #include <dlfcn.h>
 #include <sys/types.h>
 #include <unistd.h>
 
-#include <atomic>
 #include <cstdint>
 #include <cstdlib>
 #include <string>
 
 #include "dynarmic_smoke.hpp"
+#include "pvz2_apk_probe.hpp"
 
 extern "C" int csops(pid_t pid, unsigned int ops, void *useraddr, size_t usersize);
 
@@ -57,7 +58,7 @@ NSString *LogFilePath() {
         [[NSFileManager defaultManager] URLsForDirectory:NSDocumentDirectory
                                                inDomains:NSUserDomainMask];
     NSURL *documents = urls.firstObject;
-    return [[documents URLByAppendingPathComponent:@"pvz2forios-dynarmic.log"] path];
+    return [[documents URLByAppendingPathComponent:@"pvz2forios-probe.log"] path];
 }
 
 void AppendPersistentLog(NSString *line) {
@@ -84,19 +85,25 @@ NSString *ReadPersistentLog() {
     if (text == nil) {
         return @"";
     }
-    if (text.length > 18000) {
-        return [text substringFromIndex:text.length - 18000];
+    if (text.length > 24000) {
+        return [text substringFromIndex:text.length - 24000];
     }
     return text;
 }
 
+NSString *NSStringFromStd(const std::string& value) {
+    return [NSString stringWithUTF8String:value.c_str()] ?: @"(invalid UTF-8)";
+}
+
 } // namespace
 
-@interface ProbeViewController : UIViewController
+@interface ProbeViewController : UIViewController <UIDocumentPickerDelegate>
 @property(nonatomic, strong) UILabel *statusLabel;
 @property(nonatomic, strong) UITextView *logView;
 @property(nonatomic, strong) UIButton *dynarmicButton;
+@property(nonatomic, strong) UIButton *apkButton;
 @property(nonatomic, assign) BOOL dynarmicRunning;
+@property(nonatomic, assign) BOOL apkRunning;
 @property(nonatomic, assign) BOOL step1ReadyLogged;
 @end
 
@@ -117,44 +124,49 @@ NSString *ReadPersistentLog() {
     [super viewDidLoad];
 
     self.view.backgroundColor = UIColor.systemBackgroundColor;
-    self.title = @"PvZ2forIOS — Dynarmic Probe v7";
+    self.title = @"PvZ2forIOS — Loader Probe v8";
 
     UILabel *title = [[UILabel alloc] init];
     title.translatesAutoresizingMaskIntoConstraints = NO;
-    title.text = @"PvZ2forIOS — ARM32 → ARM64 Dynarmic probe v7";
-    title.font = [UIFont boldSystemFontOfSize:26.0];
+    title.text = @"PvZ2forIOS — Dynarmic + real PvZ2 ELF loader probe v8";
+    title.font = [UIFont boldSystemFontOfSize:25.0];
     title.numberOfLines = 0;
 
     UILabel *explanation = [[UILabel alloc] init];
     explanation.translatesAutoresizingMaskIntoConstraints = NO;
     explanation.text =
-        @"The raw iPadOS JIT path is already validated. This build performs the next milestone: "
-         @"Dynarmic receives a tiny ARMv7 program (MOV 40, ADD 2, SVC), translates it to native "
-         @"ARM64 in its own iOS dual-mapped code cache, executes it, and must return R0 = 42.";
+        @"v7 proved real ARMv7 guest code can run through Dynarmic on this A14. "
+         @"v8 keeps that test and adds the next layer: choose your legally owned PvZ2 APK. "
+         @"The app extracts libPVZ2.so itself, validates its ARM ELF32 layout, maps its PT_LOAD "
+         @"segments into a guest address space, applies R_ARM_RELATIVE relocations, enumerates "
+         @"Android imports and locates JNI_OnLoad. The game binary is never bundled into this IPA.";
     explanation.numberOfLines = 0;
-    explanation.font = [UIFont systemFontOfSize:16.0];
+    explanation.font = [UIFont systemFontOfSize:15.0];
 
     self.statusLabel = [[UILabel alloc] init];
     self.statusLabel.translatesAutoresizingMaskIntoConstraints = NO;
     self.statusLabel.numberOfLines = 0;
-    self.statusLabel.font = [UIFont monospacedSystemFontOfSize:14.0
+    self.statusLabel.font = [UIFont monospacedSystemFontOfSize:13.0
                                                        weight:UIFontWeightRegular];
 
     UIButton *enableButton =
         [self makeButton:@"1. Enable JIT\nwith StikDebug" selector:@selector(enableJIT)];
 
     self.dynarmicButton =
-        [self makeButton:@"2. Run Dynarmic\nARM32 → 42" selector:@selector(runDynarmic)];
+        [self makeButton:@"2. Dynarmic\nARM32 → 42" selector:@selector(runDynarmic)];
+
+    self.apkButton =
+        [self makeButton:@"3. Inspect + map\nPvZ2 APK" selector:@selector(selectApk)];
+
+    UIStackView *mainButtons = [[UIStackView alloc]
+        initWithArrangedSubviews:@[enableButton, self.dynarmicButton, self.apkButton]];
+    mainButtons.translatesAutoresizingMaskIntoConstraints = NO;
+    mainButtons.axis = UILayoutConstraintAxisHorizontal;
+    mainButtons.spacing = 12.0;
+    mainButtons.distribution = UIStackViewDistributionFillEqually;
 
     UIButton *refreshButton =
-        [self makeButton:@"Refresh\nstatus" selector:@selector(refreshStatus)];
-
-    UIStackView *buttons = [[UIStackView alloc]
-        initWithArrangedSubviews:@[enableButton, self.dynarmicButton, refreshButton]];
-    buttons.translatesAutoresizingMaskIntoConstraints = NO;
-    buttons.axis = UILayoutConstraintAxisHorizontal;
-    buttons.spacing = 12.0;
-    buttons.distribution = UIStackViewDistributionFillEqually;
+        [self makeButton:@"Refresh status" selector:@selector(refreshStatus)];
 
     self.logView = [[UITextView alloc] init];
     self.logView.translatesAutoresizingMaskIntoConstraints = NO;
@@ -168,11 +180,11 @@ NSString *ReadPersistentLog() {
 
     UIStackView *stack = [[UIStackView alloc]
         initWithArrangedSubviews:@[
-            title, explanation, self.statusLabel, buttons, self.logView
+            title, explanation, self.statusLabel, mainButtons, refreshButton, self.logView
         ]];
     stack.translatesAutoresizingMaskIntoConstraints = NO;
     stack.axis = UILayoutConstraintAxisVertical;
-    stack.spacing = 14.0;
+    stack.spacing = 12.0;
 
     [self.view addSubview:stack];
 
@@ -180,10 +192,11 @@ NSString *ReadPersistentLog() {
     [NSLayoutConstraint activateConstraints:@[
         [stack.leadingAnchor constraintEqualToAnchor:guide.leadingAnchor constant:24.0],
         [stack.trailingAnchor constraintEqualToAnchor:guide.trailingAnchor constant:-24.0],
-        [stack.topAnchor constraintEqualToAnchor:guide.topAnchor constant:18.0],
-        [stack.bottomAnchor constraintEqualToAnchor:guide.bottomAnchor constant:-18.0],
-        [buttons.heightAnchor constraintEqualToConstant:64.0],
-        [self.logView.heightAnchor constraintGreaterThanOrEqualToConstant:300.0],
+        [stack.topAnchor constraintEqualToAnchor:guide.topAnchor constant:16.0],
+        [stack.bottomAnchor constraintEqualToAnchor:guide.bottomAnchor constant:-16.0],
+        [mainButtons.heightAnchor constraintEqualToConstant:62.0],
+        [refreshButton.heightAnchor constraintEqualToConstant:38.0],
+        [self.logView.heightAnchor constraintGreaterThanOrEqualToConstant:280.0],
     ]];
 
     [[NSNotificationCenter defaultCenter]
@@ -193,7 +206,9 @@ NSString *ReadPersistentLog() {
              object:nil];
 
     [self appendUI:[NSString stringWithFormat:
-        @"=== Dynarmic probe v7 session started; PID=%d ===", getpid()]];
+        @"=== Loader probe v8 session started; PID=%d ===", getpid()]];
+    [self appendUI:
+        @"v7 milestone carried forward: ARM32 → Dynarmic → ARM64 returned R0=42 on the target A14."];
     [self refreshStatus];
 }
 
@@ -236,17 +251,19 @@ NSString *ReadPersistentLog() {
     }
 
     self.statusLabel.text = [NSString stringWithFormat:
-        @"Device: arm64 | PID: %d | iPad 10th gen / Non-TXM\n"
+        @"Device: arm64 | PID: %d | iPad 10th gen / A14 / Non-TXM\n"
          @"Bundle ID: %@\n"
          @"get-task-allow: %@ | CS_DEBUGGED: %@\n"
-         @"Dynarmic test: %@",
+         @"Dynarmic: %@ | APK/ELF probe: %@",
          getpid(),
          bundle,
          taskAllow ? @"YES" : @"NO",
          debugged ? @"YES" : @"NO",
-         self.dynarmicRunning ? @"RUNNING…" : @"ready to run"];
+         self.dynarmicRunning ? @"RUNNING…" : @"ready",
+         self.apkRunning ? @"RUNNING…" : @"ready"];
 
     self.dynarmicButton.enabled = !self.dynarmicRunning;
+    self.apkButton.enabled = !self.apkRunning;
 }
 
 - (void)enableJIT {
@@ -277,7 +294,7 @@ NSString *ReadPersistentLog() {
     }
 
     [self appendUI:
-        @"STEP 1: requesting Non-TXM debugger attach/detach. No script is sent."];
+        @"STEP 1: requesting Non-TXM debugger attach/detach. No JIT script is sent."];
 
     [[UIApplication sharedApplication]
         openURL:url
@@ -286,7 +303,7 @@ NSString *ReadPersistentLog() {
             dispatch_async(dispatch_get_main_queue(), ^{
                 [self appendUI:
                     success
-                        ? @"STEP 1: StikDebug request opened. Return here; CS_DEBUGGED=YES means it is ready."
+                        ? @"STEP 1: StikDebug request opened. Return here; CS_DEBUGGED=YES means ready."
                         : @"STEP 1 FAILED: iPadOS could not open StikDebug."];
             });
         }];
@@ -305,7 +322,7 @@ NSString *ReadPersistentLog() {
     self.dynarmicRunning = YES;
     [self refreshStatus];
     [self appendUI:
-        @"STEP 2A: constructing Dynarmic A32 JIT with an 8 MiB iOS dual-mapped code cache."];
+        @"STEP 2A: constructing Dynarmic A32 JIT and executing MOV 40 / ADD 2 / SVC."];
 
     __weak ProbeViewController *weakSelf = self;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
@@ -319,28 +336,162 @@ NSString *ReadPersistentLog() {
 
             selfRef.dynarmicRunning = NO;
 
-            NSString *line = [NSString stringWithFormat:
+            [selfRef appendUI:[NSString stringWithFormat:
                 @"STEP 2B: ok=%@ R0=%u PC=0x%08x halt=0x%08x svc=%@ exception=%@",
                 result.ok ? @"YES" : @"NO",
                 result.r0,
                 result.pc,
                 result.halt_reason,
                 result.svc_seen ? @"YES" : @"NO",
-                result.exception_seen ? @"YES" : @"NO"];
-            [selfRef appendUI:line];
+                result.exception_seen ? @"YES" : @"NO"]];
 
-            NSString *message =
-                [NSString stringWithUTF8String:result.message.c_str()] ?: @"(no message)";
+            NSString *message = NSStringFromStd(result.message);
             [selfRef appendUI:[NSString stringWithFormat:@"STEP 2C: %@", message]];
 
             if (result.ok) {
                 [selfRef appendUI:
-                    @"SUCCESS: Dynarmic executed ARM32 guest code on the A14 and returned R0=42."];
-                [selfRef showResult:@"Dynarmic works"
-                            message:@"ARM32 → Dynarmic → generated ARM64 → A14 succeeded. Guest R0 returned 42."];
+                    @"SUCCESS STEP 2: Dynarmic executed ARM32 guest code and returned R0=42."];
             } else {
-                [selfRef appendUI:@"FAILED: Dynarmic ARM32 smoke test did not complete successfully."];
                 [selfRef showResult:@"Dynarmic test failed" message:message];
+            }
+
+            [selfRef refreshStatus];
+        });
+    });
+}
+
+- (void)selectApk {
+    if (self.apkRunning) {
+        return;
+    }
+
+    UIDocumentPickerViewController *picker =
+        [[UIDocumentPickerViewController alloc]
+            initForOpeningContentTypes:@[UTTypeData]
+                                asCopy:YES];
+    picker.delegate = self;
+    picker.allowsMultipleSelection = NO;
+    picker.modalPresentationStyle = UIModalPresentationFormSheet;
+
+    [self appendUI:
+        @"STEP 3: choose the original PvZ2 1.5.252752 APK in Files. No game data is uploaded or bundled."];
+    [self presentViewController:picker animated:YES completion:nil];
+}
+
+- (void)documentPickerWasCancelled:(UIDocumentPickerViewController *)controller {
+    [self appendUI:@"STEP 3: APK selection cancelled."];
+}
+
+- (void)documentPicker:(UIDocumentPickerViewController *)controller
+    didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
+
+    NSURL *url = urls.firstObject;
+    if (url == nil) {
+        [self appendUI:@"STEP 3 FAILED: document picker returned no file."];
+        return;
+    }
+
+    self.apkRunning = YES;
+    [self refreshStatus];
+
+    [self appendUI:[NSString stringWithFormat:
+        @"STEP 3A: selected %@; reading APK…", url.lastPathComponent ?: @"(unnamed file)"]];
+
+    __weak ProbeViewController *weakSelf = self;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        BOOL scoped = [url startAccessingSecurityScopedResource];
+
+        NSError *readError = nil;
+        NSData *data = [NSData dataWithContentsOfURL:url
+                                            options:NSDataReadingMappedIfSafe
+                                              error:&readError];
+
+        if (scoped) {
+            [url stopAccessingSecurityScopedResource];
+        }
+
+        if (data == nil) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                ProbeViewController *selfRef = weakSelf;
+                if (!selfRef) {
+                    return;
+                }
+                selfRef.apkRunning = NO;
+                [selfRef appendUI:[NSString stringWithFormat:
+                    @"STEP 3 FAILED: could not read APK: %@",
+                    readError.localizedDescription ?: @"unknown read error"]];
+                [selfRef refreshStatus];
+            });
+            return;
+        }
+
+        PvZ2ApkProbeResult result = InspectAndMapPvZ2Apk(
+            static_cast<const std::uint8_t*>(data.bytes),
+            data.length);
+
+        dispatch_async(dispatch_get_main_queue(), ^{
+            ProbeViewController *selfRef = weakSelf;
+            if (!selfRef) {
+                return;
+            }
+
+            selfRef.apkRunning = NO;
+
+            [selfRef appendUI:[NSString stringWithFormat:
+                @"STEP 3B: APK=%llu bytes | libPVZ2.so compressed=%llu | ELF=%llu bytes",
+                static_cast<unsigned long long>(result.apk_size),
+                static_cast<unsigned long long>(result.elf_compressed_size),
+                static_cast<unsigned long long>(result.elf_size)]];
+
+            if (result.ok) {
+                [selfRef appendUI:[NSString stringWithFormat:
+                    @"STEP 3C: PT_LOAD=%u | guest base=0x%08x | image size=0x%08x",
+                    result.load_segments,
+                    result.guest_base,
+                    result.image_size]];
+
+                [selfRef appendUI:[NSString stringWithFormat:
+                    @"STEP 3D: relocations RELATIVE=%u/%u applied | GLOB_DAT=%u | JUMP_SLOT=%u | other=%u",
+                    result.relative_applied,
+                    result.relative_relocations,
+                    result.glob_dat_relocations,
+                    result.jump_slot_relocations,
+                    result.unsupported_relocations]];
+
+                [selfRef appendUI:[NSString stringWithFormat:
+                    @"STEP 3E: dynsym=%u | undefined imports=%u | DT_NEEDED=%u | init_array=%u",
+                    result.dynsym_count,
+                    result.undefined_symbol_count,
+                    result.needed_library_count,
+                    result.init_array_count]];
+
+                [selfRef appendUI:[NSString stringWithFormat:
+                    @"STEP 3F: SONAME=%@ | JNI_OnLoad ELF=0x%08x → guest=0x%08x",
+                    NSStringFromStd(result.soname),
+                    result.jni_onload_value,
+                    result.jni_onload_guest]];
+
+                [selfRef appendUI:[NSString stringWithFormat:
+                    @"STEP 3G: needed: %@",
+                    NSStringFromStd(result.needed_libraries)]];
+
+                [selfRef appendUI:[NSString stringWithFormat:
+                    @"STEP 3H: exact 1.5.252752 profile=%@",
+                    result.exact_15252752_profile ? @"YES" : @"NO"]];
+
+                [selfRef appendUI:[NSString stringWithFormat:
+                    @"SUCCESS STEP 3: %@",
+                    NSStringFromStd(result.message)]];
+
+                NSString *alertMessage = result.exact_15252752_profile
+                    ? @"The exact PvZ2 1.5.252752 ARMv7 ELF profile matched. PT_LOAD mapping and all 48,754 R_ARM_RELATIVE relocations succeeded. The next target is Android/JNI import trampolines and entering JNI_OnLoad."
+                    : NSStringFromStd(result.message);
+
+                [selfRef showResult:@"Real PvZ2 ELF mapped" message:alertMessage];
+            } else {
+                NSString *message = NSStringFromStd(result.message);
+                [selfRef appendUI:[NSString stringWithFormat:@"STEP 3 FAILED: %@", message]];
+                [selfRef showResult:@"APK / ELF probe failed" message:message];
             }
 
             [selfRef refreshStatus];
@@ -372,8 +523,6 @@ NSString *ReadPersistentLog() {
 
 int main(int argc, char *argv[]) {
     @autoreleasepool {
-        // LiveContainer's Dynarmic fork auto-detects iOS 26 dual mapping, but
-        // explicitly opting in documents the required policy for this target.
         setenv("DYNARMIC_DUAL_MAPPED", "1", 1);
         return UIApplicationMain(
             argc,
