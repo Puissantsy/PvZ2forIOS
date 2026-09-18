@@ -234,7 +234,7 @@ NSString *NSStringFromStd(
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — JNI Probe v9";
+        @"PvZ2forIOS — Full Load Probe v10";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -243,7 +243,7 @@ NSString *NSStringFromStd(
         NO;
 
     title.text =
-        @"PvZ2forIOS — real JNI_OnLoad probe v9";
+        @"PvZ2forIOS — full Android library startup probe v10";
 
     title.font =
         [UIFont
@@ -259,11 +259,10 @@ NSString *NSStringFromStd(
         NO;
 
     explanation.text =
-        @"v7 proved ARMv7 → Dynarmic → ARM64 execution. "
-         @"v8 proved the exact PvZ2 1.5.252752 ELF can be extracted, mapped and relocated. "
-         @"v9 enters the real game's JNI_OnLoad with a minimal guest JavaVM/JNIEnv. "
-         @"It emulates GetEnv, FindClass, RegisterNatives, malloc, ARM memset and Android logging, "
-         @"and traps the first unsupported Android import instead of crashing.";
+        @"v9 proved the real 2013 PvZ2 JNI_OnLoad completes under Dynarmic and returns JNI 1.4. "
+         @"v10 now reproduces the Android dynamic-linker phase that normally happens first: "
+         @"it executes every non-null .init_array constructor in order, preserving guest global state, "
+         @"then runs JNI_OnLoad again in that initialized process. Unsupported Android/libc imports halt safely with their name.";
 
     explanation.numberOfLines = 0;
 
@@ -440,12 +439,12 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 JNI probe v9 session started; PID=%d ===",
+                    @"=== PvZ2 full-load probe v10 session started; PID=%d ===",
                     getpid()]];
 
     [self
         appendUI:
-            @"Milestones carried forward: Non-TXM JIT ✅ | Dynarmic ARM32→42 ✅ | exact PvZ2 ELF mapping/48,754 RELATIVE relocations ✅"];
+            @"Milestones carried forward: Non-TXM JIT ✅ | Dynarmic ARM32→42 ✅ | exact PvZ2 ELF mapping ✅ | real JNI_OnLoad returned JNI 1.4 ✅"];
 
     [self refreshStatus];
 }
@@ -542,7 +541,7 @@ NSString *NSStringFromStd(
                 @"Device: arm64 | PID: %d | iPad 10th gen / A14 / Non-TXM\n"
                  @"Bundle ID: %@\n"
                  @"get-task-allow: %@ | CS_DEBUGGED: %@\n"
-                 @"Dynarmic smoke: %@ | real JNI_OnLoad: %@",
+                 @"Dynarmic smoke: %@ | full PvZ2 load: %@",
                 getpid(),
                 bundle,
                 taskAllow
@@ -768,7 +767,7 @@ NSString *NSStringFromStd(
 
     [self
         appendUI:
-            @"STEP 3: select the same original PvZ2 1.5.252752 APK. v9 will enter its real JNI_OnLoad under Dynarmic."];
+            @"STEP 3: select the same original PvZ2 1.5.252752 APK. v10 will execute all non-null .init_array constructors, then JNI_OnLoad."];
 
     [self
         presentViewController:
@@ -811,7 +810,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"STEP 3A: selected %@; loading and preparing real PvZ2 runtime…",
+                    @"STEP 3A: selected %@; preparing full PvZ2 shared-library startup…",
                     url.lastPathComponent
                         ?: @"(unnamed file)"]];
 
@@ -875,7 +874,7 @@ NSString *NSStringFromStd(
             }
 
             PvZ2JniProbeResult result =
-                RunPvZ2JniOnLoadProbe(
+                RunPvZ2FullLoadProbe(
                     static_cast<const std::uint8_t*>(
                         data.bytes),
                     data.length);
@@ -898,31 +897,29 @@ NSString *NSStringFromStd(
                         appendUI:
                             [NSString
                                 stringWithFormat:
-                                    @"STEP 3B: reached JNI_OnLoad=%@ | returned=%@ | imports patched=%u | supported import calls=%u",
-                                    result.reached_jni_onload
-                                        ? @"YES"
-                                        : @"NO",
-                                    result.returned_from_jni_onload
-                                        ? @"YES"
-                                        : @"NO",
-                                    result.imports_patched,
-                                    result.supported_import_calls]];
+                                    @"STEP 3B: init slots=%u | constructors=%u | completed=%u | __cxa_atexit=%u | imports patched=%u",
+                                    result.init_array_slots,
+                                    result.constructors_total,
+                                    result.constructors_completed,
+                                    result.cxa_atexit_calls,
+                                    result.imports_patched]];
 
                     [selfRef
                         appendUI:
                             [NSString
                                 stringWithFormat:
-                                    @"STEP 3C: FindClass=%u | RegisterNatives=%u | native methods observed=%u | return=0x%08x | PC=0x%08x",
+                                    @"STEP 3C: reached JNI=%@ | returned=%@ | FindClass=%u | RegisterNatives=%u | native methods=%u | return=0x%08x",
+                                    result.reached_jni_onload ? @"YES" : @"NO",
+                                    result.returned_from_jni_onload ? @"YES" : @"NO",
                                     result.find_class_calls,
                                     result.register_natives_calls,
                                     result.registered_native_methods,
-                                    result.return_value,
-                                    result.final_pc]];
+                                    result.return_value]];
 
                     if (!result.trace.empty()) {
                         [selfRef
                             appendUI:
-                                @"----- JNI TRACE -----"];
+                                @"----- FULL LOAD TRACE -----"];
 
                         [selfRef
                             appendUI:
@@ -931,7 +928,7 @@ NSString *NSStringFromStd(
 
                         [selfRef
                             appendUI:
-                                @"----- END JNI TRACE -----"];
+                                @"----- END FULL LOAD TRACE -----"];
                     }
 
                     [selfRef
@@ -955,19 +952,20 @@ NSString *NSStringFromStd(
                     if (result.ok) {
                         [selfRef
                             appendUI:
-                                @"SUCCESS STEP 3: the real PvZ2 JNI_OnLoad executed under Dynarmic and returned a valid JNI version."];
+                                @"SUCCESS STEP 3: PvZ2 constructors + real JNI_OnLoad completed under Dynarmic."];
 
                         [selfRef
                             showResult:
-                                @"Real PvZ2 JNI_OnLoad works"
+                                @"Full PvZ2 library startup works"
                             message:
                                 [NSString
                                     stringWithFormat:
-                                        @"The 2013 PvZ2 ARMv7 JNI_OnLoad completed on the A14 through Dynarmic.\n\nReturn: 0x%08x\nFindClass calls: %u\nRegisterNatives calls: %u\nNative methods observed: %u\n\nNext milestone: execute the 619 init-array constructors, expand Android/libc shims, then enter GameAppInitialize.",
-                                        result.return_value,
-                                        result.find_class_calls,
-                                        result.register_natives_calls,
-                                        result.registered_native_methods]];
+                                        @"The PvZ2 ARMv7 shared library completed its Android-style startup on the A14.\n\ninit_array slots: %u\nNon-null constructors: %u\nConstructors completed: %u\n__cxa_atexit calls: %u\nJNI_OnLoad return: 0x%08x\n\nNext milestone: call the registered Native_GameAppInitialize entry point and expand the Android/JNI surface it requests.",
+                                        result.init_array_slots,
+                                        result.constructors_total,
+                                        result.constructors_completed,
+                                        result.cxa_atexit_calls,
+                                        result.return_value]];
                     } else {
                         NSString *message =
                             NSStringFromStd(
@@ -975,9 +973,11 @@ NSString *NSStringFromStd(
 
                         [selfRef
                             showResult:
-                                result.reached_jni_onload
-                                    ? @"JNI_OnLoad stopped safely"
-                                    : @"JNI_OnLoad probe failed"
+                                result.constructor_failure_index != 0xffffffffu
+                                    ? @"Constructor stopped safely"
+                                    : (result.reached_jni_onload
+                                        ? @"JNI_OnLoad stopped safely"
+                                        : @"Full-load probe failed")
                             message:
                                 message];
                     }
