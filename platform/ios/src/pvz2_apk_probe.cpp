@@ -5024,13 +5024,141 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
             (result.return_value == kJniVersion14 ||
              result.return_value == kJniVersion16)) {
 
-            result.ok = true;
-            result.message =
-                "Full PvZ2 shared-library startup succeeded: all " +
-                std::to_string(result.constructors_completed) +
-                " non-null init-array constructors returned, then JNI_OnLoad returned JNI version 0x" +
-                JniProbeHex(result.return_value) +
-                ".";
+            callbacks.Append(
+                "Full shared-library startup complete; preparing registered Native_GameAppInitialize.");
+
+            if (result.game_app_initialize_address == 0) {
+                result.message =
+                    "JNI_OnLoad completed, but Native_GameAppInitialize was not captured from RegisterNatives.";
+                result.trace =
+                    callbacks.Trace();
+                return result;
+            }
+
+            callbacks.Append(
+                "Native_GameAppInitialize captured at 0x" +
+                JniProbeHex(result.game_app_initialize_address) +
+                " signature=" +
+                result.game_app_initialize_signature);
+
+            callbacks.return_mode =
+                PvZ2JniCallbacks::ReturnMode::GameAppInitialize;
+
+            callbacks.control_returned = false;
+            callbacks.ticks_left = 50000000ull;
+            callbacks.ticks_consumed = 0;
+            callbacks.next_tick_report = 5000000ull;
+
+            result.message.clear();
+            result.first_unsupported_import.clear();
+            result.unsupported_jni_slot = 0xffffffffu;
+
+            jit.ClearHalt(
+                Dynarmic::HaltReason::UserDefined1);
+
+            jit.Regs().fill(0);
+
+            constexpr std::uint32_t kAndroidGameApp =
+                0x52010000u;
+            constexpr std::uint32_t kAndroidSurfaceView =
+                0x52010100u;
+            constexpr std::uint32_t kAndroidHttpProxy =
+                0x52010200u;
+            constexpr std::uint32_t kAndroidFacebookDriver =
+                0x52010300u;
+            constexpr std::uint32_t kCloud =
+                0x52010400u;
+            constexpr std::uint32_t kGooglePlayConnect =
+                0x52010500u;
+            constexpr std::uint32_t kGooglePlayAchievements =
+                0x52010600u;
+            constexpr std::uint32_t kGooglePlayLeaderboard =
+                0x52010700u;
+            constexpr std::uint32_t kAndroidNotification =
+                0x52010800u;
+
+            const std::uint32_t app_init_sp =
+                kJniProbeStackBase +
+                kJniProbeStackSize -
+                0x200u;
+
+            // AAPCS32: r0-r3 carry JNIEnv*, thiz, and the first two Java
+            // arguments. The remaining six jobject arguments are on the
+            // caller stack in signature order.
+            memory.Write32Guest(
+                app_init_sp + 0u,
+                kAndroidFacebookDriver);
+            memory.Write32Guest(
+                app_init_sp + 4u,
+                kCloud);
+            memory.Write32Guest(
+                app_init_sp + 8u,
+                kGooglePlayConnect);
+            memory.Write32Guest(
+                app_init_sp + 12u,
+                kGooglePlayAchievements);
+            memory.Write32Guest(
+                app_init_sp + 16u,
+                kGooglePlayLeaderboard);
+            memory.Write32Guest(
+                app_init_sp + 20u,
+                kAndroidNotification);
+
+            jit.Regs()[0] =
+                callbacks.env_object;
+            jit.Regs()[1] =
+                kAndroidGameApp;
+            jit.Regs()[2] =
+                kAndroidSurfaceView;
+            jit.Regs()[3] =
+                kAndroidHttpProxy;
+            jit.Regs()[13] =
+                app_init_sp;
+            jit.Regs()[14] =
+                return_trampoline;
+            jit.Regs()[15] =
+                result.game_app_initialize_address & ~1u;
+
+            jit.SetCpsr(
+                (result.game_app_initialize_address & 1u)
+                    ? 0x30u
+                    : 0x10u);
+
+            result.reached_game_app_initialize = true;
+
+            callbacks.Append(
+                "Entering real Native_GameAppInitialize with 8 synthetic Android object handles.");
+
+            const Dynarmic::HaltReason app_halt =
+                jit.Run();
+
+            result.final_pc =
+                jit.Regs()[15];
+
+            result.halt_reason =
+                static_cast<std::uint32_t>(
+                    app_halt);
+
+            result.supported_import_calls =
+                callbacks.supported_calls;
+
+            result.trace =
+                callbacks.Trace();
+
+            if (result.returned_game_app_initialize) {
+                result.ok = true;
+                result.message =
+                    "Native_GameAppInitialize executed to return under Dynarmic; jboolean result=" +
+                    std::to_string(
+                        result.game_app_initialize_return & 0xffu) +
+                    ".";
+                return result;
+            }
+
+            if (result.message.empty()) {
+                result.message =
+                    "Native_GameAppInitialize halted before returning.";
+            }
 
             return result;
         }
