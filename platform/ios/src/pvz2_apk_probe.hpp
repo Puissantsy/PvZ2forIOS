@@ -44,8 +44,13 @@ struct PvZ2JniProbeResult {
     bool ok = false;
     bool reached_jni_onload = false;
     bool returned_from_jni_onload = false;
+    bool reached_game_app_initialize = false;
+    bool returned_game_app_initialize = false;
 
     std::uint32_t return_value = 0;
+    std::uint32_t game_app_initialize_address = 0;
+    std::uint32_t game_app_initialize_return = 0;
+    std::uint32_t unsupported_jni_slot = 0xffffffffu;
     std::uint32_t final_pc = 0;
     std::uint32_t halt_reason = 0;
 
@@ -64,6 +69,7 @@ struct PvZ2JniProbeResult {
     std::uint32_t registered_native_methods = 0;
 
     std::string first_unsupported_import;
+    std::string game_app_initialize_signature;
     std::string trace;
     std::string message;
 };
