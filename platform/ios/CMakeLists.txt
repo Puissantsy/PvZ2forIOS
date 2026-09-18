@@ -26,9 +26,11 @@ target_compile_features(PvZ2forIOS PRIVATE cxx_std_20)
 find_library(UIKIT_FRAMEWORK UIKit REQUIRED)
 find_library(FOUNDATION_FRAMEWORK Foundation REQUIRED)
 find_library(SECURITY_FRAMEWORK Security REQUIRED)
+find_library(QUARTZCORE_FRAMEWORK QuartzCore REQUIRED)
 
 target_link_libraries(PvZ2forIOS PRIVATE
     ${UIKIT_FRAMEWORK}
     ${FOUNDATION_FRAMEWORK}
     ${SECURITY_FRAMEWORK}
+    ${QUARTZCORE_FRAMEWORK}
 )
