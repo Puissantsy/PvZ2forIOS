@@ -4,7 +4,6 @@
 #include <dlfcn.h>
 #include <TargetConditionals.h>
 #include <mach/mach.h>
-#include <mach/mach_vm.h>
 #include <libkern/OSCacheControl.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -83,24 +82,24 @@ JitProbeResult RunJitProbe() {
             @"CS_DEBUGGED is not set. Enable JIT with StikDebug first, return to this app, then run the probe."};
     }
 
-    const mach_vm_size_t size = static_cast<mach_vm_size_t>(vm_page_size);
+    const vm_size_t size = static_cast<vm_size_t>(vm_page_size);
     void *rx = JIT26PrepareRegion(nullptr, static_cast<size_t>(size));
     if (rx == nullptr) {
         return {false, @"JIT26PrepareRegion returned NULL."};
     }
 
-    mach_vm_address_t writable = 0;
+    vm_address_t writable = 0;
     vm_prot_t currentProtection = VM_PROT_NONE;
     vm_prot_t maximumProtection = VM_PROT_NONE;
 
-    kern_return_t kr = mach_vm_remap(
+    kern_return_t kr = vm_remap(
         mach_task_self(),
         &writable,
         size,
         0,
         VM_FLAGS_ANYWHERE,
         mach_task_self(),
-        reinterpret_cast<mach_vm_address_t>(rx),
+        reinterpret_cast<vm_address_t>(rx),
         false,
         &currentProtection,
         &maximumProtection,
@@ -111,7 +110,7 @@ JitProbeResult RunJitProbe() {
             [NSString stringWithFormat:@"mach_vm_remap failed: %d", kr]};
     }
 
-    kr = mach_vm_protect(
+    kr = vm_protect(
         mach_task_self(),
         writable,
         size,
@@ -119,7 +118,7 @@ JitProbeResult RunJitProbe() {
         VM_PROT_READ | VM_PROT_WRITE);
 
     if (kr != KERN_SUCCESS) {
-        mach_vm_deallocate(mach_task_self(), writable, size);
+        vm_deallocate(mach_task_self(), writable, size);
         return {false,
             [NSString stringWithFormat:@"mach_vm_protect(RW alias) failed: %d", kr]};
     }
@@ -139,10 +138,10 @@ JitProbeResult RunJitProbe() {
     auto fn = reinterpret_cast<ProbeFn>(rx);
     const int value = fn();
 
-    mach_vm_deallocate(mach_task_self(), writable, size);
-    mach_vm_deallocate(
+    vm_deallocate(mach_task_self(), writable, size);
+    vm_deallocate(
         mach_task_self(),
-        reinterpret_cast<mach_vm_address_t>(rx),
+        reinterpret_cast<vm_address_t>(rx),
         size);
 
     if (value != 42) {
