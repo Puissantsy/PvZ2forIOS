@@ -9,6 +9,8 @@
 #include <cwctype>
 #include <cstdlib>
 #include <cmath>
+#include <ctime>
+#include <chrono>
 #include <limits>
 #include <sstream>
 #include <string>
@@ -1633,6 +1635,197 @@ public:
                 static_cast<std::uint32_t>(
                     comparison);
 
+            ++supported_calls;
+            return;
+        }
+
+        // Common POSIX/time/environment calls used during native startup.
+        // Filesystem and full threading semantics remain separate bridges.
+        if (name == "getenv") {
+            const std::string key =
+                mem.ReadCStringGuest(
+                    regs[0],
+                    256);
+
+            std::string value;
+
+            if (key == "LANG" ||
+                key == "LC_ALL" ||
+                key == "LC_CTYPE") {
+                value = "C";
+            } else if (key == "TMPDIR") {
+                value = "/tmp";
+            }
+
+            if (value.empty()) {
+                regs[0] = 0;
+            } else {
+                const std::uint32_t guest =
+                    mem.AllocateObject(
+                        static_cast<std::uint32_t>(
+                            value.size() + 1),
+                        1);
+
+                if (guest) {
+                    for (std::size_t i = 0;
+                         i < value.size();
+                         ++i) {
+                        mem.Write8Guest(
+                            guest +
+                                static_cast<std::uint32_t>(i),
+                            static_cast<std::uint8_t>(
+                                value[i]));
+                    }
+                    mem.Write8Guest(
+                        guest +
+                            static_cast<std::uint32_t>(
+                                value.size()),
+                        0);
+                }
+
+                regs[0] = guest;
+            }
+
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "getcwd") {
+            const std::uint32_t destination = regs[0];
+            const std::uint32_t capacity = regs[1];
+
+            if (destination == 0 ||
+                capacity < 2 ||
+                !mem.Ptr(
+                    destination,
+                    capacity)) {
+                regs[0] = 0;
+            } else {
+                mem.Write8Guest(destination, '/');
+                mem.Write8Guest(destination + 1, 0);
+                regs[0] = destination;
+            }
+
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "time") {
+            const std::uint32_t now =
+                static_cast<std::uint32_t>(
+                    std::time(nullptr));
+
+            if (regs[0]) {
+                mem.Write32Guest(
+                    regs[0],
+                    now);
+            }
+
+            regs[0] = now;
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "clock") {
+            regs[0] =
+                static_cast<std::uint32_t>(
+                    std::clock());
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "gettimeofday") {
+            if (regs[0]) {
+                const auto now =
+                    std::chrono::system_clock::now();
+                const auto micros =
+                    std::chrono::duration_cast<
+                        std::chrono::microseconds>(
+                        now.time_since_epoch())
+                        .count();
+
+                mem.Write32Guest(
+                    regs[0] + 0,
+                    static_cast<std::uint32_t>(
+                        micros / 1000000));
+                mem.Write32Guest(
+                    regs[0] + 4,
+                    static_cast<std::uint32_t>(
+                        micros % 1000000));
+            }
+
+            if (regs[1]) {
+                mem.Write32Guest(
+                    regs[1] + 0,
+                    0);
+                mem.Write32Guest(
+                    regs[1] + 4,
+                    0);
+            }
+
+            regs[0] = 0;
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "clock_gettime") {
+            if (regs[1]) {
+                const auto now =
+                    regs[0] == 0
+                        ? std::chrono::system_clock::now()
+                              .time_since_epoch()
+                        : std::chrono::steady_clock::now()
+                              .time_since_epoch();
+
+                const auto nanos =
+                    std::chrono::duration_cast<
+                        std::chrono::nanoseconds>(
+                        now)
+                        .count();
+
+                mem.Write32Guest(
+                    regs[1] + 0,
+                    static_cast<std::uint32_t>(
+                        nanos / 1000000000ll));
+                mem.Write32Guest(
+                    regs[1] + 4,
+                    static_cast<std::uint32_t>(
+                        nanos % 1000000000ll));
+            }
+
+            regs[0] = 0;
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "nanosleep" ||
+            name == "usleep") {
+            // Constructor probing must not stall the host. These startup
+            // sleeps are treated as completed.
+            regs[0] = 0;
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "sysconf") {
+            // Conservative Android-like values for the startup queries most
+            // native libraries make. Unknown names report -1.
+            switch (static_cast<int>(regs[0])) {
+            case 30: // _SC_PAGESIZE on common Android/Bionic revisions
+                regs[0] = 4096;
+                break;
+            default:
+                regs[0] = 1;
+                break;
+            }
+
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "prctl" ||
+            name == "ptrace") {
+            regs[0] = 0;
             ++supported_calls;
             return;
         }
