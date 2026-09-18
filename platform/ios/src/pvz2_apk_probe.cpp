@@ -703,6 +703,8 @@ struct JniProbeLoadedElf {
     const std::uint8_t* dynstr = nullptr;
     std::size_t dynstr_size = 0;
     std::uint32_t jni_onload = 0;
+    std::uint32_t init_array = 0;
+    std::uint32_t init_array_size = 0;
 };
 
 bool BuildJniProbeElf(
@@ -823,8 +825,45 @@ bool BuildJniProbeElf(
         }
     }
 
+    if (sections.dynamic) {
+        const std::size_t dynamic_count =
+            sections.dynamic->size / sizeof(Elf32Dyn);
+
+        for (std::size_t i = 0; i < dynamic_count; ++i) {
+            const auto* dyn = CheckedAt<Elf32Dyn>(
+                elf,
+                sections.dynamic->offset + i * sizeof(Elf32Dyn));
+
+            if (!dyn) {
+                error = "JNI probe dynamic section is truncated.";
+                return false;
+            }
+
+            if (dyn->tag == kDtNull) {
+                break;
+            }
+
+            if (dyn->tag == kDtInitArray) {
+                loaded.init_array = dyn->value;
+            } else if (dyn->tag == kDtInitArraySz) {
+                loaded.init_array_size = dyn->value;
+            }
+        }
+    }
+
     if (loaded.jni_onload != kPvZ2JniOnLoad15252752) {
         error = "JNI_OnLoad address does not match PvZ2 1.5.252752.";
+        return false;
+    }
+
+    if (loaded.init_array == 0 ||
+        loaded.init_array_size == 0 ||
+        (loaded.init_array_size & 3u) != 0 ||
+        !RangeOk(
+            loaded.init_array,
+            loaded.init_array_size,
+            loaded.image.size())) {
+        error = "PvZ2 .init_array metadata is invalid.";
         return false;
     }
 
