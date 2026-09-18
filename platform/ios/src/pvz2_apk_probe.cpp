@@ -1105,6 +1105,8 @@ public:
     bool control_returned = false;
     std::uint32_t current_constructor_index = 0;
     std::uint32_t current_constructor_address = 0;
+    std::uint32_t next_pthread_key = 1;
+    std::unordered_map<std::uint32_t, std::uint32_t> pthread_specific;
 
     std::optional<std::uint32_t>
     MemoryReadCode(std::uint32_t address) override {
@@ -1337,14 +1339,18 @@ public:
         }
 
         if (name == "__cxa_atexit") {
+            const std::uint32_t function = regs[0];
             ++result.cxa_atexit_calls;
             ++supported_calls;
             regs[0] = 0;
 
-            Append(
-                "import __cxa_atexit(func=0x" +
-                JniProbeHex(regs[0]) +
-                ") -> 0");
+            if (result.cxa_atexit_calls <= 8 ||
+                (result.cxa_atexit_calls % 100u) == 0u) {
+                Append(
+                    "import __cxa_atexit(func=0x" +
+                    JniProbeHex(function) +
+                    ") -> 0");
+            }
             return;
         }
 
@@ -1456,6 +1462,66 @@ public:
             regs[0] =
                 static_cast<std::uint32_t>(
                     comparison);
+
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "pthread_mutexattr_init" ||
+            name == "pthread_mutexattr_settype" ||
+            name == "pthread_mutexattr_destroy" ||
+            name == "pthread_mutex_init" ||
+            name == "pthread_mutex_destroy" ||
+            name == "pthread_mutex_lock" ||
+            name == "pthread_mutex_unlock") {
+
+            regs[0] = 0;
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "pthread_mutex_trylock") {
+            regs[0] = 0;
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "pthread_key_create") {
+            const std::uint32_t output = regs[0];
+            const std::uint32_t key = next_pthread_key++;
+
+            mem.Write32Guest(output, key);
+            regs[0] = 0;
+            ++supported_calls;
+
+            Append(
+                "import pthread_key_create -> key=" +
+                std::to_string(key));
+            return;
+        }
+
+        if (name == "pthread_key_delete") {
+            pthread_specific.erase(regs[0]);
+            regs[0] = 0;
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "pthread_setspecific") {
+            pthread_specific[regs[0]] = regs[1];
+            regs[0] = 0;
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "pthread_getspecific") {
+            const auto it =
+                pthread_specific.find(regs[0]);
+
+            regs[0] =
+                it == pthread_specific.end()
+                    ? 0u
+                    : it->second;
 
             ++supported_calls;
             return;
