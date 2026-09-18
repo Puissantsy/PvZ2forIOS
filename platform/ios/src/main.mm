@@ -32,8 +32,14 @@ bool HasGetTaskAllow() {
     using CreateFn = void *(*)(CFAllocatorRef);
     using CopyFn = CFTypeRef (*)(void *, CFStringRef, CFErrorRef *);
 
-    auto create = reinterpret_cast<CreateFn>(dlsym(RTLD_DEFAULT, "SecTaskCreateFromSelf"));
-    auto copy = reinterpret_cast<CopyFn>(dlsym(RTLD_DEFAULT, "SecTaskCopyValueForEntitlement"));
+    auto create =
+        reinterpret_cast<CreateFn>(
+            dlsym(RTLD_DEFAULT, "SecTaskCreateFromSelf"));
+
+    auto copy =
+        reinterpret_cast<CopyFn>(
+            dlsym(RTLD_DEFAULT, "SecTaskCopyValueForEntitlement"));
+
     if (create == nullptr || copy == nullptr) {
         return false;
     }
@@ -43,161 +49,386 @@ bool HasGetTaskAllow() {
         return false;
     }
 
-    CFTypeRef value = copy(task, CFSTR("get-task-allow"), nullptr);
-    const bool result = value == kCFBooleanTrue;
+    CFTypeRef value =
+        copy(
+            task,
+            CFSTR("get-task-allow"),
+            nullptr);
+
+    const bool result =
+        value == kCFBooleanTrue;
 
     if (value != nullptr) {
         CFRelease(value);
     }
-    CFRelease(reinterpret_cast<CFTypeRef>(task));
+
+    CFRelease(
+        reinterpret_cast<CFTypeRef>(task));
+
     return result;
 }
 
 NSString *LogFilePath() {
     NSArray<NSURL *> *urls =
-        [[NSFileManager defaultManager] URLsForDirectory:NSDocumentDirectory
-                                               inDomains:NSUserDomainMask];
+        [[NSFileManager defaultManager]
+            URLsForDirectory:NSDocumentDirectory
+                   inDomains:NSUserDomainMask];
+
     NSURL *documents = urls.firstObject;
-    return [[documents URLByAppendingPathComponent:@"pvz2forios-probe.log"] path];
+
+    return
+        [[documents
+            URLByAppendingPathComponent:
+                @"pvz2forios-probe.log"]
+            path];
 }
 
 void AppendPersistentLog(NSString *line) {
-    NSString *timestamp = [[NSDate date] descriptionWithLocale:nil];
-    NSString *entry = [NSString stringWithFormat:@"[%@] %@\n", timestamp, line];
-    NSString *path = LogFilePath();
+    NSString *timestamp =
+        [[NSDate date]
+            descriptionWithLocale:nil];
 
-    if (![[NSFileManager defaultManager] fileExistsAtPath:path]) {
-        [entry writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    NSString *entry =
+        [NSString stringWithFormat:
+            @"[%@] %@\n",
+            timestamp,
+            line];
+
+    NSString *path =
+        LogFilePath();
+
+    if (![[NSFileManager defaultManager]
+            fileExistsAtPath:path]) {
+
+        [entry
+            writeToFile:path
+              atomically:YES
+                encoding:NSUTF8StringEncoding
+                   error:nil];
         return;
     }
 
-    NSFileHandle *handle = [NSFileHandle fileHandleForWritingAtPath:path];
+    NSFileHandle *handle =
+        [NSFileHandle
+            fileHandleForWritingAtPath:path];
+
     [handle seekToEndOfFile];
-    [handle writeData:[entry dataUsingEncoding:NSUTF8StringEncoding]];
+
+    [handle
+        writeData:
+            [entry
+                dataUsingEncoding:
+                    NSUTF8StringEncoding]];
+
     [handle closeFile];
 }
 
 NSString *ReadPersistentLog() {
     NSError *error = nil;
-    NSString *text = [NSString stringWithContentsOfFile:LogFilePath()
-                                              encoding:NSUTF8StringEncoding
-                                                 error:&error];
+
+    NSString *text =
+        [NSString
+            stringWithContentsOfFile:
+                LogFilePath()
+                         encoding:
+                NSUTF8StringEncoding
+                            error:
+                &error];
+
     if (text == nil) {
         return @"";
     }
-    if (text.length > 24000) {
-        return [text substringFromIndex:text.length - 24000];
+
+    if (text.length > 32000) {
+        return
+            [text
+                substringFromIndex:
+                    text.length - 32000];
     }
+
     return text;
 }
 
-NSString *NSStringFromStd(const std::string& value) {
-    return [NSString stringWithUTF8String:value.c_str()] ?: @"(invalid UTF-8)";
+NSString *NSStringFromStd(
+    const std::string& value) {
+
+    return
+        [NSString
+            stringWithUTF8String:
+                value.c_str()]
+        ?: @"(invalid UTF-8)";
 }
 
 } // namespace
 
-@interface ProbeViewController : UIViewController <UIDocumentPickerDelegate>
-@property(nonatomic, strong) UILabel *statusLabel;
-@property(nonatomic, strong) UITextView *logView;
-@property(nonatomic, strong) UIButton *dynarmicButton;
-@property(nonatomic, strong) UIButton *apkButton;
-@property(nonatomic, assign) BOOL dynarmicRunning;
-@property(nonatomic, assign) BOOL apkRunning;
-@property(nonatomic, assign) BOOL step1ReadyLogged;
+@interface ProbeViewController :
+    UIViewController
+    <UIDocumentPickerDelegate>
+
+@property(nonatomic, strong)
+    UILabel *statusLabel;
+
+@property(nonatomic, strong)
+    UITextView *logView;
+
+@property(nonatomic, strong)
+    UIButton *dynarmicButton;
+
+@property(nonatomic, strong)
+    UIButton *jniButton;
+
+@property(nonatomic, assign)
+    BOOL dynarmicRunning;
+
+@property(nonatomic, assign)
+    BOOL jniRunning;
+
+@property(nonatomic, assign)
+    BOOL step1ReadyLogged;
+
 @end
 
 @implementation ProbeViewController
 
-- (UIButton *)makeButton:(NSString *)title selector:(SEL)selector {
-    UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
-    button.translatesAutoresizingMaskIntoConstraints = NO;
-    [button setTitle:title forState:UIControlStateNormal];
-    button.titleLabel.font = [UIFont boldSystemFontOfSize:17.0];
-    button.titleLabel.numberOfLines = 2;
-    button.titleLabel.textAlignment = NSTextAlignmentCenter;
-    [button addTarget:self action:selector forControlEvents:UIControlEventTouchUpInside];
+- (UIButton *)makeButton:
+        (NSString *)title
+    selector:
+        (SEL)selector {
+
+    UIButton *button =
+        [UIButton
+            buttonWithType:
+                UIButtonTypeSystem];
+
+    button.translatesAutoresizingMaskIntoConstraints =
+        NO;
+
+    [button
+        setTitle:title
+        forState:UIControlStateNormal];
+
+    button.titleLabel.font =
+        [UIFont
+            boldSystemFontOfSize:
+                17.0];
+
+    button.titleLabel.numberOfLines =
+        2;
+
+    button.titleLabel.textAlignment =
+        NSTextAlignmentCenter;
+
+    [button
+        addTarget:self
+           action:selector
+ forControlEvents:
+        UIControlEventTouchUpInside];
+
     return button;
 }
 
 - (void)viewDidLoad {
     [super viewDidLoad];
 
-    self.view.backgroundColor = UIColor.systemBackgroundColor;
-    self.title = @"PvZ2forIOS — Loader Probe v8";
+    self.view.backgroundColor =
+        UIColor.systemBackgroundColor;
 
-    UILabel *title = [[UILabel alloc] init];
-    title.translatesAutoresizingMaskIntoConstraints = NO;
-    title.text = @"PvZ2forIOS — Dynarmic + real PvZ2 ELF loader probe v8";
-    title.font = [UIFont boldSystemFontOfSize:25.0];
+    self.title =
+        @"PvZ2forIOS — JNI Probe v9";
+
+    UILabel *title =
+        [[UILabel alloc] init];
+
+    title.translatesAutoresizingMaskIntoConstraints =
+        NO;
+
+    title.text =
+        @"PvZ2forIOS — real JNI_OnLoad probe v9";
+
+    title.font =
+        [UIFont
+            boldSystemFontOfSize:
+                26.0];
+
     title.numberOfLines = 0;
 
-    UILabel *explanation = [[UILabel alloc] init];
-    explanation.translatesAutoresizingMaskIntoConstraints = NO;
-    explanation.text =
-        @"v7 proved real ARMv7 guest code can run through Dynarmic on this A14. "
-         @"v8 keeps that test and adds the next layer: choose your legally owned PvZ2 APK. "
-         @"The app extracts libPVZ2.so itself, validates its ARM ELF32 layout, maps its PT_LOAD "
-         @"segments into a guest address space, applies R_ARM_RELATIVE relocations, enumerates "
-         @"Android imports and locates JNI_OnLoad. The game binary is never bundled into this IPA.";
-    explanation.numberOfLines = 0;
-    explanation.font = [UIFont systemFontOfSize:15.0];
+    UILabel *explanation =
+        [[UILabel alloc] init];
 
-    self.statusLabel = [[UILabel alloc] init];
-    self.statusLabel.translatesAutoresizingMaskIntoConstraints = NO;
-    self.statusLabel.numberOfLines = 0;
-    self.statusLabel.font = [UIFont monospacedSystemFontOfSize:13.0
-                                                       weight:UIFontWeightRegular];
+    explanation.translatesAutoresizingMaskIntoConstraints =
+        NO;
+
+    explanation.text =
+        @"v7 proved ARMv7 → Dynarmic → ARM64 execution. "
+         @"v8 proved the exact PvZ2 1.5.252752 ELF can be extracted, mapped and relocated. "
+         @"v9 enters the real game's JNI_OnLoad with a minimal guest JavaVM/JNIEnv. "
+         @"It emulates GetEnv, FindClass, RegisterNatives, malloc, ARM memset and Android logging, "
+         @"and traps the first unsupported Android import instead of crashing.";
+
+    explanation.numberOfLines = 0;
+
+    explanation.font =
+        [UIFont
+            systemFontOfSize:
+                15.0];
+
+    self.statusLabel =
+        [[UILabel alloc] init];
+
+    self.statusLabel.translatesAutoresizingMaskIntoConstraints =
+        NO;
+
+    self.statusLabel.numberOfLines =
+        0;
+
+    self.statusLabel.font =
+        [UIFont
+            monospacedSystemFontOfSize:
+                13.0
+            weight:
+                UIFontWeightRegular];
 
     UIButton *enableButton =
-        [self makeButton:@"1. Enable JIT\nwith StikDebug" selector:@selector(enableJIT)];
+        [self
+            makeButton:
+                @"1. Enable JIT\nwith StikDebug"
+            selector:
+                @selector(enableJIT)];
 
     self.dynarmicButton =
-        [self makeButton:@"2. Dynarmic\nARM32 → 42" selector:@selector(runDynarmic)];
+        [self
+            makeButton:
+                @"2. Dynarmic\nARM32 → 42"
+            selector:
+                @selector(runDynarmic)];
 
-    self.apkButton =
-        [self makeButton:@"3. Inspect + map\nPvZ2 APK" selector:@selector(selectApk)];
+    self.jniButton =
+        [self
+            makeButton:
+                @"3. Run real\nJNI_OnLoad"
+            selector:
+                @selector(selectApkForJni)];
 
-    UIStackView *mainButtons = [[UIStackView alloc]
-        initWithArrangedSubviews:@[enableButton, self.dynarmicButton, self.apkButton]];
-    mainButtons.translatesAutoresizingMaskIntoConstraints = NO;
-    mainButtons.axis = UILayoutConstraintAxisHorizontal;
+    UIStackView *mainButtons =
+        [[UIStackView alloc]
+            initWithArrangedSubviews:
+                @[
+                    enableButton,
+                    self.dynarmicButton,
+                    self.jniButton
+                ]];
+
+    mainButtons.translatesAutoresizingMaskIntoConstraints =
+        NO;
+
+    mainButtons.axis =
+        UILayoutConstraintAxisHorizontal;
+
     mainButtons.spacing = 12.0;
-    mainButtons.distribution = UIStackViewDistributionFillEqually;
+
+    mainButtons.distribution =
+        UIStackViewDistributionFillEqually;
 
     UIButton *refreshButton =
-        [self makeButton:@"Refresh status" selector:@selector(refreshStatus)];
+        [self
+            makeButton:
+                @"Refresh status"
+            selector:
+                @selector(refreshStatus)];
 
-    self.logView = [[UITextView alloc] init];
-    self.logView.translatesAutoresizingMaskIntoConstraints = NO;
-    self.logView.editable = NO;
-    self.logView.font = [UIFont monospacedSystemFontOfSize:12.0
-                                                    weight:UIFontWeightRegular];
-    self.logView.layer.borderWidth = 1.0;
-    self.logView.layer.borderColor = UIColor.separatorColor.CGColor;
-    self.logView.layer.cornerRadius = 8.0;
-    self.logView.text = ReadPersistentLog();
+    self.logView =
+        [[UITextView alloc] init];
 
-    UIStackView *stack = [[UIStackView alloc]
-        initWithArrangedSubviews:@[
-            title, explanation, self.statusLabel, mainButtons, refreshButton, self.logView
-        ]];
-    stack.translatesAutoresizingMaskIntoConstraints = NO;
-    stack.axis = UILayoutConstraintAxisVertical;
-    stack.spacing = 12.0;
+    self.logView.translatesAutoresizingMaskIntoConstraints =
+        NO;
+
+    self.logView.editable =
+        NO;
+
+    self.logView.font =
+        [UIFont
+            monospacedSystemFontOfSize:
+                11.5
+            weight:
+                UIFontWeightRegular];
+
+    self.logView.layer.borderWidth =
+        1.0;
+
+    self.logView.layer.borderColor =
+        UIColor.separatorColor.CGColor;
+
+    self.logView.layer.cornerRadius =
+        8.0;
+
+    self.logView.text =
+        ReadPersistentLog();
+
+    UIStackView *stack =
+        [[UIStackView alloc]
+            initWithArrangedSubviews:
+                @[
+                    title,
+                    explanation,
+                    self.statusLabel,
+                    mainButtons,
+                    refreshButton,
+                    self.logView
+                ]];
+
+    stack.translatesAutoresizingMaskIntoConstraints =
+        NO;
+
+    stack.axis =
+        UILayoutConstraintAxisVertical;
+
+    stack.spacing =
+        12.0;
 
     [self.view addSubview:stack];
 
-    UILayoutGuide *guide = self.view.safeAreaLayoutGuide;
-    [NSLayoutConstraint activateConstraints:@[
-        [stack.leadingAnchor constraintEqualToAnchor:guide.leadingAnchor constant:24.0],
-        [stack.trailingAnchor constraintEqualToAnchor:guide.trailingAnchor constant:-24.0],
-        [stack.topAnchor constraintEqualToAnchor:guide.topAnchor constant:16.0],
-        [stack.bottomAnchor constraintEqualToAnchor:guide.bottomAnchor constant:-16.0],
-        [mainButtons.heightAnchor constraintEqualToConstant:62.0],
-        [refreshButton.heightAnchor constraintEqualToConstant:38.0],
-        [self.logView.heightAnchor constraintGreaterThanOrEqualToConstant:280.0],
-    ]];
+    UILayoutGuide *guide =
+        self.view.safeAreaLayoutGuide;
+
+    [NSLayoutConstraint
+        activateConstraints:
+            @[
+                [stack.leadingAnchor
+                    constraintEqualToAnchor:
+                        guide.leadingAnchor
+                    constant:
+                        24.0],
+
+                [stack.trailingAnchor
+                    constraintEqualToAnchor:
+                        guide.trailingAnchor
+                    constant:
+                        -24.0],
+
+                [stack.topAnchor
+                    constraintEqualToAnchor:
+                        guide.topAnchor
+                    constant:
+                        16.0],
+
+                [stack.bottomAnchor
+                    constraintEqualToAnchor:
+                        guide.bottomAnchor
+                    constant:
+                        -16.0],
+
+                [mainButtons.heightAnchor
+                    constraintEqualToConstant:
+                        62.0],
+
+                [refreshButton.heightAnchor
+                    constraintEqualToConstant:
+                        38.0],
+
+                [self.logView.heightAnchor
+                    constraintGreaterThanOrEqualToConstant:
+                        290.0],
+            ]];
 
     [[NSNotificationCenter defaultCenter]
         addObserver:self
@@ -205,329 +436,615 @@ NSString *NSStringFromStd(const std::string& value) {
                name:UIApplicationDidBecomeActiveNotification
              object:nil];
 
-    [self appendUI:[NSString stringWithFormat:
-        @"=== Loader probe v8 session started; PID=%d ===", getpid()]];
-    [self appendUI:
-        @"v7 milestone carried forward: ARM32 → Dynarmic → ARM64 returned R0=42 on the target A14."];
+    [self
+        appendUI:
+            [NSString
+                stringWithFormat:
+                    @"=== PvZ2 JNI probe v9 session started; PID=%d ===",
+                    getpid()]];
+
+    [self
+        appendUI:
+            @"Milestones carried forward: Non-TXM JIT ✅ | Dynarmic ARM32→42 ✅ | exact PvZ2 ELF mapping/48,754 RELATIVE relocations ✅"];
+
     [self refreshStatus];
 }
 
 - (void)dealloc {
-    [[NSNotificationCenter defaultCenter] removeObserver:self];
+    [[NSNotificationCenter defaultCenter]
+        removeObserver:self];
 }
 
-- (void)appendUI:(NSString *)line {
+- (void)appendUI:
+        (NSString *)line {
+
     AppendPersistentLog(line);
 
-    NSString *existing = self.logView.text ?: @"";
-    self.logView.text = [existing stringByAppendingFormat:@"%@\n", line];
+    NSString *existing =
+        self.logView.text ?: @"";
+
+    self.logView.text =
+        [existing
+            stringByAppendingFormat:
+                @"%@\n",
+                line];
 
     if (self.logView.text.length > 0) {
-        NSRange bottom = NSMakeRange(self.logView.text.length - 1, 1);
-        [self.logView scrollRangeToVisible:bottom];
+        NSRange bottom =
+            NSMakeRange(
+                self.logView.text.length - 1,
+                1);
+
+        [self.logView
+            scrollRangeToVisible:
+                bottom];
     }
 }
 
-- (void)showResult:(NSString *)title message:(NSString *)message {
+- (void)showResult:
+        (NSString *)title
+    message:
+        (NSString *)message {
+
     UIAlertController *alert =
-        [UIAlertController alertControllerWithTitle:title
-                                            message:message
-                                     preferredStyle:UIAlertControllerStyleAlert];
-    [alert addAction:[UIAlertAction actionWithTitle:@"OK"
-                                             style:UIAlertActionStyleDefault
-                                           handler:nil]];
-    [self presentViewController:alert animated:YES completion:nil];
+        [UIAlertController
+            alertControllerWithTitle:
+                title
+            message:
+                message
+            preferredStyle:
+                UIAlertControllerStyleAlert];
+
+    [alert
+        addAction:
+            [UIAlertAction
+                actionWithTitle:
+                    @"OK"
+                style:
+                    UIAlertActionStyleDefault
+                handler:
+                    nil]];
+
+    [self
+        presentViewController:
+            alert
+        animated:
+            YES
+        completion:
+            nil];
 }
 
 - (void)refreshStatus {
-    const BOOL taskAllow = HasGetTaskAllow();
-    const BOOL debugged = IsDebugged();
-    NSString *bundle = NSBundle.mainBundle.bundleIdentifier ?: @"(unknown)";
+    const BOOL taskAllow =
+        HasGetTaskAllow();
 
-    if (debugged && !self.step1ReadyLogged) {
-        self.step1ReadyLogged = YES;
-        [self appendUI:
-            @"STEP 1 READY: CS_DEBUGGED is YES. This A14/Non-TXM device needs no JIT script."];
+    const BOOL debugged =
+        IsDebugged();
+
+    NSString *bundle =
+        NSBundle.mainBundle.bundleIdentifier
+        ?: @"(unknown)";
+
+    if (debugged &&
+        !self.step1ReadyLogged) {
+
+        self.step1ReadyLogged =
+            YES;
+
+        [self
+            appendUI:
+                @"STEP 1 READY: CS_DEBUGGED is YES. A14/Non-TXM JIT acquisition is complete."];
     }
 
-    self.statusLabel.text = [NSString stringWithFormat:
-        @"Device: arm64 | PID: %d | iPad 10th gen / A14 / Non-TXM\n"
-         @"Bundle ID: %@\n"
-         @"get-task-allow: %@ | CS_DEBUGGED: %@\n"
-         @"Dynarmic: %@ | APK/ELF probe: %@",
-         getpid(),
-         bundle,
-         taskAllow ? @"YES" : @"NO",
-         debugged ? @"YES" : @"NO",
-         self.dynarmicRunning ? @"RUNNING…" : @"ready",
-         self.apkRunning ? @"RUNNING…" : @"ready"];
+    self.statusLabel.text =
+        [NSString
+            stringWithFormat:
+                @"Device: arm64 | PID: %d | iPad 10th gen / A14 / Non-TXM\n"
+                 @"Bundle ID: %@\n"
+                 @"get-task-allow: %@ | CS_DEBUGGED: %@\n"
+                 @"Dynarmic smoke: %@ | real JNI_OnLoad: %@",
+                getpid(),
+                bundle,
+                taskAllow
+                    ? @"YES"
+                    : @"NO",
+                debugged
+                    ? @"YES"
+                    : @"NO",
+                self.dynarmicRunning
+                    ? @"RUNNING…"
+                    : @"ready",
+                self.jniRunning
+                    ? @"RUNNING…"
+                    : @"ready"];
 
-    self.dynarmicButton.enabled = !self.dynarmicRunning;
-    self.apkButton.enabled = !self.apkRunning;
+    self.dynarmicButton.enabled =
+        !self.dynarmicRunning &&
+        !self.jniRunning;
+
+    self.jniButton.enabled =
+        !self.dynarmicRunning &&
+        !self.jniRunning;
 }
 
 - (void)enableJIT {
     if (!HasGetTaskAllow()) {
-        [self appendUI:@"STEP 1 FAILED: get-task-allow is NO."];
+        [self
+            appendUI:
+                @"STEP 1 FAILED: get-task-allow is NO."];
         return;
     }
 
-    NSString *bundleID = NSBundle.mainBundle.bundleIdentifier;
+    NSString *bundleID =
+        NSBundle.mainBundle.bundleIdentifier;
+
     if (bundleID.length == 0) {
-        [self appendUI:@"STEP 1 FAILED: bundle identifier unavailable."];
+        [self
+            appendUI:
+                @"STEP 1 FAILED: bundle identifier unavailable."];
         return;
     }
 
-    NSURLComponents *components = [[NSURLComponents alloc] init];
-    components.scheme = @"stikdebug";
-    components.host = @"enable-jit";
-    components.queryItems = @[
-        [NSURLQueryItem queryItemWithName:@"bundle-id" value:bundleID],
-        [NSURLQueryItem queryItemWithName:@"pid"
-                                    value:[NSString stringWithFormat:@"%d", getpid()]],
-    ];
+    NSURLComponents *components =
+        [[NSURLComponents alloc] init];
 
-    NSURL *url = components.URL;
+    components.scheme =
+        @"stikdebug";
+
+    components.host =
+        @"enable-jit";
+
+    components.queryItems =
+        @[
+            [NSURLQueryItem
+                queryItemWithName:
+                    @"bundle-id"
+                value:
+                    bundleID],
+
+            [NSURLQueryItem
+                queryItemWithName:
+                    @"pid"
+                value:
+                    [NSString
+                        stringWithFormat:
+                            @"%d",
+                            getpid()]],
+        ];
+
+    NSURL *url =
+        components.URL;
+
     if (url == nil) {
-        [self appendUI:@"STEP 1 FAILED: could not construct StikDebug URL."];
+        [self
+            appendUI:
+                @"STEP 1 FAILED: could not construct StikDebug URL."];
         return;
     }
 
-    [self appendUI:
-        @"STEP 1: requesting Non-TXM debugger attach/detach. No JIT script is sent."];
+    [self
+        appendUI:
+            @"STEP 1: requesting Non-TXM debugger attach/detach. No JIT script is sent."];
 
     [[UIApplication sharedApplication]
         openURL:url
         options:@{}
-        completionHandler:^(BOOL success) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                [self appendUI:
-                    success
-                        ? @"STEP 1: StikDebug request opened. Return here; CS_DEBUGGED=YES means ready."
-                        : @"STEP 1 FAILED: iPadOS could not open StikDebug."];
-            });
-        }];
+        completionHandler:
+            ^(BOOL success) {
+
+                dispatch_async(
+                    dispatch_get_main_queue(),
+                    ^{
+
+                        [self
+                            appendUI:
+                                success
+                                    ? @"STEP 1: StikDebug opened. Return here; CS_DEBUGGED=YES means ready."
+                                    : @"STEP 1 FAILED: iPadOS could not open StikDebug."];
+                    });
+            }];
 }
 
 - (void)runDynarmic {
     if (!IsDebugged()) {
-        [self appendUI:@"STEP 2 BLOCKED: CS_DEBUGGED is NO. Run step 1 first."];
+        [self
+            appendUI:
+                @"STEP 2 BLOCKED: CS_DEBUGGED is NO. Run step 1 first."];
         return;
     }
 
-    if (self.dynarmicRunning) {
+    if (self.dynarmicRunning ||
+        self.jniRunning) {
         return;
     }
 
-    self.dynarmicRunning = YES;
+    self.dynarmicRunning =
+        YES;
+
     [self refreshStatus];
-    [self appendUI:
-        @"STEP 2A: constructing Dynarmic A32 JIT and executing MOV 40 / ADD 2 / SVC."];
 
-    __weak ProbeViewController *weakSelf = self;
-    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-        DynarmicSmokeResult result = RunDynarmicArm32Smoke();
+    [self
+        appendUI:
+            @"STEP 2A: running the validated Dynarmic ARMv7 return-42 smoke test."];
 
-        dispatch_async(dispatch_get_main_queue(), ^{
-            ProbeViewController *selfRef = weakSelf;
-            if (!selfRef) {
-                return;
-            }
+    __weak ProbeViewController *weakSelf =
+        self;
 
-            selfRef.dynarmicRunning = NO;
+    dispatch_async(
+        dispatch_get_global_queue(
+            QOS_CLASS_USER_INITIATED,
+            0),
+        ^{
 
-            [selfRef appendUI:[NSString stringWithFormat:
-                @"STEP 2B: ok=%@ R0=%u PC=0x%08x halt=0x%08x svc=%@ exception=%@",
-                result.ok ? @"YES" : @"NO",
-                result.r0,
-                result.pc,
-                result.halt_reason,
-                result.svc_seen ? @"YES" : @"NO",
-                result.exception_seen ? @"YES" : @"NO"]];
+            DynarmicSmokeResult result =
+                RunDynarmicArm32Smoke();
 
-            NSString *message = NSStringFromStd(result.message);
-            [selfRef appendUI:[NSString stringWithFormat:@"STEP 2C: %@", message]];
+            dispatch_async(
+                dispatch_get_main_queue(),
+                ^{
 
-            if (result.ok) {
-                [selfRef appendUI:
-                    @"SUCCESS STEP 2: Dynarmic executed ARM32 guest code and returned R0=42."];
-            } else {
-                [selfRef showResult:@"Dynarmic test failed" message:message];
-            }
+                    ProbeViewController *selfRef =
+                        weakSelf;
 
-            [selfRef refreshStatus];
+                    if (!selfRef) {
+                        return;
+                    }
+
+                    selfRef.dynarmicRunning =
+                        NO;
+
+                    [selfRef
+                        appendUI:
+                            [NSString
+                                stringWithFormat:
+                                    @"STEP 2B: ok=%@ R0=%u PC=0x%08x halt=0x%08x svc=%@ exception=%@",
+                                    result.ok
+                                        ? @"YES"
+                                        : @"NO",
+                                    result.r0,
+                                    result.pc,
+                                    result.halt_reason,
+                                    result.svc_seen
+                                        ? @"YES"
+                                        : @"NO",
+                                    result.exception_seen
+                                        ? @"YES"
+                                        : @"NO"]];
+
+                    [selfRef
+                        appendUI:
+                            [NSString
+                                stringWithFormat:
+                                    @"STEP 2C: %@",
+                                    NSStringFromStd(
+                                        result.message)]];
+
+                    if (result.ok) {
+                        [selfRef
+                            appendUI:
+                                @"SUCCESS STEP 2: Dynarmic ARM32 guest code returned 42."];
+                    } else {
+                        [selfRef
+                            showResult:
+                                @"Dynarmic test failed"
+                            message:
+                                NSStringFromStd(
+                                    result.message)];
+                    }
+
+                    [selfRef refreshStatus];
+                });
         });
-    });
 }
 
-- (void)selectApk {
-    if (self.apkRunning) {
+- (void)selectApkForJni {
+    if (!IsDebugged()) {
+        [self
+            appendUI:
+                @"STEP 3 BLOCKED: CS_DEBUGGED is NO. Run step 1 first."];
+        return;
+    }
+
+    if (self.jniRunning ||
+        self.dynarmicRunning) {
         return;
     }
 
     UIDocumentPickerViewController *picker =
         [[UIDocumentPickerViewController alloc]
-            initForOpeningContentTypes:@[UTTypeData]
-                                asCopy:YES];
-    picker.delegate = self;
-    picker.allowsMultipleSelection = NO;
-    picker.modalPresentationStyle = UIModalPresentationFormSheet;
+            initForOpeningContentTypes:
+                @[UTTypeData]
+            asCopy:
+                YES];
 
-    [self appendUI:
-        @"STEP 3: choose the original PvZ2 1.5.252752 APK in Files. No game data is uploaded or bundled."];
-    [self presentViewController:picker animated:YES completion:nil];
+    picker.delegate =
+        self;
+
+    picker.allowsMultipleSelection =
+        NO;
+
+    picker.modalPresentationStyle =
+        UIModalPresentationFormSheet;
+
+    [self
+        appendUI:
+            @"STEP 3: select the same original PvZ2 1.5.252752 APK. v9 will enter its real JNI_OnLoad under Dynarmic."];
+
+    [self
+        presentViewController:
+            picker
+        animated:
+            YES
+        completion:
+            nil];
 }
 
-- (void)documentPickerWasCancelled:(UIDocumentPickerViewController *)controller {
-    [self appendUI:@"STEP 3: APK selection cancelled."];
+- (void)documentPickerWasCancelled:
+        (UIDocumentPickerViewController *)controller {
+
+    [self
+        appendUI:
+            @"STEP 3: APK selection cancelled."];
 }
 
-- (void)documentPicker:(UIDocumentPickerViewController *)controller
-    didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
+- (void)documentPicker:
+        (UIDocumentPickerViewController *)controller
+    didPickDocumentsAtURLs:
+        (NSArray<NSURL *> *)urls {
 
-    NSURL *url = urls.firstObject;
+    NSURL *url =
+        urls.firstObject;
+
     if (url == nil) {
-        [self appendUI:@"STEP 3 FAILED: document picker returned no file."];
+        [self
+            appendUI:
+                @"STEP 3 FAILED: document picker returned no file."];
         return;
     }
 
-    self.apkRunning = YES;
+    self.jniRunning =
+        YES;
+
     [self refreshStatus];
 
-    [self appendUI:[NSString stringWithFormat:
-        @"STEP 3A: selected %@; reading APK…", url.lastPathComponent ?: @"(unnamed file)"]];
+    [self
+        appendUI:
+            [NSString
+                stringWithFormat:
+                    @"STEP 3A: selected %@; loading and preparing real PvZ2 runtime…",
+                    url.lastPathComponent
+                        ?: @"(unnamed file)"]];
 
-    __weak ProbeViewController *weakSelf = self;
-    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-        BOOL scoped = [url startAccessingSecurityScopedResource];
+    __weak ProbeViewController *weakSelf =
+        self;
 
-        NSError *readError = nil;
-        NSData *data = [NSData dataWithContentsOfURL:url
-                                            options:NSDataReadingMappedIfSafe
-                                              error:&readError];
+    dispatch_async(
+        dispatch_get_global_queue(
+            QOS_CLASS_USER_INITIATED,
+            0),
+        ^{
 
-        if (scoped) {
-            [url stopAccessingSecurityScopedResource];
-        }
+            BOOL scoped =
+                [url
+                    startAccessingSecurityScopedResource];
 
-        if (data == nil) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                ProbeViewController *selfRef = weakSelf;
-                if (!selfRef) {
-                    return;
-                }
-                selfRef.apkRunning = NO;
-                [selfRef appendUI:[NSString stringWithFormat:
-                    @"STEP 3 FAILED: could not read APK: %@",
-                    readError.localizedDescription ?: @"unknown read error"]];
-                [selfRef refreshStatus];
-            });
-            return;
-        }
+            NSError *readError =
+                nil;
 
-        PvZ2ApkProbeResult result = InspectAndMapPvZ2Apk(
-            static_cast<const std::uint8_t*>(data.bytes),
-            data.length);
+            NSData *data =
+                [NSData
+                    dataWithContentsOfURL:
+                        url
+                    options:
+                        NSDataReadingMappedIfSafe
+                    error:
+                        &readError];
 
-        dispatch_async(dispatch_get_main_queue(), ^{
-            ProbeViewController *selfRef = weakSelf;
-            if (!selfRef) {
+            if (scoped) {
+                [url
+                    stopAccessingSecurityScopedResource];
+            }
+
+            if (data == nil) {
+                dispatch_async(
+                    dispatch_get_main_queue(),
+                    ^{
+
+                        ProbeViewController *selfRef =
+                            weakSelf;
+
+                        if (!selfRef) {
+                            return;
+                        }
+
+                        selfRef.jniRunning =
+                            NO;
+
+                        [selfRef
+                            appendUI:
+                                [NSString
+                                    stringWithFormat:
+                                        @"STEP 3 FAILED: could not read APK: %@",
+                                        readError.localizedDescription
+                                            ?: @"unknown read error"]];
+
+                        [selfRef refreshStatus];
+                    });
+
                 return;
             }
 
-            selfRef.apkRunning = NO;
+            PvZ2JniProbeResult result =
+                RunPvZ2JniOnLoadProbe(
+                    static_cast<const std::uint8_t*>(
+                        data.bytes),
+                    data.length);
 
-            [selfRef appendUI:[NSString stringWithFormat:
-                @"STEP 3B: APK=%llu bytes | libPVZ2.so compressed=%llu | ELF=%llu bytes",
-                static_cast<unsigned long long>(result.apk_size),
-                static_cast<unsigned long long>(result.elf_compressed_size),
-                static_cast<unsigned long long>(result.elf_size)]];
+            dispatch_async(
+                dispatch_get_main_queue(),
+                ^{
 
-            if (result.ok) {
-                [selfRef appendUI:[NSString stringWithFormat:
-                    @"STEP 3C: PT_LOAD=%u | guest base=0x%08x | image size=0x%08x",
-                    result.load_segments,
-                    result.guest_base,
-                    result.image_size]];
+                    ProbeViewController *selfRef =
+                        weakSelf;
 
-                [selfRef appendUI:[NSString stringWithFormat:
-                    @"STEP 3D: relocations RELATIVE=%u/%u applied | GLOB_DAT=%u | JUMP_SLOT=%u | other=%u",
-                    result.relative_applied,
-                    result.relative_relocations,
-                    result.glob_dat_relocations,
-                    result.jump_slot_relocations,
-                    result.unsupported_relocations]];
+                    if (!selfRef) {
+                        return;
+                    }
 
-                [selfRef appendUI:[NSString stringWithFormat:
-                    @"STEP 3E: dynsym=%u | undefined imports=%u | DT_NEEDED=%u | init_array=%u",
-                    result.dynsym_count,
-                    result.undefined_symbol_count,
-                    result.needed_library_count,
-                    result.init_array_count]];
+                    selfRef.jniRunning =
+                        NO;
 
-                [selfRef appendUI:[NSString stringWithFormat:
-                    @"STEP 3F: SONAME=%@ | JNI_OnLoad ELF=0x%08x → guest=0x%08x",
-                    NSStringFromStd(result.soname),
-                    result.jni_onload_value,
-                    result.jni_onload_guest]];
+                    [selfRef
+                        appendUI:
+                            [NSString
+                                stringWithFormat:
+                                    @"STEP 3B: reached JNI_OnLoad=%@ | returned=%@ | imports patched=%u | supported import calls=%u",
+                                    result.reached_jni_onload
+                                        ? @"YES"
+                                        : @"NO",
+                                    result.returned_from_jni_onload
+                                        ? @"YES"
+                                        : @"NO",
+                                    result.imports_patched,
+                                    result.supported_import_calls]];
 
-                [selfRef appendUI:[NSString stringWithFormat:
-                    @"STEP 3G: needed: %@",
-                    NSStringFromStd(result.needed_libraries)]];
+                    [selfRef
+                        appendUI:
+                            [NSString
+                                stringWithFormat:
+                                    @"STEP 3C: FindClass=%u | RegisterNatives=%u | native methods observed=%u | return=0x%08x | PC=0x%08x",
+                                    result.find_class_calls,
+                                    result.register_natives_calls,
+                                    result.registered_native_methods,
+                                    result.return_value,
+                                    result.final_pc]];
 
-                [selfRef appendUI:[NSString stringWithFormat:
-                    @"STEP 3H: exact 1.5.252752 profile=%@",
-                    result.exact_15252752_profile ? @"YES" : @"NO"]];
+                    if (!result.trace.empty()) {
+                        [selfRef
+                            appendUI:
+                                @"----- JNI TRACE -----"];
 
-                [selfRef appendUI:[NSString stringWithFormat:
-                    @"SUCCESS STEP 3: %@",
-                    NSStringFromStd(result.message)]];
+                        [selfRef
+                            appendUI:
+                                NSStringFromStd(
+                                    result.trace)];
 
-                NSString *alertMessage = result.exact_15252752_profile
-                    ? @"The exact PvZ2 1.5.252752 ARMv7 ELF profile matched. PT_LOAD mapping and all 48,754 R_ARM_RELATIVE relocations succeeded. The next target is Android/JNI import trampolines and entering JNI_OnLoad."
-                    : NSStringFromStd(result.message);
+                        [selfRef
+                            appendUI:
+                                @"----- END JNI TRACE -----"];
+                    }
 
-                [selfRef showResult:@"Real PvZ2 ELF mapped" message:alertMessage];
-            } else {
-                NSString *message = NSStringFromStd(result.message);
-                [selfRef appendUI:[NSString stringWithFormat:@"STEP 3 FAILED: %@", message]];
-                [selfRef showResult:@"APK / ELF probe failed" message:message];
-            }
+                    [selfRef
+                        appendUI:
+                            [NSString
+                                stringWithFormat:
+                                    @"STEP 3D: %@",
+                                    NSStringFromStd(
+                                        result.message)]];
 
-            [selfRef refreshStatus];
+                    if (!result.first_unsupported_import.empty()) {
+                        [selfRef
+                            appendUI:
+                                [NSString
+                                    stringWithFormat:
+                                        @"STEP 3E: first unsupported import = %@",
+                                        NSStringFromStd(
+                                            result.first_unsupported_import)]];
+                    }
+
+                    if (result.ok) {
+                        [selfRef
+                            appendUI:
+                                @"SUCCESS STEP 3: the real PvZ2 JNI_OnLoad executed under Dynarmic and returned a valid JNI version."];
+
+                        [selfRef
+                            showResult:
+                                @"Real PvZ2 JNI_OnLoad works"
+                            message:
+                                [NSString
+                                    stringWithFormat:
+                                        @"The 2013 PvZ2 ARMv7 JNI_OnLoad completed on the A14 through Dynarmic.\n\nReturn: 0x%08x\nFindClass calls: %u\nRegisterNatives calls: %u\nNative methods observed: %u\n\nNext milestone: execute the 619 init-array constructors, expand Android/libc shims, then enter GameAppInitialize.",
+                                        result.return_value,
+                                        result.find_class_calls,
+                                        result.register_natives_calls,
+                                        result.registered_native_methods]];
+                    } else {
+                        NSString *message =
+                            NSStringFromStd(
+                                result.message);
+
+                        [selfRef
+                            showResult:
+                                result.reached_jni_onload
+                                    ? @"JNI_OnLoad stopped safely"
+                                    : @"JNI_OnLoad probe failed"
+                            message:
+                                message];
+                    }
+
+                    [selfRef refreshStatus];
+                });
         });
-    });
 }
 
 @end
 
-@interface ProbeAppDelegate : UIResponder <UIApplicationDelegate>
-@property(nonatomic, strong) UIWindow *window;
+@interface ProbeAppDelegate :
+    UIResponder
+    <UIApplicationDelegate>
+
+@property(nonatomic, strong)
+    UIWindow *window;
+
 @end
 
 @implementation ProbeAppDelegate
 
-- (BOOL)application:(UIApplication *)application
-    didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
+- (BOOL)application:
+        (UIApplication *)application
+    didFinishLaunchingWithOptions:
+        (NSDictionary *)launchOptions {
 
-    self.window = [[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
-    ProbeViewController *controller = [[ProbeViewController alloc] init];
+    self.window =
+        [[UIWindow alloc]
+            initWithFrame:
+                UIScreen.mainScreen.bounds];
+
+    ProbeViewController *controller =
+        [[ProbeViewController alloc] init];
+
     UINavigationController *nav =
-        [[UINavigationController alloc] initWithRootViewController:controller];
-    self.window.rootViewController = nav;
-    [self.window makeKeyAndVisible];
+        [[UINavigationController alloc]
+            initWithRootViewController:
+                controller];
+
+    self.window.rootViewController =
+        nav;
+
+    [self.window
+        makeKeyAndVisible];
+
     return YES;
 }
 
 @end
 
-int main(int argc, char *argv[]) {
+int main(
+    int argc,
+    char *argv[]) {
+
     @autoreleasepool {
-        setenv("DYNARMIC_DUAL_MAPPED", "1", 1);
-        return UIApplicationMain(
-            argc,
-            argv,
-            nil,
-            NSStringFromClass([ProbeAppDelegate class]));
+        setenv(
+            "DYNARMIC_DUAL_MAPPED",
+            "1",
+            1);
+
+        return
+            UIApplicationMain(
+                argc,
+                argv,
+                nil,
+                NSStringFromClass(
+                    [ProbeAppDelegate class]));
     }
 }
