@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <string>
 
 struct PvZ2ApkProbeResult {
@@ -36,6 +37,8 @@ struct PvZ2ApkProbeResult {
 
 PvZ2ApkProbeResult InspectAndMapPvZ2Apk(const std::uint8_t* apk_data, std::size_t apk_size);
 
+
+using PvZ2ProbeProgress = std::function<void(const std::string&)>;
 
 struct PvZ2JniProbeResult {
     bool ok = false;
@@ -72,4 +75,5 @@ PvZ2JniProbeResult RunPvZ2JniOnLoadProbe(
 
 PvZ2JniProbeResult RunPvZ2FullLoadProbe(
     const std::uint8_t* apk_data,
-    std::size_t apk_size);
+    std::size_t apk_size,
+    PvZ2ProbeProgress progress = {});
