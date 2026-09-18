@@ -234,7 +234,7 @@ NSString *NSStringFromStd(
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — Bulk JNI Probe v14";
+        @"PvZ2forIOS — First Frame Probe v15";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -243,7 +243,7 @@ NSString *NSStringFromStd(
         NO;
 
     title.text =
-        @"PvZ2forIOS — bulk JNI compatibility probe v14";
+        @"PvZ2forIOS — lifecycle + first frame probe v15";
 
     title.font =
         [UIFont
@@ -259,8 +259,8 @@ NSString *NSStringFromStd(
         NO;
 
     explanation.text =
-        @"v13 proved the complete ELF-import baseline and advanced Native_GameAppInitialize until JNIEnv slot 24 (IsSameObject). "
-         @"v14 removes the JNI one-slot-at-a-time problem the same way: the standard JNI 1.4/1.6 table now has a bulk compatibility baseline for references, object/method calls, fields, strings, arrays, monitors, weak/global refs and direct buffers. Slot 24 is implemented with real reference-equality semantics; Java method calls are logged and receive deterministic probe return values until the real Java bridge replaces them.";
+        @"v14 proved the real Native_GameAppInitialize completes on the A14 and returns JNI_TRUE after the full 618-constructor + JNI_OnLoad sequence. "
+         @"v15 immediately continues through the real PvZ2 lifecycle and rendering entry points recovered from the original 1.5 binary: applicationWillFinishLaunching, applicationDidFinishLaunching, applicationWillBecomeForeground, applicationDidBecomeActive, onSurfaceCreated, onSurfaceChanged, and finally one real Native_onDrawFrame call. The GLES layer is still probe/no-op, so this milestone proves frame execution before real presentation.";
 
     explanation.numberOfLines = 0;
 
@@ -437,7 +437,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 bulk-JNI probe v14 session started; PID=%d ===",
+                    @"=== PvZ2 first-frame probe v15 session started; PID=%d ===",
                     getpid()]];
 
     [self
@@ -756,7 +756,7 @@ NSString *NSStringFromStd(
 
     [self
         appendUI:
-            @"STEP 3: select the same original PvZ2 1.5.252752 APK. v14 will reproduce the validated startup, use the complete ELF-import baseline, then run Native_GameAppInitialize with a bulk JNIEnv compatibility layer so standard JNI slots no longer require one IPA per call."];
+            @"STEP 3: select the same original PvZ2 1.5.252752 APK. v15 will reproduce the validated full startup and GameAppInitialize, then drive the real application lifecycle, surface creation/change, and one Native_onDrawFrame call."];
 
     [self
         presentViewController:
@@ -799,7 +799,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"STEP 3A: selected %@; preparing full PvZ2 startup + complete import baseline + bulk JNI baseline + Native_GameAppInitialize…",
+                    @"STEP 3A: selected %@; preparing full PvZ2 startup + GameAppInitialize + lifecycle + first draw frame…",
                     url.lastPathComponent
                         ?: @"(unnamed file)"]];
 
@@ -907,14 +907,13 @@ NSString *NSStringFromStd(
                         appendUI:
                             [NSString
                                 stringWithFormat:
-                                    @"STEP 3C: JNI_OnLoad reached=%@ returned=%@ return=0x%08x | GameAppInitialize=0x%08x reached=%@ returned=%@ result=%u",
-                                    result.reached_jni_onload ? @"YES" : @"NO",
+                                    @"STEP 3C: JNI_OnLoad=%@ | GameAppInit returned=%@ result=%u | lifecycle=%u | firstDraw reached=%@ returned=%@",
                                     result.returned_from_jni_onload ? @"YES" : @"NO",
-                                    result.return_value,
-                                    result.game_app_initialize_address,
-                                    result.reached_game_app_initialize ? @"YES" : @"NO",
                                     result.returned_game_app_initialize ? @"YES" : @"NO",
-                                    result.game_app_initialize_return & 0xffu]];
+                                    result.game_app_initialize_return & 0xffu,
+                                    result.lifecycle_calls_completed,
+                                    result.reached_first_draw_frame ? @"YES" : @"NO",
+                                    result.returned_first_draw_frame ? @"YES" : @"NO"]];
 
                     if (!result.trace.empty()) {
                         [selfRef
@@ -962,18 +961,19 @@ NSString *NSStringFromStd(
                     if (result.ok) {
                         [selfRef
                             appendUI:
-                                @"SUCCESS STEP 3: real Native_GameAppInitialize returned under Dynarmic."];
+                                @"SUCCESS STEP 3: PvZ2 completed lifecycle + surface setup + one real Native_onDrawFrame call under Dynarmic."];
 
                         [selfRef
                             showResult:
-                                @"Native_GameAppInitialize returned"
+                                @"First PvZ2 frame path returned"
                             message:
                                 [NSString
                                     stringWithFormat:
-                                        @"The real PvZ2 Native_GameAppInitialize executed to its return point on the A14.\n\nAddress: 0x%08x\nJNI signature: %@\nReturn jboolean: %u\nConstructors completed: %u/%u\nJNI_OnLoad: 0x%08x\n\nNext milestone: replace synthetic Android/Java objects with functional surface/filesystem/input bridges and continue toward first game frame.",
-                                        result.game_app_initialize_address,
-                                        NSStringFromStd(result.game_app_initialize_signature),
+                                        @"PvZ2 completed its real native startup, lifecycle and first draw-frame path on the A14.\n\nGameAppInitialize: %u\nLifecycle calls completed: %u\nNative_onDrawFrame reached: %@\nNative_onDrawFrame returned: %@\nConstructors: %u/%u\nJNI_OnLoad: 0x%08x\n\nThe current GLES backend is still a probe/no-op layer, so the next milestone is a real iPad presentation bridge that turns this successful draw path into visible pixels.",
                                         result.game_app_initialize_return & 0xffu,
+                                        result.lifecycle_calls_completed,
+                                        result.reached_first_draw_frame ? @"YES" : @"NO",
+                                        result.returned_first_draw_frame ? @"YES" : @"NO",
                                         result.constructors_completed,
                                         result.constructors_total,
                                         result.return_value]];
@@ -984,13 +984,15 @@ NSString *NSStringFromStd(
 
                         [selfRef
                             showResult:
-                                result.constructor_failure_index != 0xffffffffu
-                                    ? @"Constructor stopped safely"
-                                    : (result.reached_game_app_initialize
-                                        ? @"GameAppInitialize stopped safely"
-                                        : (result.reached_jni_onload
-                                            ? @"JNI_OnLoad stopped safely"
-                                            : @"Full-load probe failed"))
+                                !result.lifecycle_failure_name.empty()
+                                    ? @"Lifecycle/first-frame call stopped"
+                                    : (result.constructor_failure_index != 0xffffffffu
+                                        ? @"Constructor stopped safely"
+                                        : (result.reached_game_app_initialize
+                                            ? @"GameAppInitialize stopped safely"
+                                            : (result.reached_jni_onload
+                                                ? @"JNI_OnLoad stopped safely"
+                                                : @"Full-load probe failed")))
                             message:
                                 message];
                     }
