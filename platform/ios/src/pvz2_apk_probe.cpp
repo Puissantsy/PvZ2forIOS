@@ -1814,6 +1814,68 @@ std::uint32_t JniProbeMakeTrampoline(
     return address;
 }
 
+
+std::uint32_t JniProbeMakePthreadOnceShim(
+    JniProbeGuestMemory& memory) {
+
+    // Minimal single-threaded Android pthread_once equivalent executed
+    // entirely as ARMv7 guest code. Bionic pthread_once_t uses a state
+    // machine where 0 = never run and 2 = completed. We mark 1 while the
+    // initializer is executing and 2 after it returns.
+    //
+    //   push {r4,lr}
+    //   mov  r4,r0
+    //   ldr  r2,[r4]
+    //   cmp  r2,#2
+    //   moveq r0,#0
+    //   popeq {r4,pc}
+    //   mov  r2,#1
+    //   str  r2,[r4]
+    //   blx  r1
+    //   mov  r2,#2
+    //   str  r2,[r4]
+    //   mov  r0,#0
+    //   pop  {r4,pc}
+    constexpr std::uint32_t kShimAddress =
+        kJniProbeTrampolineBase + 0x00080000u;
+
+    constexpr std::uint32_t words[] = {
+        0xE92D4010u,
+        0xE1A04000u,
+        0xE5942000u,
+        0xE3520002u,
+        0x03A00000u,
+        0x08BD8010u,
+        0xE3A02001u,
+        0xE5842000u,
+        0xE12FFF31u,
+        0xE3A02002u,
+        0xE5842000u,
+        0xE3A00000u,
+        0xE8BD8010u,
+    };
+
+    auto* p =
+        memory.Ptr(
+            kShimAddress,
+            sizeof(words));
+
+    if (!p) {
+        return 0;
+    }
+
+    for (std::size_t i = 0;
+         i < sizeof(words) / sizeof(words[0]);
+         ++i) {
+
+        Write32(
+            p + i * 4u,
+            words[i]);
+    }
+
+    return kShimAddress;
+}
+
 std::uint32_t JniProbeAllocateImportedObject(
     JniProbeGuestMemory& memory,
     const std::string& name) {
@@ -1909,6 +1971,30 @@ bool JniProbePrepareRuntime(
             symbol_type == 2u;
 
         if (function_like) {
+            if (name == "pthread_once") {
+                const std::uint32_t shim =
+                    JniProbeMakePthreadOnceShim(
+                        memory);
+
+                if (!shim) {
+                    error =
+                        "JNI probe could not allocate pthread_once guest shim.";
+                    return false;
+                }
+
+                Write32(
+                    memory.image.data() +
+                    rel.offset,
+                    shim);
+
+                callbacks.Append(
+                    "installed guest-native pthread_once shim at 0x" +
+                    JniProbeHex(shim));
+
+                ++result.imports_patched;
+                continue;
+            }
+
             const std::uint32_t svc =
                 kJniProbeImportSvcBase +
                 import_svc_index++;
