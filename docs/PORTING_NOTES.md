@@ -190,3 +190,38 @@ v9 enters the real `JNI_OnLoad` under Dynarmic with a deliberately small guest r
 - a controlled return trampoline captures the actual JNI version returned by `JNI_OnLoad`.
 
 The expected successful return for this build is `JNI_VERSION_1_4` (`0x00010004`).
+
+
+## On-device v9 result
+
+On 2026-09-18, the real PvZ2 1.5.252752 `JNI_OnLoad` completed successfully on the physical iPad 10th generation / A14 / iPadOS 26.6.1 through Dynarmic.
+
+Observed on-device:
+
+- `JNI_OnLoad` entered at guest `0x109EAD80`;
+- 329 imported relocations were patched;
+- `malloc(316)` and `__aeabi_memset` shims were exercised successfully;
+- `JavaVM::GetEnv(0x00010006)` returned the synthetic `JNIEnv`;
+- `FindClass` was called for:
+  - `com/popcap/SexyAppFramework/AndroidGameApp`;
+  - `com/popcap/PvZ2/PvZ2DownloaderService`;
+- `RegisterNatives` was called twice and exposed three native methods:
+  - `Native_GameAppInitialize` at guest `0x109EAF60`;
+  - `Native_GameAppTeardown` at guest `0x109EB4DC`;
+  - `Native_getGoogleplayAPIKey` at guest `0x109EB524`;
+- Android log calls were intercepted;
+- `JNI_OnLoad` returned `0x00010004` (`JNI_VERSION_1_4`);
+- no unsupported import was reached during `JNI_OnLoad`.
+
+This proves that a real exported function from the 2013 ARMv7 PvZ2 binary can execute to completion on the A14 through the compatibility runtime.
+
+## v10 full shared-library startup probe
+
+The next probe runs the dynamic-linker initialization phase before `JNI_OnLoad`:
+
+- the ELF contains 619 `.init_array` slots, of which 618 are non-null constructors;
+- constructors execute in original order while sharing the same guest globals/heap;
+- `__cxa_atexit`, memory-copy/move/set primitives, malloc/free, memalign, basic string compares and Android logging have initial shims;
+- each constructor returns through a controlled guest trampoline;
+- the first unsupported import or Dynarmic exception reports its constructor index and address;
+- if all constructors complete, `JNI_OnLoad` is executed again in that fully initialized memory image.
