@@ -34,7 +34,9 @@ The target iPad (10th generation / A14) is a **Non-TXM** device. On the actual i
 
 TXM/SPTM devices require the newer per-region StikDebug/StikJIT breakpoint protocol, but that path is not required on this A14 target.
 
-The next milestone is validating Dynarmic itself with a tiny ARMv7 guest program before loading the real PvZ2 ELF.
+Dynarmic A32 has now been validated on the physical A14: a tiny ARMv7 guest program was translated to generated ARM64 and returned the expected value `42`.
+
+The current v8 loader probe lets the user choose their own APK from Files, extracts `lib/armeabi-v7a/libPVZ2.so` in memory, validates the ELF32/ARM layout, maps its `PT_LOAD` segments into a guest address space, applies `R_ARM_RELATIVE` relocations, enumerates unresolved Android imports, and locates `JNI_OnLoad`. No copyrighted game binary is bundled in the IPA or repository.
 
 ## Initial milestones
 
