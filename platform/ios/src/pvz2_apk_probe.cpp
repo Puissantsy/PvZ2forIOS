@@ -17,6 +17,7 @@
 #include <utility>
 #include <vector>
 #include <unordered_map>
+#include <unordered_set>
 
 #include <dynarmic/interface/A32/a32.h>
 #include <dynarmic/interface/exclusive_monitor.h>
@@ -1237,7 +1238,9 @@ public:
     std::uint32_t next_synthetic_thread = 1;
     std::uint32_t next_synthetic_class = 1;
     std::uint32_t next_synthetic_method = 1;
+    std::uint32_t next_gl_object = 1;
     std::uint32_t guest_errno_address = 0;
+    std::unordered_set<std::string> fallback_logged;
     std::unordered_map<std::uint32_t, std::uint32_t> pthread_specific;
     std::unordered_map<std::uint32_t, z_stream> zstreams;
     std::unordered_map<std::uint32_t, bool> zstream_deflate_mode;
@@ -4008,6 +4011,240 @@ public:
 
             jit->HaltExecution(
                 Dynarmic::HaltReason::UserDefined2);
+            return;
+        }
+
+        // v13 complete-import baseline: every symbol in the verified 328-name
+        // import inventory gets a deterministic category fallback. These are
+        // deliberately probe semantics, not the final gameplay backends.
+        // They let GameAppInitialize reveal semantic/runtime requirements
+        // without forcing one IPA release per newly reached import.
+        auto log_fallback_once =
+            [&](const std::string& category) {
+                if (fallback_logged.insert(name).second) {
+                    Append(
+                        "COMPAT FALLBACK [" +
+                        category +
+                        "]: " +
+                        name);
+                }
+            };
+
+        static const std::unordered_set<std::string> kStdio = {
+            "fclose","fdopen","feof","ferror","fflush","fgetc","fgets",
+            "fopen","fprintf","fputc","fputs","fread","fscanf","fseek",
+            "fsetpos","ftell","fwrite","getc","printf","putc","puts",
+            "setvbuf","snprintf","sprintf","sscanf","ungetc","vsnprintf",
+            "vsprintf","qsort","lrand48","srand48","strtok"
+        };
+
+        if (kStdio.count(name) != 0) {
+            log_fallback_once("stdio");
+
+            if (name == "fwrite") {
+                // size * nmemb requested; report all elements written.
+                regs[0] = regs[2];
+            } else if (name == "fread") {
+                regs[0] = 0; // EOF for the temporary probe filesystem.
+            } else if (name == "fopen" ||
+                       name == "fdopen" ||
+                       name == "fgets") {
+                regs[0] = 0; // no host FILE* is exposed to the guest.
+            } else if (name == "feof") {
+                regs[0] = 1;
+            } else if (name == "ferror") {
+                regs[0] = 0;
+            } else if (name == "fgetc" ||
+                       name == "getc" ||
+                       name == "ungetc") {
+                regs[0] = 0xffffffffu;
+            } else if (name == "fputc" ||
+                       name == "putc") {
+                regs[0] = regs[0] & 0xffu;
+            } else if (name == "fputs" ||
+                       name == "puts") {
+                regs[0] = 0;
+            } else if (name == "ftell") {
+                regs[0] = 0;
+            } else if (name == "qsort") {
+                // Keep the input buffer untouched in probe mode.
+                regs[0] = 0;
+            } else if (name == "lrand48") {
+                regs[0] = 0x12345678u;
+            } else {
+                regs[0] = 0;
+            }
+
+            ++supported_calls;
+            return;
+        }
+
+        static const std::unordered_set<std::string> kPosixFiles = {
+            "access","close","closedir","fnmatch","fstat","fsync",
+            "ftruncate","ioctl","lseek","mkdir","mktemp","open","opendir",
+            "poll","read","readdir","readdir_r","stat","syscall","unlink",
+            "write","writev"
+        };
+
+        if (kPosixFiles.count(name) != 0) {
+            log_fallback_once("posix-fs");
+
+            if (name == "write") {
+                regs[0] = regs[2];
+            } else if (name == "writev") {
+                // Return a non-negative success result; exact byte accounting
+                // is deferred to the real VFS bridge.
+                regs[0] = 0;
+            } else if (name == "read") {
+                regs[0] = 0;
+            } else if (name == "mkdir" ||
+                       name == "fsync" ||
+                       name == "close" ||
+                       name == "closedir" ||
+                       name == "unlink") {
+                regs[0] = 0;
+            } else if (name == "poll") {
+                regs[0] = 0;
+            } else {
+                regs[0] = 0xffffffffu;
+            }
+
+            ++supported_calls;
+            return;
+        }
+
+        static const std::unordered_set<std::string> kTimeLocale = {
+            "asctime","gmtime","localtime","localtime_r","mktime",
+            "strftime","strptime"
+        };
+
+        if (kTimeLocale.count(name) != 0) {
+            log_fallback_once("time-locale");
+            // Constructors/GameAppInitialize only need these calls not to
+            // escape the guest. Full struct tm conversion comes with VFS/time.
+            regs[0] = 0;
+            ++supported_calls;
+            return;
+        }
+
+        if (name.rfind("gl", 0) == 0) {
+            log_fallback_once("gles-probe");
+
+            auto allocate_guest_string =
+                [&](const char* value) {
+                    const std::size_t length =
+                        std::strlen(value);
+                    const std::uint32_t guest =
+                        mem.AllocateObject(
+                            static_cast<std::uint32_t>(length + 1),
+                            1);
+
+                    if (guest) {
+                        for (std::size_t i = 0; i < length; ++i) {
+                            mem.Write8Guest(
+                                guest + static_cast<std::uint32_t>(i),
+                                static_cast<std::uint8_t>(value[i]));
+                        }
+                        mem.Write8Guest(
+                            guest + static_cast<std::uint32_t>(length),
+                            0);
+                    }
+
+                    return guest;
+                };
+
+            if (name == "glGetError") {
+                regs[0] = 0;
+            } else if (name == "glCheckFramebufferStatus" ||
+                       name == "glCheckFramebufferStatusOES") {
+                regs[0] = 0x8CD5u; // GL_FRAMEBUFFER_COMPLETE
+            } else if (name == "glCreateProgram" ||
+                       name == "glCreateShader") {
+                regs[0] = next_gl_object++;
+            } else if (name == "glGenTextures" ||
+                       name == "glGenFramebuffers" ||
+                       name == "glGenFramebuffersOES") {
+                const std::uint32_t count = regs[0];
+                const std::uint32_t output = regs[1];
+
+                for (std::uint32_t i = 0;
+                     i < count;
+                     ++i) {
+                    mem.Write32Guest(
+                        output + i * 4u,
+                        next_gl_object++);
+                }
+
+                regs[0] = 0;
+            } else if (name == "glGetShaderiv" ||
+                       name == "glGetProgramiv") {
+                if (regs[2]) {
+                    // Successful compile/link, zero-length info log.
+                    mem.Write32Guest(regs[2], 1);
+                }
+                regs[0] = 0;
+            } else if (name == "glGetShaderInfoLog" ||
+                       name == "glGetProgramInfoLog") {
+                if (regs[2]) {
+                    mem.Write32Guest(regs[2], 0);
+                }
+                if (regs[3]) {
+                    mem.Write8Guest(regs[3], 0);
+                }
+                regs[0] = 0;
+            } else if (name == "glGetString") {
+                regs[0] =
+                    allocate_guest_string(
+                        "PvZ2forIOS GLES compatibility probe");
+            } else if (name == "glGetUniformLocation") {
+                regs[0] = 0;
+            } else if (name == "glIsProgram" ||
+                       name == "glIsShader" ||
+                       name == "glIsTexture") {
+                regs[0] = regs[0] ? 1u : 0u;
+            } else if (name == "glGetIntegerv") {
+                if (regs[1]) {
+                    mem.Write32Guest(regs[1], 0);
+                }
+                regs[0] = 0;
+            } else {
+                regs[0] = 0;
+            }
+
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "slCreateEngine") {
+            log_fallback_once("opensl-probe");
+            // Report unavailable audio cleanly. The real backend will map
+            // OpenSL ES to iOS audio instead of constructing fake vtables.
+            regs[0] = 1; // non-success SLresult
+            ++supported_calls;
+            return;
+        }
+
+        static const std::unordered_set<std::string> kMiscSafe = {
+            "abort","exit","raise","setjmp","longjmp"
+        };
+
+        if (kMiscSafe.count(name) != 0) {
+            log_fallback_once("control-flow");
+            if (name == "abort" ||
+                name == "exit" ||
+                name == "raise" ||
+                name == "longjmp") {
+                result.message =
+                    "Guest requested control-flow termination via " +
+                    name +
+                    "; import is known and classified, not missing.";
+                jit->HaltExecution(
+                    Dynarmic::HaltReason::UserDefined2);
+                return;
+            }
+
+            regs[0] = 0;
+            ++supported_calls;
             return;
         }
 
