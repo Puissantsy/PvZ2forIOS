@@ -5258,16 +5258,41 @@ public:
     void AddTicks(std::uint64_t ticks) override {
         ticks_consumed += ticks;
 
-        if (return_mode == ReturnMode::Constructor &&
-            ticks_consumed >= next_tick_report) {
+        auto phase_name =
+            [&]() -> std::string {
+                switch (return_mode) {
+                case ReturnMode::Constructor:
+                    return
+                        "constructor[" +
+                        std::to_string(current_constructor_index) +
+                        "]";
+                case ReturnMode::GameAppInitialize:
+                    return "Native_GameAppInitialize";
+                case ReturnMode::Lifecycle:
+                    return
+                        current_lifecycle_name.empty()
+                            ? "lifecycle"
+                            : current_lifecycle_name;
+                case ReturnMode::JniOnLoad:
+                default:
+                    return "JNI_OnLoad";
+                }
+            };
 
-            Append(
-                "constructor[" +
-                std::to_string(current_constructor_index) +
-                "] long-run progress: ticks=" +
-                std::to_string(ticks_consumed) +
-                " PC=0x" +
-                JniProbeHex(jit ? jit->Regs()[15] : 0u));
+        if (ticks_consumed >= next_tick_report) {
+            std::ostringstream progress;
+            progress
+                << phase_name()
+                << " long-run progress: ticks="
+                << ticks_consumed
+                << " PC=0x"
+                << JniProbeHex(jit ? jit->Regs()[15] : 0u)
+                << " LR=0x"
+                << JniProbeHex(jit ? jit->Regs()[14] : 0u)
+                << " SP=0x"
+                << JniProbeHex(jit ? jit->Regs()[13] : 0u);
+
+            Append(progress.str());
 
             while (next_tick_report <= ticks_consumed) {
                 next_tick_report += 5000000ull;
@@ -5276,16 +5301,42 @@ public:
 
         if (ticks >= ticks_left) {
             ticks_left = 0;
-            result.message =
-                return_mode == ReturnMode::Constructor
-                    ? ("Constructor[" +
-                       std::to_string(current_constructor_index) +
-                       "] exceeded the extended 50M-tick budget at guest PC 0x" +
-                       JniProbeHex(jit ? jit->Regs()[15] : 0u) +
-                       " after " +
-                       std::to_string(ticks_consumed) +
-                       " ticks.")
-                    : "JNI_OnLoad exceeded the probe instruction budget.";
+
+            const std::uint32_t pc =
+                jit ? jit->Regs()[15] : 0u;
+            const std::uint32_t lr =
+                jit ? jit->Regs()[14] : 0u;
+            const std::uint32_t sp =
+                jit ? jit->Regs()[13] : 0u;
+
+            std::ostringstream timeout;
+            timeout
+                << phase_name()
+                << " exceeded the 50M-tick probe budget"
+                << " at PC=0x" << JniProbeHex(pc)
+                << " LR=0x" << JniProbeHex(lr)
+                << " caller=0x"
+                << JniProbeHex(lr >= 4u ? lr - 4u : lr)
+                << " SP=0x" << JniProbeHex(sp)
+                << " after " << ticks_consumed
+                << " ticks";
+
+            if (jit) {
+                timeout
+                    << "; r0=0x" << JniProbeHex(jit->Regs()[0])
+                    << " r1=0x" << JniProbeHex(jit->Regs()[1])
+                    << " r2=0x" << JniProbeHex(jit->Regs()[2])
+                    << " r3=0x" << JniProbeHex(jit->Regs()[3])
+                    << " r4=0x" << JniProbeHex(jit->Regs()[4])
+                    << " r5=0x" << JniProbeHex(jit->Regs()[5])
+                    << " r6=0x" << JniProbeHex(jit->Regs()[6])
+                    << " r7=0x" << JniProbeHex(jit->Regs()[7]);
+            }
+
+            timeout << ".";
+
+            result.message = timeout.str();
+            Append("EXECUTION BUDGET: " + result.message);
 
             if (jit) {
                 jit->HaltExecution(
@@ -5302,10 +5353,44 @@ public:
     }
 
     void Append(const std::string& line) {
-        trace << line << '\n';
+        // Guest-derived strings can contain arbitrary bytes. Keep the trace
+        // valid UTF-8/ASCII so one bad Android log/method string cannot make
+        // the entire diagnostic disappear in NSStringFromStd.
+        constexpr char hex[] = "0123456789abcdef";
+        std::string safe;
+        safe.reserve(
+            std::min<std::size_t>(
+                line.size() * 2u,
+                8192u));
+
+        const std::size_t limit =
+            std::min<std::size_t>(
+                line.size(),
+                4096u);
+
+        for (std::size_t i = 0; i < limit; ++i) {
+            const unsigned char ch =
+                static_cast<unsigned char>(line[i]);
+
+            if ((ch >= 0x20u && ch <= 0x7eu) ||
+                ch == '\t') {
+                safe.push_back(
+                    static_cast<char>(ch));
+            } else {
+                safe += "\\x";
+                safe.push_back(hex[(ch >> 4) & 0x0fu]);
+                safe.push_back(hex[ch & 0x0fu]);
+            }
+        }
+
+        if (line.size() > limit) {
+            safe += "...<truncated>";
+        }
+
+        trace << safe << '\n';
 
         if (progress_callback) {
-            progress_callback(line);
+            progress_callback(safe);
         }
     }
 
