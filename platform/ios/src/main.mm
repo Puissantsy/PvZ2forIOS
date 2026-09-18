@@ -234,7 +234,7 @@ NSString *NSStringFromStd(
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — Bulk ABI Probe v11.1";
+        @"PvZ2forIOS — Bulk ABI Probe v11.2";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -243,7 +243,7 @@ NSString *NSStringFromStd(
         NO;
 
     title.text =
-        @"PvZ2forIOS — bulk Android ABI compatibility probe v11.1";
+        @"PvZ2forIOS — bulk Android ABI compatibility probe v11.2";
 
     title.font =
         [UIFont
@@ -260,7 +260,7 @@ NSString *NSStringFromStd(
 
     explanation.text =
         @"v9 proved the real 2013 PvZ2 JNI_OnLoad completes under Dynarmic and returns JNI 1.4. "
-         @"v11.1 keeps the bulk-import approach and raises the per-constructor execution budget from 1M to 50M Dynarmic ticks, with persistent PC checkpoints every 5M ticks. The exact 328 Android imports were inventoried up front and are now implemented by subsystem: a bulk C/wide-locale layer, ARM soft-float math bridge, zlib bridge, pthread/semaphore startup layer, POSIX time/environment shims, Android runtime helpers, plus the existing guest-native pthread_once and atomic support: "
+         @"v11.2 keeps the bulk-import approach, but fixes a constructor-probe threading trap: pthread_create no longer runs long-lived guest worker routines synchronously. Worker starts are now deferred and logged, while constructors continue normally. The 50M-tick watchdog remains as a safety net. The exact 328 Android imports were inventoried up front and are now implemented by subsystem: a bulk C/wide-locale layer, ARM soft-float math bridge, zlib bridge, pthread/semaphore startup layer, POSIX time/environment shims, Android runtime helpers, plus the existing guest-native pthread_once and atomic support: "
          @"it executes every non-null .init_array constructor in order, preserving guest global state, "
          @"then runs JNI_OnLoad again in that initialized process. Unsupported Android/libc imports halt safely with their name.";
 
@@ -439,7 +439,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 bulk-ABI probe v11.1 session started; PID=%d ===",
+                    @"=== PvZ2 bulk-ABI probe v11.2 session started; PID=%d ===",
                     getpid()]];
 
     [self
@@ -758,7 +758,7 @@ NSString *NSStringFromStd(
 
     [self
         appendUI:
-            @"STEP 3: select the same original PvZ2 1.5.252752 APK. v11.1 will execute all non-null .init_array constructors with the bulk Android ABI pack enabled. Long constructors may now run up to 50M ticks and emit persistent PC checkpoints every 5M ticks before being considered stuck."];
+            @"STEP 3: select the same original PvZ2 1.5.252752 APK. v11.2 will execute all non-null .init_array constructors with the bulk Android ABI pack enabled. pthread_create calls are recorded as deferred worker starts instead of blocking constructor execution; long constructors still get the 50M-tick watchdog."];
 
     [self
         presentViewController:
