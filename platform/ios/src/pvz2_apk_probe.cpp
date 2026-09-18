@@ -1228,6 +1228,7 @@ public:
     std::uint32_t current_constructor_index = 0;
     std::uint32_t current_constructor_address = 0;
     std::uint32_t next_pthread_key = 1;
+    std::uint32_t next_synthetic_thread = 1;
     std::uint32_t guest_errno_address = 0;
     std::unordered_map<std::uint32_t, std::uint32_t> pthread_specific;
     std::unordered_map<std::uint32_t, z_stream> zstreams;
@@ -3560,6 +3561,44 @@ public:
             return;
         }
 
+        if (name == "pthread_create") {
+            const std::uint32_t thread_out = regs[0];
+            const std::uint32_t start_routine = regs[2];
+            const std::uint32_t argument = regs[3];
+            const std::uint32_t thread_id =
+                next_synthetic_thread++;
+
+            if (thread_out) {
+                mem.Write32Guest(
+                    thread_out,
+                    thread_id);
+            }
+
+            Append(
+                "import pthread_create deferred: tid=" +
+                std::to_string(thread_id) +
+                " start=0x" +
+                JniProbeHex(start_routine) +
+                " arg=0x" +
+                JniProbeHex(argument));
+
+            // During constructor probing we must not run the guest worker
+            // synchronously: many pthread entry points are intentionally
+            // long-lived loops. Real concurrent guest threads are a later
+            // runtime subsystem.
+            regs[0] = 0;
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "pthread_exit") {
+            Append(
+                "import pthread_exit ignored during constructor probe");
+            regs[0] = 0;
+            ++supported_calls;
+            return;
+        }
+
         if (name == "pthread_mutexattr_init" ||
             name == "pthread_mutexattr_settype" ||
             name == "pthread_mutexattr_setpshared" ||
@@ -4235,37 +4274,6 @@ bool JniProbePrepareRuntime(
 
                 callbacks.Append(
                     "installed guest-native pthread_once shim at 0x" +
-                    JniProbeHex(shim));
-
-                ++result.imports_patched;
-                continue;
-            }
-
-            if (name == "pthread_create" ||
-                name == "pthread_exit") {
-
-                const std::uint32_t shim =
-                    name == "pthread_create"
-                        ? JniProbeMakePthreadCreateShim(memory)
-                        : JniProbeMakePthreadExitShim(memory);
-
-                if (!shim) {
-                    error =
-                        "JNI probe could not allocate " +
-                        name +
-                        " guest shim.";
-                    return false;
-                }
-
-                Write32(
-                    memory.image.data() +
-                    rel.offset,
-                    shim);
-
-                callbacks.Append(
-                    "installed guest-native " +
-                    name +
-                    " shim at 0x" +
                     JniProbeHex(shim));
 
                 ++result.imports_patched;
