@@ -234,7 +234,7 @@ NSString *NSStringFromStd(
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — Full Load Probe v10";
+        @"PvZ2forIOS — Full Load Probe v10.1";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -243,7 +243,7 @@ NSString *NSStringFromStd(
         NO;
 
     title.text =
-        @"PvZ2forIOS — full Android library startup probe v10";
+        @"PvZ2forIOS — full Android library startup diagnostic v10.1";
 
     title.font =
         [UIFont
@@ -260,7 +260,7 @@ NSString *NSStringFromStd(
 
     explanation.text =
         @"v9 proved the real 2013 PvZ2 JNI_OnLoad completes under Dynarmic and returns JNI 1.4. "
-         @"v10 now reproduces the Android dynamic-linker phase that normally happens first: "
+         @"v10.1 reproduces the Android dynamic-linker phase with crash-persistent constructor checkpoints: "
          @"it executes every non-null .init_array constructor in order, preserving guest global state, "
          @"then runs JNI_OnLoad again in that initialized process. Unsupported Android/libc imports halt safely with their name.";
 
@@ -767,7 +767,7 @@ NSString *NSStringFromStd(
 
     [self
         appendUI:
-            @"STEP 3: select the same original PvZ2 1.5.252752 APK. v10 will execute all non-null .init_array constructors, then JNI_OnLoad."];
+            @"STEP 3: select the same original PvZ2 1.5.252752 APK. v10.1 will execute all non-null .init_array constructors, persist every constructor checkpoint, then JNI_OnLoad."];
 
     [self
         presentViewController:
@@ -877,7 +877,17 @@ NSString *NSStringFromStd(
                 RunPvZ2FullLoadProbe(
                     static_cast<const std::uint8_t*>(
                         data.bytes),
-                    data.length);
+                    data.length,
+                    [](const std::string& line) {
+                        @autoreleasepool {
+                            NSString *nsLine =
+                                NSStringFromStd(line);
+                            AppendPersistentLog(
+                                [NSString stringWithFormat:
+                                    @"[FULLLOAD] %@",
+                                    nsLine]);
+                        }
+                    });
 
             dispatch_async(
                 dispatch_get_main_queue(),
