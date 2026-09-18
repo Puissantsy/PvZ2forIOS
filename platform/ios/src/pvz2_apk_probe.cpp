@@ -2599,13 +2599,131 @@ public:
             const std::uint32_t source = regs[1];
             const std::uint32_t size = regs[2];
 
+            // C library copy helpers are allowed to receive arbitrary pointers
+            // when the requested size is zero; no guest memory is touched.
+            if (size == 0) {
+                regs[0] = destination;
+                ++supported_calls;
+                return;
+            }
+
             auto* dst = mem.Ptr(destination, size);
             const auto* src = mem.Ptr(source, size);
 
             if (!dst || !src) {
-                result.message =
-                    name +
-                    " attempted to access outside guest memory.";
+                const std::uint32_t pc = regs[15];
+                const std::uint32_t lr = regs[14];
+                const std::uint32_t sp = regs[13];
+                const std::uint32_t caller =
+                    lr >= 4u ? lr - 4u : lr;
+
+                auto phase_name = [&]() -> std::string {
+                    switch (return_mode) {
+                    case ReturnMode::Constructor:
+                        return
+                            "constructor[" +
+                            std::to_string(current_constructor_index) +
+                            "]";
+                    case ReturnMode::GameAppInitialize:
+                        return "Native_GameAppInitialize";
+                    case ReturnMode::Lifecycle:
+                        return
+                            current_lifecycle_name.empty()
+                                ? "lifecycle"
+                                : current_lifecycle_name;
+                    case ReturnMode::JniOnLoad:
+                    default:
+                        return "JNI_OnLoad";
+                    }
+                };
+
+                auto region_name =
+                    [&](std::uint32_t address) -> const char* {
+                        const std::uint64_t a = address;
+
+                        if (a >= kGuestBase &&
+                            a < static_cast<std::uint64_t>(
+                                    kGuestBase) +
+                                    mem.image.size()) {
+                            return "image";
+                        }
+
+                        if (a >= kJniProbeStackBase &&
+                            a < static_cast<std::uint64_t>(
+                                    kJniProbeStackBase) +
+                                    kJniProbeStackSize) {
+                            return "stack";
+                        }
+
+                        if (a >= kJniProbeHeapBase &&
+                            a < static_cast<std::uint64_t>(
+                                    kJniProbeHeapBase) +
+                                    kJniProbeHeapSize) {
+                            return "heap";
+                        }
+
+                        if (a >= kJniProbeTrampolineBase &&
+                            a < static_cast<std::uint64_t>(
+                                    kJniProbeTrampolineBase) +
+                                    kJniProbeTrampolineSize) {
+                            return "trampoline";
+                        }
+
+                        if (a >= kJniProbeJniBase &&
+                            a < static_cast<std::uint64_t>(
+                                    kJniProbeJniBase) +
+                                    kJniProbeJniSize) {
+                            return "jni";
+                        }
+
+                        if (a >= kJniProbeObjectBase &&
+                            a < static_cast<std::uint64_t>(
+                                    kJniProbeObjectBase) +
+                                    kJniProbeObjectSize) {
+                            return "object";
+                        }
+
+                        if ((address >= 0x52000000u &&
+                             address < 0x53000000u) ||
+                            (address >= 0x54000000u &&
+                             address < 0x56000000u)) {
+                            return "synthetic-java-handle";
+                        }
+
+                        return "unmapped";
+                    };
+
+                std::ostringstream fault;
+                fault
+                    << name
+                    << " guest-memory fault in "
+                    << phase_name()
+                    << ": dst=0x"
+                    << JniProbeHex(destination)
+                    << " (" << region_name(destination)
+                    << ", full=" << (dst ? "yes" : "no") << ")"
+                    << ", src=0x"
+                    << JniProbeHex(source)
+                    << " (" << region_name(source)
+                    << ", full=" << (src ? "yes" : "no") << ")"
+                    << ", size=" << std::dec << size
+                    << " (0x" << JniProbeHex(size) << ")"
+                    << ", PC=0x" << JniProbeHex(pc)
+                    << ", LR=0x" << JniProbeHex(lr)
+                    << ", caller=0x" << JniProbeHex(caller)
+                    << ", SP=0x" << JniProbeHex(sp)
+                    << ", stack[0..3]={0x"
+                    << JniProbeHex(mem.Read32Guest(sp + 0u))
+                    << ",0x"
+                    << JniProbeHex(mem.Read32Guest(sp + 4u))
+                    << ",0x"
+                    << JniProbeHex(mem.Read32Guest(sp + 8u))
+                    << ",0x"
+                    << JniProbeHex(mem.Read32Guest(sp + 12u))
+                    << "}.";
+
+                result.message = fault.str();
+                Append("MEMORY FAULT: " + result.message);
 
                 jit->HaltExecution(
                     Dynarmic::HaltReason::UserDefined2);
@@ -6146,6 +6264,12 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
 
             jit.ClearHalt(
                 Dynarmic::HaltReason::UserDefined1);
+            jit.ClearHalt(
+                Dynarmic::HaltReason::UserDefined2);
+            jit.ClearHalt(
+                Dynarmic::HaltReason::UserDefined3);
+            jit.ClearHalt(
+                Dynarmic::HaltReason::UserDefined4);
 
             jit.Regs().fill(0);
 
@@ -6269,6 +6393,12 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
 
                         jit.ClearHalt(
                             Dynarmic::HaltReason::UserDefined1);
+                        jit.ClearHalt(
+                            Dynarmic::HaltReason::UserDefined2);
+                        jit.ClearHalt(
+                            Dynarmic::HaltReason::UserDefined3);
+                        jit.ClearHalt(
+                            Dynarmic::HaltReason::UserDefined4);
 
                         jit.Regs().fill(0);
                         jit.Regs()[0] =
@@ -6319,7 +6449,19 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                         result.trace =
                             callbacks.Trace();
 
+                        const bool lifecycle_fatal =
+                            Dynarmic::Has(
+                                lifecycle_halt,
+                                Dynarmic::HaltReason::UserDefined2) ||
+                            Dynarmic::Has(
+                                lifecycle_halt,
+                                Dynarmic::HaltReason::UserDefined3) ||
+                            Dynarmic::Has(
+                                lifecycle_halt,
+                                Dynarmic::HaltReason::UserDefined4);
+
                         if (callbacks.control_returned &&
+                            !lifecycle_fatal &&
                             Dynarmic::Has(
                                 lifecycle_halt,
                                 Dynarmic::HaltReason::UserDefined1)) {
