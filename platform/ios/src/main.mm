@@ -234,7 +234,7 @@ NSString *NSStringFromStd(
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — Bulk ABI Probe v11.2";
+        @"PvZ2forIOS — GameAppInitialize Probe v12";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -243,7 +243,7 @@ NSString *NSStringFromStd(
         NO;
 
     title.text =
-        @"PvZ2forIOS — bulk Android ABI compatibility probe v11.2";
+        @"PvZ2forIOS — real GameAppInitialize probe v12";
 
     title.font =
         [UIFont
@@ -259,10 +259,8 @@ NSString *NSStringFromStd(
         NO;
 
     explanation.text =
-        @"v9 proved the real 2013 PvZ2 JNI_OnLoad completes under Dynarmic and returns JNI 1.4. "
-         @"v11.2 keeps the bulk-import approach, but fixes a constructor-probe threading trap: pthread_create no longer runs long-lived guest worker routines synchronously. Worker starts are now deferred and logged, while constructors continue normally. The 50M-tick watchdog remains as a safety net. The exact 328 Android imports were inventoried up front and are now implemented by subsystem: a bulk C/wide-locale layer, ARM soft-float math bridge, zlib bridge, pthread/semaphore startup layer, POSIX time/environment shims, Android runtime helpers, plus the existing guest-native pthread_once and atomic support: "
-         @"it executes every non-null .init_array constructor in order, preserving guest global state, "
-         @"then runs JNI_OnLoad again in that initialized process. Unsupported Android/libc imports halt safely with their name.";
+        @"v11.2 proved the complete PvZ2 ARMv7 shared-library startup works on the A14: all 618 constructors returned and JNI_OnLoad returned JNI 1.4. "
+         @"v12 immediately continues into the real registered Native_GameAppInitialize. It supplies eight synthetic Android object handles, implements the JNI calls visible in the top-level function (NewGlobalRef, GetObjectClass, GetMethodID, RegisterNatives), and fills every other JNIEnv slot with a controlled trap so the first missing Java/JNI surface is reported precisely instead of crashing.";
 
     explanation.numberOfLines = 0;
 
@@ -439,7 +437,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 bulk-ABI probe v11.2 session started; PID=%d ===",
+                    @"=== PvZ2 GameAppInitialize probe v12 session started; PID=%d ===",
                     getpid()]];
 
     [self
@@ -758,7 +756,7 @@ NSString *NSStringFromStd(
 
     [self
         appendUI:
-            @"STEP 3: select the same original PvZ2 1.5.252752 APK. v11.2 will execute all non-null .init_array constructors with the bulk Android ABI pack enabled. pthread_create calls are recorded as deferred worker starts instead of blocking constructor execution; long constructors still get the 50M-tick watchdog."];
+            @"STEP 3: select the same original PvZ2 1.5.252752 APK. v12 will reproduce the validated full shared-library startup, then enter the real registered Native_GameAppInitialize with its 8 Android object arguments represented by controlled synthetic handles."];
 
     [self
         presentViewController:
@@ -801,7 +799,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"STEP 3A: selected %@; preparing full PvZ2 shared-library startup…",
+                    @"STEP 3A: selected %@; preparing full PvZ2 startup + Native_GameAppInitialize…",
                     url.lastPathComponent
                         ?: @"(unnamed file)"]];
 
@@ -909,13 +907,14 @@ NSString *NSStringFromStd(
                         appendUI:
                             [NSString
                                 stringWithFormat:
-                                    @"STEP 3C: reached JNI=%@ | returned=%@ | FindClass=%u | RegisterNatives=%u | native methods=%u | return=0x%08x",
+                                    @"STEP 3C: JNI_OnLoad reached=%@ returned=%@ return=0x%08x | GameAppInitialize=0x%08x reached=%@ returned=%@ result=%u",
                                     result.reached_jni_onload ? @"YES" : @"NO",
                                     result.returned_from_jni_onload ? @"YES" : @"NO",
-                                    result.find_class_calls,
-                                    result.register_natives_calls,
-                                    result.registered_native_methods,
-                                    result.return_value]];
+                                    result.return_value,
+                                    result.game_app_initialize_address,
+                                    result.reached_game_app_initialize ? @"YES" : @"NO",
+                                    result.returned_game_app_initialize ? @"YES" : @"NO",
+                                    result.game_app_initialize_return & 0xffu]];
 
                     if (!result.trace.empty()) {
                         [selfRef
@@ -950,22 +949,33 @@ NSString *NSStringFromStd(
                                             result.first_unsupported_import)]];
                     }
 
+                    if (result.unsupported_jni_slot != 0xffffffffu) {
+                        [selfRef
+                            appendUI:
+                                [NSString
+                                    stringWithFormat:
+                                        @"STEP 3F: first unsupported JNIEnv slot = %u (offset 0x%08x)",
+                                        result.unsupported_jni_slot,
+                                        result.unsupported_jni_slot * 4u]];
+                    }
+
                     if (result.ok) {
                         [selfRef
                             appendUI:
-                                @"SUCCESS STEP 3: PvZ2 constructors + real JNI_OnLoad completed under Dynarmic."];
+                                @"SUCCESS STEP 3: real Native_GameAppInitialize returned under Dynarmic."];
 
                         [selfRef
                             showResult:
-                                @"Full PvZ2 library startup works"
+                                @"Native_GameAppInitialize returned"
                             message:
                                 [NSString
                                     stringWithFormat:
-                                        @"The PvZ2 ARMv7 shared library completed its Android-style startup on the A14.\n\ninit_array slots: %u\nNon-null constructors: %u\nConstructors completed: %u\n__cxa_atexit calls: %u\nJNI_OnLoad return: 0x%08x\n\nNext milestone: call the registered Native_GameAppInitialize entry point and expand the Android/JNI surface it requests.",
-                                        result.init_array_slots,
-                                        result.constructors_total,
+                                        @"The real PvZ2 Native_GameAppInitialize executed to its return point on the A14.\n\nAddress: 0x%08x\nJNI signature: %@\nReturn jboolean: %u\nConstructors completed: %u/%u\nJNI_OnLoad: 0x%08x\n\nNext milestone: replace synthetic Android/Java objects with functional surface/filesystem/input bridges and continue toward first game frame.",
+                                        result.game_app_initialize_address,
+                                        NSStringFromStd(result.game_app_initialize_signature),
+                                        result.game_app_initialize_return & 0xffu,
                                         result.constructors_completed,
-                                        result.cxa_atexit_calls,
+                                        result.constructors_total,
                                         result.return_value]];
                     } else {
                         NSString *message =
@@ -976,9 +986,11 @@ NSString *NSStringFromStd(
                             showResult:
                                 result.constructor_failure_index != 0xffffffffu
                                     ? @"Constructor stopped safely"
-                                    : (result.reached_jni_onload
-                                        ? @"JNI_OnLoad stopped safely"
-                                        : @"Full-load probe failed")
+                                    : (result.reached_game_app_initialize
+                                        ? @"GameAppInitialize stopped safely"
+                                        : (result.reached_jni_onload
+                                            ? @"JNI_OnLoad stopped safely"
+                                            : @"Full-load probe failed"))
                             message:
                                 message];
                     }
