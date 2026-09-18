@@ -20,6 +20,10 @@ jobs:
           xcodebuild -version
           cmake --version
 
+      - name: Install Dynarmic build dependency
+        run: |
+          brew list boost >/dev/null 2>&1 || brew install boost
+
       - name: Configure iOS project
         run: |
           cmake -S platform/ios -B build-ios -G Xcode \
