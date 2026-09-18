@@ -698,6 +698,11 @@ constexpr std::uint32_t kJniProbeSvcGetEnv = 0x00f001u;
 constexpr std::uint32_t kJniProbeSvcFindClass = 0x00f002u;
 constexpr std::uint32_t kJniProbeSvcRegisterNatives = 0x00f003u;
 constexpr std::uint32_t kJniProbeSvcReturn = 0x00f004u;
+constexpr std::uint32_t kJniProbeSvcNewGlobalRef = 0x00f005u;
+constexpr std::uint32_t kJniProbeSvcGetObjectClass = 0x00f006u;
+constexpr std::uint32_t kJniProbeSvcGetMethodID = 0x00f007u;
+constexpr std::uint32_t kJniProbeSvcUnsupportedJniBase = 0x00e000u;
+constexpr std::uint32_t kJniProbeJniSlotCount = 256u;
 
 constexpr std::uint32_t kPvZ2JniOnLoad15252752 = 0x009ead80u;
 constexpr std::uint32_t kJniVersion14 = 0x00010004u;
@@ -1215,6 +1220,7 @@ public:
     enum class ReturnMode {
         JniOnLoad,
         Constructor,
+        GameAppInitialize,
     };
 
     std::uint32_t vm_object = 0;
@@ -1229,6 +1235,8 @@ public:
     std::uint32_t current_constructor_address = 0;
     std::uint32_t next_pthread_key = 1;
     std::uint32_t next_synthetic_thread = 1;
+    std::uint32_t next_synthetic_class = 1;
+    std::uint32_t next_synthetic_method = 1;
     std::uint32_t guest_errno_address = 0;
     std::unordered_map<std::uint32_t, std::uint32_t> pthread_specific;
     std::unordered_map<std::uint32_t, z_stream> zstreams;
@@ -1380,6 +1388,55 @@ public:
             return;
         }
 
+        if (swi == kJniProbeSvcNewGlobalRef) {
+            regs[0] = regs[1];
+            Append(
+                "JNIEnv.NewGlobalRef(0x" +
+                JniProbeHex(regs[1]) +
+                ") -> 0x" +
+                JniProbeHex(regs[0]));
+            return;
+        }
+
+        if (swi == kJniProbeSvcGetObjectClass) {
+            const std::uint32_t class_handle =
+                0x53000000u +
+                (next_synthetic_class++ * 0x100u);
+
+            regs[0] = class_handle;
+
+            Append(
+                "JNIEnv.GetObjectClass(0x" +
+                JniProbeHex(regs[1]) +
+                ") -> 0x" +
+                JniProbeHex(class_handle));
+            return;
+        }
+
+        if (swi == kJniProbeSvcGetMethodID) {
+            const std::string method_name =
+                mem.ReadCStringGuest(regs[2], 256);
+            const std::string signature =
+                mem.ReadCStringGuest(regs[3], 512);
+
+            const std::uint32_t method_id =
+                0x54000000u +
+                (next_synthetic_method++ * 0x100u);
+
+            regs[0] = method_id;
+
+            Append(
+                "JNIEnv.GetMethodID(clazz=0x" +
+                JniProbeHex(regs[1]) +
+                ", name="" +
+                method_name +
+                "", sig="" +
+                signature +
+                "") -> 0x" +
+                JniProbeHex(method_id));
+            return;
+        }
+
         if (swi == kJniProbeSvcRegisterNatives) {
             ++result.register_natives_calls;
 
@@ -1413,13 +1470,25 @@ public:
                 const std::uint32_t function_ptr =
                     mem.Read32Guest(entry + 8);
 
+                const std::string native_name =
+                    mem.ReadCStringGuest(name_ptr, 192);
+                const std::string native_signature =
+                    mem.ReadCStringGuest(signature_ptr, 512);
+
+                if (native_name == "Native_GameAppInitialize") {
+                    result.game_app_initialize_address =
+                        function_ptr;
+                    result.game_app_initialize_signature =
+                        native_signature;
+                }
+
                 Append(
                     "  native[" +
                     std::to_string(i) +
                     "] " +
-                    mem.ReadCStringGuest(name_ptr, 192) +
+                    native_name +
                     " " +
-                    mem.ReadCStringGuest(signature_ptr, 256) +
+                    native_signature +
                     " -> 0x" +
                     JniProbeHex(function_ptr));
             }
@@ -1437,6 +1506,13 @@ public:
                     std::to_string(current_constructor_index) +
                     "] returned from 0x" +
                     JniProbeHex(current_constructor_address));
+            } else if (return_mode == ReturnMode::GameAppInitialize) {
+                result.returned_game_app_initialize = true;
+                result.game_app_initialize_return = regs[0];
+
+                Append(
+                    "Native_GameAppInitialize returned 0x" +
+                    JniProbeHex(regs[0]));
             } else {
                 result.returned_from_jni_onload = true;
                 result.return_value = regs[0];
@@ -1448,6 +1524,32 @@ public:
 
             jit->HaltExecution(
                 Dynarmic::HaltReason::UserDefined1);
+            return;
+        }
+
+        if (swi >= kJniProbeSvcUnsupportedJniBase &&
+            swi < kJniProbeSvcUnsupportedJniBase +
+                    kJniProbeJniSlotCount) {
+
+            const std::uint32_t slot =
+                swi - kJniProbeSvcUnsupportedJniBase;
+
+            result.unsupported_jni_slot = slot;
+            result.message =
+                "First unsupported JNIEnv function slot reached: " +
+                std::to_string(slot) +
+                " (table offset 0x" +
+                JniProbeHex(slot * 4u) +
+                ").";
+
+            Append(
+                "UNSUPPORTED JNI: slot=" +
+                std::to_string(slot) +
+                " offset=0x" +
+                JniProbeHex(slot * 4u));
+
+            jit->HaltExecution(
+                Dynarmic::HaltReason::UserDefined2);
             return;
         }
 
