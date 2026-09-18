@@ -1634,6 +1634,1088 @@ public:
             return;
         }
 
+        // Bulk libc/string compatibility pack. These are implemented together
+        // so constructor bring-up no longer needs one release per symbol.
+        if (name == "memchr") {
+            const std::uint32_t address = regs[0];
+            const std::uint8_t wanted =
+                static_cast<std::uint8_t>(regs[1]);
+            const std::uint32_t size = regs[2];
+            const auto* p = mem.Ptr(address, size);
+
+            regs[0] = 0;
+            if (p) {
+                for (std::uint32_t i = 0; i < size; ++i) {
+                    if (p[i] == wanted) {
+                        regs[0] = address + i;
+                        break;
+                    }
+                }
+            }
+
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "strchr") {
+            const std::uint32_t address = regs[0];
+            const unsigned char wanted =
+                static_cast<unsigned char>(regs[1]);
+            const std::string value =
+                mem.ReadCStringGuest(address, 1u << 20);
+
+            regs[0] = 0;
+            for (std::size_t i = 0; i <= value.size(); ++i) {
+                const unsigned char ch =
+                    i == value.size()
+                        ? 0
+                        : static_cast<unsigned char>(value[i]);
+                if (ch == wanted) {
+                    regs[0] =
+                        address +
+                        static_cast<std::uint32_t>(i);
+                    break;
+                }
+            }
+
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "strstr") {
+            const std::uint32_t haystack_address = regs[0];
+            const std::string haystack =
+                mem.ReadCStringGuest(
+                    haystack_address,
+                    1u << 20);
+            const std::string needle =
+                mem.ReadCStringGuest(
+                    regs[1],
+                    1u << 20);
+
+            const std::size_t found =
+                haystack.find(needle);
+
+            regs[0] =
+                found == std::string::npos
+                    ? 0u
+                    : haystack_address +
+                        static_cast<std::uint32_t>(found);
+
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "strcasecmp" ||
+            name == "strncasecmp") {
+
+            const std::string a =
+                mem.ReadCStringGuest(
+                    regs[0],
+                    1u << 20);
+            const std::string b =
+                mem.ReadCStringGuest(
+                    regs[1],
+                    1u << 20);
+
+            const std::size_t limit =
+                name == "strncasecmp"
+                    ? regs[2]
+                    : std::max(a.size(), b.size()) + 1;
+
+            int comparison = 0;
+
+            for (std::size_t i = 0; i < limit; ++i) {
+                const unsigned char ac =
+                    i < a.size()
+                        ? static_cast<unsigned char>(
+                            std::tolower(
+                                static_cast<unsigned char>(a[i])))
+                        : 0;
+
+                const unsigned char bc =
+                    i < b.size()
+                        ? static_cast<unsigned char>(
+                            std::tolower(
+                                static_cast<unsigned char>(b[i])))
+                        : 0;
+
+                if (ac != bc) {
+                    comparison =
+                        ac < bc ? -1 : 1;
+                    break;
+                }
+
+                if (ac == 0) {
+                    break;
+                }
+            }
+
+            regs[0] =
+                static_cast<std::uint32_t>(
+                    comparison);
+
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "strcpy" ||
+            name == "strncpy" ||
+            name == "strcat" ||
+            name == "strncat") {
+
+            const std::uint32_t destination = regs[0];
+            const std::string source =
+                mem.ReadCStringGuest(
+                    regs[1],
+                    1u << 20);
+
+            std::string prefix;
+            std::size_t count = source.size();
+
+            if (name == "strcat" ||
+                name == "strncat") {
+                prefix =
+                    mem.ReadCStringGuest(
+                        destination,
+                        1u << 20);
+            }
+
+            if (name == "strncpy" ||
+                name == "strncat") {
+                count =
+                    std::min<std::size_t>(
+                        count,
+                        regs[2]);
+            }
+
+            const std::string combined =
+                prefix +
+                source.substr(0, count);
+
+            const std::size_t bytes =
+                combined.size() + 1;
+
+            if (!mem.Ptr(destination, bytes)) {
+                result.message =
+                    name +
+                    " attempted to write outside guest memory.";
+                jit->HaltExecution(
+                    Dynarmic::HaltReason::UserDefined2);
+                return;
+            }
+
+            for (std::size_t i = 0;
+                 i < combined.size();
+                 ++i) {
+                mem.Write8Guest(
+                    destination +
+                        static_cast<std::uint32_t>(i),
+                    static_cast<std::uint8_t>(
+                        combined[i]));
+            }
+
+            mem.Write8Guest(
+                destination +
+                    static_cast<std::uint32_t>(
+                        combined.size()),
+                0);
+
+            if (name == "strncpy" &&
+                regs[2] > combined.size() + 1) {
+                const std::size_t pad_end =
+                    std::min<std::size_t>(
+                        regs[2],
+                        combined.size() + 4096);
+
+                for (std::size_t i =
+                         combined.size() + 1;
+                     i < pad_end;
+                     ++i) {
+                    mem.Write8Guest(
+                        destination +
+                            static_cast<std::uint32_t>(i),
+                        0);
+                }
+            }
+
+            regs[0] = destination;
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "atoi" ||
+            name == "atol" ||
+            name == "strtol" ||
+            name == "strtoul" ||
+            name == "strtod") {
+
+            const std::uint32_t source_address = regs[0];
+            const std::string source =
+                mem.ReadCStringGuest(
+                    source_address,
+                    4096);
+
+            char* end = nullptr;
+
+            if (name == "strtod") {
+                const double value =
+                    std::strtod(
+                        source.c_str(),
+                        &end);
+
+                std::uint64_t bits = 0;
+                static_assert(
+                    sizeof(bits) == sizeof(value));
+                std::memcpy(
+                    &bits,
+                    &value,
+                    sizeof(bits));
+
+                regs[0] =
+                    static_cast<std::uint32_t>(bits);
+                regs[1] =
+                    static_cast<std::uint32_t>(
+                        bits >> 32);
+            } else if (name == "strtoul") {
+                const unsigned long value =
+                    std::strtoul(
+                        source.c_str(),
+                        &end,
+                        static_cast<int>(regs[2]));
+
+                regs[0] =
+                    static_cast<std::uint32_t>(value);
+            } else {
+                const int base =
+                    name == "strtol"
+                        ? static_cast<int>(regs[2])
+                        : 10;
+
+                const long value =
+                    std::strtol(
+                        source.c_str(),
+                        &end,
+                        base);
+
+                regs[0] =
+                    static_cast<std::uint32_t>(value);
+            }
+
+            if ((name == "strtol" ||
+                 name == "strtoul" ||
+                 name == "strtod") &&
+                regs[1] != 0 &&
+                end != nullptr) {
+
+                const std::uint32_t end_offset =
+                    static_cast<std::uint32_t>(
+                        end - source.c_str());
+
+                mem.Write32Guest(
+                    regs[1],
+                    source_address + end_offset);
+            }
+
+            ++supported_calls;
+            return;
+        }
+
+        // Android ARM uses 32-bit wchar_t. The compatibility layer implements
+        // the common C/UTF-8 behaviour directly against guest memory.
+        if (name == "wctob") {
+            const std::uint32_t wc = regs[0];
+            regs[0] =
+                wc <= 0xffu
+                    ? wc
+                    : 0xffffffffu;
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "btowc") {
+            const std::uint32_t byte = regs[0];
+            regs[0] =
+                byte == 0xffffffffu
+                    ? 0xffffffffu
+                    : (byte & 0xffu);
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "towlower" ||
+            name == "towupper") {
+            const std::uint32_t wc = regs[0];
+
+            if (wc <= 0x7fu) {
+                const unsigned char c =
+                    static_cast<unsigned char>(wc);
+
+                regs[0] =
+                    name == "towlower"
+                        ? static_cast<std::uint32_t>(
+                            std::tolower(c))
+                        : static_cast<std::uint32_t>(
+                            std::toupper(c));
+            }
+
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "iswspace" ||
+            name == "iswalnum") {
+            const std::uint32_t wc = regs[0];
+            int answer = 0;
+
+            if (wc <= 0x7fu) {
+                const unsigned char c =
+                    static_cast<unsigned char>(wc);
+                answer =
+                    name == "iswspace"
+                        ? std::isspace(c)
+                        : std::isalnum(c);
+            }
+
+            regs[0] =
+                answer ? 1u : 0u;
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "wcslen") {
+            regs[0] =
+                static_cast<std::uint32_t>(
+                    mem.ReadWStringGuest(
+                        regs[0],
+                        1u << 18)
+                        .size());
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "wcscmp" ||
+            name == "wcsncmp" ||
+            name == "wmemcmp") {
+
+            const auto a =
+                mem.ReadWStringGuest(
+                    regs[0],
+                    1u << 18);
+            const auto b =
+                mem.ReadWStringGuest(
+                    regs[1],
+                    1u << 18);
+
+            std::size_t limit =
+                std::max(a.size(), b.size()) + 1;
+
+            if (name == "wcsncmp" ||
+                name == "wmemcmp") {
+                limit = regs[2];
+            }
+
+            int comparison = 0;
+
+            for (std::size_t i = 0;
+                 i < limit;
+                 ++i) {
+
+                const std::uint32_t av =
+                    i < a.size() ? a[i] : 0u;
+                const std::uint32_t bv =
+                    i < b.size() ? b[i] : 0u;
+
+                if (av != bv) {
+                    comparison =
+                        av < bv ? -1 : 1;
+                    break;
+                }
+
+                if (name != "wmemcmp" &&
+                    av == 0) {
+                    break;
+                }
+            }
+
+            regs[0] =
+                static_cast<std::uint32_t>(
+                    comparison);
+
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "wcscpy" ||
+            name == "wcsncpy") {
+
+            const auto source =
+                mem.ReadWStringGuest(
+                    regs[1],
+                    1u << 18);
+
+            const std::size_t capacity =
+                name == "wcsncpy"
+                    ? std::max<std::size_t>(
+                        regs[2],
+                        1u)
+                    : source.size() + 1;
+
+            if (!mem.WriteWStringGuest(
+                    regs[0],
+                    source,
+                    capacity)) {
+
+                result.message =
+                    name +
+                    " attempted to write outside guest memory.";
+
+                jit->HaltExecution(
+                    Dynarmic::HaltReason::UserDefined2);
+                return;
+            }
+
+            regs[0] = regs[0];
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "wcschr" ||
+            name == "wmemchr") {
+
+            const std::uint32_t address = regs[0];
+            const std::uint32_t wanted = regs[1];
+
+            const std::size_t limit =
+                name == "wmemchr"
+                    ? regs[2]
+                    : (1u << 18);
+
+            regs[0] = 0;
+
+            for (std::size_t i = 0;
+                 i < limit;
+                 ++i) {
+
+                const std::uint32_t ch =
+                    mem.Read32Guest(
+                        address +
+                        static_cast<std::uint32_t>(
+                            i * 4u));
+
+                if (ch == wanted) {
+                    regs[0] =
+                        address +
+                        static_cast<std::uint32_t>(
+                            i * 4u);
+                    break;
+                }
+
+                if (name == "wcschr" &&
+                    ch == 0) {
+                    break;
+                }
+            }
+
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "wmemcpy" ||
+            name == "wmemmove") {
+
+            const std::uint32_t bytes =
+                regs[2] * 4u;
+
+            auto* dst =
+                mem.Ptr(
+                    regs[0],
+                    bytes);
+
+            const auto* src =
+                mem.Ptr(
+                    regs[1],
+                    bytes);
+
+            if (!dst || !src) {
+                result.message =
+                    name +
+                    " attempted to access outside guest memory.";
+
+                jit->HaltExecution(
+                    Dynarmic::HaltReason::UserDefined2);
+                return;
+            }
+
+            std::memmove(
+                dst,
+                src,
+                bytes);
+
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "wmemset") {
+            const std::uint32_t destination = regs[0];
+            const std::uint32_t value = regs[1];
+            const std::uint32_t count = regs[2];
+
+            if (!mem.Ptr(
+                    destination,
+                    static_cast<std::size_t>(count) * 4u)) {
+
+                result.message =
+                    "wmemset attempted to write outside guest memory.";
+
+                jit->HaltExecution(
+                    Dynarmic::HaltReason::UserDefined2);
+                return;
+            }
+
+            for (std::uint32_t i = 0;
+                 i < count;
+                 ++i) {
+
+                mem.Write32Guest(
+                    destination + i * 4u,
+                    value);
+            }
+
+            regs[0] = destination;
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "wcscspn" ||
+            name == "wcsspn") {
+
+            const auto source =
+                mem.ReadWStringGuest(
+                    regs[0],
+                    1u << 18);
+
+            const auto set =
+                mem.ReadWStringGuest(
+                    regs[1],
+                    4096);
+
+            auto in_set =
+                [&](std::uint32_t ch) {
+                    return
+                        std::find(
+                            set.begin(),
+                            set.end(),
+                            ch) != set.end();
+                };
+
+            std::size_t count = 0;
+
+            for (const std::uint32_t ch : source) {
+                const bool match = in_set(ch);
+
+                if (name == "wcscspn"
+                        ? match
+                        : !match) {
+                    break;
+                }
+
+                ++count;
+            }
+
+            regs[0] =
+                static_cast<std::uint32_t>(
+                    count);
+
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "setlocale") {
+            static constexpr char kCLocale[] = "C";
+
+            const std::uint32_t guest =
+                mem.AllocateObject(
+                    sizeof(kCLocale),
+                    1);
+
+            if (guest) {
+                for (std::size_t i = 0;
+                     i < sizeof(kCLocale);
+                     ++i) {
+                    mem.Write8Guest(
+                        guest +
+                            static_cast<std::uint32_t>(i),
+                        static_cast<std::uint8_t>(
+                            kCLocale[i]));
+                }
+            }
+
+            regs[0] = guest;
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "strcoll") {
+            const std::string a =
+                mem.ReadCStringGuest(
+                    regs[0],
+                    1u << 20);
+
+            const std::string b =
+                mem.ReadCStringGuest(
+                    regs[1],
+                    1u << 20);
+
+            regs[0] =
+                static_cast<std::uint32_t>(
+                    a.compare(b));
+
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "strxfrm") {
+            const std::uint32_t destination = regs[0];
+            const std::string source =
+                mem.ReadCStringGuest(
+                    regs[1],
+                    1u << 20);
+            const std::uint32_t capacity = regs[2];
+
+            if (destination != 0 &&
+                capacity != 0) {
+
+                const std::size_t copy =
+                    std::min<std::size_t>(
+                        source.size(),
+                        capacity - 1);
+
+                if (mem.Ptr(
+                        destination,
+                        capacity)) {
+
+                    for (std::size_t i = 0;
+                         i < copy;
+                         ++i) {
+                        mem.Write8Guest(
+                            destination +
+                                static_cast<std::uint32_t>(i),
+                            static_cast<std::uint8_t>(
+                                source[i]));
+                    }
+
+                    mem.Write8Guest(
+                        destination +
+                            static_cast<std::uint32_t>(copy),
+                        0);
+                }
+            }
+
+            regs[0] =
+                static_cast<std::uint32_t>(
+                    source.size());
+
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "wcscoll") {
+            const auto a =
+                mem.ReadWStringGuest(
+                    regs[0],
+                    1u << 18);
+            const auto b =
+                mem.ReadWStringGuest(
+                    regs[1],
+                    1u << 18);
+
+            regs[0] =
+                static_cast<std::uint32_t>(
+                    std::lexicographical_compare(
+                        a.begin(), a.end(),
+                        b.begin(), b.end())
+                        ? -1
+                        : (a == b ? 0 : 1));
+
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "wcsxfrm") {
+            const auto source =
+                mem.ReadWStringGuest(
+                    regs[1],
+                    1u << 18);
+
+            if (regs[0] != 0 &&
+                regs[2] != 0) {
+                mem.WriteWStringGuest(
+                    regs[0],
+                    source,
+                    regs[2]);
+            }
+
+            regs[0] =
+                static_cast<std::uint32_t>(
+                    source.size());
+
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "wctype") {
+            const std::string kind =
+                mem.ReadCStringGuest(
+                    regs[0],
+                    64);
+
+            static const std::array<const char*, 12> names = {
+                "alnum", "alpha", "blank", "cntrl",
+                "digit", "graph", "lower", "print",
+                "punct", "space", "upper", "xdigit"
+            };
+
+            regs[0] = 0;
+
+            for (std::size_t i = 0;
+                 i < names.size();
+                 ++i) {
+                if (kind == names[i]) {
+                    regs[0] =
+                        static_cast<std::uint32_t>(
+                            i + 1);
+                    break;
+                }
+            }
+
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "iswctype") {
+            const std::uint32_t wc = regs[0];
+            const std::uint32_t kind = regs[1];
+            int answer = 0;
+
+            if (wc <= 0x7fu &&
+                kind >= 1u &&
+                kind <= 12u) {
+
+                const unsigned char ch =
+                    static_cast<unsigned char>(wc);
+
+                switch (kind) {
+                case 1: answer = std::isalnum(ch); break;
+                case 2: answer = std::isalpha(ch); break;
+                case 3: answer = (ch == ' ' || ch == '\\t'); break;
+                case 4: answer = std::iscntrl(ch); break;
+                case 5: answer = std::isdigit(ch); break;
+                case 6: answer = std::isgraph(ch); break;
+                case 7: answer = std::islower(ch); break;
+                case 8: answer = std::isprint(ch); break;
+                case 9: answer = std::ispunct(ch); break;
+                case 10: answer = std::isspace(ch); break;
+                case 11: answer = std::isupper(ch); break;
+                case 12: answer = std::isxdigit(ch); break;
+                default: break;
+                }
+            }
+
+            regs[0] =
+                answer ? 1u : 0u;
+
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "mbrtowc") {
+            const std::uint32_t output = regs[0];
+            const std::uint32_t source_address = regs[1];
+            const std::size_t available = regs[2];
+
+            if (source_address == 0) {
+                regs[0] = 0;
+                ++supported_calls;
+                return;
+            }
+
+            if (available == 0) {
+                regs[0] = 0xfffffffeu;
+                ++supported_calls;
+                return;
+            }
+
+            const std::uint8_t b0 =
+                mem.Read8(source_address);
+
+            if (b0 == 0) {
+                if (output) {
+                    mem.Write32Guest(output, 0);
+                }
+                regs[0] = 0;
+                ++supported_calls;
+                return;
+            }
+
+            std::uint32_t codepoint = 0;
+            std::size_t length = 0;
+
+            if (b0 < 0x80u) {
+                codepoint = b0;
+                length = 1;
+            } else if ((b0 & 0xe0u) == 0xc0u &&
+                       available >= 2) {
+                codepoint =
+                    ((b0 & 0x1fu) << 6) |
+                    (mem.Read8(source_address + 1) & 0x3fu);
+                length = 2;
+            } else if ((b0 & 0xf0u) == 0xe0u &&
+                       available >= 3) {
+                codepoint =
+                    ((b0 & 0x0fu) << 12) |
+                    ((mem.Read8(source_address + 1) & 0x3fu) << 6) |
+                    (mem.Read8(source_address + 2) & 0x3fu);
+                length = 3;
+            } else if ((b0 & 0xf8u) == 0xf0u &&
+                       available >= 4) {
+                codepoint =
+                    ((b0 & 0x07u) << 18) |
+                    ((mem.Read8(source_address + 1) & 0x3fu) << 12) |
+                    ((mem.Read8(source_address + 2) & 0x3fu) << 6) |
+                    (mem.Read8(source_address + 3) & 0x3fu);
+                length = 4;
+            } else {
+                regs[0] = 0xffffffffu;
+                ++supported_calls;
+                return;
+            }
+
+            if (output) {
+                mem.Write32Guest(
+                    output,
+                    codepoint);
+            }
+
+            regs[0] =
+                static_cast<std::uint32_t>(
+                    length);
+
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "wcrtomb") {
+            const std::uint32_t destination = regs[0];
+            const std::uint32_t wc = regs[1];
+
+            if (destination == 0) {
+                regs[0] = 1;
+                ++supported_calls;
+                return;
+            }
+
+            std::array<std::uint8_t, 4> bytes{};
+            std::size_t length = 0;
+
+            if (wc <= 0x7fu) {
+                bytes[0] =
+                    static_cast<std::uint8_t>(wc);
+                length = 1;
+            } else if (wc <= 0x7ffu) {
+                bytes[0] =
+                    0xc0u | (wc >> 6);
+                bytes[1] =
+                    0x80u | (wc & 0x3fu);
+                length = 2;
+            } else if (wc <= 0xffffu) {
+                bytes[0] =
+                    0xe0u | (wc >> 12);
+                bytes[1] =
+                    0x80u |
+                    ((wc >> 6) & 0x3fu);
+                bytes[2] =
+                    0x80u |
+                    (wc & 0x3fu);
+                length = 3;
+            } else if (wc <= 0x10ffffu) {
+                bytes[0] =
+                    0xf0u | (wc >> 18);
+                bytes[1] =
+                    0x80u |
+                    ((wc >> 12) & 0x3fu);
+                bytes[2] =
+                    0x80u |
+                    ((wc >> 6) & 0x3fu);
+                bytes[3] =
+                    0x80u |
+                    (wc & 0x3fu);
+                length = 4;
+            } else {
+                regs[0] = 0xffffffffu;
+                ++supported_calls;
+                return;
+            }
+
+            for (std::size_t i = 0;
+                 i < length;
+                 ++i) {
+                mem.Write8Guest(
+                    destination +
+                        static_cast<std::uint32_t>(i),
+                    bytes[i]);
+            }
+
+            regs[0] =
+                static_cast<std::uint32_t>(
+                    length);
+
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "wcstombs") {
+            const std::uint32_t destination = regs[0];
+            const auto source =
+                mem.ReadWStringGuest(
+                    regs[1],
+                    1u << 18);
+            const std::size_t capacity = regs[2];
+
+            std::vector<std::uint8_t> encoded;
+            encoded.reserve(source.size());
+
+            for (const std::uint32_t wc : source) {
+                if (wc <= 0x7fu) {
+                    encoded.push_back(
+                        static_cast<std::uint8_t>(wc));
+                } else if (wc <= 0x7ffu) {
+                    encoded.push_back(
+                        0xc0u | (wc >> 6));
+                    encoded.push_back(
+                        0x80u |
+                        (wc & 0x3fu));
+                } else if (wc <= 0xffffu) {
+                    encoded.push_back(
+                        0xe0u | (wc >> 12));
+                    encoded.push_back(
+                        0x80u |
+                        ((wc >> 6) & 0x3fu));
+                    encoded.push_back(
+                        0x80u |
+                        (wc & 0x3fu));
+                } else if (wc <= 0x10ffffu) {
+                    encoded.push_back(
+                        0xf0u | (wc >> 18));
+                    encoded.push_back(
+                        0x80u |
+                        ((wc >> 12) & 0x3fu));
+                    encoded.push_back(
+                        0x80u |
+                        ((wc >> 6) & 0x3fu));
+                    encoded.push_back(
+                        0x80u |
+                        (wc & 0x3fu));
+                } else {
+                    regs[0] = 0xffffffffu;
+                    ++supported_calls;
+                    return;
+                }
+            }
+
+            if (destination != 0 &&
+                capacity != 0) {
+                const std::size_t copy =
+                    std::min(
+                        capacity,
+                        encoded.size());
+
+                for (std::size_t i = 0;
+                     i < copy;
+                     ++i) {
+                    mem.Write8Guest(
+                        destination +
+                            static_cast<std::uint32_t>(i),
+                        encoded[i]);
+                }
+
+                if (copy < capacity) {
+                    mem.Write8Guest(
+                        destination +
+                            static_cast<std::uint32_t>(copy),
+                        0);
+                }
+            }
+
+            regs[0] =
+                static_cast<std::uint32_t>(
+                    encoded.size());
+
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "wcstol") {
+            const auto source =
+                mem.ReadWStringGuest(
+                    regs[0],
+                    4096);
+
+            std::string ascii;
+            ascii.reserve(source.size());
+
+            for (const auto wc : source) {
+                ascii.push_back(
+                    wc <= 0x7fu
+                        ? static_cast<char>(wc)
+                        : '?');
+            }
+
+            char* end = nullptr;
+            const long value =
+                std::strtol(
+                    ascii.c_str(),
+                    &end,
+                    static_cast<int>(regs[2]));
+
+            regs[0] =
+                static_cast<std::uint32_t>(
+                    value);
+
+            ++supported_calls;
+            return;
+        }
+
+        // C-locale fallbacks for rarely used wide stdio/formatting hooks.
+        // They are safe during static construction and remain explicitly
+        // isolated from the later real file/audio/rendering bridges.
+        if (name == "fwide") {
+            regs[0] = 0;
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "getwc" ||
+            name == "ungetwc") {
+            regs[0] = 0xffffffffu;
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "putwc") {
+            regs[0] = regs[0];
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "swscanf" ||
+            name == "vswprintf" ||
+            name == "wcsftime") {
+            regs[0] = 0;
+            ++supported_calls;
+            return;
+        }
+
         if (name == "pthread_mutexattr_init" ||
             name == "pthread_mutexattr_settype" ||
             name == "pthread_mutexattr_destroy" ||
