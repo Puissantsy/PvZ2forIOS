@@ -46,6 +46,8 @@ struct PvZ2JniProbeResult {
     bool returned_from_jni_onload = false;
     bool reached_game_app_initialize = false;
     bool returned_game_app_initialize = false;
+    bool reached_first_draw_frame = false;
+    bool returned_first_draw_frame = false;
 
     std::uint32_t return_value = 0;
     std::uint32_t game_app_initialize_address = 0;
@@ -63,6 +65,7 @@ struct PvZ2JniProbeResult {
     std::uint32_t constructor_failure_index = 0xffffffffu;
     std::uint32_t constructor_failure_address = 0;
     std::uint32_t cxa_atexit_calls = 0;
+    std::uint32_t lifecycle_calls_completed = 0;
 
     std::uint32_t find_class_calls = 0;
     std::uint32_t register_natives_calls = 0;
@@ -70,6 +73,7 @@ struct PvZ2JniProbeResult {
 
     std::string first_unsupported_import;
     std::string game_app_initialize_signature;
+    std::string lifecycle_failure_name;
     std::string trace;
     std::string message;
 };
