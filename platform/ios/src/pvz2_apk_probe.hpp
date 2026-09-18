@@ -35,3 +35,28 @@ struct PvZ2ApkProbeResult {
 };
 
 PvZ2ApkProbeResult InspectAndMapPvZ2Apk(const std::uint8_t* apk_data, std::size_t apk_size);
+
+
+struct PvZ2JniProbeResult {
+    bool ok = false;
+    bool reached_jni_onload = false;
+    bool returned_from_jni_onload = false;
+
+    std::uint32_t return_value = 0;
+    std::uint32_t final_pc = 0;
+    std::uint32_t halt_reason = 0;
+
+    std::uint32_t imports_patched = 0;
+    std::uint32_t supported_import_calls = 0;
+    std::uint32_t find_class_calls = 0;
+    std::uint32_t register_natives_calls = 0;
+    std::uint32_t registered_native_methods = 0;
+
+    std::string first_unsupported_import;
+    std::string trace;
+    std::string message;
+};
+
+PvZ2JniProbeResult RunPvZ2JniOnLoadProbe(
+    const std::uint8_t* apk_data,
+    std::size_t apk_size);
