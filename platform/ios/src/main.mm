@@ -2,6 +2,7 @@
 #import <Foundation/Foundation.h>
 
 #include <dlfcn.h>
+#include <TargetConditionals.h>
 #include <mach/mach.h>
 #include <mach/mach_vm.h>
 #include <libkern/OSCacheControl.h>
@@ -214,8 +215,8 @@ void AppendLogLine(NSString *line) {
     explanation.translatesAutoresizingMaskIntoConstraints = NO;
     explanation.text =
         @"This first build does not contain Plants vs. Zombies 2. "
-         "It only verifies that a sideloaded arm64 app can create and execute "
-         "Dynarmic-style JIT memory on this iPad.";
+         @"It only verifies that a sideloaded arm64 app can create and execute "
+         @"Dynarmic-style JIT memory on this iPad.";
     explanation.numberOfLines = 0;
     explanation.font = [UIFont systemFontOfSize:17.0];
 
@@ -321,11 +322,11 @@ void AppendLogLine(NSString *line) {
 
     self.statusLabel.text = [NSString stringWithFormat:
         @"Device architecture: arm64\n"
-         "PID: %d\n"
-         "Bundle ID: %@\n"
-         "get-task-allow: %@\n"
-         "CS_DEBUGGED: %@\n"
-         "Log: Documents/pvz2forios-jit.log",
+         @"PID: %d\n"
+         @"Bundle ID: %@\n"
+         @"get-task-allow: %@\n"
+         @"CS_DEBUGGED: %@\n"
+         @"Log: Documents/pvz2forios-jit.log",
          getpid(),
          bundle,
          taskAllow ? @"YES" : @"NO",
