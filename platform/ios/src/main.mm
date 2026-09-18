@@ -234,7 +234,7 @@ NSString *NSStringFromStd(
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — GameAppInitialize Probe v12";
+        @"PvZ2forIOS — Complete Import Probe v13";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -243,7 +243,7 @@ NSString *NSStringFromStd(
         NO;
 
     title.text =
-        @"PvZ2forIOS — real GameAppInitialize probe v12";
+        @"PvZ2forIOS — complete Android import baseline probe v13";
 
     title.font =
         [UIFont
@@ -259,8 +259,8 @@ NSString *NSStringFromStd(
         NO;
 
     explanation.text =
-        @"v11.2 proved the complete PvZ2 ARMv7 shared-library startup works on the A14: all 618 constructors returned and JNI_OnLoad returned JNI 1.4. "
-         @"v12 immediately continues into the real registered Native_GameAppInitialize. It supplies eight synthetic Android object handles, implements the JNI calls visible in the top-level function (NewGlobalRef, GetObjectClass, GetMethodID, RegisterNatives), and fills every other JNIEnv slot with a controlled trap so the first missing Java/JNI surface is reported precisely instead of crashing.";
+        @"v11.2 proved the complete PvZ2 ARMv7 shared-library startup works on the A14. v12 entered the real Native_GameAppInitialize and reached deep enough to expose Java method registration before stopping on fwrite. "
+         @"v13 removes the remaining one-import-at-a-time problem: all verified PvZ2 Android imports now have either a real bridge or a deterministic subsystem fallback. Stdio/POSIX, GLES probe calls, OpenSL availability, time/locale and remaining control-flow imports are classified up front, so the next blockers should be semantic runtime/JNI requirements rather than missing ELF imports.";
 
     explanation.numberOfLines = 0;
 
@@ -437,7 +437,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 GameAppInitialize probe v12 session started; PID=%d ===",
+                    @"=== PvZ2 complete-import probe v13 session started; PID=%d ===",
                     getpid()]];
 
     [self
@@ -756,7 +756,7 @@ NSString *NSStringFromStd(
 
     [self
         appendUI:
-            @"STEP 3: select the same original PvZ2 1.5.252752 APK. v12 will reproduce the validated full shared-library startup, then enter the real registered Native_GameAppInitialize with its 8 Android object arguments represented by controlled synthetic handles."];
+            @"STEP 3: select the same original PvZ2 1.5.252752 APK. v13 will reproduce the validated full startup, enter Native_GameAppInitialize, and use the complete known-import baseline so missing ELF imports no longer require one IPA per symbol."];
 
     [self
         presentViewController:
@@ -799,7 +799,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"STEP 3A: selected %@; preparing full PvZ2 startup + Native_GameAppInitialize…",
+                    @"STEP 3A: selected %@; preparing full PvZ2 startup + complete import baseline + Native_GameAppInitialize…",
                     url.lastPathComponent
                         ?: @"(unnamed file)"]];
 
