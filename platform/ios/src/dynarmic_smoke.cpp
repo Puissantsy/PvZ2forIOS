@@ -10,6 +10,7 @@
 #include <vector>
 
 #include <dynarmic/interface/A32/a32.h>
+#include <dynarmic/interface/exclusive_monitor.h>
 
 namespace {
 
@@ -170,8 +171,12 @@ DynarmicSmokeResult RunDynarmicArm32Smoke() {
     try {
         SmokeCallbacks callbacks;
 
+        Dynarmic::ExclusiveMonitor exclusive_monitor{1};
+
         Dynarmic::A32::UserConfig config;
         config.callbacks = &callbacks;
+        config.processor_id = 0;
+        config.global_monitor = &exclusive_monitor;
         config.arch_version = Dynarmic::A32::ArchVersion::v7;
         config.always_little_endian = true;
         config.enable_cycle_counting = true;
