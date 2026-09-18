@@ -271,3 +271,38 @@ The probe supplies controlled synthetic handles for those eight Android objects 
 - `RegisterNatives`.
 
 Every other JNIEnv function-table slot is populated with a controlled diagnostic trampoline, so the first missing Java/JNI capability reports its table slot and byte offset instead of jumping through a null pointer.
+
+
+## On-device v13 result
+
+On 2026-09-18, v13 entered the real `Native_GameAppInitialize` after the already validated 618 constructors + `JNI_OnLoad` sequence and passed the previous `fwrite` ELF-import blocker through the complete Android-import baseline.
+
+The run progressed through extensive Java method discovery/registration for the cloud, Google Play and notification driver surfaces. The first remaining blocker was no longer an ELF import:
+
+- JNIEnv slot: `24`
+- table offset: `0x60`
+- standard JNI function: `IsSameObject`
+
+This confirms the v13 328-symbol import baseline did its job: the next compatibility frontier is the Java/JNI object model rather than missing native imports.
+
+## v14 bulk JNIEnv compatibility baseline
+
+v14 applies the same bulk strategy to the standard JNI 1.4 function table instead of adding one JNI slot per release.
+
+The compatibility layer now provides deterministic probe semantics for the standard JNIEnv surface through slot 232, including:
+
+- local/global/weak reference management and `IsSameObject`;
+- object allocation, class tests and reflected-member placeholders;
+- instance/nonvirtual/static method-call families;
+- field and static-field lookup/read/write families;
+- Java strings and UTF helpers;
+- object and primitive arrays, element access and regions;
+- `RegisterNatives` / `UnregisterNatives`;
+- monitor functions and `GetJavaVM`;
+- critical string/array access;
+- direct byte buffers;
+- exception/status helpers and object reference types.
+
+The specific JNI functions already modeled with richer semantics (`FindClass`, `NewGlobalRef`, `GetObjectClass`, `GetMethodID`, `RegisterNatives`) remain on their dedicated handlers.
+
+The goal of v14 is diagnostic progression: broad JNI calls should no longer require one IPA per newly reached table slot. Later milestones will replace probe fallbacks with real Java/surface/input/filesystem behavior where PvZ2 actually depends on semantics.
