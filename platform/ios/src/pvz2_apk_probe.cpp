@@ -1428,11 +1428,11 @@ public:
             Append(
                 "JNIEnv.GetMethodID(clazz=0x" +
                 JniProbeHex(regs[1]) +
-                ", name="" +
+                ", name=\"" +
                 method_name +
-                "", sig="" +
+                "\", sig=\"" +
                 signature +
-                "") -> 0x" +
+                "\") -> 0x" +
                 JniProbeHex(method_id));
             return;
         }
@@ -3355,7 +3355,7 @@ public:
                 switch (kind) {
                 case 1: answer = std::isalnum(ch); break;
                 case 2: answer = std::isalpha(ch); break;
-                case 3: answer = (ch == ' ' || ch == '\\t'); break;
+                case 3: answer = (ch == ' ' || ch == '\t'); break;
                 case 4: answer = std::iscntrl(ch); break;
                 case 5: answer = std::isdigit(ch); break;
                 case 6: answer = std::isgraph(ch); break;
