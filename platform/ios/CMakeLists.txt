@@ -25,6 +25,7 @@ FetchContent_Declare(
     GIT_REPOSITORY https://github.com/LiveContainer/dynarmic.git
     GIT_TAG c97c525ec1432b1e5404ebf091027738005ec168
     GIT_SHALLOW TRUE
+    PATCH_COMMAND git apply "${CMAKE_CURRENT_SOURCE_DIR}/patches/dynarmic-ios-nontxm.patch"
 )
 FetchContent_MakeAvailable(dynarmic)
 
