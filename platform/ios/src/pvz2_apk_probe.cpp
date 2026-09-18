@@ -4036,6 +4036,70 @@ std::uint32_t JniProbeMakePthreadOnceShim(
     return kShimAddress;
 }
 
+
+std::uint32_t JniProbeMakePthreadCreateShim(
+    JniProbeGuestMemory& memory) {
+
+    // Constructor-probe pthread_create: execute the guest start routine
+    // synchronously in the same emulated process, store a synthetic thread id,
+    // and return success. Real concurrent guest threads are a later subsystem.
+    constexpr std::uint32_t kShimAddress =
+        kJniProbeTrampolineBase + 0x00080100u;
+
+    constexpr std::uint32_t words[] = {
+        0xE92D4030u, // push {r4,r5,lr}
+        0xE1A04000u, // mov r4,r0
+        0xE1A05002u, // mov r5,r2
+        0xE1A00003u, // mov r0,r3
+        0xE12FFF35u, // blx r5
+        0xE3A01001u, // mov r1,#1
+        0xE5841000u, // str r1,[r4]
+        0xE3A00000u, // mov r0,#0
+        0xE8BD8030u, // pop {r4,r5,pc}
+    };
+
+    auto* p =
+        memory.Ptr(
+            kShimAddress,
+            sizeof(words));
+
+    if (!p) {
+        return 0;
+    }
+
+    for (std::size_t i = 0;
+         i < sizeof(words) / sizeof(words[0]);
+         ++i) {
+        Write32(
+            p + i * 4u,
+            words[i]);
+    }
+
+    return kShimAddress;
+}
+
+std::uint32_t JniProbeMakePthreadExitShim(
+    JniProbeGuestMemory& memory) {
+
+    constexpr std::uint32_t kShimAddress =
+        kJniProbeTrampolineBase + 0x00080200u;
+
+    auto* p =
+        memory.Ptr(
+            kShimAddress,
+            4);
+
+    if (!p) {
+        return 0;
+    }
+
+    Write32(
+        p,
+        0xE12FFF1Eu); // bx lr
+
+    return kShimAddress;
+}
+
 std::uint32_t JniProbeAllocateImportedObject(
     JniProbeGuestMemory& memory,
     const std::string& name) {
@@ -4149,6 +4213,37 @@ bool JniProbePrepareRuntime(
 
                 callbacks.Append(
                     "installed guest-native pthread_once shim at 0x" +
+                    JniProbeHex(shim));
+
+                ++result.imports_patched;
+                continue;
+            }
+
+            if (name == "pthread_create" ||
+                name == "pthread_exit") {
+
+                const std::uint32_t shim =
+                    name == "pthread_create"
+                        ? JniProbeMakePthreadCreateShim(memory)
+                        : JniProbeMakePthreadExitShim(memory);
+
+                if (!shim) {
+                    error =
+                        "JNI probe could not allocate " +
+                        name +
+                        " guest shim.";
+                    return false;
+                }
+
+                Write32(
+                    memory.image.data() +
+                    rel.offset,
+                    shim);
+
+                callbacks.Append(
+                    "installed guest-native " +
+                    name +
+                    " shim at 0x" +
                     JniProbeHex(shim));
 
                 ++result.imports_patched;
