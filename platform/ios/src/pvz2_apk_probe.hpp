@@ -48,6 +48,14 @@ struct PvZ2JniProbeResult {
 
     std::uint32_t imports_patched = 0;
     std::uint32_t supported_import_calls = 0;
+
+    std::uint32_t init_array_slots = 0;
+    std::uint32_t constructors_total = 0;
+    std::uint32_t constructors_completed = 0;
+    std::uint32_t constructor_failure_index = 0xffffffffu;
+    std::uint32_t constructor_failure_address = 0;
+    std::uint32_t cxa_atexit_calls = 0;
+
     std::uint32_t find_class_calls = 0;
     std::uint32_t register_natives_calls = 0;
     std::uint32_t registered_native_methods = 0;
@@ -58,5 +66,10 @@ struct PvZ2JniProbeResult {
 };
 
 PvZ2JniProbeResult RunPvZ2JniOnLoadProbe(
+    const std::uint8_t* apk_data,
+    std::size_t apk_size);
+
+
+PvZ2JniProbeResult RunPvZ2FullLoadProbe(
     const std::uint8_t* apk_data,
     std::size_t apk_size);
