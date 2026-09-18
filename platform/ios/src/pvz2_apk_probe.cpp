@@ -2039,8 +2039,7 @@ PvZ2JniProbeResult RunPvZ2JniOnLoadProbe(
         JniProbeGuestMemory memory;
         PvZ2JniCallbacks callbacks(
             memory,
-            result,
-            std::move(progress));
+            result);
 
         std::uint32_t return_trampoline = 0;
 
@@ -2202,7 +2201,8 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
         JniProbeGuestMemory memory;
         PvZ2JniCallbacks callbacks(
             memory,
-            result);
+            result,
+            std::move(progress));
 
         std::uint32_t return_trampoline = 0;
 
