@@ -1,0 +1,51 @@
+diff --git a/src/dynarmic/common/spin_lock_arm64.cpp b/src/dynarmic/common/spin_lock_arm64.cpp
+--- a/src/dynarmic/common/spin_lock_arm64.cpp
++++ b/src/dynarmic/common/spin_lock_arm64.cpp
+@@ -4,6 +4,9 @@
+  */
+ 
+ #include <mutex>
++#if defined(__APPLE__)
++#    include <TargetConditionals.h>
++#endif
+ 
+ #include <oaknut/configurable_code_block.hpp>
+ #include <oaknut/oaknut.hpp>
+@@ -31,6 +34,8 @@ void EmitSpinLockUnlock(oaknut::CodeGenerator& code, oaknut::XReg ptr) {
+     code.STLR(WZR, ptr);
+ }
+ 
++#if !defined(__APPLE__) || !TARGET_OS_IPHONE
++
+ namespace {
+ 
+ struct SpinLockImpl {
+@@ -67,13 +72,27 @@ void SpinLockImpl::Initialize() {
+ }
+ 
+ }  // namespace
++#endif
+ 
+ void SpinLock::Lock() {
++#if defined(__APPLE__) && TARGET_OS_IPHONE
++    while (__atomic_exchange_n(&storage, 1, __ATOMIC_ACQUIRE) != 0) {
++        while (__atomic_load_n(&storage, __ATOMIC_RELAXED) != 0) {
++            __asm__ volatile("yield");
++        }
++    }
++#else
+     std::call_once(flag, &SpinLockImpl::Initialize, impl);
+     impl.lock(&storage);
++#endif
+ }
+ 
+ void SpinLock::Unlock() {
++#if defined(__APPLE__) && TARGET_OS_IPHONE
++    __atomic_store_n(&storage, 0, __ATOMIC_RELEASE);
++#else
+     std::call_once(flag, &SpinLockImpl::Initialize, impl);
+     impl.unlock(&storage);
++#endif
+ }
+ 
+ }  // namespace Dynarmic
