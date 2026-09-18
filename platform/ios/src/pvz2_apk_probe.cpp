@@ -1553,9 +1553,841 @@ public:
             const std::uint32_t slot =
                 swi - kJniProbeSvcUnsupportedJniBase;
 
+            auto new_object =
+                [&]() {
+                    return
+                        0x55000000u +
+                        (next_synthetic_object++ * 0x100u);
+                };
+
+            auto new_string =
+                [&](const std::string& value) {
+                    const std::uint32_t handle =
+                        new_object();
+                    jni_strings[handle] = value;
+                    return handle;
+                };
+
+            auto log_jni_fallback =
+                [&](const std::string& label) {
+                    const std::string key =
+                        "jni:" + std::to_string(slot);
+
+                    if (fallback_logged.insert(key).second) {
+                        Append(
+                            "JNI COMPAT FALLBACK: slot=" +
+                            std::to_string(slot) +
+                            " " +
+                            label);
+                    }
+                };
+
+            // Reference management. Slot 24 is the exact blocker reached by
+            // v13 (IsSameObject).
+            switch (slot) {
+            case 4: // GetVersion
+                regs[0] = kJniVersion14;
+                return;
+
+            case 5: // DefineClass
+                regs[0] =
+                    0x53000000u +
+                    (next_synthetic_class++ * 0x100u);
+                log_jni_fallback("DefineClass");
+                return;
+
+            case 7: // FromReflectedMethod
+            case 8: // FromReflectedField
+                regs[0] =
+                    slot == 7
+                        ? 0x54000000u +
+                            (next_synthetic_method++ * 0x100u)
+                        : 0x54100000u +
+                            (next_synthetic_field++ * 0x100u);
+                log_jni_fallback(
+                    slot == 7
+                        ? "FromReflectedMethod"
+                        : "FromReflectedField");
+                return;
+
+            case 9:  // ToReflectedMethod
+            case 12: // ToReflectedField
+                regs[0] = new_object();
+                log_jni_fallback("reflected member object");
+                return;
+
+            case 10: // GetSuperclass
+                regs[0] = regs[1];
+                return;
+
+            case 11: // IsAssignableFrom
+                regs[0] = 1;
+                return;
+
+            case 13: // Throw
+            case 14: // ThrowNew
+                // Probe mode keeps Java exceptions non-fatal and reports the
+                // call once. Real exception state comes with the Java bridge.
+                regs[0] = 0;
+                log_jni_fallback(
+                    slot == 13 ? "Throw" : "ThrowNew");
+                return;
+
+            case 15: // ExceptionOccurred
+                regs[0] = 0;
+                return;
+
+            case 16: // ExceptionDescribe
+            case 17: // ExceptionClear
+                regs[0] = 0;
+                return;
+
+            case 18: // FatalError
+                result.message =
+                    "JNI FatalError reached during probe.";
+                jit->HaltExecution(
+                    Dynarmic::HaltReason::UserDefined2);
+                return;
+
+            case 19: // PushLocalFrame
+                regs[0] = 0;
+                return;
+
+            case 20: // PopLocalFrame
+                regs[0] = regs[1];
+                return;
+
+            case 22: // DeleteGlobalRef
+            case 23: // DeleteLocalRef
+                regs[0] = 0;
+                return;
+
+            case 24: // IsSameObject
+                regs[0] =
+                    regs[1] == regs[2]
+                        ? 1u
+                        : 0u;
+                Append(
+                    "JNIEnv.IsSameObject(0x" +
+                    JniProbeHex(regs[1]) +
+                    ", 0x" +
+                    JniProbeHex(regs[2]) +
+                    ") -> " +
+                    std::to_string(regs[0]));
+                return;
+
+            case 25: // NewLocalRef
+                regs[0] = regs[1];
+                return;
+
+            case 26: // EnsureLocalCapacity
+                regs[0] = 0;
+                return;
+
+            case 27: // AllocObject
+            case 28: // NewObject
+            case 29: // NewObjectV
+            case 30: // NewObjectA
+                regs[0] = new_object();
+                log_jni_fallback("object construction");
+                return;
+
+            case 32: // IsInstanceOf
+                regs[0] = 1;
+                return;
+
+            default:
+                break;
+            }
+
+            // Instance, nonvirtual and static Java method calls. The probe
+            // records method IDs from GetMethodID/GetStaticMethodID and uses
+            // the JNI return family to provide deterministic values.
+            auto handle_call_family =
+                [&](std::uint32_t family_base,
+                    bool nonvirtual) -> bool {
+
+                    if (slot < family_base ||
+                        slot >= family_base + 30u) {
+                        return false;
+                    }
+
+                    const std::uint32_t family =
+                        (slot - family_base) / 3u;
+
+                    const std::uint32_t method_id =
+                        nonvirtual
+                            ? regs[3]
+                            : regs[2];
+
+                    const auto name_it =
+                        jni_method_names.find(method_id);
+                    const auto sig_it =
+                        jni_method_signatures.find(method_id);
+
+                    const std::string method_name =
+                        name_it == jni_method_names.end()
+                            ? std::string{"<unknown>"}
+                            : name_it->second;
+
+                    const std::string signature =
+                        sig_it == jni_method_signatures.end()
+                            ? std::string{}
+                            : sig_it->second;
+
+                    if (fallback_logged.insert(
+                            "jni-call:" + method_name + ":" +
+                            std::to_string(family)).second) {
+
+                        Append(
+                            "JNI method fallback: " +
+                            method_name +
+                            " sig=" +
+                            signature +
+                            " slot=" +
+                            std::to_string(slot));
+                    }
+
+                    // 0 Object, 1 boolean, 2 byte, 3 char, 4 short,
+                    // 5 int, 6 long, 7 float, 8 double, 9 void.
+                    if (family == 0) {
+                        if (signature.find(
+                                "Ljava/lang/String;") !=
+                            std::string::npos) {
+                            regs[0] = new_string("");
+                        } else {
+                            regs[0] = new_object();
+                        }
+                    } else {
+                        regs[0] = 0;
+                        if (family == 6 ||
+                            family == 8) {
+                            regs[1] = 0;
+                        }
+                    }
+
+                    return true;
+                };
+
+            if (handle_call_family(34u, false) ||
+                handle_call_family(64u, true) ||
+                handle_call_family(114u, false)) {
+                return;
+            }
+
+            if (slot == 94u ||
+                slot == 144u) { // GetFieldID / GetStaticFieldID
+
+                const std::string field_name =
+                    mem.ReadCStringGuest(regs[2], 256);
+                const std::string signature =
+                    mem.ReadCStringGuest(regs[3], 256);
+
+                regs[0] =
+                    0x54100000u +
+                    (next_synthetic_field++ * 0x100u);
+
+                Append(
+                    std::string{
+                        slot == 94u
+                            ? "JNIEnv.GetFieldID "
+                            : "JNIEnv.GetStaticFieldID "} +
+                    field_name +
+                    " sig=" +
+                    signature +
+                    " -> 0x" +
+                    JniProbeHex(regs[0]));
+                return;
+            }
+
+            if (slot == 113u) { // GetStaticMethodID
+                const std::string method_name =
+                    mem.ReadCStringGuest(regs[2], 256);
+                const std::string signature =
+                    mem.ReadCStringGuest(regs[3], 512);
+
+                const std::uint32_t method_id =
+                    0x54000000u +
+                    (next_synthetic_method++ * 0x100u);
+
+                jni_method_names[method_id] =
+                    method_name;
+                jni_method_signatures[method_id] =
+                    signature;
+
+                regs[0] = method_id;
+
+                Append(
+                    "JNIEnv.GetStaticMethodID " +
+                    method_name +
+                    " sig=" +
+                    signature +
+                    " -> 0x" +
+                    JniProbeHex(method_id));
+                return;
+            }
+
+            if (slot >= 95u &&
+                slot <= 103u) { // Get<Field>
+
+                regs[0] =
+                    slot == 95u
+                        ? new_object()
+                        : 0u;
+
+                if (slot == 101u ||
+                    slot == 103u) {
+                    regs[1] = 0;
+                }
+
+                log_jni_fallback("instance field read");
+                return;
+            }
+
+            if (slot >= 104u &&
+                slot <= 112u) { // Set<Field>
+                regs[0] = 0;
+                log_jni_fallback("instance field write");
+                return;
+            }
+
+            if (slot >= 145u &&
+                slot <= 153u) { // GetStatic<Field>
+
+                regs[0] =
+                    slot == 145u
+                        ? new_object()
+                        : 0u;
+
+                if (slot == 151u ||
+                    slot == 153u) {
+                    regs[1] = 0;
+                }
+
+                log_jni_fallback("static field read");
+                return;
+            }
+
+            if (slot >= 154u &&
+                slot <= 162u) { // SetStatic<Field>
+                regs[0] = 0;
+                log_jni_fallback("static field write");
+                return;
+            }
+
+            // Strings.
+            if (slot == 163u) { // NewString UTF-16
+                const std::uint32_t chars = regs[1];
+                const std::uint32_t length = regs[2];
+
+                std::string value;
+                value.reserve(length);
+
+                for (std::uint32_t i = 0;
+                     i < length;
+                     ++i) {
+                    const std::uint16_t ch =
+                        mem.Read16Guest(
+                            chars + i * 2u);
+
+                    value.push_back(
+                        ch <= 0x7fu
+                            ? static_cast<char>(ch)
+                            : '?');
+                }
+
+                regs[0] = new_string(value);
+                return;
+            }
+
+            if (slot == 164u ||
+                slot == 168u) { // GetStringLength / UTFLength
+
+                const auto it =
+                    jni_strings.find(regs[1]);
+
+                regs[0] =
+                    it == jni_strings.end()
+                        ? 0u
+                        : static_cast<std::uint32_t>(
+                            it->second.size());
+                return;
+            }
+
+            if (slot == 165u) { // GetStringChars
+                const auto it =
+                    jni_strings.find(regs[1]);
+
+                if (regs[2]) {
+                    mem.Write8Guest(regs[2], 1);
+                }
+
+                if (it == jni_strings.end()) {
+                    regs[0] = 0;
+                    return;
+                }
+
+                const std::uint32_t buffer =
+                    mem.AllocateObject(
+                        static_cast<std::uint32_t>(
+                            (it->second.size() + 1u) * 2u),
+                        2);
+
+                for (std::size_t i = 0;
+                     i < it->second.size();
+                     ++i) {
+                    mem.Write16Guest(
+                        buffer +
+                            static_cast<std::uint32_t>(i * 2u),
+                        static_cast<std::uint8_t>(
+                            it->second[i]));
+                }
+
+                mem.Write16Guest(
+                    buffer +
+                        static_cast<std::uint32_t>(
+                            it->second.size() * 2u),
+                    0);
+
+                regs[0] = buffer;
+                return;
+            }
+
+            if (slot == 166u ||
+                slot == 170u) { // ReleaseString*
+                regs[0] = 0;
+                return;
+            }
+
+            if (slot == 167u) { // NewStringUTF
+                regs[0] =
+                    new_string(
+                        mem.ReadCStringGuest(
+                            regs[1],
+                            1u << 20));
+                return;
+            }
+
+            if (slot == 169u) { // GetStringUTFChars
+                const auto it =
+                    jni_strings.find(regs[1]);
+
+                if (regs[2]) {
+                    mem.Write8Guest(regs[2], 1);
+                }
+
+                if (it == jni_strings.end()) {
+                    regs[0] = 0;
+                    return;
+                }
+
+                const std::uint32_t buffer =
+                    mem.AllocateObject(
+                        static_cast<std::uint32_t>(
+                            it->second.size() + 1u),
+                        1);
+
+                for (std::size_t i = 0;
+                     i < it->second.size();
+                     ++i) {
+                    mem.Write8Guest(
+                        buffer +
+                            static_cast<std::uint32_t>(i),
+                        static_cast<std::uint8_t>(
+                            it->second[i]));
+                }
+
+                mem.Write8Guest(
+                    buffer +
+                        static_cast<std::uint32_t>(
+                            it->second.size()),
+                    0);
+
+                regs[0] = buffer;
+                return;
+            }
+
+            // Arrays.
+            if (slot == 171u) { // GetArrayLength
+                const auto it =
+                    jni_array_lengths.find(regs[1]);
+
+                regs[0] =
+                    it == jni_array_lengths.end()
+                        ? 0u
+                        : it->second;
+                return;
+            }
+
+            if (slot == 172u) { // NewObjectArray
+                const std::uint32_t handle =
+                    new_object();
+
+                jni_array_lengths[handle] =
+                    regs[1];
+
+                jni_object_arrays[handle] =
+                    std::vector<std::uint32_t>(
+                        regs[1],
+                        regs[3]);
+
+                regs[0] = handle;
+                return;
+            }
+
+            if (slot == 173u) { // GetObjectArrayElement
+                const auto it =
+                    jni_object_arrays.find(regs[1]);
+
+                regs[0] =
+                    it != jni_object_arrays.end() &&
+                    regs[2] < it->second.size()
+                        ? it->second[regs[2]]
+                        : 0u;
+                return;
+            }
+
+            if (slot == 174u) { // SetObjectArrayElement
+                auto it =
+                    jni_object_arrays.find(regs[1]);
+
+                if (it != jni_object_arrays.end() &&
+                    regs[2] < it->second.size()) {
+                    it->second[regs[2]] =
+                        regs[3];
+                }
+
+                regs[0] = 0;
+                return;
+            }
+
+            if (slot >= 175u &&
+                slot <= 182u) { // New primitive arrays
+
+                static constexpr std::uint32_t sizes[] = {
+                    1u, 1u, 2u, 2u,
+                    4u, 8u, 4u, 8u
+                };
+
+                const std::uint32_t length =
+                    regs[1];
+
+                const std::uint32_t element_size =
+                    sizes[slot - 175u];
+
+                const std::uint32_t bytes =
+                    length * element_size;
+
+                const std::uint32_t handle =
+                    new_object();
+
+                const std::uint32_t data =
+                    mem.AllocateHeap(
+                        std::max<std::uint32_t>(
+                            bytes,
+                            1u),
+                        std::max<std::uint32_t>(
+                            element_size,
+                            1u));
+
+                if (data && bytes) {
+                    if (auto* p =
+                            mem.Ptr(data, bytes)) {
+                        std::memset(
+                            p,
+                            0,
+                            bytes);
+                    }
+                }
+
+                jni_array_lengths[handle] =
+                    length;
+                jni_array_data[handle] =
+                    data;
+                jni_array_element_sizes[handle] =
+                    element_size;
+
+                regs[0] = handle;
+                return;
+            }
+
+            if (slot >= 183u &&
+                slot <= 190u) { // Get primitive array elements
+                if (regs[2]) {
+                    mem.Write8Guest(regs[2], 0);
+                }
+
+                const auto it =
+                    jni_array_data.find(regs[1]);
+
+                regs[0] =
+                    it == jni_array_data.end()
+                        ? 0u
+                        : it->second;
+                return;
+            }
+
+            if (slot >= 191u &&
+                slot <= 198u) { // Release primitive array elements
+                regs[0] = 0;
+                return;
+            }
+
+            if ((slot >= 199u &&
+                 slot <= 206u) ||
+                (slot >= 207u &&
+                 slot <= 214u)) {
+
+                const bool set_region =
+                    slot >= 207u;
+
+                const std::uint32_t array =
+                    regs[1];
+                const std::uint32_t start =
+                    regs[2];
+                const std::uint32_t length =
+                    regs[3];
+
+                const auto data_it =
+                    jni_array_data.find(array);
+                const auto size_it =
+                    jni_array_element_sizes.find(array);
+
+                const std::uint32_t buffer =
+                    mem.Read32Guest(regs[13]);
+
+                if (data_it != jni_array_data.end() &&
+                    size_it != jni_array_element_sizes.end()) {
+
+                    const std::uint32_t bytes =
+                        length * size_it->second;
+
+                    auto* array_ptr =
+                        mem.Ptr(
+                            data_it->second +
+                                start * size_it->second,
+                            bytes);
+
+                    auto* buffer_ptr =
+                        mem.Ptr(
+                            buffer,
+                            bytes);
+
+                    if (array_ptr &&
+                        buffer_ptr) {
+                        if (set_region) {
+                            std::memmove(
+                                array_ptr,
+                                buffer_ptr,
+                                bytes);
+                        } else {
+                            std::memmove(
+                                buffer_ptr,
+                                array_ptr,
+                                bytes);
+                        }
+                    }
+                }
+
+                regs[0] = 0;
+                return;
+            }
+
+            switch (slot) {
+            case 216: // UnregisterNatives
+            case 217: // MonitorEnter
+            case 218: // MonitorExit
+                regs[0] = 0;
+                return;
+
+            case 219: // GetJavaVM
+                if (regs[1]) {
+                    mem.Write32Guest(
+                        regs[1],
+                        vm_object);
+                }
+                regs[0] = 0;
+                return;
+
+            case 220: // GetStringRegion
+            case 221: { // GetStringUTFRegion
+                const auto it =
+                    jni_strings.find(regs[1]);
+
+                const std::uint32_t output =
+                    mem.Read32Guest(regs[13]);
+
+                if (it != jni_strings.end() &&
+                    output) {
+                    const std::size_t start =
+                        std::min<std::size_t>(
+                            regs[2],
+                            it->second.size());
+
+                    const std::size_t length =
+                        std::min<std::size_t>(
+                            regs[3],
+                            it->second.size() - start);
+
+                    if (slot == 221u) {
+                        for (std::size_t i = 0;
+                             i < length;
+                             ++i) {
+                            mem.Write8Guest(
+                                output +
+                                    static_cast<std::uint32_t>(i),
+                                static_cast<std::uint8_t>(
+                                    it->second[start + i]));
+                        }
+                    } else {
+                        for (std::size_t i = 0;
+                             i < length;
+                             ++i) {
+                            mem.Write16Guest(
+                                output +
+                                    static_cast<std::uint32_t>(i * 2u),
+                                static_cast<std::uint8_t>(
+                                    it->second[start + i]));
+                        }
+                    }
+                }
+
+                regs[0] = 0;
+                return;
+            }
+
+            case 222: { // GetPrimitiveArrayCritical
+                if (regs[2]) {
+                    mem.Write8Guest(regs[2], 0);
+                }
+
+                const auto it =
+                    jni_array_data.find(regs[1]);
+
+                regs[0] =
+                    it == jni_array_data.end()
+                        ? 0u
+                        : it->second;
+                return;
+            }
+
+            case 223: // ReleasePrimitiveArrayCritical
+            case 225: // ReleaseStringCritical
+                regs[0] = 0;
+                return;
+
+            case 224: { // GetStringCritical
+                const auto it =
+                    jni_strings.find(regs[1]);
+
+                if (regs[2]) {
+                    mem.Write8Guest(regs[2], 1);
+                }
+
+                if (it == jni_strings.end()) {
+                    regs[0] = 0;
+                    return;
+                }
+
+                const std::uint32_t buffer =
+                    mem.AllocateObject(
+                        static_cast<std::uint32_t>(
+                            (it->second.size() + 1u) * 2u),
+                        2);
+
+                for (std::size_t i = 0;
+                     i < it->second.size();
+                     ++i) {
+                    mem.Write16Guest(
+                        buffer +
+                            static_cast<std::uint32_t>(i * 2u),
+                        static_cast<std::uint8_t>(
+                            it->second[i]));
+                }
+
+                mem.Write16Guest(
+                    buffer +
+                        static_cast<std::uint32_t>(
+                            it->second.size() * 2u),
+                    0);
+
+                regs[0] = buffer;
+                return;
+            }
+
+            case 226: // NewWeakGlobalRef
+                regs[0] = regs[1];
+                return;
+
+            case 227: // DeleteWeakGlobalRef
+                regs[0] = 0;
+                return;
+
+            case 228: // ExceptionCheck
+                regs[0] = 0;
+                return;
+
+            case 229: { // NewDirectByteBuffer
+                const std::uint32_t handle =
+                    new_object();
+
+                const std::uint64_t capacity =
+                    static_cast<std::uint64_t>(regs[2]) |
+                    (static_cast<std::uint64_t>(
+                        regs[3]) << 32);
+
+                jni_direct_buffer_address[handle] =
+                    regs[1];
+                jni_direct_buffer_capacity[handle] =
+                    capacity;
+
+                regs[0] = handle;
+                return;
+            }
+
+            case 230: { // GetDirectBufferAddress
+                const auto it =
+                    jni_direct_buffer_address.find(regs[1]);
+
+                regs[0] =
+                    it == jni_direct_buffer_address.end()
+                        ? 0u
+                        : it->second;
+                return;
+            }
+
+            case 231: { // GetDirectBufferCapacity
+                const auto it =
+                    jni_direct_buffer_capacity.find(regs[1]);
+
+                const std::uint64_t capacity =
+                    it == jni_direct_buffer_capacity.end()
+                        ? 0xffffffffffffffffull
+                        : it->second;
+
+                regs[0] =
+                    static_cast<std::uint32_t>(
+                        capacity);
+                regs[1] =
+                    static_cast<std::uint32_t>(
+                        capacity >> 32);
+                return;
+            }
+
+            case 232: // GetObjectRefType
+                regs[0] =
+                    regs[1] == 0
+                        ? 0u
+                        : 1u; // JNILocalRefType
+                return;
+
+            default:
+                break;
+            }
+
             result.unsupported_jni_slot = slot;
             result.message =
-                "First unsupported JNIEnv function slot reached: " +
+                "JNIEnv slot outside v14 compatibility baseline: " +
                 std::to_string(slot) +
                 " (table offset 0x" +
                 JniProbeHex(slot * 4u) +
