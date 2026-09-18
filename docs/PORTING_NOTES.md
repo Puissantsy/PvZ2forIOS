@@ -225,3 +225,15 @@ The next probe runs the dynamic-linker initialization phase before `JNI_OnLoad`:
 - each constructor returns through a controlled guest trampoline;
 - the first unsupported import or Dynarmic exception reports its constructor index and address;
 - if all constructors complete, `JNI_OnLoad` is executed again in that fully initialized memory image.
+
+
+## v10.3 exclusive-monitor fix
+
+The crash-persistent v10.2 log isolated the native crash to the very first non-null constructor:
+
+- constructor index: `0`
+- guest address: `0x100E96C0`
+
+Disassembly of the constructor path shows ARM exclusive-access synchronization (`LDREX` / `STREX`, with barriers). Earlier probes did not require this path, so the Dynarmic A32 runtime had been created without a global `ExclusiveMonitor`.
+
+v10.3 configures a single-processor `Dynarmic::ExclusiveMonitor` for both the smoke and PvZ2 runtimes and assigns `processor_id = 0`. This gives ARMv7 exclusive loads/stores the runtime state they require. The Bundle-ID-only StikDebug launch and crash-persistent constructor checkpoints remain enabled.
