@@ -234,7 +234,7 @@ NSString *NSStringFromStd(
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — Memory Fault Probe v16";
+        @"PvZ2forIOS — Lifecycle Timeout Probe v17";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -243,7 +243,7 @@ NSString *NSStringFromStd(
         NO;
 
     title.text =
-        @"PvZ2forIOS — lifecycle + memory fault probe v16";
+        @"PvZ2forIOS — lifecycle timeout probe v17";
 
     title.font =
         [UIFont
@@ -259,8 +259,8 @@ NSString *NSStringFromStd(
         NO;
 
     explanation.text =
-        @"v15 reached the lifecycle path after the validated 618-constructor + JNI_OnLoad + Native_GameAppInitialize sequence, then exposed a real __aeabi_memmove guest-memory fault. "
-         @"v16 keeps the same lifecycle/first-frame probe but instruments copy faults with the exact phase, dst/src/size, PC, LR/caller, SP and stack words. It also clears stale probe halt reasons between stages so the next run identifies the real failing call instead of masking it. The GLES layer remains probe/no-op.";
+        @"v16 proved the earlier __aeabi_memmove stop was not the final blocker: after zero-length copy handling, PvZ2 advances into the first lifecycle call and now spends the full execution budget there. "
+         @"v17 keeps all v16 memory diagnostics, adds phase-aware 5M-tick progress and a full timeout register dump (PC/LR/caller/SP/r0-r7), and sanitizes guest-derived trace bytes so the complete trace remains readable instead of collapsing to invalid UTF-8. The GLES layer remains probe/no-op.";
 
     explanation.numberOfLines = 0;
 
@@ -437,7 +437,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 memory-fault probe v16 session started; PID=%d ===",
+                    @"=== PvZ2 lifecycle-timeout probe v17 session started; PID=%d ===",
                     getpid()]];
 
     [self
@@ -756,7 +756,7 @@ NSString *NSStringFromStd(
 
     [self
         appendUI:
-            @"STEP 3: select the same original PvZ2 1.5.252752 APK. v16 will reproduce the validated startup and lifecycle path; if the memory-copy fault recurs it will report the exact phase, addresses, size, caller PC/LR and stack context."];
+            @"STEP 3: select the same original PvZ2 1.5.252752 APK. v17 will reproduce the validated startup and report lifecycle progress every 5M ticks; if the first lifecycle call stalls, STEP 3D will include the exact phase, PC/LR/caller/SP and r0-r7 while the full trace remains readable."];
 
     [self
         presentViewController:
