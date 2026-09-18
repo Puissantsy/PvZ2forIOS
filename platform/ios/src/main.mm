@@ -234,7 +234,7 @@ NSString *NSStringFromStd(
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — Complete Import Probe v13";
+        @"PvZ2forIOS — Bulk JNI Probe v14";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -243,7 +243,7 @@ NSString *NSStringFromStd(
         NO;
 
     title.text =
-        @"PvZ2forIOS — complete Android import baseline probe v13";
+        @"PvZ2forIOS — bulk JNI compatibility probe v14";
 
     title.font =
         [UIFont
@@ -259,8 +259,8 @@ NSString *NSStringFromStd(
         NO;
 
     explanation.text =
-        @"v11.2 proved the complete PvZ2 ARMv7 shared-library startup works on the A14. v12 entered the real Native_GameAppInitialize and reached deep enough to expose Java method registration before stopping on fwrite. "
-         @"v13 removes the remaining one-import-at-a-time problem: all verified PvZ2 Android imports now have either a real bridge or a deterministic subsystem fallback. Stdio/POSIX, GLES probe calls, OpenSL availability, time/locale and remaining control-flow imports are classified up front, so the next blockers should be semantic runtime/JNI requirements rather than missing ELF imports.";
+        @"v13 proved the complete ELF-import baseline and advanced Native_GameAppInitialize until JNIEnv slot 24 (IsSameObject). "
+         @"v14 removes the JNI one-slot-at-a-time problem the same way: the standard JNI 1.4/1.6 table now has a bulk compatibility baseline for references, object/method calls, fields, strings, arrays, monitors, weak/global refs and direct buffers. Slot 24 is implemented with real reference-equality semantics; Java method calls are logged and receive deterministic probe return values until the real Java bridge replaces them.";
 
     explanation.numberOfLines = 0;
 
@@ -437,7 +437,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 complete-import probe v13 session started; PID=%d ===",
+                    @"=== PvZ2 bulk-JNI probe v14 session started; PID=%d ===",
                     getpid()]];
 
     [self
@@ -756,7 +756,7 @@ NSString *NSStringFromStd(
 
     [self
         appendUI:
-            @"STEP 3: select the same original PvZ2 1.5.252752 APK. v13 will reproduce the validated full startup, enter Native_GameAppInitialize, and use the complete known-import baseline so missing ELF imports no longer require one IPA per symbol."];
+            @"STEP 3: select the same original PvZ2 1.5.252752 APK. v14 will reproduce the validated startup, use the complete ELF-import baseline, then run Native_GameAppInitialize with a bulk JNIEnv compatibility layer so standard JNI slots no longer require one IPA per call."];
 
     [self
         presentViewController:
@@ -799,7 +799,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"STEP 3A: selected %@; preparing full PvZ2 startup + complete import baseline + Native_GameAppInitialize…",
+                    @"STEP 3A: selected %@; preparing full PvZ2 startup + complete import baseline + bulk JNI baseline + Native_GameAppInitialize…",
                     url.lastPathComponent
                         ?: @"(unnamed file)"]];
 
