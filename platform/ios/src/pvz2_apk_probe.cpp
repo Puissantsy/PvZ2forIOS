@@ -2014,3 +2014,308 @@ PvZ2JniProbeResult RunPvZ2JniOnLoadProbe(
         return result;
     }
 }
+
+
+PvZ2JniProbeResult RunPvZ2FullLoadProbe(
+    const std::uint8_t* apk_data,
+    std::size_t apk_size) {
+
+    PvZ2JniProbeResult result;
+
+    if (!apk_data || apk_size == 0) {
+        result.message =
+            "No APK data was supplied.";
+        return result;
+    }
+
+    try {
+        ZipEntry entry;
+        std::string error;
+
+        if (!FindZipEntry(
+                apk_data,
+                apk_size,
+                kPvZ2Path,
+                entry,
+                error)) {
+            result.message = error;
+            return result;
+        }
+
+        std::vector<std::uint8_t> elf;
+        if (!ExtractZipEntry(
+                apk_data,
+                apk_size,
+                entry,
+                elf,
+                error)) {
+            result.message = error;
+            return result;
+        }
+
+        JniProbeLoadedElf loaded;
+        if (!BuildJniProbeElf(
+                elf,
+                loaded,
+                error)) {
+            result.message = error;
+            return result;
+        }
+
+        JniProbeGuestMemory memory;
+        PvZ2JniCallbacks callbacks(
+            memory,
+            result);
+
+        std::uint32_t return_trampoline = 0;
+
+        if (!JniProbePrepareRuntime(
+                loaded,
+                memory,
+                callbacks,
+                result,
+                return_trampoline,
+                error)) {
+            result.message = error;
+            return result;
+        }
+
+        result.init_array_slots =
+            loaded.init_array_size / 4u;
+
+        std::vector<std::uint32_t> constructors;
+        constructors.reserve(result.init_array_slots);
+
+        for (std::uint32_t slot = 0;
+             slot < result.init_array_slots;
+             ++slot) {
+
+            const std::uint32_t address =
+                memory.Read32Guest(
+                    kGuestBase +
+                    loaded.init_array +
+                    slot * 4u);
+
+            if (address == 0 ||
+                address == 0xffffffffu) {
+                continue;
+            }
+
+            constructors.push_back(address);
+        }
+
+        result.constructors_total =
+            static_cast<std::uint32_t>(
+                constructors.size());
+
+        Dynarmic::A32::UserConfig config;
+        config.callbacks = &callbacks;
+        config.arch_version =
+            Dynarmic::A32::ArchVersion::v7;
+        config.always_little_endian = true;
+        config.enable_cycle_counting = true;
+        config.check_halt_on_memory_access = true;
+        config.code_cache_size =
+            32 * 1024 * 1024;
+
+        Dynarmic::A32::Jit jit{config};
+        callbacks.jit = &jit;
+
+        callbacks.Append(
+            "PvZ2 full-load probe: .init_array slots=" +
+            std::to_string(result.init_array_slots) +
+            ", non-null constructors=" +
+            std::to_string(result.constructors_total));
+
+        for (std::uint32_t index = 0;
+             index < constructors.size();
+             ++index) {
+
+            const std::uint32_t function =
+                constructors[index];
+
+            callbacks.return_mode =
+                PvZ2JniCallbacks::ReturnMode::Constructor;
+
+            callbacks.control_returned = false;
+            callbacks.current_constructor_index = index;
+            callbacks.current_constructor_address = function;
+            callbacks.ticks_left = 1000000;
+
+            result.message.clear();
+            result.first_unsupported_import.clear();
+
+            jit.Regs().fill(0);
+
+            jit.Regs()[13] =
+                kJniProbeStackBase +
+                kJniProbeStackSize -
+                0x100u;
+
+            jit.Regs()[14] =
+                return_trampoline;
+
+            jit.Regs()[15] =
+                function & ~1u;
+
+            const std::uint32_t cpsr =
+                (function & 1u)
+                    ? 0x30u
+                    : 0x10u;
+
+            jit.SetCpsr(cpsr);
+
+            if (index < 8 ||
+                (index % 50u) == 0u ||
+                index + 1 == constructors.size()) {
+
+                callbacks.Append(
+                    "enter constructor[" +
+                    std::to_string(index) +
+                    "/" +
+                    std::to_string(constructors.size()) +
+                    "] @ 0x" +
+                    JniProbeHex(function));
+            }
+
+            const Dynarmic::HaltReason halt =
+                jit.Run();
+
+            result.final_pc =
+                jit.Regs()[15];
+
+            result.halt_reason =
+                static_cast<std::uint32_t>(halt);
+
+            if (callbacks.control_returned &&
+                halt == Dynarmic::HaltReason::UserDefined1) {
+
+                ++result.constructors_completed;
+                jit.ClearHalt(
+                    Dynarmic::HaltReason::UserDefined1);
+                continue;
+            }
+
+            result.constructor_failure_index =
+                index;
+
+            result.constructor_failure_address =
+                function;
+
+            if (result.message.empty()) {
+                result.message =
+                    "Constructor[" +
+                    std::to_string(index) +
+                    "] at 0x" +
+                    JniProbeHex(function) +
+                    " halted before returning.";
+            }
+
+            callbacks.Append(
+                "CONSTRUCTOR STOP: index=" +
+                std::to_string(index) +
+                " address=0x" +
+                JniProbeHex(function) +
+                " reason=" +
+                result.message);
+
+            result.supported_import_calls =
+                callbacks.supported_calls;
+
+            result.trace =
+                callbacks.Trace();
+
+            return result;
+        }
+
+        callbacks.Append(
+            "All " +
+            std::to_string(result.constructors_completed) +
+            " non-null .init_array constructors returned successfully.");
+
+        callbacks.return_mode =
+            PvZ2JniCallbacks::ReturnMode::JniOnLoad;
+
+        callbacks.control_returned = false;
+        callbacks.ticks_left = 1000000;
+
+        result.message.clear();
+        result.first_unsupported_import.clear();
+
+        jit.Regs().fill(0);
+
+        jit.Regs()[0] =
+            callbacks.vm_object;
+
+        jit.Regs()[1] = 0;
+
+        jit.Regs()[13] =
+            kJniProbeStackBase +
+            kJniProbeStackSize -
+            0x100u;
+
+        jit.Regs()[14] =
+            return_trampoline;
+
+        jit.Regs()[15] =
+            kGuestBase +
+            loaded.jni_onload;
+
+        jit.SetCpsr(0x10u);
+
+        result.reached_jni_onload = true;
+
+        callbacks.Append(
+            "Entering real PvZ2 JNI_OnLoad after constructors at guest 0x" +
+            JniProbeHex(
+                kGuestBase +
+                loaded.jni_onload));
+
+        const Dynarmic::HaltReason halt =
+            jit.Run();
+
+        result.final_pc =
+            jit.Regs()[15];
+
+        result.halt_reason =
+            static_cast<std::uint32_t>(halt);
+
+        result.supported_import_calls =
+            callbacks.supported_calls;
+
+        result.trace =
+            callbacks.Trace();
+
+        if (result.returned_from_jni_onload &&
+            (result.return_value == kJniVersion14 ||
+             result.return_value == kJniVersion16)) {
+
+            result.ok = true;
+            result.message =
+                "Full PvZ2 shared-library startup succeeded: all " +
+                std::to_string(result.constructors_completed) +
+                " non-null init-array constructors returned, then JNI_OnLoad returned JNI version 0x" +
+                JniProbeHex(result.return_value) +
+                ".";
+
+            return result;
+        }
+
+        if (result.message.empty()) {
+            result.message =
+                "Constructors completed, but JNI_OnLoad halted before returning.";
+        }
+
+        return result;
+    } catch (const std::exception& e) {
+        result.message =
+            std::string{
+                "Full-load probe exception: "} +
+            e.what();
+        return result;
+    } catch (...) {
+        result.message =
+            "Full-load probe failed with an unknown native exception.";
+        return result;
+    }
+}
