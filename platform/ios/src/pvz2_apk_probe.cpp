@@ -2718,6 +2718,7 @@ public:
 
         if (name == "pthread_mutexattr_init" ||
             name == "pthread_mutexattr_settype" ||
+            name == "pthread_mutexattr_setpshared" ||
             name == "pthread_mutexattr_destroy" ||
             name == "pthread_mutex_init" ||
             name == "pthread_mutex_destroy" ||
@@ -2771,6 +2772,177 @@ public:
                 it == pthread_specific.end()
                     ? 0u
                     : it->second;
+
+            ++supported_calls;
+            return;
+        }
+
+        // Bulk single-process pthread/semaphore compatibility. This is
+        // intentionally sufficient for static construction; real concurrent
+        // guest threads will be introduced as a separate runtime subsystem.
+        if (name == "pthread_attr_init" ||
+            name == "pthread_attr_destroy" ||
+            name == "pthread_attr_setdetachstate" ||
+            name == "pthread_attr_setschedparam" ||
+            name == "pthread_attr_setschedpolicy" ||
+            name == "pthread_attr_setstack" ||
+            name == "pthread_attr_setstacksize" ||
+            name == "pthread_condattr_init" ||
+            name == "pthread_condattr_destroy" ||
+            name == "pthread_cond_init" ||
+            name == "pthread_cond_destroy" ||
+            name == "pthread_cond_signal" ||
+            name == "pthread_cond_broadcast" ||
+            name == "pthread_detach" ||
+            name == "pthread_join" ||
+            name == "pthread_setschedparam" ||
+            name == "sched_yield") {
+
+            regs[0] = 0;
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "pthread_self") {
+            regs[0] = 1;
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "pthread_getschedparam") {
+            if (regs[1]) {
+                mem.Write32Guest(regs[1], 0);
+            }
+            if (regs[2]) {
+                mem.Write32Guest(regs[2], 0);
+            }
+            regs[0] = 0;
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "pthread_attr_getschedparam") {
+            if (regs[1]) {
+                mem.Write32Guest(regs[1], 0);
+            }
+            regs[0] = 0;
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "pthread_attr_getstack") {
+            if (regs[1]) {
+                mem.Write32Guest(
+                    regs[1],
+                    kJniProbeStackBase);
+            }
+
+            if (regs[2]) {
+                mem.Write32Guest(
+                    regs[2],
+                    kJniProbeStackSize);
+            }
+
+            regs[0] = 0;
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "pthread_getattr_np") {
+            if (regs[1]) {
+                if (auto* p =
+                        mem.Ptr(regs[1], 64)) {
+                    std::memset(p, 0, 64);
+                }
+            }
+
+            regs[0] = 0;
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "pthread_cond_wait" ||
+            name == "pthread_cond_timedwait") {
+
+            // No competing guest thread exists during constructor probing.
+            // Returning success prevents a fake single-thread deadlock.
+            regs[0] = 0;
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "sched_get_priority_min" ||
+            name == "sched_get_priority_max") {
+
+            regs[0] = 0;
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "sem_init") {
+            const std::uint32_t sem = regs[0];
+            const std::uint32_t initial = regs[2];
+
+            mem.Write32Guest(
+                sem,
+                initial);
+
+            regs[0] = 0;
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "sem_destroy") {
+            regs[0] = 0;
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "sem_getvalue") {
+            if (regs[1]) {
+                mem.Write32Guest(
+                    regs[1],
+                    mem.Read32Guest(regs[0]));
+            }
+
+            regs[0] = 0;
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "sem_post") {
+            const std::uint32_t sem = regs[0];
+
+            mem.Write32Guest(
+                sem,
+                mem.Read32Guest(sem) + 1u);
+
+            regs[0] = 0;
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "sem_wait" ||
+            name == "sem_trywait" ||
+            name == "sem_timedwait") {
+
+            const std::uint32_t sem = regs[0];
+            const std::uint32_t count =
+                mem.Read32Guest(sem);
+
+            if (count > 0) {
+                mem.Write32Guest(
+                    sem,
+                    count - 1u);
+                regs[0] = 0;
+            } else {
+                // During constructor bring-up there is no other guest thread
+                // capable of posting, so do not block the host forever.
+                regs[0] =
+                    name == "sem_wait"
+                        ? 0u
+                        : 0xffffffffu;
+            }
 
             ++supported_calls;
             return;
