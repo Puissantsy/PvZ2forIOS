@@ -1225,6 +1225,8 @@ public:
     std::uint32_t current_constructor_address = 0;
     std::uint32_t next_pthread_key = 1;
     std::unordered_map<std::uint32_t, std::uint32_t> pthread_specific;
+    std::unordered_map<std::uint32_t, z_stream> zstreams;
+    std::unordered_map<std::uint32_t, bool> zstream_deflate_mode;
 
     std::optional<std::uint32_t>
     MemoryReadCode(std::uint32_t address) override {
@@ -1803,6 +1805,384 @@ public:
             }
 
             write_double_regs(fraction);
+            ++supported_calls;
+            return;
+        }
+
+        // Bulk zlib bridge. Guest z_stream is the 32-bit Android layout;
+        // host zlib state remains private and only buffer pointers/counters
+        // are mirrored across the ABI boundary.
+        if (name == "adler32" ||
+            name == "crc32") {
+
+            const std::uint32_t initial = regs[0];
+            const std::uint32_t buffer = regs[1];
+            const std::uint32_t length = regs[2];
+            const auto* p =
+                length == 0
+                    ? nullptr
+                    : mem.Ptr(buffer, length);
+
+            if (length != 0 && !p) {
+                result.message =
+                    name +
+                    " attempted to read outside guest memory.";
+                jit->HaltExecution(
+                    Dynarmic::HaltReason::UserDefined2);
+                return;
+            }
+
+            regs[0] =
+                static_cast<std::uint32_t>(
+                    name == "adler32"
+                        ? ::adler32(
+                            initial,
+                            reinterpret_cast<const Bytef*>(p),
+                            length)
+                        : ::crc32(
+                            initial,
+                            reinterpret_cast<const Bytef*>(p),
+                            length));
+
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "compress" ||
+            name == "uncompress") {
+
+            const std::uint32_t destination = regs[0];
+            const std::uint32_t destination_length_ptr = regs[1];
+            const std::uint32_t source = regs[2];
+            const std::uint32_t source_length = regs[3];
+
+            const std::uint32_t guest_capacity =
+                mem.Read32Guest(
+                    destination_length_ptr);
+
+            auto* dst =
+                mem.Ptr(
+                    destination,
+                    guest_capacity);
+            const auto* src =
+                mem.Ptr(
+                    source,
+                    source_length);
+
+            if (!dst || !src) {
+                result.message =
+                    name +
+                    " attempted to access outside guest memory.";
+                jit->HaltExecution(
+                    Dynarmic::HaltReason::UserDefined2);
+                return;
+            }
+
+            uLongf host_length =
+                guest_capacity;
+
+            const int status =
+                name == "compress"
+                    ? ::compress(
+                        reinterpret_cast<Bytef*>(dst),
+                        &host_length,
+                        reinterpret_cast<const Bytef*>(src),
+                        source_length)
+                    : ::uncompress(
+                        reinterpret_cast<Bytef*>(dst),
+                        &host_length,
+                        reinterpret_cast<const Bytef*>(src),
+                        source_length);
+
+            mem.Write32Guest(
+                destination_length_ptr,
+                static_cast<std::uint32_t>(
+                    host_length));
+
+            regs[0] =
+                static_cast<std::uint32_t>(
+                    status);
+
+            ++supported_calls;
+            return;
+        }
+
+        auto sync_zstream_from_guest =
+            [&](std::uint32_t guest_stream,
+                z_stream& stream) -> bool {
+
+                const std::uint32_t next_in =
+                    mem.Read32Guest(
+                        guest_stream + 0);
+                const std::uint32_t avail_in =
+                    mem.Read32Guest(
+                        guest_stream + 4);
+                const std::uint32_t next_out =
+                    mem.Read32Guest(
+                        guest_stream + 12);
+                const std::uint32_t avail_out =
+                    mem.Read32Guest(
+                        guest_stream + 16);
+
+                stream.next_in =
+                    avail_in == 0
+                        ? nullptr
+                        : reinterpret_cast<Bytef*>(
+                            mem.Ptr(
+                                next_in,
+                                avail_in));
+
+                stream.avail_in =
+                    avail_in;
+
+                stream.next_out =
+                    avail_out == 0
+                        ? nullptr
+                        : reinterpret_cast<Bytef*>(
+                            mem.Ptr(
+                                next_out,
+                                avail_out));
+
+                stream.avail_out =
+                    avail_out;
+
+                return
+                    (avail_in == 0 || stream.next_in) &&
+                    (avail_out == 0 || stream.next_out);
+            };
+
+        auto sync_zstream_to_guest =
+            [&](std::uint32_t guest_stream,
+                const z_stream& stream,
+                std::uint32_t original_next_in,
+                std::uint32_t original_avail_in,
+                std::uint32_t original_next_out,
+                std::uint32_t original_avail_out) {
+
+                const std::uint32_t consumed =
+                    original_avail_in -
+                    stream.avail_in;
+                const std::uint32_t produced =
+                    original_avail_out -
+                    stream.avail_out;
+
+                mem.Write32Guest(
+                    guest_stream + 0,
+                    original_next_in + consumed);
+                mem.Write32Guest(
+                    guest_stream + 4,
+                    stream.avail_in);
+                mem.Write32Guest(
+                    guest_stream + 8,
+                    static_cast<std::uint32_t>(
+                        stream.total_in));
+                mem.Write32Guest(
+                    guest_stream + 12,
+                    original_next_out + produced);
+                mem.Write32Guest(
+                    guest_stream + 16,
+                    stream.avail_out);
+                mem.Write32Guest(
+                    guest_stream + 20,
+                    static_cast<std::uint32_t>(
+                        stream.total_out));
+                mem.Write32Guest(
+                    guest_stream + 44,
+                    static_cast<std::uint32_t>(
+                        stream.data_type));
+                mem.Write32Guest(
+                    guest_stream + 48,
+                    static_cast<std::uint32_t>(
+                        stream.adler));
+            };
+
+        if (name == "deflateInit_" ||
+            name == "inflateInit_" ||
+            name == "deflateInit2_") {
+
+            const std::uint32_t guest_stream =
+                regs[0];
+
+            z_stream stream{};
+            int status = Z_STREAM_ERROR;
+
+            if (name == "deflateInit_") {
+                status =
+                    ::deflateInit_(
+                        &stream,
+                        static_cast<int>(regs[1]),
+                        ZLIB_VERSION,
+                        sizeof(z_stream));
+            } else if (name == "inflateInit_") {
+                status =
+                    ::inflateInit_(
+                        &stream,
+                        ZLIB_VERSION,
+                        sizeof(z_stream));
+            } else {
+                const std::uint32_t sp =
+                    regs[13];
+
+                const int mem_level =
+                    static_cast<int>(
+                        mem.Read32Guest(sp + 0));
+                const int strategy =
+                    static_cast<int>(
+                        mem.Read32Guest(sp + 4));
+
+                status =
+                    ::deflateInit2_(
+                        &stream,
+                        static_cast<int>(regs[1]),
+                        static_cast<int>(regs[2]),
+                        static_cast<int>(regs[3]),
+                        mem_level,
+                        strategy,
+                        ZLIB_VERSION,
+                        sizeof(z_stream));
+            }
+
+            if (status == Z_OK) {
+                zstreams[guest_stream] =
+                    stream;
+
+                zstream_deflate_mode[guest_stream] =
+                    name != "inflateInit_";
+            }
+
+            regs[0] =
+                static_cast<std::uint32_t>(
+                    status);
+
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "deflate" ||
+            name == "inflate") {
+
+            const std::uint32_t guest_stream =
+                regs[0];
+
+            auto it =
+                zstreams.find(
+                    guest_stream);
+
+            if (it == zstreams.end()) {
+                regs[0] =
+                    static_cast<std::uint32_t>(
+                        Z_STREAM_ERROR);
+                ++supported_calls;
+                return;
+            }
+
+            const std::uint32_t original_next_in =
+                mem.Read32Guest(
+                    guest_stream + 0);
+            const std::uint32_t original_avail_in =
+                mem.Read32Guest(
+                    guest_stream + 4);
+            const std::uint32_t original_next_out =
+                mem.Read32Guest(
+                    guest_stream + 12);
+            const std::uint32_t original_avail_out =
+                mem.Read32Guest(
+                    guest_stream + 16);
+
+            if (!sync_zstream_from_guest(
+                    guest_stream,
+                    it->second)) {
+
+                result.message =
+                    name +
+                    " guest z_stream buffer is outside mapped memory.";
+
+                jit->HaltExecution(
+                    Dynarmic::HaltReason::UserDefined2);
+                return;
+            }
+
+            const int status =
+                name == "deflate"
+                    ? ::deflate(
+                        &it->second,
+                        static_cast<int>(regs[1]))
+                    : ::inflate(
+                        &it->second,
+                        static_cast<int>(regs[1]));
+
+            sync_zstream_to_guest(
+                guest_stream,
+                it->second,
+                original_next_in,
+                original_avail_in,
+                original_next_out,
+                original_avail_out);
+
+            regs[0] =
+                static_cast<std::uint32_t>(
+                    status);
+
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "deflateReset" ||
+            name == "inflateReset") {
+
+            auto it =
+                zstreams.find(
+                    regs[0]);
+
+            if (it == zstreams.end()) {
+                regs[0] =
+                    static_cast<std::uint32_t>(
+                        Z_STREAM_ERROR);
+            } else {
+                regs[0] =
+                    static_cast<std::uint32_t>(
+                        name == "deflateReset"
+                            ? ::deflateReset(
+                                &it->second)
+                            : ::inflateReset(
+                                &it->second));
+            }
+
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "deflateEnd" ||
+            name == "inflateEnd") {
+
+            const std::uint32_t guest_stream =
+                regs[0];
+
+            auto it =
+                zstreams.find(
+                    guest_stream);
+
+            if (it == zstreams.end()) {
+                regs[0] =
+                    static_cast<std::uint32_t>(
+                        Z_STREAM_ERROR);
+            } else {
+                const int status =
+                    name == "deflateEnd"
+                        ? ::deflateEnd(
+                            &it->second)
+                        : ::inflateEnd(
+                            &it->second);
+
+                regs[0] =
+                    static_cast<std::uint32_t>(
+                        status);
+
+                zstreams.erase(it);
+                zstream_deflate_mode.erase(
+                    guest_stream);
+            }
+
             ++supported_calls;
             return;
         }
