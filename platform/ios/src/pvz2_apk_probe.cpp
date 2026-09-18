@@ -1092,10 +1092,19 @@ public:
     std::unordered_map<std::uint32_t, JniProbeImportBinding>
         imports_by_svc;
 
+    enum class ReturnMode {
+        JniOnLoad,
+        Constructor,
+    };
+
     std::uint32_t vm_object = 0;
     std::uint32_t env_object = 0;
     std::uint32_t supported_calls = 0;
     std::uint64_t ticks_left = 1000000;
+    ReturnMode return_mode = ReturnMode::JniOnLoad;
+    bool control_returned = false;
+    std::uint32_t current_constructor_index = 0;
+    std::uint32_t current_constructor_address = 0;
 
     std::optional<std::uint32_t>
     MemoryReadCode(std::uint32_t address) override {
@@ -1254,12 +1263,22 @@ public:
         }
 
         if (swi == kJniProbeSvcReturn) {
-            result.returned_from_jni_onload = true;
-            result.return_value = regs[0];
+            control_returned = true;
 
-            Append(
-                "JNI_OnLoad returned 0x" +
-                JniProbeHex(regs[0]));
+            if (return_mode == ReturnMode::Constructor) {
+                Append(
+                    "constructor[" +
+                    std::to_string(current_constructor_index) +
+                    "] returned from 0x" +
+                    JniProbeHex(current_constructor_address));
+            } else {
+                result.returned_from_jni_onload = true;
+                result.return_value = regs[0];
+
+                Append(
+                    "JNI_OnLoad returned 0x" +
+                    JniProbeHex(regs[0]));
+            }
 
             jit->HaltExecution(
                 Dynarmic::HaltReason::UserDefined1);
@@ -1280,19 +1299,165 @@ public:
 
         const std::string& name = binding->second.name;
 
-        if (name == "malloc") {
-            const std::uint32_t requested = regs[0];
+        if (name == "malloc" ||
+            name == "memalign") {
+
+            const std::uint32_t alignment =
+                name == "memalign"
+                    ? std::max<std::uint32_t>(regs[0], 4u)
+                    : 16u;
+
+            const std::uint32_t requested =
+                name == "memalign"
+                    ? regs[1]
+                    : regs[0];
+
             const std::uint32_t address =
-                mem.AllocateHeap(requested, 16);
+                mem.AllocateHeap(
+                    requested,
+                    alignment);
 
             regs[0] = address;
             ++supported_calls;
 
             Append(
-                "import malloc(" +
+                "import " +
+                name +
+                "(" +
                 std::to_string(requested) +
                 ") -> 0x" +
                 JniProbeHex(address));
+            return;
+        }
+
+        if (name == "free") {
+            regs[0] = 0;
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "__cxa_atexit") {
+            ++result.cxa_atexit_calls;
+            ++supported_calls;
+            regs[0] = 0;
+
+            Append(
+                "import __cxa_atexit(func=0x" +
+                JniProbeHex(regs[0]) +
+                ") -> 0");
+            return;
+        }
+
+        if (name == "__cxa_finalize") {
+            ++supported_calls;
+            regs[0] = 0;
+            return;
+        }
+
+        if (name == "__aeabi_memcpy" ||
+            name == "memcpy" ||
+            name == "__aeabi_memmove" ||
+            name == "memmove") {
+
+            const std::uint32_t destination = regs[0];
+            const std::uint32_t source = regs[1];
+            const std::uint32_t size = regs[2];
+
+            auto* dst = mem.Ptr(destination, size);
+            const auto* src = mem.Ptr(source, size);
+
+            if (!dst || !src) {
+                result.message =
+                    name +
+                    " attempted to access outside guest memory.";
+
+                jit->HaltExecution(
+                    Dynarmic::HaltReason::UserDefined2);
+                return;
+            }
+
+            std::memmove(dst, src, size);
+            regs[0] = destination;
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "memcmp") {
+            const std::uint32_t a = regs[0];
+            const std::uint32_t b = regs[1];
+            const std::uint32_t size = regs[2];
+
+            const auto* pa = mem.Ptr(a, size);
+            const auto* pb = mem.Ptr(b, size);
+
+            if (!pa || !pb) {
+                result.message =
+                    "memcmp attempted to access outside guest memory.";
+
+                jit->HaltExecution(
+                    Dynarmic::HaltReason::UserDefined2);
+                return;
+            }
+
+            regs[0] =
+                static_cast<std::uint32_t>(
+                    std::memcmp(pa, pb, size));
+
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "strlen") {
+            const std::string value =
+                mem.ReadCStringGuest(
+                    regs[0],
+                    1u << 20);
+
+            regs[0] =
+                static_cast<std::uint32_t>(
+                    value.size());
+
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "strcmp" ||
+            name == "strncmp") {
+
+            const std::string a =
+                mem.ReadCStringGuest(
+                    regs[0],
+                    name == "strncmp"
+                        ? regs[2]
+                        : 1u << 20);
+
+            const std::string b =
+                mem.ReadCStringGuest(
+                    regs[1],
+                    name == "strncmp"
+                        ? regs[2]
+                        : 1u << 20);
+
+            int comparison = 0;
+
+            if (name == "strncmp") {
+                comparison =
+                    std::strncmp(
+                        a.c_str(),
+                        b.c_str(),
+                        regs[2]);
+            } else {
+                comparison =
+                    std::strcmp(
+                        a.c_str(),
+                        b.c_str());
+            }
+
+            regs[0] =
+                static_cast<std::uint32_t>(
+                    comparison);
+
+            ++supported_calls;
             return;
         }
 
