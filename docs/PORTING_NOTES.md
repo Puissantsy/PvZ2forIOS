@@ -237,3 +237,37 @@ The crash-persistent v10.2 log isolated the native crash to the very first non-n
 Disassembly of the constructor path shows ARM exclusive-access synchronization (`LDREX` / `STREX`, with barriers). Earlier probes did not require this path, so the Dynarmic A32 runtime had been created without a global `ExclusiveMonitor`.
 
 v10.3 configures a single-processor `Dynarmic::ExclusiveMonitor` for both the smoke and PvZ2 runtimes and assigns `processor_id = 0`. This gives ARMv7 exclusive loads/stores the runtime state they require. The Bundle-ID-only StikDebug launch and crash-persistent constructor checkpoints remain enabled.
+
+
+## On-device v11.2 result
+
+On 2026-09-18, the physical iPad 10th generation / A14 / iPadOS 26.6.1 completed the entire Android-style native shared-library startup for PvZ2 1.5.252752 under Dynarmic.
+
+Verified on-device:
+
+- all 619 `.init_array` slots were processed;
+- all 618 non-null constructors returned successfully;
+- `__cxa_atexit` was exercised 1,252 times;
+- the bulk Android ABI compatibility pack eliminated the previous one-import-at-a-time constructor failures;
+- `pthread_create` worker starts are deferred during constructor probing so long-lived background loops do not block startup;
+- after all constructors, the real `JNI_OnLoad` executed again and returned `0x00010004` (`JNI_VERSION_1_4`);
+- `Native_GameAppInitialize` remained registered at guest `0x109EAF60`.
+
+This proves the full ARMv7 native library can reach a stable post-linker / post-constructor / post-JNI_OnLoad state on A14.
+
+## v12 GameAppInitialize probe
+
+v12 continues from that validated state directly into the registered `Native_GameAppInitialize`.
+
+The exact registered JNI signature recovered from the original PvZ2 binary is:
+
+`(Lcom/popcap/SexyAppFramework/AndroidSurfaceView;Lcom/popcap/SexyAppFramework/AndroidHttpProxy;Lcom/popcap/SexyAppFramework/AndroidFacebookDriver;Lcom/popcap/SexyAppFramework/cloud/Cloud;Lcom/popcap/SexyAppFramework/GooglePlay/GooglePlayConnect;Lcom/popcap/SexyAppFramework/GooglePlay/GooglePlayAchievements;Lcom/popcap/SexyAppFramework/GooglePlay/GooglePlayLeaderboard;Lcom/popcap/SexyAppFramework/AndroidNotification;)Z`
+
+The probe supplies controlled synthetic handles for those eight Android objects and implements the JNI operations used directly by the top-level function:
+
+- `NewGlobalRef`;
+- `GetObjectClass`;
+- `GetMethodID`;
+- `RegisterNatives`.
+
+Every other JNIEnv function-table slot is populated with a controlled diagnostic trampoline, so the first missing Java/JNI capability reports its table slot and byte offset instead of jumping through a null pointer.
