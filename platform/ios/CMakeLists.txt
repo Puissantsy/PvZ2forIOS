@@ -32,6 +32,7 @@ FetchContent_MakeAvailable(dynarmic)
 add_executable(PvZ2forIOS MACOSX_BUNDLE
     src/main.mm
     src/dynarmic_smoke.cpp
+    src/pvz2_apk_probe.cpp
 )
 
 set_target_properties(PvZ2forIOS PROPERTIES
@@ -53,6 +54,7 @@ find_library(COREFOUNDATION_FRAMEWORK CoreFoundation REQUIRED)
 find_library(SECURITY_FRAMEWORK Security REQUIRED)
 find_library(QUARTZCORE_FRAMEWORK QuartzCore REQUIRED)
 find_library(IOKIT_FRAMEWORK IOKit REQUIRED)
+find_library(ZLIB_LIBRARY z REQUIRED)
 
 target_link_libraries(PvZ2forIOS PRIVATE
     dynarmic
@@ -62,4 +64,5 @@ target_link_libraries(PvZ2forIOS PRIVATE
     ${SECURITY_FRAMEWORK}
     ${QUARTZCORE_FRAMEWORK}
     ${IOKIT_FRAMEWORK}
+    ${ZLIB_LIBRARY}
 )
