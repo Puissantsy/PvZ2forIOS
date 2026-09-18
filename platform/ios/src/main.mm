@@ -234,7 +234,7 @@ NSString *NSStringFromStd(
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — Full Load Probe v10.2";
+        @"PvZ2forIOS — Full Load Probe v10.3";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -243,7 +243,7 @@ NSString *NSStringFromStd(
         NO;
 
     title.text =
-        @"PvZ2forIOS — full Android library startup diagnostic v10.2";
+        @"PvZ2forIOS — full Android library startup diagnostic v10.3";
 
     title.font =
         [UIFont
@@ -260,7 +260,7 @@ NSString *NSStringFromStd(
 
     explanation.text =
         @"v9 proved the real 2013 PvZ2 JNI_OnLoad completes under Dynarmic and returns JNI 1.4. "
-         @"v10.2 fixes JIT acquisition by letting StikDebug launch the final process by Bundle ID, then runs the Android dynamic-linker phase with crash-persistent constructor checkpoints: "
+         @"v10.3 keeps the Bundle-ID JIT flow and fixes ARM exclusive atomics used by PvZ2 constructors by configuring Dynarmic's ExclusiveMonitor: "
          @"it executes every non-null .init_array constructor in order, preserving guest global state, "
          @"then runs JNI_OnLoad again in that initialized process. Unsupported Android/libc imports halt safely with their name.";
 
@@ -439,7 +439,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 full-load probe v10.2 session started; PID=%d ===",
+                    @"=== PvZ2 full-load probe v10.3 session started; PID=%d ===",
                     getpid()]];
 
     [self
@@ -758,7 +758,7 @@ NSString *NSStringFromStd(
 
     [self
         appendUI:
-            @"STEP 3: select the same original PvZ2 1.5.252752 APK. v10.2 will execute all non-null .init_array constructors, persist every constructor checkpoint, then JNI_OnLoad."];
+            @"STEP 3: select the same original PvZ2 1.5.252752 APK. v10.3 will execute all non-null .init_array constructors with LDREX/STREX support, persist every checkpoint, then JNI_OnLoad."];
 
     [self
         presentViewController:
