@@ -30,7 +30,11 @@ The essential JNI lifecycle functions for 1.5.252752 have been located and are e
 
 ## iPadOS 26 JIT
 
-iPadOS 26 requires more than attaching a debugger: executable JIT regions must cooperate with the iOS 26 debug/JIT protocol. The plan is to adapt the proven iOS Dynarmic approach used by modern 32-bit iOS compatibility projects and integrate with StikDebug/StikJIT rather than inventing a new JIT mechanism.
+The target iPad (10th generation / A14) is a **Non-TXM** device. On the actual iPad running iPadOS 26.6.1, the project has confirmed that StikDebug debugger attachment enables a dual-mapped JIT path: an RX mapping plus an RW alias can be created, written, and executed successfully. The on-device probe generated ARM64 code at runtime and returned the expected value `42`.
+
+TXM/SPTM devices require the newer per-region StikDebug/StikJIT breakpoint protocol, but that path is not required on this A14 target.
+
+The next milestone is validating Dynarmic itself with a tiny ARMv7 guest program before loading the real PvZ2 ELF.
 
 ## Initial milestones
 
