@@ -234,7 +234,7 @@ NSString *NSStringFromStd(
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — Full Load Probe v10.1";
+        @"PvZ2forIOS — Full Load Probe v10.2";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -243,7 +243,7 @@ NSString *NSStringFromStd(
         NO;
 
     title.text =
-        @"PvZ2forIOS — full Android library startup diagnostic v10.1";
+        @"PvZ2forIOS — full Android library startup diagnostic v10.2";
 
     title.font =
         [UIFont
@@ -260,7 +260,7 @@ NSString *NSStringFromStd(
 
     explanation.text =
         @"v9 proved the real 2013 PvZ2 JNI_OnLoad completes under Dynarmic and returns JNI 1.4. "
-         @"v10.1 reproduces the Android dynamic-linker phase with crash-persistent constructor checkpoints: "
+         @"v10.2 fixes JIT acquisition by letting StikDebug launch the final process by Bundle ID, then runs the Android dynamic-linker phase with crash-persistent constructor checkpoints: "
          @"it executes every non-null .init_array constructor in order, preserving guest global state, "
          @"then runs JNI_OnLoad again in that initialized process. Unsupported Android/libc imports halt safely with their name.";
 
@@ -439,7 +439,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 full-load probe v10 session started; PID=%d ===",
+                    @"=== PvZ2 full-load probe v10.2 session started; PID=%d ===",
                     getpid()]];
 
     [self
@@ -600,15 +600,6 @@ NSString *NSStringFromStd(
                     @"bundle-id"
                 value:
                     bundleID],
-
-            [NSURLQueryItem
-                queryItemWithName:
-                    @"pid"
-                value:
-                    [NSString
-                        stringWithFormat:
-                            @"%d",
-                            getpid()]],
         ];
 
     NSURL *url =
@@ -623,7 +614,7 @@ NSString *NSStringFromStd(
 
     [self
         appendUI:
-            @"STEP 1: requesting Non-TXM debugger attach/detach. No JIT script is sent."];
+            @"STEP 1: asking StikDebug to launch the final app process by Bundle ID under the debugger. No PID is supplied and no JIT script is sent."];
 
     [[UIApplication sharedApplication]
         openURL:url
@@ -638,7 +629,7 @@ NSString *NSStringFromStd(
                         [self
                             appendUI:
                                 success
-                                    ? @"STEP 1: StikDebug opened. Return here; CS_DEBUGGED=YES means ready."
+                                    ? @"STEP 1: StikDebug opened. It will relaunch PvZ2forIOS itself; when the new instance shows CS_DEBUGGED=YES, that final PID is ready."
                                     : @"STEP 1 FAILED: iPadOS could not open StikDebug."];
                     });
             }];
@@ -767,7 +758,7 @@ NSString *NSStringFromStd(
 
     [self
         appendUI:
-            @"STEP 3: select the same original PvZ2 1.5.252752 APK. v10.1 will execute all non-null .init_array constructors, persist every constructor checkpoint, then JNI_OnLoad."];
+            @"STEP 3: select the same original PvZ2 1.5.252752 APK. v10.2 will execute all non-null .init_array constructors, persist every constructor checkpoint, then JNI_OnLoad."];
 
     [self
         presentViewController:
