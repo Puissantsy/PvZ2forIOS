@@ -8,6 +8,7 @@
 #include <cctype>
 #include <cwctype>
 #include <cstdlib>
+#include <cmath>
 #include <limits>
 #include <sstream>
 #include <string>
@@ -1630,6 +1631,178 @@ public:
                 static_cast<std::uint32_t>(
                     comparison);
 
+            ++supported_calls;
+            return;
+        }
+
+        // Soft-float AAPCS math bridge used by Android armeabi-v7a.
+        // Float values travel in one core register; doubles use rN/rN+1.
+        auto read_float_reg =
+            [&](std::size_t index) {
+                float value = 0.0f;
+                const std::uint32_t bits = regs[index];
+                std::memcpy(
+                    &value,
+                    &bits,
+                    sizeof(value));
+                return value;
+            };
+
+        auto write_float_reg =
+            [&](float value) {
+                std::uint32_t bits = 0;
+                std::memcpy(
+                    &bits,
+                    &value,
+                    sizeof(bits));
+                regs[0] = bits;
+            };
+
+        auto read_double_regs =
+            [&](std::size_t index) {
+                const std::uint64_t bits =
+                    static_cast<std::uint64_t>(regs[index]) |
+                    (static_cast<std::uint64_t>(
+                        regs[index + 1]) << 32);
+                double value = 0.0;
+                std::memcpy(
+                    &value,
+                    &bits,
+                    sizeof(value));
+                return value;
+            };
+
+        auto write_double_regs =
+            [&](double value) {
+                std::uint64_t bits = 0;
+                std::memcpy(
+                    &bits,
+                    &value,
+                    sizeof(bits));
+                regs[0] =
+                    static_cast<std::uint32_t>(bits);
+                regs[1] =
+                    static_cast<std::uint32_t>(
+                        bits >> 32);
+            };
+
+        if (name == "acosf" ||
+            name == "asinf" ||
+            name == "ceilf" ||
+            name == "cosf" ||
+            name == "floorf" ||
+            name == "sinf" ||
+            name == "sqrtf" ||
+            name == "tanf") {
+
+            const float x =
+                read_float_reg(0);
+            float answer = 0.0f;
+
+            if (name == "acosf") answer = std::acos(x);
+            else if (name == "asinf") answer = std::asin(x);
+            else if (name == "ceilf") answer = std::ceil(x);
+            else if (name == "cosf") answer = std::cos(x);
+            else if (name == "floorf") answer = std::floor(x);
+            else if (name == "sinf") answer = std::sin(x);
+            else if (name == "sqrtf") answer = std::sqrt(x);
+            else if (name == "tanf") answer = std::tan(x);
+
+            write_float_reg(answer);
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "atan2f" ||
+            name == "fmodf" ||
+            name == "powf") {
+
+            const float a =
+                read_float_reg(0);
+            const float b =
+                read_float_reg(1);
+            float answer = 0.0f;
+
+            if (name == "atan2f") answer = std::atan2(a, b);
+            else if (name == "fmodf") answer = std::fmod(a, b);
+            else if (name == "powf") answer = std::pow(a, b);
+
+            write_float_reg(answer);
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "acos" ||
+            name == "ceil" ||
+            name == "cos" ||
+            name == "exp" ||
+            name == "fabs" ||
+            name == "floor" ||
+            name == "log10" ||
+            name == "sin" ||
+            name == "sqrt" ||
+            name == "tan") {
+
+            const double x =
+                read_double_regs(0);
+            double answer = 0.0;
+
+            if (name == "acos") answer = std::acos(x);
+            else if (name == "ceil") answer = std::ceil(x);
+            else if (name == "cos") answer = std::cos(x);
+            else if (name == "exp") answer = std::exp(x);
+            else if (name == "fabs") answer = std::fabs(x);
+            else if (name == "floor") answer = std::floor(x);
+            else if (name == "log10") answer = std::log10(x);
+            else if (name == "sin") answer = std::sin(x);
+            else if (name == "sqrt") answer = std::sqrt(x);
+            else if (name == "tan") answer = std::tan(x);
+
+            write_double_regs(answer);
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "atan2" ||
+            name == "fmod" ||
+            name == "pow") {
+
+            const double a =
+                read_double_regs(0);
+            const double b =
+                read_double_regs(2);
+            double answer = 0.0;
+
+            if (name == "atan2") answer = std::atan2(a, b);
+            else if (name == "fmod") answer = std::fmod(a, b);
+            else if (name == "pow") answer = std::pow(a, b);
+
+            write_double_regs(answer);
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "modf") {
+            const double x =
+                read_double_regs(0);
+            double integer_part = 0.0;
+            const double fraction =
+                std::modf(
+                    x,
+                    &integer_part);
+
+            if (regs[2] != 0) {
+                std::uint64_t bits = 0;
+                std::memcpy(
+                    &bits,
+                    &integer_part,
+                    sizeof(bits));
+                mem.Write64Guest(
+                    regs[2],
+                    bits);
+            }
+
+            write_double_regs(fraction);
             ++supported_calls;
             return;
         }
