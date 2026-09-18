@@ -2315,7 +2315,9 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                 static_cast<std::uint32_t>(halt);
 
             if (callbacks.control_returned &&
-                halt == Dynarmic::HaltReason::UserDefined1) {
+                Dynarmic::Has(
+                    halt,
+                    Dynarmic::HaltReason::UserDefined1)) {
 
                 ++result.constructors_completed;
                 jit.ClearHalt(
