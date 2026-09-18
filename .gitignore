@@ -1,0 +1,47 @@
+# Game files / proprietary assets
+*.apk
+*.obb
+libPVZ2.so
+game/
+Game/
+
+# Apple signing / device-private material
+*.mobileprovision
+*.p12
+*.cer
+*.pairing
+*.mobiledevicepairing
+pairing*
+xcuserdata/
+*.xcuserstate
+
+# Xcode / Apple build output
+DerivedData/
+.build/
+build/
+build-*/
+dist/
+*.ipa
+*.app
+*.dSYM
+*.dSYM.zip
+
+# CMake / native build output
+CMakeCache.txt
+CMakeFiles/
+cmake-build-*/
+compile_commands.json
+.ninja_*
+build.ninja
+
+# Local config / logs
+config.ini
+*.log
+.env
+.env.*
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
