@@ -79,3 +79,11 @@ Send only:
 Do not send a pairing file, signing certificate, provisioning profile, Apple account credentials, or device serial number.
 
 Once this milestone passes, the next build will replace the two-instruction probe with a minimal Dynarmic A32 guest test, then with loading/identification of the PvZ2 1.5 `libPVZ2.so`.
+
+## iPad 10th generation / StikDebug TXM override
+
+StikDebug's current iOS 26 hardware heuristic only auto-runs JIT scripts on iPads whose hardware identifier parses to iPad14,5 or newer. The iPad (10th generation) reports as iPad13,18/iPad13,19, so StikDebug will attach the debugger but skip the JS callback unless its override is enabled.
+
+For this device, open **StikDebug → Settings → Behavior** and enable **Always Run Scripts** before running the PvZ2forIOS probe. This sets StikDebug's TXM override and allows the custom iOS 26 JIT script to execute.
+
+Without this setting, `CS_DEBUGGED` can briefly become YES while `brk #0xf00d` still terminates the process because no JIT script is listening for it.
