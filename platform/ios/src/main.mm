@@ -234,7 +234,7 @@ NSString *NSStringFromStd(
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — First Frame Probe v15";
+        @"PvZ2forIOS — Memory Fault Probe v16";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -243,7 +243,7 @@ NSString *NSStringFromStd(
         NO;
 
     title.text =
-        @"PvZ2forIOS — lifecycle + first frame probe v15";
+        @"PvZ2forIOS — lifecycle + memory fault probe v16";
 
     title.font =
         [UIFont
@@ -259,8 +259,8 @@ NSString *NSStringFromStd(
         NO;
 
     explanation.text =
-        @"v14 proved the real Native_GameAppInitialize completes on the A14 and returns JNI_TRUE after the full 618-constructor + JNI_OnLoad sequence. "
-         @"v15 immediately continues through the real PvZ2 lifecycle and rendering entry points recovered from the original 1.5 binary: applicationWillFinishLaunching, applicationDidFinishLaunching, applicationWillBecomeForeground, applicationDidBecomeActive, onSurfaceCreated, onSurfaceChanged, and finally one real Native_onDrawFrame call. The GLES layer is still probe/no-op, so this milestone proves frame execution before real presentation.";
+        @"v15 reached the lifecycle path after the validated 618-constructor + JNI_OnLoad + Native_GameAppInitialize sequence, then exposed a real __aeabi_memmove guest-memory fault. "
+         @"v16 keeps the same lifecycle/first-frame probe but instruments copy faults with the exact phase, dst/src/size, PC, LR/caller, SP and stack words. It also clears stale probe halt reasons between stages so the next run identifies the real failing call instead of masking it. The GLES layer remains probe/no-op.";
 
     explanation.numberOfLines = 0;
 
@@ -437,7 +437,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 first-frame probe v15 session started; PID=%d ===",
+                    @"=== PvZ2 memory-fault probe v16 session started; PID=%d ===",
                     getpid()]];
 
     [self
@@ -756,7 +756,7 @@ NSString *NSStringFromStd(
 
     [self
         appendUI:
-            @"STEP 3: select the same original PvZ2 1.5.252752 APK. v15 will reproduce the validated full startup and GameAppInitialize, then drive the real application lifecycle, surface creation/change, and one Native_onDrawFrame call."];
+            @"STEP 3: select the same original PvZ2 1.5.252752 APK. v16 will reproduce the validated startup and lifecycle path; if the memory-copy fault recurs it will report the exact phase, addresses, size, caller PC/LR and stack context."];
 
     [self
         presentViewController:
