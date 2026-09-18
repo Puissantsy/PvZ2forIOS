@@ -31,6 +31,7 @@ jobs:
             -DCMAKE_OSX_SYSROOT=iphoneos \
             -DCMAKE_OSX_ARCHITECTURES=arm64 \
             -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
             -DBoost_INCLUDE_DIR="$(brew --prefix boost)/include"
 
       - name: Build unsigned arm64 app
