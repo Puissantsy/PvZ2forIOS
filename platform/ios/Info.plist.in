@@ -7,9 +7,9 @@
     <key>CFBundleDisplayName</key>
     <string>PvZ2forIOS Probe</string>
     <key>CFBundleExecutable</key>
-    <string>${EXECUTABLE_NAME}</string>
+    <string>PvZ2forIOS</string>
     <key>CFBundleIdentifier</key>
-    <string>${PRODUCT_BUNDLE_IDENTIFIER}</string>
+    <string>com.puissantsy.pvz2forios</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
