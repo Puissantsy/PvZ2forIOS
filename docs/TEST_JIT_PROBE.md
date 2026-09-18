@@ -94,3 +94,22 @@ Therefore:
 - do not execute `JIT26PrepareRegion` or `JIT26Detach` on this device.
 
 Probe v6 implements this Non-TXM path.
+
+## Confirmed hardware result — iPad 10th generation (A14), iPadOS 26.6.1
+
+On 2026-09-18, Probe v6 succeeded on the target iPad (10th generation / A14, iPadOS 26.6.1) using the Non-TXM path.
+
+Observed sequence:
+
+- `get-task-allow: YES`
+- `CS_DEBUGGED: YES`
+- 16 KiB RX page allocated successfully
+- `vm_remap` created a separate writable alias successfully
+- writable alias accepted `VM_PROT_READ | VM_PROT_WRITE`
+- generated ARM64 `mov w0, #42; ret` was written through the RW alias
+- instruction cache invalidation completed
+- execution through the RX mapping returned `42`
+
+Result: **classic Non-TXM JIT is confirmed working on the actual target device.** The TXM/StikDebug script path is not required for this hardware.
+
+This clears the JIT substrate milestone. The next validation target is Dynarmic ARM32 → ARM64 execution using the same RX/RW allocator.
