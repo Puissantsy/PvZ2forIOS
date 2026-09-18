@@ -80,10 +80,17 @@ Do not send a pairing file, signing certificate, provisioning profile, Apple acc
 
 Once this milestone passes, the next build will replace the two-instruction probe with a minimal Dynarmic A32 guest test, then with loading/identification of the PvZ2 1.5 `libPVZ2.so`.
 
-## iPad 10th generation / StikDebug TXM override
+## iPad 10th generation / Non-TXM path
 
-StikDebug's current iOS 26 hardware heuristic only auto-runs JIT scripts on iPads whose hardware identifier parses to iPad14,5 or newer. The iPad (10th generation) reports as iPad13,18/iPad13,19, so StikDebug will attach the debugger but skip the JS callback unless its override is enabled.
+The iPad (10th generation, A14; iPad13,18/iPad13,19) is treated by StikDebug/StikJIT as **Non-TXM**.
 
-For this device, open **StikDebug → Settings → Behavior** and enable **Always Run Scripts** before running the PvZ2forIOS probe. This sets StikDebug's TXM override and allows the custom iOS 26 JIT script to execute.
+For Non-TXM devices, StikJIT's integration guide states that attaching and detaching the debugger is enough to enable JIT. The `brk #0xf00d` executable-region protocol is only required where TXM/SPTM is present.
 
-Without this setting, `CS_DEBUGGED` can briefly become YES while `brk #0xf00d` still terminates the process because no JIT script is listening for it.
+Therefore:
+
+- leave **StikDebug → Settings → Behavior → Always Run Scripts** **OFF**;
+- request JIT with bundle ID + current PID and **no script**;
+- after `CS_DEBUGGED` becomes YES, allocate an RX mapping and create a separate RW mirror with `vm_remap`;
+- do not execute `JIT26PrepareRegion` or `JIT26Detach` on this device.
+
+Probe v6 implements this Non-TXM path.
