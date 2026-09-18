@@ -678,7 +678,7 @@ namespace {
 constexpr std::uint32_t kJniProbeStackBase = 0x20000000u;
 constexpr std::uint32_t kJniProbeStackSize = 0x00100000u;
 constexpr std::uint32_t kJniProbeHeapBase = 0x30000000u;
-constexpr std::uint32_t kJniProbeHeapSize = 0x00800000u;
+constexpr std::uint32_t kJniProbeHeapSize = 0x04000000u;
 constexpr std::uint32_t kJniProbeTrampolineBase = 0x40000000u;
 constexpr std::uint32_t kJniProbeTrampolineSize = 0x00100000u;
 constexpr std::uint32_t kJniProbeJniBase = 0x50000000u;
@@ -906,6 +906,7 @@ public:
 
     std::uint32_t heap_next = 0;
     std::uint32_t object_next = 0;
+    std::unordered_map<std::uint32_t, std::uint32_t> heap_allocations;
 
     const std::uint8_t* Ptr(
         std::uint32_t address,
@@ -1015,7 +1016,55 @@ public:
         }
 
         heap_next = aligned + size;
-        return kJniProbeHeapBase + aligned;
+        const std::uint32_t address =
+            kJniProbeHeapBase + aligned;
+
+        heap_allocations[address] = size;
+        return address;
+    }
+
+    std::uint32_t ReallocateHeap(
+        std::uint32_t old_address,
+        std::uint32_t new_size) {
+
+        if (old_address == 0) {
+            return AllocateHeap(new_size, 16);
+        }
+
+        if (new_size == 0) {
+            heap_allocations.erase(old_address);
+            return 0;
+        }
+
+        const std::uint32_t new_address =
+            AllocateHeap(new_size, 16);
+
+        if (!new_address) {
+            return 0;
+        }
+
+        const auto it =
+            heap_allocations.find(old_address);
+
+        if (it != heap_allocations.end()) {
+            const std::uint32_t copy_size =
+                std::min(it->second, new_size);
+
+            auto* dst = Ptr(new_address, copy_size);
+            const auto* src = Ptr(old_address, copy_size);
+
+            if (dst && src) {
+                std::memmove(dst, src, copy_size);
+            }
+
+            heap_allocations.erase(it);
+        }
+
+        return new_address;
+    }
+
+    void FreeHeap(std::uint32_t address) {
+        heap_allocations.erase(address);
     }
 
     std::uint32_t AllocateObject(
@@ -1333,7 +1382,19 @@ public:
         }
 
         if (name == "free") {
+            mem.FreeHeap(regs[0]);
             regs[0] = 0;
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "realloc") {
+            const std::uint32_t address =
+                mem.ReallocateHeap(
+                    regs[0],
+                    regs[1]);
+
+            regs[0] = address;
             ++supported_calls;
             return;
         }
