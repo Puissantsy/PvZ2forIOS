@@ -1210,6 +1210,44 @@ public:
         mem.Write64Guest(address, value);
     }
 
+    // Dynarmic's callback-only exclusive-memory path calls these methods for
+    // STREX/STREXB/STREXH/STREXD. UserCallbacks defaults to returning false,
+    // which makes every guest STREX report failure and causes Android atomic
+    // retry loops to spin forever. This probe is single-CPU/single-threaded;
+    // Dynarmic's ExclusiveMonitor already validates the reservation, so once
+    // we reach this callback the write can commit successfully.
+    bool MemoryWriteExclusive8(
+        std::uint32_t address,
+        std::uint8_t value,
+        [[maybe_unused]] std::uint8_t expected) override {
+        mem.Write8Guest(address, value);
+        return true;
+    }
+
+    bool MemoryWriteExclusive16(
+        std::uint32_t address,
+        std::uint16_t value,
+        [[maybe_unused]] std::uint16_t expected) override {
+        mem.Write16Guest(address, value);
+        return true;
+    }
+
+    bool MemoryWriteExclusive32(
+        std::uint32_t address,
+        std::uint32_t value,
+        [[maybe_unused]] std::uint32_t expected) override {
+        mem.Write32Guest(address, value);
+        return true;
+    }
+
+    bool MemoryWriteExclusive64(
+        std::uint32_t address,
+        std::uint64_t value,
+        [[maybe_unused]] std::uint64_t expected) override {
+        mem.Write64Guest(address, value);
+        return true;
+    }
+
     void InterpreterFallback(
         std::uint32_t pc,
         std::size_t count) override {
@@ -1709,7 +1747,13 @@ public:
         if (ticks >= ticks_left) {
             ticks_left = 0;
             result.message =
-                "JNI_OnLoad exceeded the probe instruction budget.";
+                return_mode == ReturnMode::Constructor
+                    ? ("Constructor[" +
+                       std::to_string(current_constructor_index) +
+                       "] exceeded the probe instruction budget at guest PC 0x" +
+                       JniProbeHex(jit ? jit->Regs()[15] : 0u) +
+                       ".")
+                    : "JNI_OnLoad exceeded the probe instruction budget.";
 
             if (jit) {
                 jit->HaltExecution(
