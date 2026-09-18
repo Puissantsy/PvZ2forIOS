@@ -23,6 +23,14 @@ Extracted from `lib/armeabi-v7a/libPVZ2.so`.
 - SHA-256: `f5ae581d56d5548ed18639aac19470cc67dab6a251c6cedff7cfd841e8ce0e9f`
 - Format: ELF32, little-endian, ARM, EABI5, stripped
 - Dynamic dependencies observed: `libz.so`, `liblog.so`, `libGLESv2.so`, `libGLESv1_CM.so`, `libOpenSLES.so`, `libc.so`, `libm.so`, `libstdc++.so`, `libdl.so`
+- ELF file size: `13,950,396` bytes
+- Loadable guest image end: `0x00DF9700`
+- `PT_LOAD` segments: 2
+- `JNI_OnLoad`: `0x009EAD80`
+- `R_ARM_RELATIVE`: 48,754
+- `R_ARM_GLOB_DAT`: 13
+- `R_ARM_JUMP_SLOT`: 316
+- `.init_array` entries: 619
 
 ## PvZ2 1.5.252752 lifecycle symbols
 
@@ -124,15 +132,24 @@ References:
 - Applesauce: https://github.com/johnny901901901/Applesauce
 - Applesauce Dynarmic fork/branch: https://github.com/johnny901901901/dynarmic/tree/ios-hyperhle-experiment
 
+## Validated runtime milestones
+
+On the physical iPad 10th generation / A14:
+
+1. StikDebug attachment produces `CS_DEBUGGED=YES` on the Non-TXM target.
+2. Dual-mapped writable/executable JIT memory works.
+3. Dynarmic A32 translated and executed a controlled ARMv7 guest program and returned `R0=42`.
+4. The v8 loader probe builds successfully and can import the user's APK directly from Files without bundling game data.
+
 ## Next engineering milestone
 
-Before touching rendering/audio, build a minimal iOS arm64 host that can:
+The loader now needs to move from structural ELF mapping to executable PvZ2 boot:
 
-1. start as a normal signed/sideloaded iPadOS app;
-2. initialize an iOS-26-compatible Dynarmic A32 code cache;
-3. load the supplied ELF32 `libPVZ2.so` from the app's Documents/Application Support area;
-4. identify it as PvZ2 1.5.252752 using the two verified fingerprints;
-5. execute a tiny controlled guest path and emit logs;
-6. only then progress to JNI/lifecycle boot and GLES presentation.
+1. validate the real 1.5.252752 APK profile on-device;
+2. resolve `R_ARM_GLOB_DAT` and `R_ARM_JUMP_SLOT` imports to guest trampolines;
+3. implement the first libc/liblog/libm/zlib shims needed by startup;
+4. create minimal guest-side JavaVM/JNIEnv tables;
+5. enter `JNI_OnLoad` under Dynarmic and log the first unsupported Android/JNI call;
+6. then advance toward `Native_GameAppInitialize`, GLES presentation, audio, input and filesystem support.
 
-Keeping these milestones separate will make JIT failures distinguishable from PvZ2 compatibility failures.
+Keeping these milestones separate makes loader, JIT, JNI and rendering failures distinguishable.
