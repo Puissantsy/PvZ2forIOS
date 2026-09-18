@@ -1,0 +1,67 @@
+name: Build iOS JIT Probe
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "platform/ios/**"
+      - ".github/workflows/build-ios-probe.yml"
+
+jobs:
+  build:
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          cmake --version
+
+      - name: Configure iOS project
+        run: |
+          cmake -S platform/ios -B build-ios -G Xcode \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_SYSROOT=iphoneos \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build unsigned arm64 app
+        run: |
+          cmake --build build-ios --config Release --target PvZ2forIOS -- \
+            -sdk iphoneos \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO
+
+      - name: Inspect build
+        run: |
+          APP="$(find build-ios -type d -name 'PvZ2forIOS.app' -print -quit)"
+          if [ -z "$APP" ]; then
+            echo "PvZ2forIOS.app was not produced"
+            exit 1
+          fi
+          echo "APP=$APP" >> "$GITHUB_ENV"
+          file "$APP/PvZ2forIOS"
+          plutil -p "$APP/Info.plist"
+
+      - name: Package unsigned IPA
+        run: |
+          rm -rf package
+          mkdir -p package/Payload
+          cp -R "$APP" package/Payload/PvZ2forIOS.app
+          (
+            cd package
+            zip -qry ../PvZ2forIOS-JIT-Probe-unsigned.ipa Payload
+          )
+          shasum -a 256 PvZ2forIOS-JIT-Probe-unsigned.ipa | tee PvZ2forIOS-JIT-Probe-unsigned.ipa.sha256
+
+      - name: Upload unsigned IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: PvZ2forIOS-JIT-Probe-unsigned
+          path: |
+            PvZ2forIOS-JIT-Probe-unsigned.ipa
+            PvZ2forIOS-JIT-Probe-unsigned.ipa.sha256
+          if-no-files-found: error
