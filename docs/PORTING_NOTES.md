@@ -153,3 +153,40 @@ The loader now needs to move from structural ELF mapping to executable PvZ2 boot
 6. then advance toward `Native_GameAppInitialize`, GLES presentation, audio, input and filesystem support.
 
 Keeping these milestones separate makes loader, JIT, JNI and rendering failures distinguishable.
+
+
+## On-device v8 result
+
+On 2026-09-18, the real PvZ2 1.5.252752 APK loader probe succeeded on the target iPad 10th generation / A14 / iPadOS 26.6.1.
+
+Confirmed on-device:
+
+- exact APK/ELF profile matched;
+- `PT_LOAD=2`;
+- guest base `0x10000000`;
+- mapped image size `0x00DF9700`;
+- all `48,754` `R_ARM_RELATIVE` relocations applied successfully;
+- `R_ARM_GLOB_DAT=13`;
+- `R_ARM_JUMP_SLOT=316`;
+- dynamic symbol count `7031`;
+- undefined imports `328`;
+- `DT_NEEDED=9`;
+- `.init_array=619`;
+- `SONAME=libPVZ2.so`;
+- `JNI_OnLoad=0x009EAD80` / guest `0x109EAD80`.
+
+The preceding v7 Dynarmic probe also succeeded on the same device, returning `R0=42` from translated ARMv7 guest code.
+
+## v9 JNI_OnLoad probe
+
+v9 enters the real `JNI_OnLoad` under Dynarmic with a deliberately small guest runtime:
+
+- all imported function relocations point to ARM guest trampolines;
+- unknown imports halt cleanly and identify the first missing shim instead of crashing;
+- `malloc`, `__aeabi_memset`/`memset`, and Android log calls have initial shims;
+- a minimal guest `JavaVM` implements `GetEnv`;
+- a minimal guest `JNIEnv` implements `FindClass` and `RegisterNatives`;
+- `RegisterNatives` logs the native method names, signatures, and guest function pointers observed in the real PvZ2 tables;
+- a controlled return trampoline captures the actual JNI version returned by `JNI_OnLoad`.
+
+The expected successful return for this build is `JNI_VERSION_1_4` (`0x00010004`).
