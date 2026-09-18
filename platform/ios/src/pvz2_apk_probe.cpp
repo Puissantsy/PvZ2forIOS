@@ -1226,6 +1226,7 @@ public:
     std::uint32_t current_constructor_index = 0;
     std::uint32_t current_constructor_address = 0;
     std::uint32_t next_pthread_key = 1;
+    std::uint32_t guest_errno_address = 0;
     std::unordered_map<std::uint32_t, std::uint32_t> pthread_specific;
     std::unordered_map<std::uint32_t, z_stream> zstreams;
     std::unordered_map<std::uint32_t, bool> zstream_deflate_mode;
@@ -1460,6 +1461,101 @@ public:
         }
 
         const std::string& name = binding->second.name;
+
+        if (name == "__errno") {
+            if (guest_errno_address == 0) {
+                guest_errno_address =
+                    mem.AllocateObject(4, 4);
+
+                if (guest_errno_address) {
+                    mem.Write32Guest(
+                        guest_errno_address,
+                        0);
+                }
+            }
+
+            regs[0] =
+                guest_errno_address;
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "__gnu_Unwind_Find_exidx") {
+            if (regs[1]) {
+                mem.Write32Guest(
+                    regs[1],
+                    0);
+            }
+
+            regs[0] = 0;
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "__android_log_assert") {
+            const std::string condition =
+                mem.ReadCStringGuest(
+                    regs[0],
+                    256);
+            const std::string tag =
+                mem.ReadCStringGuest(
+                    regs[1],
+                    128);
+            const std::string format =
+                mem.ReadCStringGuest(
+                    regs[2],
+                    512);
+
+            Append(
+                "import __android_log_assert condition=\"" +
+                condition +
+                "\" tag=\"" +
+                tag +
+                "\" format=\"" +
+                format +
+                "\" (suppressed during probe)");
+
+            regs[0] = 0;
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "strerror") {
+            const char* host =
+                std::strerror(
+                    static_cast<int>(regs[0]));
+
+            const std::string message =
+                host ? host : "Unknown error";
+
+            const std::uint32_t guest =
+                mem.AllocateObject(
+                    static_cast<std::uint32_t>(
+                        message.size() + 1),
+                    1);
+
+            if (guest) {
+                for (std::size_t i = 0;
+                     i < message.size();
+                     ++i) {
+                    mem.Write8Guest(
+                        guest +
+                            static_cast<std::uint32_t>(i),
+                        static_cast<std::uint8_t>(
+                            message[i]));
+                }
+
+                mem.Write8Guest(
+                    guest +
+                        static_cast<std::uint32_t>(
+                            message.size()),
+                    0);
+            }
+
+            regs[0] = guest;
+            ++supported_calls;
+            return;
+        }
 
         if (name == "malloc" ||
             name == "memalign") {
