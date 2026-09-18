@@ -1238,10 +1238,21 @@ public:
     std::uint32_t next_synthetic_thread = 1;
     std::uint32_t next_synthetic_class = 1;
     std::uint32_t next_synthetic_method = 1;
+    std::uint32_t next_synthetic_field = 1;
+    std::uint32_t next_synthetic_object = 1;
     std::uint32_t next_gl_object = 1;
     std::uint32_t guest_errno_address = 0;
     std::unordered_set<std::string> fallback_logged;
     std::unordered_map<std::uint32_t, std::uint32_t> pthread_specific;
+    std::unordered_map<std::uint32_t, std::string> jni_method_names;
+    std::unordered_map<std::uint32_t, std::string> jni_method_signatures;
+    std::unordered_map<std::uint32_t, std::string> jni_strings;
+    std::unordered_map<std::uint32_t, std::uint32_t> jni_array_lengths;
+    std::unordered_map<std::uint32_t, std::uint32_t> jni_array_data;
+    std::unordered_map<std::uint32_t, std::uint32_t> jni_array_element_sizes;
+    std::unordered_map<std::uint32_t, std::vector<std::uint32_t>> jni_object_arrays;
+    std::unordered_map<std::uint32_t, std::uint32_t> jni_direct_buffer_address;
+    std::unordered_map<std::uint32_t, std::uint64_t> jni_direct_buffer_capacity;
     std::unordered_map<std::uint32_t, z_stream> zstreams;
     std::unordered_map<std::uint32_t, bool> zstream_deflate_mode;
 
@@ -1425,6 +1436,11 @@ public:
             const std::uint32_t method_id =
                 0x54000000u +
                 (next_synthetic_method++ * 0x100u);
+
+            jni_method_names[method_id] =
+                method_name;
+            jni_method_signatures[method_id] =
+                signature;
 
             regs[0] = method_id;
 
