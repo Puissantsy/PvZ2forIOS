@@ -1811,6 +1811,971 @@ public:
         }
     }
 
+    std::string NormalizeVirtualAssetKey(
+        std::string path) const {
+
+        constexpr char kAssetPrefix[] =
+            "ASSET:";
+
+        if (path.rfind(kAssetPrefix, 0) == 0) {
+            path.erase(
+                0,
+                sizeof(kAssetPrefix) - 1u);
+        }
+
+        while (path.rfind("./", 0) == 0) {
+            path.erase(0, 2);
+        }
+
+        while (!path.empty() &&
+               path.front() == '/') {
+            path.erase(path.begin());
+        }
+
+        std::transform(
+            path.begin(),
+            path.end(),
+            path.begin(),
+            [](unsigned char ch) {
+                if (ch == '\\') {
+                    return '/';
+                }
+
+                return
+                    static_cast<char>(
+                        std::toupper(ch));
+            });
+
+        return path;
+    }
+
+    bool ReadObbU24(
+        std::uint64_t offset,
+        std::uint32_t& value) const {
+
+        if (obb_data == nullptr ||
+            offset + 3u > obb_size) {
+            return false;
+        }
+
+        value =
+            static_cast<std::uint32_t>(
+                obb_data[offset]) |
+            (static_cast<std::uint32_t>(
+                 obb_data[offset + 1u])
+             << 8u) |
+            (static_cast<std::uint32_t>(
+                 obb_data[offset + 2u])
+             << 16u);
+
+        return true;
+    }
+
+    bool ReadObbU32(
+        std::uint64_t offset,
+        std::uint32_t& value) const {
+
+        if (obb_data == nullptr ||
+            offset + 4u > obb_size) {
+            return false;
+        }
+
+        value =
+            static_cast<std::uint32_t>(
+                obb_data[offset]) |
+            (static_cast<std::uint32_t>(
+                 obb_data[offset + 1u])
+             << 8u) |
+            (static_cast<std::uint32_t>(
+                 obb_data[offset + 2u])
+             << 16u) |
+            (static_cast<std::uint32_t>(
+                 obb_data[offset + 3u])
+             << 24u);
+
+        return true;
+    }
+
+    std::optional<std::uint32_t>
+    FindOuterRsbGroup(
+        const std::string& target) const {
+
+        struct PrefixDefault {
+            std::string name;
+            std::uint32_t end_words =
+                0xffffffffu;
+        };
+
+        std::uint32_t list_length = 0;
+        std::uint32_t list_begin = 0;
+
+        if (!ReadObbU32(
+                0x10u,
+                list_length) ||
+            !ReadObbU32(
+                0x14u,
+                list_begin) ||
+            static_cast<std::uint64_t>(
+                list_begin) +
+                list_length >
+                obb_size) {
+            return std::nullopt;
+        }
+
+        const std::uint64_t begin =
+            list_begin;
+        const std::uint64_t end =
+            begin + list_length;
+        std::uint64_t pos = begin;
+
+        std::vector<PrefixDefault> defaults;
+        defaults.push_back(PrefixDefault{});
+
+        while (pos < end) {
+            std::string head;
+
+            for (std::size_t i = 0;
+                 i < defaults.size();) {
+
+                if (pos <
+                    begin +
+                        static_cast<std::uint64_t>(
+                            defaults[i].end_words) *
+                        4ull) {
+
+                    head +=
+                        defaults[i].name;
+                    ++i;
+                } else {
+                    defaults.erase(
+                        defaults.begin() +
+                        static_cast<std::ptrdiff_t>(
+                            i));
+                }
+            }
+
+            if (defaults.empty()) {
+                defaults.push_back(
+                    PrefixDefault{});
+            }
+
+            std::string tail;
+            std::size_t prefix_start = 0;
+            std::uint32_t prefix_end =
+                defaults.back().end_words;
+            bool terminated = false;
+
+            while (pos + 4u <= end) {
+                const std::uint8_t ch =
+                    obb_data[pos];
+
+                std::uint32_t cover = 0;
+                if (!ReadObbU24(
+                        pos + 1u,
+                        cover)) {
+                    return std::nullopt;
+                }
+
+                pos += 4u;
+
+                if (ch == 0u) {
+                    if (cover != 0u &&
+                        tail.size() != 1u &&
+                        prefix_start <
+                            tail.size()) {
+
+                        defaults.push_back(
+                            PrefixDefault{
+                                tail.substr(
+                                    prefix_start),
+                                prefix_end});
+                    }
+
+                    terminated = true;
+                    break;
+                }
+
+                tail.push_back(
+                    static_cast<char>(ch));
+
+                if (cover != 0u) {
+                    if (tail.size() != 1u &&
+                        prefix_start <
+                            tail.size() - 1u) {
+
+                        defaults.push_back(
+                            PrefixDefault{
+                                tail.substr(
+                                    prefix_start,
+                                    tail.size() -
+                                        1u -
+                                        prefix_start),
+                                prefix_end});
+                    }
+
+                    prefix_start =
+                        tail.size() - 1u;
+                    prefix_end = cover;
+                }
+            }
+
+            if (!terminated ||
+                pos + 4u > end) {
+                return std::nullopt;
+            }
+
+            std::uint32_t group_index = 0;
+            if (!ReadObbU32(
+                    pos,
+                    group_index)) {
+                return std::nullopt;
+            }
+
+            pos += 4u;
+
+            std::string full =
+                head + tail;
+
+            std::transform(
+                full.begin(),
+                full.end(),
+                full.begin(),
+                [](unsigned char ch) {
+                    return ch == '\\'
+                        ? '/'
+                        : static_cast<char>(
+                              std::toupper(ch));
+                });
+
+            if (full == target) {
+                return group_index;
+            }
+        }
+
+        return std::nullopt;
+    }
+
+    const SyntheticAsset*
+    GetOrBuildSyntheticTga(
+        const std::string& requested) {
+
+        const std::string asset_key =
+            NormalizeVirtualAssetKey(
+                requested);
+
+        if (asset_key.size() < 4u ||
+            asset_key.compare(
+                asset_key.size() - 4u,
+                4u,
+                ".TGA") != 0) {
+            return nullptr;
+        }
+
+        if (const auto cached =
+                synthetic_assets.find(
+                    asset_key);
+            cached !=
+                synthetic_assets.end()) {
+            return &cached->second;
+        }
+
+        std::string ptx_path =
+            asset_key;
+        ptx_path.replace(
+            ptx_path.size() - 4u,
+            4u,
+            ".PTX");
+
+        const auto group_index =
+            FindOuterRsbGroup(
+                ptx_path);
+
+        if (!group_index.has_value()) {
+            return nullptr;
+        }
+
+        std::uint32_t group_count = 0;
+        std::uint32_t group_info_begin = 0;
+        std::uint32_t group_info_each = 0;
+
+        if (!ReadObbU32(
+                0x28u,
+                group_count) ||
+            !ReadObbU32(
+                0x2cu,
+                group_info_begin) ||
+            !ReadObbU32(
+                0x30u,
+                group_info_each) ||
+            group_info_each < 0xb0u ||
+            *group_index >= group_count) {
+            return nullptr;
+        }
+
+        const std::uint64_t info =
+            static_cast<std::uint64_t>(
+                group_info_begin) +
+            static_cast<std::uint64_t>(
+                *group_index) *
+            group_info_each;
+
+        std::uint32_t group_offset = 0;
+        std::uint32_t group_size = 0;
+        std::uint32_t part1_offset = 0;
+        std::uint32_t part1_zsize = 0;
+        std::uint32_t part1_size = 0;
+
+        if (!ReadObbU32(
+                info + 0x80u,
+                group_offset) ||
+            !ReadObbU32(
+                info + 0x84u,
+                group_size) ||
+            !ReadObbU32(
+                info + 0xa4u,
+                part1_offset) ||
+            !ReadObbU32(
+                info + 0xa8u,
+                part1_zsize) ||
+            !ReadObbU32(
+                info + 0xacu,
+                part1_size) ||
+            part1_size == 0u ||
+            static_cast<std::uint64_t>(
+                group_offset) +
+                group_size >
+                obb_size) {
+            return nullptr;
+        }
+
+        std::uint32_t rsgp_magic = 0;
+        std::uint32_t file_list_length = 0;
+        std::uint32_t file_list_begin = 0;
+
+        if (!ReadObbU32(
+                group_offset,
+                rsgp_magic) ||
+            rsgp_magic != 0x72736770u ||
+            !ReadObbU32(
+                static_cast<std::uint64_t>(
+                    group_offset) +
+                    0x48u,
+                file_list_length) ||
+            !ReadObbU32(
+                static_cast<std::uint64_t>(
+                    group_offset) +
+                    0x4cu,
+                file_list_begin)) {
+            return nullptr;
+        }
+
+        const std::uint64_t list_begin =
+            static_cast<std::uint64_t>(
+                group_offset) +
+            file_list_begin;
+        const std::uint64_t list_end =
+            list_begin +
+            file_list_length;
+
+        if (list_end > obb_size) {
+            return nullptr;
+        }
+
+        struct PrefixDefault {
+            std::string name;
+            std::uint32_t end_words =
+                0xffffffffu;
+        };
+
+        std::vector<PrefixDefault> defaults;
+        defaults.push_back(PrefixDefault{});
+
+        std::uint64_t pos = list_begin;
+
+        std::uint32_t file_offset = 0;
+        std::uint32_t file_size = 0;
+        std::uint32_t width = 0;
+        std::uint32_t height = 0;
+        bool found = false;
+
+        while (pos < list_end) {
+            std::string head;
+
+            for (std::size_t i = 0;
+                 i < defaults.size();) {
+
+                if (pos <
+                    list_begin +
+                        static_cast<std::uint64_t>(
+                            defaults[i].end_words) *
+                        4ull) {
+
+                    head +=
+                        defaults[i].name;
+                    ++i;
+                } else {
+                    defaults.erase(
+                        defaults.begin() +
+                        static_cast<std::ptrdiff_t>(
+                            i));
+                }
+            }
+
+            if (defaults.empty()) {
+                defaults.push_back(
+                    PrefixDefault{});
+            }
+
+            std::string tail;
+            std::size_t prefix_start = 0;
+            std::uint32_t prefix_end =
+                defaults.back().end_words;
+            bool terminated = false;
+
+            while (pos + 4u <= list_end) {
+                const std::uint8_t ch =
+                    obb_data[pos];
+
+                std::uint32_t cover = 0;
+                if (!ReadObbU24(
+                        pos + 1u,
+                        cover)) {
+                    return nullptr;
+                }
+
+                pos += 4u;
+
+                if (ch == 0u) {
+                    if (cover != 0u &&
+                        tail.size() != 1u &&
+                        prefix_start <
+                            tail.size()) {
+
+                        defaults.push_back(
+                            PrefixDefault{
+                                tail.substr(
+                                    prefix_start),
+                                prefix_end});
+                    }
+
+                    terminated = true;
+                    break;
+                }
+
+                tail.push_back(
+                    static_cast<char>(ch));
+
+                if (cover != 0u) {
+                    if (tail.size() != 1u &&
+                        prefix_start <
+                            tail.size() - 1u) {
+
+                        defaults.push_back(
+                            PrefixDefault{
+                                tail.substr(
+                                    prefix_start,
+                                    tail.size() -
+                                        1u -
+                                        prefix_start),
+                                prefix_end});
+                    }
+
+                    prefix_start =
+                        tail.size() - 1u;
+                    prefix_end = cover;
+                }
+            }
+
+            if (!terminated ||
+                pos + 12u > list_end) {
+                return nullptr;
+            }
+
+            const std::uint64_t record =
+                pos;
+
+            std::uint32_t type = 0;
+            std::uint32_t candidate_offset = 0;
+            std::uint32_t candidate_size = 0;
+
+            if (!ReadObbU32(
+                    record,
+                    type) ||
+                !ReadObbU32(
+                    record + 4u,
+                    candidate_offset) ||
+                !ReadObbU32(
+                    record + 8u,
+                    candidate_size)) {
+                return nullptr;
+            }
+
+            const std::uint32_t record_size =
+                type == 0u
+                    ? 12u
+                    : 32u;
+
+            if (record +
+                    record_size >
+                list_end) {
+                return nullptr;
+            }
+
+            std::string full =
+                head + tail;
+
+            std::transform(
+                full.begin(),
+                full.end(),
+                full.begin(),
+                [](unsigned char ch) {
+                    return ch == '\\'
+                        ? '/'
+                        : static_cast<char>(
+                              std::toupper(ch));
+                });
+
+            if (full == ptx_path &&
+                type == 1u) {
+
+                if (!ReadObbU32(
+                        record + 24u,
+                        width) ||
+                    !ReadObbU32(
+                        record + 28u,
+                        height) ||
+                    width == 0u ||
+                    height == 0u) {
+                    return nullptr;
+                }
+
+                file_offset =
+                    candidate_offset;
+                file_size =
+                    candidate_size;
+                found = true;
+                break;
+            }
+
+            pos += record_size;
+        }
+
+        if (!found ||
+            part1_zsize == 0u ||
+            static_cast<std::uint64_t>(
+                group_offset) +
+                part1_offset +
+                part1_zsize >
+                obb_size) {
+            return nullptr;
+        }
+
+        auto unpacked =
+            std::make_shared<
+                std::vector<std::uint8_t>>(
+                    part1_size);
+
+        const std::uint8_t* compressed =
+            obb_data +
+            static_cast<std::size_t>(
+                group_offset) +
+            part1_offset;
+
+        if (part1_zsize ==
+            part1_size) {
+
+            std::memcpy(
+                unpacked->data(),
+                compressed,
+                part1_size);
+        } else {
+            uLongf destination_size =
+                static_cast<uLongf>(
+                    part1_size);
+
+            const int z_result =
+                ::uncompress(
+                    unpacked->data(),
+                    &destination_size,
+                    compressed,
+                    static_cast<uLong>(
+                        part1_zsize));
+
+            if (z_result != Z_OK ||
+                destination_size !=
+                    part1_size) {
+                Append(
+                    "V31 PTX bridge: zlib inflate failed for " +
+                    ptx_path +
+                    " rc=" +
+                    std::to_string(z_result));
+                return nullptr;
+            }
+        }
+
+        if (static_cast<std::uint64_t>(
+                file_offset) +
+                file_size >
+            unpacked->size()) {
+            return nullptr;
+        }
+
+        const std::uint64_t block_columns =
+            (static_cast<std::uint64_t>(
+                 width) +
+             3u) /
+            4u;
+        const std::uint64_t block_rows =
+            (static_cast<std::uint64_t>(
+                 height) +
+             3u) /
+            4u;
+        const std::uint64_t etc_bytes =
+            block_columns *
+            block_rows *
+            8u;
+        const std::uint64_t alpha_bytes =
+            static_cast<std::uint64_t>(
+                width) *
+            height;
+        const std::uint64_t expected =
+            etc_bytes +
+            alpha_bytes;
+
+        if (expected >
+                file_size ||
+            file_offset + expected >
+                unpacked->size()) {
+            Append(
+                "V31 PTX bridge: unsupported PTX payload shape " +
+                ptx_path +
+                " size=" +
+                std::to_string(file_size) +
+                " expected>=" +
+                std::to_string(expected));
+            return nullptr;
+        }
+
+        const std::uint8_t* texture =
+            unpacked->data() +
+            file_offset;
+        const std::uint8_t* alpha =
+            texture +
+            etc_bytes;
+
+        const std::uint64_t rgba_bytes =
+            static_cast<std::uint64_t>(
+                width) *
+            height *
+            4u;
+
+        if (rgba_bytes >
+            std::numeric_limits<
+                std::size_t>::max() -
+                18u) {
+            return nullptr;
+        }
+
+        auto tga =
+            std::make_shared<
+                std::vector<std::uint8_t>>(
+                    18u +
+                    static_cast<std::size_t>(
+                        rgba_bytes),
+                    0u);
+
+        (*tga)[2] = 2u;
+        (*tga)[12] =
+            static_cast<std::uint8_t>(
+                width & 0xffu);
+        (*tga)[13] =
+            static_cast<std::uint8_t>(
+                (width >> 8u) & 0xffu);
+        (*tga)[14] =
+            static_cast<std::uint8_t>(
+                height & 0xffu);
+        (*tga)[15] =
+            static_cast<std::uint8_t>(
+                (height >> 8u) & 0xffu);
+        (*tga)[16] = 32u;
+        (*tga)[17] = 0x28u;
+
+        constexpr int modifiers[8][4] = {
+            {2, 8, -2, -8},
+            {5, 17, -5, -17},
+            {9, 29, -9, -29},
+            {13, 42, -13, -42},
+            {18, 60, -18, -60},
+            {24, 80, -24, -80},
+            {33, 106, -33, -106},
+            {47, 183, -47, -183},
+        };
+
+        auto clamp8 =
+            [](int value) {
+                return
+                    static_cast<std::uint8_t>(
+                        std::max(
+                            0,
+                            std::min(
+                                255,
+                                value)));
+            };
+
+        auto expand4 =
+            [](int value) {
+                return
+                    (value << 4) |
+                    value;
+            };
+
+        auto expand5 =
+            [](int value) {
+                return
+                    (value << 3) |
+                    (value >> 2);
+            };
+
+        auto signed3 =
+            [](int value) {
+                return
+                    (value & 4)
+                        ? value - 8
+                        : value;
+            };
+
+        std::uint64_t block_index = 0;
+
+        for (std::uint32_t by = 0;
+             by < height;
+             by += 4u) {
+
+            for (std::uint32_t bx = 0;
+                 bx < width;
+                 bx += 4u) {
+
+                const std::uint8_t* block =
+                    texture +
+                    block_index *
+                    8u;
+                ++block_index;
+
+                const bool differential =
+                    (block[3] & 0x02u) !=
+                    0u;
+                const bool flip =
+                    (block[3] & 0x01u) !=
+                    0u;
+
+                const int table1 =
+                    (block[3] >> 5u) &
+                    7u;
+                const int table2 =
+                    (block[3] >> 2u) &
+                    7u;
+
+                int colors[2][3] = {};
+
+                if (differential) {
+                    const int r1 =
+                        block[0] >> 3u;
+                    const int g1 =
+                        block[1] >> 3u;
+                    const int b1 =
+                        block[2] >> 3u;
+
+                    const int r2 =
+                        std::max(
+                            0,
+                            std::min(
+                                31,
+                                r1 +
+                                signed3(
+                                    block[0] &
+                                    7u)));
+                    const int g2 =
+                        std::max(
+                            0,
+                            std::min(
+                                31,
+                                g1 +
+                                signed3(
+                                    block[1] &
+                                    7u)));
+                    const int b2 =
+                        std::max(
+                            0,
+                            std::min(
+                                31,
+                                b1 +
+                                signed3(
+                                    block[2] &
+                                    7u)));
+
+                    colors[0][0] =
+                        expand5(r1);
+                    colors[0][1] =
+                        expand5(g1);
+                    colors[0][2] =
+                        expand5(b1);
+                    colors[1][0] =
+                        expand5(r2);
+                    colors[1][1] =
+                        expand5(g2);
+                    colors[1][2] =
+                        expand5(b2);
+                } else {
+                    colors[0][0] =
+                        expand4(
+                            block[0] >> 4u);
+                    colors[0][1] =
+                        expand4(
+                            block[1] >> 4u);
+                    colors[0][2] =
+                        expand4(
+                            block[2] >> 4u);
+                    colors[1][0] =
+                        expand4(
+                            block[0] & 0x0fu);
+                    colors[1][1] =
+                        expand4(
+                            block[1] & 0x0fu);
+                    colors[1][2] =
+                        expand4(
+                            block[2] & 0x0fu);
+                }
+
+                const std::uint32_t selector_bits =
+                    (static_cast<std::uint32_t>(
+                         block[4])
+                     << 24u) |
+                    (static_cast<std::uint32_t>(
+                         block[5])
+                     << 16u) |
+                    (static_cast<std::uint32_t>(
+                         block[6])
+                     << 8u) |
+                    static_cast<std::uint32_t>(
+                        block[7]);
+
+                for (std::uint32_t py = 0;
+                     py < 4u;
+                     ++py) {
+
+                    for (std::uint32_t px = 0;
+                         px < 4u;
+                         ++px) {
+
+                        const std::uint32_t x =
+                            bx + px;
+                        const std::uint32_t y =
+                            by + py;
+
+                        if (x >= width ||
+                            y >= height) {
+                            continue;
+                        }
+
+                        const std::uint32_t bit =
+                            px * 4u + py;
+
+                        const int selector =
+                            static_cast<int>(
+                                ((selector_bits >>
+                                      (bit + 16u)) &
+                                     1u)
+                                    << 1u) |
+                            static_cast<int>(
+                                (selector_bits >>
+                                 bit) &
+                                1u);
+
+                        const int subblock =
+                            flip
+                                ? (py >= 2u
+                                    ? 1
+                                    : 0)
+                                : (px >= 2u
+                                    ? 1
+                                    : 0);
+
+                        const int modifier =
+                            modifiers[
+                                subblock
+                                    ? table2
+                                    : table1][
+                                selector];
+
+                        const std::size_t pixel =
+                            static_cast<std::size_t>(
+                                y) *
+                                width +
+                            x;
+
+                        const std::size_t out =
+                            18u +
+                            pixel *
+                                4u;
+
+                        const std::uint8_t r =
+                            clamp8(
+                                colors[subblock][0] +
+                                modifier);
+                        const std::uint8_t g =
+                            clamp8(
+                                colors[subblock][1] +
+                                modifier);
+                        const std::uint8_t b =
+                            clamp8(
+                                colors[subblock][2] +
+                                modifier);
+
+                        (*tga)[out + 0u] = b;
+                        (*tga)[out + 1u] = g;
+                        (*tga)[out + 2u] = r;
+                        (*tga)[out + 3u] =
+                            alpha[pixel];
+                    }
+                }
+            }
+        }
+
+        SyntheticAsset asset;
+        asset.bytes = tga;
+        asset.source_path = ptx_path;
+        asset.width = width;
+        asset.height = height;
+
+        auto inserted =
+            synthetic_assets.emplace(
+                asset_key,
+                std::move(asset));
+
+        Append(
+            "V31 PTX->TGA bridge: \"" +
+            requested +
+            "\" <= " +
+            ptx_path +
+            " group=" +
+            std::to_string(
+                *group_index) +
+            " " +
+            std::to_string(width) +
+            "x" +
+            std::to_string(height) +
+            " ptxBytes=" +
+            std::to_string(file_size) +
+            " tgaBytes=" +
+            std::to_string(
+                inserted.first
+                    ->second
+                    .bytes
+                    ->size()));
+
+        return
+            &inserted.first->second;
+    }
+
     void CallSVC(std::uint32_t swi) override {
         if (!jit) {
             return;
