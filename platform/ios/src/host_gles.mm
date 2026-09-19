@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <cstring>
 #include <string>
+#include <sstream>
 #include <vector>
 
 namespace {
