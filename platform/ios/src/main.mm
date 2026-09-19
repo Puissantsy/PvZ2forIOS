@@ -245,7 +245,7 @@ NSString *NSStringFromStd(
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — First Frame Events v29";
+        @"PvZ2forIOS — Cooperative Threads v30";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -254,7 +254,7 @@ NSString *NSStringFromStd(
         NO;
 
     title.text =
-        @"PvZ2forIOS — first frame events v29";
+        @"PvZ2forIOS — cooperative threads v30";
 
     title.font =
         [UIFont
@@ -270,8 +270,8 @@ NSString *NSStringFromStd(
         NO;
 
     explanation.text =
-        @"v28 passed the directory loop completely and reached Native_onDrawFrame for the first time. The remaining crash was not a rendering fault: UI_ProcessEvents received a DirectByteBuffer backed by guest stack memory, but the generic JNI fallback returned false without initializing that buffer. PvZ2 then read a stale word as an enormous event count and eventually called a null event-dispatch-table entry. "
-         @"v29 zeroes the event buffer and returns an explicit empty event pump, so the native decoder sees zero queued events. It also implements the twenty-two real JNI methods observed before the first speculative recovery, plus closely related HTTP, analytics, cloud/social, notification, device and graphics stubs, so the next run can advance in bulk instead of stopping one Java method at a time.";
+        @"v29 preserved all of the bulk JNI and first-frame event fixes, but the run exposed a scheduler-level race before the first draw. After Native_onSurfaceCreated created six guest pthreads, the probe switched into those workers on an ordinary CPU timeslice even though pthread mutex/cond behavior is still synthetic. The main thread then resumed inside std::vector<unsigned char>::_M_range_insert with an impossible state: vector begin was NULL while its end/insert iterator was non-NULL, producing a gigantic __aeabi_memmove from address zero. "
+         @"v30 removes that artificial interleaving class. Background guest workers are now advanced only when the main thread is at a recognized concrete async wait (for example a future-poll); plain CPU quanta stay on the main guest thread. This preserves the cooperative single-thread safety model until real mutex/condition blocking is implemented. v29's zeroed UI_ProcessEvents DirectByteBuffer and bulk JNI bridges remain active. Memory-copy faults also carry full register/vector diagnostics if another corruption site appears.";
 
     explanation.numberOfLines = 0;
 
@@ -815,7 +815,7 @@ NSString *NSStringFromStd(
 
     [self
         appendUI:
-            @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v29 keeps the working RSB/directory VFS, fixes the first-frame UI event DirectByteBuffer so an empty event queue is represented by zeroed data, and bulk-bridges the Java methods observed by v28 before continuing through Native_onDrawFrame."];
+            @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v30 keeps the working RSB/directory VFS and v29 bulk JNI/event bridges, but no longer runs deferred guest workers during an ordinary main-thread CPU timeslice. Workers advance only at recognized async waits, preventing synthetic pthread interleavings from corrupting shared C++ containers before the first frame."];
 
     [self
         presentViewController:
@@ -876,7 +876,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v29 probe run started; PID=%d ===",
+                    @"=== PvZ2 v30 probe run started; PID=%d ===",
                     getpid()]];
 
     self.jniRunning =
