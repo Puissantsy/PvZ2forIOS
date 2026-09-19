@@ -245,7 +245,7 @@ NSString *NSStringFromStd(
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — Progress Runtime v27";
+        @"PvZ2forIOS — Directory VFS v28";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -254,7 +254,7 @@ NSString *NSStringFromStd(
         NO;
 
     title.text =
-        @"PvZ2forIOS — progress runtime v27";
+        @"PvZ2forIOS — directory VFS v28";
 
     title.font =
         [UIFont
@@ -270,8 +270,8 @@ NSString *NSStringFromStd(
         NO;
 
     explanation.text =
-        @"v26 no longer ended on the old RESFILE_PACKAGES_VERSION/null-callback chain. Instead, Native_onSurfaceCreated kept executing real ARM code until the probe's old 200M-tick scheduler ceiling fired. The tail also showed tens of megabytes of repeated temporary allocations while the probe heap never reused freed blocks. "
-         @"v27 fixes those probe-runtime limits rather than special-casing one game resource: freed guest heap blocks are reusable/coalesced, hot malloc/memset trace spam is rate-limited, plain CPU timeslices are no longer treated as fake async futures, completed workers no longer stop CPU work, and the lifecycle gets a much larger safety ceiling with register/heap progress snapshots. The RSB resolver remains active and its manifest success is now carried into the final summary.";
+        @"v27 confirmed the RSB fix: PROPERTIES/RESOURCES.RTON resolved successfully, thirty indexed RSB members were opened, and the old RESFILE_PACKAGES_VERSION/logic_error chain disappeared. The run later exposed a different generic compatibility bug in the POSIX directory fallback. "
+         @"Android's opendir failure is NULL, but the old fallback returned 0xffffffff; PvZ2 therefore treated an invalid DIR* as valid, readdir also returned 0xffffffff forever, and the game looped through readdir/fnmatch until the 2B-tick safety ceiling. v28 gives opendir/readdir/readdir_r/closedir/fnmatch correct semantics, logs unavailable directory paths, and implements the only new observed JNI method, Util_GetUUIDString, with a stable probe UUID.";
 
     explanation.numberOfLines = 0;
 
@@ -474,7 +474,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 progress-runtime v27 session started; PID=%d ===",
+                    @"=== PvZ2 directory-VFS v28 session started; PID=%d ===",
                     getpid()]];
 
     [self
@@ -815,7 +815,7 @@ NSString *NSStringFromStd(
 
     [self
         appendUI:
-            @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v27 keeps the RSB VFS and bulk sweep, reuses freed guest heap memory, suppresses hot allocator trace spam, and distinguishes real async waits from ordinary CPU-heavy timeslices while continuing toward the first frame."];
+            @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v28 keeps the working RSB VFS and reusable guest heap, fixes POSIX directory failure/EOF semantics so readdir cannot spin on an invalid DIR*, provides host fnmatch semantics, and implements Util_GetUUIDString before continuing toward surface change and the first frame."];
 
     [self
         presentViewController:
@@ -876,7 +876,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v27 probe run started; PID=%d ===",
+                    @"=== PvZ2 v28 probe run started; PID=%d ===",
                     getpid()]];
 
     self.jniRunning =
