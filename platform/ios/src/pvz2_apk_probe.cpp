@@ -7240,13 +7240,45 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                 return out.str();
                             };
 
-                        auto in_async_poll =
-                            [&](std::uint32_t pc) {
-                                return
-                                    pc >=
+                        auto wait_kind =
+                            [&](std::uint32_t pc) -> const char* {
+                                if (pc >=
                                         kGuestBase + 0x009f6f24u &&
                                     pc <=
-                                        kGuestBase + 0x009f7050u;
+                                        kGuestBase + 0x009f7050u) {
+                                    return "future-poll";
+                                }
+
+                                // Verified by disassembly of 1.5.252752:
+                                // 0x864968 and 0x864a40 repeatedly invoke the
+                                // async stream status virtual at +0x2c while
+                                // reading the 1bsr resource header/body.
+                                if ((pc >=
+                                         kGuestBase + 0x00864960u &&
+                                     pc <=
+                                         kGuestBase + 0x00864998u) ||
+                                    (pc >=
+                                         kGuestBase + 0x00864a38u &&
+                                     pc <=
+                                         kGuestBase + 0x00864a70u)) {
+                                    return "rsb-read-wait";
+                                }
+
+                                return "timeslice";
+                            };
+
+                        auto wait_object_for_pc =
+                            [&](std::uint32_t pc) {
+                                const char* kind =
+                                    wait_kind(pc);
+
+                                if (std::strcmp(
+                                        kind,
+                                        "rsb-read-wait") == 0) {
+                                    return jit.Regs()[5];
+                                }
+
+                                return jit.Regs()[4];
                             };
 
                         callbacks.return_mode =
@@ -7298,12 +7330,12 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             std::string{name} +
                             " at 0x" +
                             JniProbeHex(function) +
-                            " with v21 persistent cooperative worker scheduling; deferred_threads=" +
+                            " with v22 general cooperative worker scheduling; deferred_threads=" +
                             std::to_string(
                                 callbacks.deferred_threads.size()));
 
                         constexpr std::uint64_t kMainSliceTicks =
-                            5000000ull;
+                            1000000ull;
                         constexpr std::uint64_t kWorkerSliceTicks =
                             750000ull;
                         constexpr std::uint64_t kLifecycleTotalBudget =
@@ -7373,7 +7405,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                 }
 
                                 callbacks.Append(
-                                    "V21 LIFECYCLE RETURN: " +
+                                    "V22 LIFECYCLE RETURN: " +
                                     std::string{name} +
                                     " completed after " +
                                     std::to_string(
@@ -7427,21 +7459,24 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                 return false;
                             }
 
-                            // A slice may simply expire while useful native
-                            // work is progressing. Only schedule background
-                            // pthreads when the main thread is actually in one
-                            // of the verified async-future poll helpers.
-                            if (!in_async_poll(
-                                    result.final_pc) ||
-                                callbacks.deferred_threads.empty()) {
-
+                            // Real pthread workers are concurrent with the
+                            // lifecycle, not only with one specific future
+                            // helper. v21 reached a higher-level RSB read loop
+                            // at 0x864968, proving that PC-gating the scheduler
+                            // was too narrow. Give runnable workers a slice
+                            // after every expired main-thread quantum.
+                            if (callbacks.deferred_threads.empty()) {
                                 continue;
                             }
 
                             ++async_round;
 
+                            const char* current_wait_kind =
+                                wait_kind(result.final_pc);
+
                             const std::uint32_t future =
-                                jit.Regs()[4];
+                                wait_object_for_pc(
+                                    result.final_pc);
 
                             std::array<std::uint8_t, 64> future_before{};
                             for (std::size_t bi = 0;
@@ -7454,15 +7489,17 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             }
 
                             callbacks.Append(
-                                "V21 ASYNC ROUND " +
+                                "V22 SCHED ROUND " +
                                 std::to_string(async_round) +
-                                ": main paused at PC=0x" +
+                                ": kind=" +
+                                current_wait_kind +
+                                " main PC=0x" +
                                 JniProbeHex(
                                     result.final_pc) +
-                                " " +
+                                " wait_object{" +
                                 async_future_snapshot(
                                     future) +
-                                " workers=" +
+                                "} workers=" +
                                 std::to_string(
                                     callbacks.deferred_threads.size()));
 
@@ -7544,7 +7581,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                         true;
 
                                     callbacks.Append(
-                                        "V21 WORKER START tid=" +
+                                        "V22 WORKER START tid=" +
                                         std::to_string(
                                             worker_state.id) +
                                         " start=0x" +
@@ -7639,7 +7676,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                 }
 
                                 callbacks.Append(
-                                    "V21 WORKER SLICE tid=" +
+                                    "V22 WORKER SLICE tid=" +
                                     std::to_string(
                                         worker_state.id) +
                                     " PC=0x" +
@@ -7674,7 +7711,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                     future_changed = true;
 
                                     callbacks.Append(
-                                        "V21 ASYNC PROGRESS by tid=" +
+                                        "V22 WAIT OBJECT PROGRESS by tid=" +
                                         std::to_string(
                                             worker_state.id) +
                                         ": " +
@@ -7710,11 +7747,11 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                 result.lifecycle_failure_name =
                                     name;
                                 result.message =
-                                    "v21 reached an async-file poll but no runnable deferred guest worker remained. " +
+                                    "v22 has no runnable deferred guest worker remaining. " +
                                     async_future_snapshot(
                                         future);
                                 callbacks.Append(
-                                    "V21 SCHEDULER STOP: " +
+                                    "V22 SCHEDULER STOP: " +
                                     result.message);
                                 result.trace =
                                     callbacks.Trace();
@@ -7723,7 +7760,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
 
                             if (!future_changed) {
                                 callbacks.Append(
-                                    "V21 ASYNC ROUND " +
+                                    "V22 SCHED ROUND " +
                                     std::to_string(async_round) +
                                     ": future unchanged after one persistent worker slice; main thread will receive another slice before retrying.");
                             }
@@ -7738,7 +7775,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                         std::ostringstream timeout;
                         timeout
                             << name
-                            << " exceeded v21 cooperative lifecycle budget at PC=0x"
+                            << " exceeded v22 cooperative lifecycle budget at PC=0x"
                             << JniProbeHex(jit.Regs()[15])
                             << " after "
                             << lifecycle_ticks
@@ -7750,7 +7787,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             timeout.str();
 
                         callbacks.Append(
-                            "V21 SCHEDULER TIMEOUT: " +
+                            "V22 SCHEDULER TIMEOUT: " +
                             result.message);
 
                         result.trace =
