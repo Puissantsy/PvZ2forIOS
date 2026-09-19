@@ -2,6 +2,18 @@
 
 Experimental compatibility project for running a legally owned copy of **Plants vs. Zombies 2 1.5.252752 (Android, 2013)** on modern iPadOS/iOS hardware.
 
+## Legal / project scope
+
+This is an **unofficial, independent interoperability and compatibility project**. It is not affiliated with, sponsored by, or endorsed by Electronic Arts or PopCap Games.
+
+This repository contains only independently written compatibility/runtime code, build scripts, patches, and technical notes. It does **not** contain or distribute Plants vs. Zombies 2 game binaries or assets, including the APK, OBB/expansion data, `libPVZ2.so`, textures, audio, video, saves, extracted resource archives, signing material, or device pairing files.
+
+Users must provide their own legally obtained compatible game files. The project is not intended to provide game content, activation/decryption material, or a substitute download for the original game.
+
+Reverse-engineered names, offsets, signatures, file-format observations, and behavioral notes in this repository are documented for compatibility/interoperability work. **Do not contribute decompiled game source, copied proprietary implementation code, extracted game assets, or proprietary binaries.**
+
+Plants vs. Zombies, Plants vs. Zombies 2, PopCap, Electronic Arts, and related names and marks belong to their respective owners.
+
 ## Target
 
 - Device used for development/testing: **iPad (10th generation, A14 / arm64)**
