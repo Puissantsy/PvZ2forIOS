@@ -14147,6 +14147,302 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                         return false;
                     };
 
+                // v35: v30 intentionally stopped running deferred workers during
+                // ordinary main-thread timeslices because synthetic pthread
+                // synchronization made mid-lifecycle interleavings unsafe.
+                // That fixed corruption, but it also meant workers created
+                // after the last concrete async wait (tid=2..6 in v34) could
+                // remain deferred forever. Run them cooperatively only at
+                // lifecycle/frame boundaries, where the main guest is not
+                // mutating game state.
+                std::size_t boundary_worker_cursor = 0u;
+                std::uint64_t boundary_worker_slices = 0u;
+
+                auto run_boundary_workers =
+                    [&](const char* phase,
+                        std::size_t max_slices) -> bool {
+
+                        if (callbacks.deferred_threads.empty() ||
+                            max_slices == 0u) {
+                            return true;
+                        }
+
+                        constexpr std::uint32_t
+                            kBoundaryWorkerStackSize =
+                                64u * 1024u;
+                        constexpr std::uint64_t
+                            kBoundaryWorkerSliceTicks =
+                                100000ull;
+
+                        const auto saved_regs =
+                            jit.Regs();
+                        const auto saved_ext_regs =
+                            jit.ExtRegs();
+                        const std::uint32_t saved_cpsr =
+                            jit.Cpsr();
+                        const std::uint32_t saved_fpscr =
+                            jit.Fpscr();
+
+                        auto clear_boundary_halts =
+                            [&]() {
+                                jit.ClearHalt(
+                                    Dynarmic::HaltReason::UserDefined1);
+                                jit.ClearHalt(
+                                    Dynarmic::HaltReason::UserDefined2);
+                                jit.ClearHalt(
+                                    Dynarmic::HaltReason::UserDefined3);
+                                jit.ClearHalt(
+                                    Dynarmic::HaltReason::UserDefined4);
+                            };
+
+                        std::size_t ran = 0u;
+                        std::size_t inspected = 0u;
+
+                        while (ran < max_slices &&
+                               inspected <
+                                   callbacks
+                                       .deferred_threads
+                                       .size()) {
+
+                            if (callbacks.deferred_threads.empty()) {
+                                break;
+                            }
+
+                            boundary_worker_cursor %=
+                                callbacks
+                                    .deferred_threads
+                                    .size();
+
+                            const std::size_t wi =
+                                boundary_worker_cursor++;
+
+                            ++inspected;
+
+                            auto worker_state =
+                                callbacks
+                                    .deferred_threads[wi];
+
+                            if (worker_state.runtime_completed ||
+                                worker_state.runtime_failed) {
+                                continue;
+                            }
+
+                            if (!worker_state.runtime_started) {
+                                const std::uint32_t stack_base =
+                                    memory.AllocateHeap(
+                                        kBoundaryWorkerStackSize,
+                                        16u);
+
+                                if (!stack_base) {
+                                    callbacks.Append(
+                                        "V35 BOUNDARY WORKER: unable to allocate stack for tid=" +
+                                        std::to_string(
+                                            worker_state.id));
+                                    worker_state.runtime_failed =
+                                        true;
+
+                                    if (wi <
+                                        callbacks
+                                            .deferred_threads
+                                            .size()) {
+                                        callbacks
+                                            .deferred_threads[wi] =
+                                                worker_state;
+                                    }
+                                    continue;
+                                }
+
+                                worker_state.stack_top =
+                                    stack_base +
+                                    kBoundaryWorkerStackSize -
+                                    0x100u;
+
+                                worker_state.regs.fill(0);
+                                worker_state.ext_regs.fill(0);
+                                worker_state.regs[0] =
+                                    worker_state.argument;
+                                worker_state.regs[13] =
+                                    worker_state.stack_top;
+                                worker_state.regs[14] =
+                                    return_trampoline;
+                                worker_state.regs[15] =
+                                    worker_state.start_routine &
+                                    ~1u;
+                                worker_state.cpsr =
+                                    (worker_state.start_routine &
+                                     1u)
+                                        ? 0x30u
+                                        : 0x10u;
+                                worker_state.fpscr = 0u;
+                                worker_state.runtime_started =
+                                    true;
+
+                                callbacks.Append(
+                                    "V35 BOUNDARY WORKER START tid=" +
+                                    std::to_string(
+                                        worker_state.id) +
+                                    " start=0x" +
+                                    JniProbeHex(
+                                        worker_state.start_routine) +
+                                    " created_in=" +
+                                    worker_state.created_in +
+                                    " phase=" +
+                                    std::string{
+                                        phase != nullptr
+                                            ? phase
+                                            : "n/a"});
+                            }
+
+                            jit.Regs() =
+                                worker_state.regs;
+                            jit.ExtRegs() =
+                                worker_state.ext_regs;
+                            jit.SetCpsr(
+                                worker_state.cpsr);
+                            jit.SetFpscr(
+                                worker_state.fpscr);
+                            jit.ClearExclusiveState();
+
+                            callbacks.return_mode =
+                                PvZ2JniCallbacks::ReturnMode::Lifecycle;
+                            callbacks.current_lifecycle_name =
+                                "V35_boundary_worker_tid_" +
+                                std::to_string(
+                                    worker_state.id);
+                            callbacks.current_probe_thread_id =
+                                worker_state.id;
+                            callbacks.control_returned = false;
+                            callbacks.soft_slice_timeout = true;
+                            callbacks.ticks_left =
+                                kBoundaryWorkerSliceTicks;
+                            callbacks.ticks_consumed = 0u;
+                            callbacks.next_tick_report =
+                                kBoundaryWorkerSliceTicks;
+
+                            result.message.clear();
+                            clear_boundary_halts();
+
+                            const std::uint64_t calls_before =
+                                callbacks.supported_calls;
+
+                            const Dynarmic::HaltReason worker_halt =
+                                jit.Run();
+
+                            worker_state.regs =
+                                jit.Regs();
+                            worker_state.ext_regs =
+                                jit.ExtRegs();
+                            worker_state.cpsr =
+                                jit.Cpsr();
+                            worker_state.fpscr =
+                                jit.Fpscr();
+                            worker_state.runtime_ticks +=
+                                callbacks.ticks_consumed;
+
+                            const bool worker_returned =
+                                callbacks.control_returned &&
+                                Dynarmic::Has(
+                                    worker_halt,
+                                    Dynarmic::HaltReason::UserDefined1);
+
+                            const bool worker_fatal =
+                                Dynarmic::Has(
+                                    worker_halt,
+                                    Dynarmic::HaltReason::UserDefined2) ||
+                                Dynarmic::Has(
+                                    worker_halt,
+                                    Dynarmic::HaltReason::UserDefined3);
+
+                            if (worker_returned) {
+                                worker_state.runtime_completed =
+                                    true;
+                            }
+
+                            if (worker_fatal) {
+                                worker_state.runtime_failed =
+                                    true;
+                            }
+
+                            if (wi <
+                                callbacks
+                                    .deferred_threads
+                                    .size()) {
+                                callbacks
+                                    .deferred_threads[wi] =
+                                        worker_state;
+                            }
+
+                            ++ran;
+                            ++boundary_worker_slices;
+
+                            if (boundary_worker_slices <= 24u ||
+                                (boundary_worker_slices %
+                                 100u) == 0u ||
+                                worker_state.runtime_completed ||
+                                worker_state.runtime_failed) {
+
+                                callbacks.Append(
+                                    "V35 BOUNDARY WORKER SLICE phase=" +
+                                    std::string{
+                                        phase != nullptr
+                                            ? phase
+                                            : "n/a"} +
+                                    " tid=" +
+                                    std::to_string(
+                                        worker_state.id) +
+                                    " PC=0x" +
+                                    JniProbeHex(
+                                        worker_state.regs[15]) +
+                                    " ticks=" +
+                                    std::to_string(
+                                        callbacks.ticks_consumed) +
+                                    " total=" +
+                                    std::to_string(
+                                        worker_state.runtime_ticks) +
+                                    " calls+=" +
+                                    std::to_string(
+                                        callbacks.supported_calls -
+                                        calls_before) +
+                                    " returned=" +
+                                    (worker_state.runtime_completed
+                                        ? "YES"
+                                        : "NO") +
+                                    " failed=" +
+                                    (worker_state.runtime_failed
+                                        ? "YES"
+                                        : "NO"));
+                            }
+
+                            if (worker_fatal) {
+                                callbacks.Append(
+                                    "V35 BOUNDARY WORKER STOP: tid=" +
+                                    std::to_string(
+                                        worker_state.id) +
+                                    " halted fatally; preserving main runtime and continuing other diagnostics.");
+                            }
+                        }
+
+                        clear_boundary_halts();
+
+                        jit.Regs() =
+                            saved_regs;
+                        jit.ExtRegs() =
+                            saved_ext_regs;
+                        jit.SetCpsr(
+                            saved_cpsr);
+                        jit.SetFpscr(
+                            saved_fpscr);
+                        jit.ClearExclusiveState();
+
+                        callbacks.return_mode =
+                            PvZ2JniCallbacks::ReturnMode::Lifecycle;
+                        callbacks.current_probe_thread_id = 0u;
+                        callbacks.control_returned = false;
+                        callbacks.soft_slice_timeout = true;
+
+                        return true;
+                    };
+
                 std::size_t http_delivery_cursor = 0u;
 
                 auto drain_offline_http_callbacks =
@@ -14349,8 +14645,18 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                     return result;
                 }
 
+                // Give every deferred worker one short slice before rendering.
+                // This is the first safe point after surface setup and starts
+                // workers that v30 deliberately refused to interleave inside
+                // Native_onSurfaceCreated.
+                if (!run_boundary_workers(
+                        "pre-frame",
+                        callbacks.deferred_threads.size())) {
+                    return result;
+                }
+
                 constexpr std::uint32_t
-                    kV34FrameCount = 600u;
+                    kV35FrameCount = 600u;
 
                 auto should_sample_frame =
                     [](std::uint32_t frame) {
@@ -14374,14 +14680,19 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             frame == 420u ||
                             frame == 480u ||
                             frame == 540u ||
-                            frame == 600u;
+                            frame == 600u ||
+                            (frame >= 90u &&
+                             (frame % 10u) == 0u);
                     };
 
                 std::uint64_t best_non_black = 0u;
                 std::uint32_t best_frame = 0u;
+                std::uint64_t post_ea_best_non_black = 0u;
+                std::uint32_t post_ea_best_frame = 0u;
+                std::string post_ea_best_path;
 
                 for (std::uint32_t frame = 0u;
-                     frame < kV34FrameCount;
+                     frame < kV35FrameCount;
                      ++frame) {
 
                     const std::uint32_t frame_number =
@@ -14392,12 +14703,12 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
 
                     if (sample) {
                         callbacks.Append(
-                            "V34 FRAME SOAK: begin frame " +
+                            "V35 FRAME SOAK: begin frame " +
                             std::to_string(
                                 frame_number) +
                             "/" +
                             std::to_string(
-                                kV34FrameCount));
+                                kV35FrameCount));
                     }
 
                     if (!run_lifecycle(
@@ -14411,7 +14722,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                         if (callbacks.host_gles_ready) {
                             const char* partial =
                                 PvZ2HostGLESCapturePNGNamed(
-                                    "pvz2-v34-stopped-frame.png");
+                                    "pvz2-v35-stopped-frame.png");
 
                             if (partial != nullptr &&
                                 *partial != '\0') {
@@ -14436,6 +14747,14 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                         return result;
                     }
 
+                    // One fair background slice per completed frame. No worker
+                    // runs while Native_onDrawFrame itself is active.
+                    if (!run_boundary_workers(
+                            "frame-boundary",
+                            1u)) {
+                        return result;
+                    }
+
                     if (callbacks.host_gles_ready &&
                         sample) {
 
@@ -14445,7 +14764,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             PvZ2HostGLESLastNonBlackPixels();
 
                         callbacks.Append(
-                            "V34 FRAME STATS #" +
+                            "V35 FRAME STATS #" +
                             std::to_string(
                                 frame_number) +
                             ": " +
@@ -14466,7 +14785,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                         if (non_black > best_non_black) {
                             const char* best =
                                 PvZ2HostGLESCapturePNGNamed(
-                                    "pvz2-v34-best-frame.png");
+                                    "pvz2-v35-best-frame.png");
 
                             if (best != nullptr &&
                                 *best != '\0') {
@@ -14482,7 +14801,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                     best;
 
                                 callbacks.Append(
-                                    "V34 BEST FRAME: #" +
+                                    "V35 BEST FRAME: #" +
                                     std::to_string(
                                         best_frame) +
                                     " nonBlack=" +
@@ -14493,17 +14812,50 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             }
                         }
 
+                        // Preserve the richest frame after the EA animation
+                        // separately. The globally richest image is EA itself,
+                        // so without this a later menu/loading screen with
+                        // fewer lit pixels would never be shown to the tester.
+                        if (frame_number >= 90u &&
+                            non_black >
+                                post_ea_best_non_black) {
+
+                            const char* post_ea =
+                                PvZ2HostGLESCapturePNGNamed(
+                                    "pvz2-v35-post-ea-best.png");
+
+                            if (post_ea != nullptr &&
+                                *post_ea != '\0') {
+                                post_ea_best_non_black =
+                                    non_black;
+                                post_ea_best_frame =
+                                    frame_number;
+                                post_ea_best_path =
+                                    post_ea;
+
+                                callbacks.Append(
+                                    "V35 POST-EA FRAME: #" +
+                                    std::to_string(
+                                        post_ea_best_frame) +
+                                    " nonBlack=" +
+                                    std::to_string(
+                                        post_ea_best_non_black) +
+                                    " path=" +
+                                    post_ea_best_path);
+                            }
+                        }
+
                         callbacks.Append(
-                            "V34 FRAME SOAK: returned frame " +
+                            "V35 FRAME SOAK: returned frame " +
                             std::to_string(
                                 frame_number) +
                             "/" +
                             std::to_string(
-                                kV34FrameCount));
+                                kV35FrameCount));
                     }
 
                     if (frame_number !=
-                        kV34FrameCount) {
+                        kV35FrameCount) {
                         std::this_thread::sleep_for(
                             std::chrono::milliseconds(
                                 16));
@@ -14513,11 +14865,11 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                 if (callbacks.host_gles_ready) {
                     const char* final_capture =
                         PvZ2HostGLESCapturePNGNamed(
-                            "pvz2-v34-final-frame.png");
+                            "pvz2-v35-final-frame.png");
 
                     callbacks.Append(
                         std::string{
-                            "V34 FINAL GLES CAPTURE: "} +
+                            "V35 FINAL GLES CAPTURE: "} +
                         (final_capture != nullptr &&
                          *final_capture != '\0'
                             ? final_capture
@@ -14532,16 +14884,30 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                 }
 
                 callbacks.Append(
-                    "V34 BEST FRAME SUMMARY: frame=" +
+                    "V35 BEST FRAME SUMMARY: frame=" +
                     std::to_string(
                         best_frame) +
                     " nonBlack=" +
                     std::to_string(
-                        best_non_black));
+                        best_non_black) +
+                    " | postEA=" +
+                    std::to_string(
+                        post_ea_best_frame) +
+                    " nonBlack=" +
+                    std::to_string(
+                        post_ea_best_non_black) +
+                    " | boundaryWorkerSlices=" +
+                    std::to_string(
+                        boundary_worker_slices));
+
+                if (!post_ea_best_path.empty()) {
+                    result.host_frame_png_path =
+                        post_ea_best_path;
+                }
 
                 result.ok = true;
                 result.message =
-                    "PvZ2 completed GameAppInitialize, lifecycle, surface setup, deterministic offline AndroidHttpTransaction callbacks, and a 600-frame timed host-GLES soak; the most populated sampled framebuffer was preserved for display.";
+                    "PvZ2 completed GameAppInitialize, lifecycle, surface setup, deterministic offline AndroidHttpTransaction callbacks, safe boundary-only background worker scheduling, and a 600-frame timed host-GLES soak.";
                 return result;
             }
 
