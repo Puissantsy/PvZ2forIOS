@@ -1571,6 +1571,11 @@ public:
     std::uint64_t memset_calls = 0;
     std::uint32_t rsb_resolved_files = 0;
     std::uint32_t missing_resource_diagnostics = 0;
+    std::uint64_t gles_draw_calls = 0;
+    std::uint64_t gles_clear_calls = 0;
+    std::uint64_t gles_texture_uploads = 0;
+    std::unordered_set<std::string>
+        recovered_missing_resource_ids;
 
     static constexpr std::uint32_t kSweepRecoveryLimit = 48u;
     std::uint32_t sweep_recoveries = 0;
@@ -8129,12 +8134,30 @@ public:
                             return value;
                         };
 
+                    const std::uint32_t
+                        wrapper_caller_lr =
+                            regs[14] ==
+                                    kGuestBase +
+                                    0x007aa73cu &&
+                                mem.Ptr(
+                                    regs[13] + 28u,
+                                    4u) != nullptr
+                                ? mem.Read32Guest(
+                                      regs[13] + 28u)
+                                : 0u;
+
+                    std::string
+                        recovered_resource_id;
+
                     std::ostringstream diagnostic;
                     diagnostic
-                        << "V32 MISSING RESOURCE CONTEXT #"
+                        << "V33 MISSING RESOURCE CONTEXT #"
                         << missing_resource_diagnostics
-                        << " LR=0x"
+                        << " wrapperLR=0x"
                         << JniProbeHex(regs[14])
+                        << " callerLR=0x"
+                        << JniProbeHex(
+                               wrapper_caller_lr)
                         << " SP=0x"
                         << JniProbeHex(regs[13]);
 
@@ -8153,6 +8176,14 @@ public:
                                     << "=\""
                                     << direct
                                     << "\"";
+
+                                if (recovered_resource_id.empty() &&
+                                    direct.rfind(
+                                        "RESFILE_",
+                                        0u) == 0u) {
+                                    recovered_resource_id =
+                                        direct;
+                                }
                             }
 
                             if (word != 0u &&
@@ -8176,6 +8207,14 @@ public:
                                         << "=\""
                                         << nested
                                         << "\"";
+
+                                    if (recovered_resource_id.empty() &&
+                                        nested.rfind(
+                                            "RESFILE_",
+                                            0u) == 0u) {
+                                        recovered_resource_id =
+                                            nested;
+                                    }
                                 }
                             }
                         };
@@ -8201,6 +8240,62 @@ public:
                             "s" +
                                 std::to_string(slot),
                             word);
+                    }
+
+                    constexpr char
+                        kLevelPrefix[] =
+                            "RESFILE_PACKAGES_LEVELS_";
+
+                    if (!recovered_resource_id.empty()) {
+                        diagnostic
+                            << " recoveredID=\""
+                            << recovered_resource_id
+                            << "\"";
+
+                        if (recovered_resource_id.rfind(
+                                kLevelPrefix,
+                                0u) == 0u) {
+
+                            const std::string level_name =
+                                recovered_resource_id.substr(
+                                    sizeof(kLevelPrefix) - 1u);
+
+                            const std::string physical =
+                                "PACKAGES/LEVELS/" +
+                                level_name +
+                                ".RTON";
+
+                            const auto group =
+                                FindOuterRsbGroup(
+                                    physical);
+
+                            diagnostic
+                                << " physical=\""
+                                << physical
+                                << "\" outerGroup=";
+
+                            if (group.has_value()) {
+                                diagnostic
+                                    << *group;
+                            } else {
+                                diagnostic
+                                    << "NOT_FOUND";
+                            }
+
+                            if (recovered_missing_resource_ids
+                                    .insert(
+                                        recovered_resource_id)
+                                    .second) {
+
+                                RecordSweepIssue(
+                                    "missing-resource-id",
+                                    recovered_resource_id,
+                                    recovered_resource_id +
+                                        (group.has_value()
+                                            ? " (physical RSB member exists; registry lookup missing)"
+                                            : " (no matching outer RSB member found)"));
+                            }
+                        }
                     }
 
                     Append(
@@ -10337,6 +10432,7 @@ public:
                             guest_arg(1u)));
                     regs[0] = 0u;
                 } else if (name == "glTexImage2D") {
+                    ++gles_texture_uploads;
                     const GLsizei width =
                         static_cast<GLsizei>(
                             guest_arg(3u));
@@ -10383,6 +10479,7 @@ public:
                         pixels);
                     regs[0] = 0u;
                 } else if (name == "glTexSubImage2D") {
+                    ++gles_texture_uploads;
                     const GLsizei width =
                         static_cast<GLsizei>(
                             guest_arg(4u));
@@ -10431,6 +10528,7 @@ public:
                 } else if (
                     name == "glCompressedTexImage2D") {
 
+                    ++gles_texture_uploads;
                     const GLsizei image_size =
                         static_cast<GLsizei>(
                             guest_arg(6u));
@@ -10528,6 +10626,7 @@ public:
                         guest_f32(3u));
                     regs[0] = 0u;
                 } else if (name == "glClear") {
+                    ++gles_clear_calls;
                     glClear(
                         static_cast<GLbitfield>(
                             guest_arg(0u)));
@@ -10635,6 +10734,7 @@ public:
                         pointer);
                     regs[0] = 0u;
                 } else if (name == "glDrawArrays") {
+                    ++gles_draw_calls;
                     glDrawArrays(
                         static_cast<GLenum>(
                             guest_arg(0u)),
@@ -10644,6 +10744,7 @@ public:
                             guest_arg(2u)));
                     regs[0] = 0u;
                 } else if (name == "glDrawElements") {
+                    ++gles_draw_calls;
                     const GLsizei count =
                         static_cast<GLsizei>(
                             guest_arg(1u));
@@ -13279,28 +13380,55 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                     return result;
                 }
 
-                constexpr std::uint32_t kV32FrameCount = 120u;
+                constexpr std::uint32_t
+                    kV33FrameCount = 600u;
+
+                auto should_sample_frame =
+                    [](std::uint32_t frame) {
+                        return
+                            frame <= 3u ||
+                            frame == 5u ||
+                            frame == 10u ||
+                            frame == 15u ||
+                            frame == 20u ||
+                            frame == 30u ||
+                            frame == 45u ||
+                            frame == 60u ||
+                            frame == 75u ||
+                            frame == 90u ||
+                            frame == 120u ||
+                            frame == 150u ||
+                            frame == 180u ||
+                            frame == 240u ||
+                            frame == 300u ||
+                            frame == 360u ||
+                            frame == 420u ||
+                            frame == 480u ||
+                            frame == 540u ||
+                            frame == 600u;
+                    };
+
+                std::uint64_t best_non_black = 0u;
+                std::uint32_t best_frame = 0u;
 
                 for (std::uint32_t frame = 0u;
-                     frame < kV32FrameCount;
+                     frame < kV33FrameCount;
                      ++frame) {
 
                     const std::uint32_t frame_number =
                         frame + 1u;
+                    const bool sample =
+                        should_sample_frame(
+                            frame_number);
 
-                    if (frame_number <= 3u ||
-                        frame_number == 15u ||
-                        frame_number == 30u ||
-                        frame_number == 60u ||
-                        frame_number == 120u) {
-
+                    if (sample) {
                         callbacks.Append(
-                            "V32 FRAME SOAK: begin frame " +
+                            "V33 FRAME SOAK: begin frame " +
                             std::to_string(
                                 frame_number) +
                             "/" +
                             std::to_string(
-                                kV32FrameCount));
+                                kV33FrameCount));
                     }
 
                     if (!run_lifecycle(
@@ -13313,7 +13441,8 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
 
                         if (callbacks.host_gles_ready) {
                             const char* partial =
-                                PvZ2HostGLESCapturePNG();
+                                PvZ2HostGLESCapturePNGNamed(
+                                    "pvz2-v33-stopped-frame.png");
 
                             if (partial != nullptr &&
                                 *partial != '\0') {
@@ -13329,42 +13458,73 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                         frame_number;
 
                     if (callbacks.host_gles_ready &&
-                        (frame_number <= 3u ||
-                         frame_number == 15u ||
-                         frame_number == 30u ||
-                         frame_number == 60u ||
-                         frame_number == 120u)) {
+                        sample) {
 
                         const char* stats =
                             PvZ2HostGLESFrameStats();
+                        const std::uint64_t non_black =
+                            PvZ2HostGLESLastNonBlackPixels();
 
                         callbacks.Append(
-                            "V32 FRAME STATS #" +
+                            "V33 FRAME STATS #" +
                             std::to_string(
                                 frame_number) +
                             ": " +
                             (stats != nullptr
                                 ? stats
-                                : "unavailable"));
-                    }
+                                : "unavailable") +
+                            " GL{draws=" +
+                            std::to_string(
+                                callbacks.gles_draw_calls) +
+                            ",clears=" +
+                            std::to_string(
+                                callbacks.gles_clear_calls) +
+                            ",uploads=" +
+                            std::to_string(
+                                callbacks.gles_texture_uploads) +
+                            "}");
 
-                    if (frame_number <= 3u ||
-                        frame_number == 15u ||
-                        frame_number == 30u ||
-                        frame_number == 60u ||
-                        frame_number == 120u) {
+                        if (non_black > best_non_black) {
+                            const char* best =
+                                PvZ2HostGLESCapturePNGNamed(
+                                    "pvz2-v33-best-frame.png");
+
+                            if (best != nullptr &&
+                                *best != '\0') {
+                                best_non_black =
+                                    non_black;
+                                best_frame =
+                                    frame_number;
+                                result.best_frame_number =
+                                    best_frame;
+                                result.best_frame_nonblack =
+                                    best_non_black;
+                                result.host_frame_png_path =
+                                    best;
+
+                                callbacks.Append(
+                                    "V33 BEST FRAME: #" +
+                                    std::to_string(
+                                        best_frame) +
+                                    " nonBlack=" +
+                                    std::to_string(
+                                        best_non_black) +
+                                    " path=" +
+                                    result.host_frame_png_path);
+                            }
+                        }
 
                         callbacks.Append(
-                            "V32 FRAME SOAK: returned frame " +
+                            "V33 FRAME SOAK: returned frame " +
                             std::to_string(
                                 frame_number) +
                             "/" +
                             std::to_string(
-                                kV32FrameCount));
+                                kV33FrameCount));
                     }
 
                     if (frame_number !=
-                        kV32FrameCount) {
+                        kV33FrameCount) {
                         std::this_thread::sleep_for(
                             std::chrono::milliseconds(
                                 16));
@@ -13372,26 +13532,37 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                 }
 
                 if (callbacks.host_gles_ready) {
-                    const char* capture =
-                        PvZ2HostGLESCapturePNG();
+                    const char* final_capture =
+                        PvZ2HostGLESCapturePNGNamed(
+                            "pvz2-v33-final-frame.png");
 
-                    if (capture != nullptr &&
-                        *capture != '\0') {
+                    callbacks.Append(
+                        std::string{
+                            "V33 FINAL GLES CAPTURE: "} +
+                        (final_capture != nullptr &&
+                         *final_capture != '\0'
+                            ? final_capture
+                            : "failed"));
+
+                    if (result.host_frame_png_path.empty() &&
+                        final_capture != nullptr &&
+                        *final_capture != '\0') {
                         result.host_frame_png_path =
-                            capture;
-
-                        callbacks.Append(
-                            "V32 HOST GLES CAPTURE: " +
-                            result.host_frame_png_path);
-                    } else {
-                        callbacks.Append(
-                            "V32 HOST GLES CAPTURE: failed");
+                            final_capture;
                     }
                 }
 
+                callbacks.Append(
+                    "V33 BEST FRAME SUMMARY: frame=" +
+                    std::to_string(
+                        best_frame) +
+                    " nonBlack=" +
+                    std::to_string(
+                        best_non_black));
+
                 result.ok = true;
                 result.message =
-                    "PvZ2 completed GameAppInitialize, lifecycle, surface setup, and a 120-frame timed host-GLES soak with framebuffer statistics.";
+                    "PvZ2 completed GameAppInitialize, lifecycle, surface setup, and a 600-frame timed host-GLES soak; the most populated sampled framebuffer was preserved for display.";
                 return result;
             }
 
