@@ -1223,6 +1223,24 @@ public:
         Constructor,
         GameAppInitialize,
         Lifecycle,
+        Worker,
+    };
+
+    struct DeferredThread {
+        std::uint32_t id = 0;
+        std::uint32_t start_routine = 0;
+        std::uint32_t argument = 0;
+        std::uint32_t stack_top = 0;
+        std::array<std::uint32_t, 16> regs{};
+        std::array<std::uint32_t, 64> ext_regs{};
+        std::uint32_t cpsr = 0x10u;
+        std::uint32_t fpscr = 0;
+        std::uint64_t ticks_consumed = 0;
+        std::uint64_t next_tick_report = 5000000ull;
+        bool started = false;
+        bool completed = false;
+        bool failed = false;
+        std::string failure_message;
     };
 
     std::uint32_t vm_object = 0;
@@ -1233,9 +1251,14 @@ public:
     std::uint64_t next_tick_report = 5000000;
     ReturnMode return_mode = ReturnMode::JniOnLoad;
     bool control_returned = false;
+    bool cooperative_slice_mode = false;
+    bool slice_expired = false;
     std::uint32_t current_constructor_index = 0;
     std::uint32_t current_constructor_address = 0;
     std::string current_lifecycle_name;
+    std::uint32_t current_worker_id = 0;
+    std::uint32_t current_worker_start = 0;
+    std::vector<DeferredThread> deferred_threads;
     std::uint32_t next_pthread_key = 1;
     std::uint32_t next_synthetic_thread = 1;
     std::uint32_t next_synthetic_class = 1;
@@ -1537,6 +1560,13 @@ public:
             } else if (return_mode == ReturnMode::Lifecycle) {
                 Append(
                     current_lifecycle_name +
+                    " returned.");
+            } else if (return_mode == ReturnMode::Worker) {
+                Append(
+                    "guest worker tid=" +
+                    std::to_string(current_worker_id) +
+                    " start=0x" +
+                    JniProbeHex(current_worker_start) +
                     " returned.");
             } else {
                 result.returned_from_jni_onload = true;
@@ -4651,19 +4681,43 @@ public:
                     thread_id);
             }
 
+            constexpr std::uint32_t kWorkerStackSize =
+                64u * 1024u;
+
+            const std::uint32_t stack_base =
+                mem.AllocateHeap(
+                    kWorkerStackSize,
+                    16u);
+
+            DeferredThread worker;
+            worker.id = thread_id;
+            worker.start_routine = start_routine;
+            worker.argument = argument;
+            worker.stack_top =
+                stack_base
+                    ? stack_base +
+                        kWorkerStackSize -
+                        0x100u
+                    : 0u;
+
+            deferred_threads.push_back(worker);
+
             Append(
-                "import pthread_create deferred: tid=" +
+                "import pthread_create deferred/cooperative: tid=" +
                 std::to_string(thread_id) +
                 " start=0x" +
                 JniProbeHex(start_routine) +
                 " arg=0x" +
-                JniProbeHex(argument));
+                JniProbeHex(argument) +
+                " stack=0x" +
+                JniProbeHex(worker.stack_top));
 
-            // During constructor probing we must not run the guest worker
-            // synchronously: many pthread entry points are intentionally
-            // long-lived loops. Real concurrent guest threads are a later
-            // runtime subsystem.
-            regs[0] = 0;
+            // Constructors still create threads without running them inline.
+            // v18 resumes eligible workers cooperatively between lifecycle
+            // slices, avoiding recursive Jit::Run while allowing async I/O
+            // queues (notably the main.pak request) to make progress.
+            regs[0] =
+                stack_base ? 0u : 0xffffffffu;
             ++supported_calls;
             return;
         }
@@ -4764,7 +4818,11 @@ public:
         }
 
         if (name == "pthread_self") {
-            regs[0] = 1;
+            regs[0] =
+                return_mode == ReturnMode::Worker &&
+                        current_worker_id != 0
+                    ? current_worker_id
+                    : 1u;
             ++supported_calls;
             return;
         }
@@ -5273,6 +5331,12 @@ public:
                         current_lifecycle_name.empty()
                             ? "lifecycle"
                             : current_lifecycle_name;
+                case ReturnMode::Worker:
+                    return
+                        "worker[" +
+                        std::to_string(current_worker_id) +
+                        "]@0x" +
+                        JniProbeHex(current_worker_start);
                 case ReturnMode::JniOnLoad:
                 default:
                     return "JNI_OnLoad";
@@ -5301,6 +5365,15 @@ public:
 
         if (ticks >= ticks_left) {
             ticks_left = 0;
+
+            if (cooperative_slice_mode) {
+                slice_expired = true;
+                if (jit) {
+                    jit->HaltExecution(
+                        Dynarmic::HaltReason::UserDefined4);
+                }
+                return;
+            }
 
             const std::uint32_t pc =
                 jit ? jit->Regs()[15] : 0u;
@@ -6455,6 +6528,211 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                 callbacks.Append(
                     "Native_GameAppInitialize returned JNI_TRUE; entering real PvZ2 lifecycle/surface sequence.");
 
+                auto clear_probe_halts =
+                    [&]() {
+                        jit.ClearHalt(
+                            Dynarmic::HaltReason::UserDefined1);
+                        jit.ClearHalt(
+                            Dynarmic::HaltReason::UserDefined2);
+                        jit.ClearHalt(
+                            Dynarmic::HaltReason::UserDefined3);
+                        jit.ClearHalt(
+                            Dynarmic::HaltReason::UserDefined4);
+                    };
+
+                auto run_worker_slice =
+                    [&](std::size_t index) {
+
+                        if (index >=
+                            callbacks.deferred_threads.size()) {
+                            return;
+                        }
+
+                        auto& worker =
+                            callbacks.deferred_threads[index];
+
+                        if (worker.completed ||
+                            worker.failed ||
+                            worker.stack_top == 0u) {
+                            return;
+                        }
+
+                        // The verified PvZ2 startup workers live below the
+                        // Wwise/audio region. Leave audio threads deferred for
+                        // now; they are not required to resolve main.pak.
+                        constexpr std::uint32_t kGameplayWorkerLimit =
+                            kGuestBase + 0x00b00000u;
+
+                        if ((worker.start_routine & ~1u) >=
+                            kGameplayWorkerLimit) {
+                            return;
+                        }
+
+                        const auto main_regs =
+                            jit.Regs();
+                        const auto main_ext_regs =
+                            jit.ExtRegs();
+                        const std::uint32_t main_cpsr =
+                            jit.Cpsr();
+                        const std::uint32_t main_fpscr =
+                            jit.Fpscr();
+
+                        const auto saved_mode =
+                            callbacks.return_mode;
+                        const bool saved_control_returned =
+                            callbacks.control_returned;
+                        const bool saved_cooperative =
+                            callbacks.cooperative_slice_mode;
+                        const bool saved_slice_expired =
+                            callbacks.slice_expired;
+                        const std::uint64_t saved_ticks_left =
+                            callbacks.ticks_left;
+                        const std::uint64_t saved_ticks_consumed =
+                            callbacks.ticks_consumed;
+                        const std::uint64_t saved_next_report =
+                            callbacks.next_tick_report;
+                        const std::uint32_t saved_worker_id =
+                            callbacks.current_worker_id;
+                        const std::uint32_t saved_worker_start =
+                            callbacks.current_worker_start;
+                        const std::string saved_message =
+                            result.message;
+
+                        if (!worker.started) {
+                            worker.regs.fill(0);
+                            worker.ext_regs.fill(0);
+                            worker.regs[0] =
+                                worker.argument;
+                            worker.regs[13] =
+                                worker.stack_top;
+                            worker.regs[14] =
+                                return_trampoline;
+                            worker.regs[15] =
+                                worker.start_routine & ~1u;
+                            worker.cpsr =
+                                (worker.start_routine & 1u)
+                                    ? 0x30u
+                                    : 0x10u;
+                            worker.fpscr = 0;
+                            worker.started = true;
+
+                            callbacks.Append(
+                                "COOP SCHED: starting worker tid=" +
+                                std::to_string(worker.id) +
+                                " start=0x" +
+                                JniProbeHex(
+                                    worker.start_routine) +
+                                " arg=0x" +
+                                JniProbeHex(worker.argument));
+                        }
+
+                        jit.Regs() =
+                            worker.regs;
+                        jit.ExtRegs() =
+                            worker.ext_regs;
+                        jit.SetCpsr(worker.cpsr);
+                        jit.SetFpscr(worker.fpscr);
+                        jit.ClearExclusiveState();
+
+                        callbacks.return_mode =
+                            PvZ2JniCallbacks::ReturnMode::Worker;
+                        callbacks.current_worker_id =
+                            worker.id;
+                        callbacks.current_worker_start =
+                            worker.start_routine;
+                        callbacks.control_returned = false;
+                        callbacks.cooperative_slice_mode = true;
+                        callbacks.slice_expired = false;
+                        callbacks.ticks_left = 25000ull;
+                        callbacks.ticks_consumed =
+                            worker.ticks_consumed;
+                        callbacks.next_tick_report =
+                            worker.next_tick_report;
+
+                        result.message.clear();
+                        clear_probe_halts();
+
+                        const Dynarmic::HaltReason worker_halt =
+                            jit.Run();
+
+                        worker.regs =
+                            jit.Regs();
+                        worker.ext_regs =
+                            jit.ExtRegs();
+                        worker.cpsr =
+                            jit.Cpsr();
+                        worker.fpscr =
+                            jit.Fpscr();
+                        worker.ticks_consumed =
+                            callbacks.ticks_consumed;
+                        worker.next_tick_report =
+                            callbacks.next_tick_report;
+
+                        const bool worker_fatal =
+                            Dynarmic::Has(
+                                worker_halt,
+                                Dynarmic::HaltReason::UserDefined2) ||
+                            Dynarmic::Has(
+                                worker_halt,
+                                Dynarmic::HaltReason::UserDefined3);
+
+                        if (callbacks.control_returned &&
+                            !worker_fatal &&
+                            Dynarmic::Has(
+                                worker_halt,
+                                Dynarmic::HaltReason::UserDefined1)) {
+
+                            worker.completed = true;
+                            callbacks.Append(
+                                "COOP SCHED: worker tid=" +
+                                std::to_string(worker.id) +
+                                " completed.");
+                        } else if (worker_fatal) {
+                            worker.failed = true;
+                            worker.failure_message =
+                                result.message.empty()
+                                    ? "guest worker halted fatally"
+                                    : result.message;
+
+                            callbacks.Append(
+                                "COOP SCHED: worker tid=" +
+                                std::to_string(worker.id) +
+                                " disabled after fault: " +
+                                worker.failure_message);
+                        }
+
+                        clear_probe_halts();
+
+                        jit.Regs() =
+                            main_regs;
+                        jit.ExtRegs() =
+                            main_ext_regs;
+                        jit.SetCpsr(main_cpsr);
+                        jit.SetFpscr(main_fpscr);
+                        jit.ClearExclusiveState();
+
+                        callbacks.return_mode =
+                            saved_mode;
+                        callbacks.control_returned =
+                            saved_control_returned;
+                        callbacks.cooperative_slice_mode =
+                            saved_cooperative;
+                        callbacks.slice_expired =
+                            saved_slice_expired;
+                        callbacks.ticks_left =
+                            saved_ticks_left;
+                        callbacks.ticks_consumed =
+                            saved_ticks_consumed;
+                        callbacks.next_tick_report =
+                            saved_next_report;
+                        callbacks.current_worker_id =
+                            saved_worker_id;
+                        callbacks.current_worker_start =
+                            saved_worker_start;
+                        result.message =
+                            saved_message;
+                    };
+
                 auto run_lifecycle =
                     [&](const char* name,
                         std::uint32_t function,
@@ -6468,7 +6746,8 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                         callbacks.current_lifecycle_name =
                             name;
                         callbacks.control_returned = false;
-                        callbacks.ticks_left = 50000000ull;
+                        callbacks.cooperative_slice_mode = true;
+                        callbacks.slice_expired = false;
                         callbacks.ticks_consumed = 0;
                         callbacks.next_tick_report = 5000000ull;
 
@@ -6476,16 +6755,10 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                         result.first_unsupported_import.clear();
                         result.unsupported_jni_slot = 0xffffffffu;
 
-                        jit.ClearHalt(
-                            Dynarmic::HaltReason::UserDefined1);
-                        jit.ClearHalt(
-                            Dynarmic::HaltReason::UserDefined2);
-                        jit.ClearHalt(
-                            Dynarmic::HaltReason::UserDefined3);
-                        jit.ClearHalt(
-                            Dynarmic::HaltReason::UserDefined4);
+                        clear_probe_halts();
 
                         jit.Regs().fill(0);
+                        jit.ExtRegs().fill(0);
                         jit.Regs()[0] =
                             callbacks.env_object;
                         jit.Regs()[1] =
@@ -6507,6 +6780,8 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             (function & 1u)
                                 ? 0x30u
                                 : 0x10u);
+                        jit.SetFpscr(0);
+                        jit.ClearExclusiveState();
 
                         if (first_draw) {
                             result.reached_first_draw_frame = true;
@@ -6516,60 +6791,256 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             "Entering " +
                             std::string{name} +
                             " at 0x" +
-                            JniProbeHex(function));
+                            JniProbeHex(function) +
+                            " with cooperative guest-worker scheduling; deferred threads=" +
+                            std::to_string(
+                                callbacks.deferred_threads.size()));
 
-                        const Dynarmic::HaltReason lifecycle_halt =
-                            jit.Run();
+                        constexpr std::uint64_t kLifecycleBudget =
+                            50000000ull;
+                        constexpr std::uint64_t kMainSlice =
+                            250000ull;
 
-                        result.final_pc =
-                            jit.Regs()[15];
+                        while (callbacks.ticks_consumed <
+                               kLifecycleBudget) {
 
-                        result.halt_reason =
-                            static_cast<std::uint32_t>(
-                                lifecycle_halt);
+                            callbacks.return_mode =
+                                PvZ2JniCallbacks::ReturnMode::Lifecycle;
+                            callbacks.control_returned = false;
+                            callbacks.cooperative_slice_mode = true;
+                            callbacks.slice_expired = false;
+                            callbacks.ticks_left =
+                                std::min<std::uint64_t>(
+                                    kMainSlice,
+                                    kLifecycleBudget -
+                                        callbacks.ticks_consumed);
 
-                        result.supported_import_calls =
-                            callbacks.supported_calls;
+                            clear_probe_halts();
 
-                        result.trace =
-                            callbacks.Trace();
+                            const Dynarmic::HaltReason lifecycle_halt =
+                                jit.Run();
 
-                        const bool lifecycle_fatal =
-                            Dynarmic::Has(
-                                lifecycle_halt,
-                                Dynarmic::HaltReason::UserDefined2) ||
-                            Dynarmic::Has(
-                                lifecycle_halt,
-                                Dynarmic::HaltReason::UserDefined3) ||
-                            Dynarmic::Has(
-                                lifecycle_halt,
-                                Dynarmic::HaltReason::UserDefined4);
+                            result.final_pc =
+                                jit.Regs()[15];
 
-                        if (callbacks.control_returned &&
-                            !lifecycle_fatal &&
-                            Dynarmic::Has(
-                                lifecycle_halt,
-                                Dynarmic::HaltReason::UserDefined1)) {
+                            result.halt_reason =
+                                static_cast<std::uint32_t>(
+                                    lifecycle_halt);
 
-                            ++result.lifecycle_calls_completed;
+                            result.supported_import_calls =
+                                callbacks.supported_calls;
 
-                            if (first_draw) {
-                                result.returned_first_draw_frame = true;
+                            const bool lifecycle_fatal =
+                                Dynarmic::Has(
+                                    lifecycle_halt,
+                                    Dynarmic::HaltReason::UserDefined2) ||
+                                Dynarmic::Has(
+                                    lifecycle_halt,
+                                    Dynarmic::HaltReason::UserDefined3);
+
+                            if (callbacks.control_returned &&
+                                !lifecycle_fatal &&
+                                Dynarmic::Has(
+                                    lifecycle_halt,
+                                    Dynarmic::HaltReason::UserDefined1)) {
+
+                                callbacks.cooperative_slice_mode =
+                                    false;
+
+                                ++result.lifecycle_calls_completed;
+
+                                if (first_draw) {
+                                    result.returned_first_draw_frame =
+                                        true;
+                                }
+
+                                result.trace =
+                                    callbacks.Trace();
+
+                                return true;
                             }
 
-                            return true;
+                            if (lifecycle_fatal) {
+                                callbacks.cooperative_slice_mode =
+                                    false;
+                                result.lifecycle_failure_name =
+                                    name;
+                                result.trace =
+                                    callbacks.Trace();
+
+                                if (result.message.empty()) {
+                                    result.message =
+                                        std::string{name} +
+                                        " halted fatally at guest PC 0x" +
+                                        JniProbeHex(
+                                            result.final_pc) +
+                                        ".";
+                                }
+
+                                return false;
+                            }
+
+                            if (callbacks.slice_expired &&
+                                Dynarmic::Has(
+                                    lifecycle_halt,
+                                    Dynarmic::HaltReason::UserDefined4)) {
+
+                                clear_probe_halts();
+
+                                const std::size_t worker_count =
+                                    callbacks.deferred_threads.size();
+
+                                for (std::size_t i = 0;
+                                     i < worker_count;
+                                     ++i) {
+                                    run_worker_slice(i);
+                                }
+
+                                continue;
+                            }
+
+                            callbacks.cooperative_slice_mode =
+                                false;
+                            result.lifecycle_failure_name =
+                                name;
+                            result.trace =
+                                callbacks.Trace();
+
+                            if (result.message.empty()) {
+                                result.message =
+                                    std::string{name} +
+                                    " halted before returning at guest PC 0x" +
+                                    JniProbeHex(
+                                        result.final_pc) +
+                                    ".";
+                            }
+
+                            return false;
                         }
 
+                        callbacks.cooperative_slice_mode = false;
                         result.lifecycle_failure_name =
                             name;
 
-                        if (result.message.empty()) {
-                            result.message =
-                                std::string{name} +
-                                " halted before returning at guest PC 0x" +
-                                JniProbeHex(result.final_pc) +
-                                ".";
+                        const std::uint32_t pc =
+                            jit.Regs()[15];
+                        const std::uint32_t lr =
+                            jit.Regs()[14];
+                        const std::uint32_t sp =
+                            jit.Regs()[13];
+
+                        std::size_t completed_workers = 0;
+                        std::size_t active_workers = 0;
+                        std::size_t failed_workers = 0;
+
+                        for (const auto& worker :
+                             callbacks.deferred_threads) {
+                            if (worker.completed) {
+                                ++completed_workers;
+                            } else if (worker.failed) {
+                                ++failed_workers;
+                            } else if (worker.started) {
+                                ++active_workers;
+                            }
                         }
+
+                        std::ostringstream timeout;
+                        timeout
+                            << name
+                            << " exceeded the 50M-tick cooperative budget"
+                            << " at PC=0x" << JniProbeHex(pc)
+                            << " LR=0x" << JniProbeHex(lr)
+                            << " caller=0x"
+                            << JniProbeHex(
+                                lr >= 4u ? lr - 4u : lr)
+                            << " SP=0x" << JniProbeHex(sp)
+                            << " after "
+                            << callbacks.ticks_consumed
+                            << " ticks; workers(total/completed/active/failed)="
+                            << callbacks.deferred_threads.size()
+                            << "/" << completed_workers
+                            << "/" << active_workers
+                            << "/" << failed_workers;
+
+                        // v17 localized the startup stall to this async-future
+                        // poll. Dump its state explicitly: +0x2c is the atomic
+                        // status read by 0x9f6fb4; Android errno 115 is
+                        // EINPROGRESS.
+                        if (pc >=
+                                kGuestBase + 0x009f6f24u &&
+                            pc <=
+                                kGuestBase + 0x009f6f68u) {
+
+                            const std::uint32_t future =
+                                jit.Regs()[4];
+
+                            timeout
+                                << "; main.pak async future=0x"
+                                << JniProbeHex(future)
+                                << " done="
+                                << static_cast<unsigned>(
+                                    memory.Read8(
+                                        future + 0x14u))
+                                << " failed="
+                                << static_cast<unsigned>(
+                                    memory.Read8(
+                                        future + 0x15u))
+                                << " status="
+                                << memory.Read32Guest(
+                                    future + 0x2cu)
+                                << " result="
+                                << memory.Read32Guest(
+                                    future + 0x30u);
+
+                            if (memory.Read32Guest(
+                                    future + 0x2cu) ==
+                                115u) {
+                                timeout
+                                    << " (EINPROGRESS)";
+                            }
+                        }
+
+                        timeout
+                            << "; r0=0x"
+                            << JniProbeHex(jit.Regs()[0])
+                            << " r1=0x"
+                            << JniProbeHex(jit.Regs()[1])
+                            << " r2=0x"
+                            << JniProbeHex(jit.Regs()[2])
+                            << " r3=0x"
+                            << JniProbeHex(jit.Regs()[3])
+                            << " r4=0x"
+                            << JniProbeHex(jit.Regs()[4])
+                            << ".";
+
+                        result.message = timeout.str();
+                        callbacks.Append(
+                            "COOP SCHED TIMEOUT: " +
+                            result.message);
+
+                        for (const auto& worker :
+                             callbacks.deferred_threads) {
+                            callbacks.Append(
+                                "  worker tid=" +
+                                std::to_string(worker.id) +
+                                " start=0x" +
+                                JniProbeHex(
+                                    worker.start_routine) +
+                                " arg=0x" +
+                                JniProbeHex(worker.argument) +
+                                " started=" +
+                                (worker.started ? "YES" : "NO") +
+                                " completed=" +
+                                (worker.completed ? "YES" : "NO") +
+                                " failed=" +
+                                (worker.failed ? "YES" : "NO") +
+                                " ticks=" +
+                                std::to_string(
+                                    worker.ticks_consumed));
+                        }
+
+                        result.trace =
+                            callbacks.Trace();
 
                         return false;
                     };
