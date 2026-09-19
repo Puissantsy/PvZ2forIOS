@@ -234,7 +234,7 @@ NSString *NSStringFromStd(
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — Async Worker Probe v20";
+        @"PvZ2forIOS — Cooperative Resume v21";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -243,7 +243,7 @@ NSString *NSStringFromStd(
         NO;
 
     title.text =
-        @"PvZ2forIOS — async worker probe v20";
+        @"PvZ2forIOS — cooperative resume v21";
 
     title.font =
         [UIFont
@@ -259,8 +259,8 @@ NSString *NSStringFromStd(
         NO;
 
     explanation.text =
-        @"v19 proved the Android expansion bridge is now reached for real: PvZ2 successfully opens ASSET:main.pak against the selected 170 MB OBB, then stalls in the sibling async-future poll before any OBB read occurs. "
-         @"v20 expands the verified poll range, records up to 64 deferred pthread candidates, gives each a real synthetic pthread_self id, and executes bounded ARM32 worker probes to identify which background worker consumes the queued resource request. The OBB VFS remains active; GLES remains probe/no-op.";
+        @"v20 identified the exact background thread: deferred pthread tid=1 (created by constructor 575) changes the async main.pak future and reaches the OBB VFS. "
+         @"v21 turns that diagnostic into runtime behavior. The worker keeps a persistent ARM32 register/stack context across slices, the main lifecycle is restored after each worker slice, and both sides are cooperatively resumed until the lifecycle returns or a new concrete blocker is reached. APK+OBB VFS remains active; GLES is still probe/no-op.";
 
     explanation.numberOfLines = 0;
 
@@ -437,7 +437,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 async-worker probe v20 session started; PID=%d ===",
+                    @"=== PvZ2 cooperative-resume v21 session started; PID=%d ===",
                     getpid()]];
 
     [self
@@ -756,7 +756,7 @@ NSString *NSStringFromStd(
 
     [self
         appendUI:
-            @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v20 reproduces the verified ASSET:main.pak open, then probes every recorded deferred ARM32 worker candidate at the async-future stall to find the background file worker."];
+            @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v21 keeps the identified background worker alive across ARM32 time slices and resumes the real lifecycle after each async-file completion, continuing toward surface creation and the first draw frame."];
 
     [self
         presentViewController:
