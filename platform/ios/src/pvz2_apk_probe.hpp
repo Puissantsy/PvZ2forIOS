@@ -67,6 +67,10 @@ struct PvZ2JniProbeResult {
     std::uint32_t cxa_atexit_calls = 0;
     std::uint32_t lifecycle_calls_completed = 0;
 
+    std::uint32_t sweep_issue_count = 0;
+    std::uint32_t sweep_recovery_count = 0;
+    bool sweep_speculative = false;
+
     std::uint32_t find_class_calls = 0;
     std::uint32_t register_natives_calls = 0;
     std::uint32_t registered_native_methods = 0;
@@ -74,6 +78,7 @@ struct PvZ2JniProbeResult {
     std::string first_unsupported_import;
     std::string game_app_initialize_signature;
     std::string lifecycle_failure_name;
+    std::string sweep_summary;
     std::string trace;
     std::string message;
 };
