@@ -234,7 +234,7 @@ NSString *NSStringFromStd(
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — General Scheduler v22";
+        @"PvZ2forIOS — Null-Call Recovery v23";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -243,7 +243,7 @@ NSString *NSStringFromStd(
         NO;
 
     title.text =
-        @"PvZ2forIOS — general scheduler v22";
+        @"PvZ2forIOS — null-call recovery v23";
 
     title.font =
         [UIFont
@@ -259,8 +259,8 @@ NSString *NSStringFromStd(
         NO;
 
     explanation.text =
-        @"v21 successfully carried PvZ2 past applicationWillFinishLaunching and into Native_onSurfaceCreated, where the main thread now waits in the verified 1bsr resource-bundle read loop at guest 0x10864968. "
-         @"v22 removes the overly narrow future-PC scheduler gate: persistent deferred ARM32 workers now receive time slices after every lifecycle quantum, including the higher-level RSB header/body wait loops at 0x10864968 and 0x10864a40. The main thread is then restored and resumed. APK+OBB VFS remains active; GLES is still probe/no-op.";
+        @"v22 advanced deep into resource registration and then hit a direct NoExecuteFault at guest PC 0 immediately after PvZ2 logged that RESFILE_PACKAGES_VERSION was not found. "
+         @"v23 adds a full null-call diagnostic (LR/callsite, registers, stack words, phase/thread, recent Android log, and OBB read/seek coverage), verifies whether RESFILE_PACKAGES_VERSION is physically present in the selected OBB, and can recover up to four lifecycle null callbacks by synthesizing a zero return and resuming at LR. APK+OBB VFS and the persistent worker scheduler remain active; GLES is still probe/no-op.";
 
     explanation.numberOfLines = 0;
 
@@ -437,7 +437,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 general-scheduler v22 session started; PID=%d ===",
+                    @"=== PvZ2 null-call-recovery v23 session started; PID=%d ===",
                     getpid()]];
 
     [self
@@ -756,7 +756,7 @@ NSString *NSStringFromStd(
 
     [self
         appendUI:
-            @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v22 keeps the persistent background worker scheduled throughout every lifecycle stage, including the RSB resource-read wait reached in onSurfaceCreated, and resumes the main ARM32 context after each worker slice."];
+            @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v23 continues the persistent worker scheduler, audits OBB read/seek coverage at any fault, and records/recoveries a bounded number of direct null callback calls so execution can continue to the next concrete blocker."];
 
     [self
         presentViewController:
