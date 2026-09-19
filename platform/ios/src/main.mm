@@ -234,7 +234,7 @@ NSString *NSStringFromStd(
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — Cooperative Resume v21";
+        @"PvZ2forIOS — General Scheduler v22";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -243,7 +243,7 @@ NSString *NSStringFromStd(
         NO;
 
     title.text =
-        @"PvZ2forIOS — cooperative resume v21";
+        @"PvZ2forIOS — general scheduler v22";
 
     title.font =
         [UIFont
@@ -259,8 +259,8 @@ NSString *NSStringFromStd(
         NO;
 
     explanation.text =
-        @"v20 identified the exact background thread: deferred pthread tid=1 (created by constructor 575) changes the async main.pak future and reaches the OBB VFS. "
-         @"v21 turns that diagnostic into runtime behavior. The worker keeps a persistent ARM32 register/stack context across slices, the main lifecycle is restored after each worker slice, and both sides are cooperatively resumed until the lifecycle returns or a new concrete blocker is reached. APK+OBB VFS remains active; GLES is still probe/no-op.";
+        @"v21 successfully carried PvZ2 past applicationWillFinishLaunching and into Native_onSurfaceCreated, where the main thread now waits in the verified 1bsr resource-bundle read loop at guest 0x10864968. "
+         @"v22 removes the overly narrow future-PC scheduler gate: persistent deferred ARM32 workers now receive time slices after every lifecycle quantum, including the higher-level RSB header/body wait loops at 0x10864968 and 0x10864a40. The main thread is then restored and resumed. APK+OBB VFS remains active; GLES is still probe/no-op.";
 
     explanation.numberOfLines = 0;
 
@@ -437,7 +437,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 cooperative-resume v21 session started; PID=%d ===",
+                    @"=== PvZ2 general-scheduler v22 session started; PID=%d ===",
                     getpid()]];
 
     [self
@@ -756,7 +756,7 @@ NSString *NSStringFromStd(
 
     [self
         appendUI:
-            @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v21 keeps the identified background worker alive across ARM32 time slices and resumes the real lifecycle after each async-file completion, continuing toward surface creation and the first draw frame."];
+            @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v22 keeps the persistent background worker scheduled throughout every lifecycle stage, including the RSB resource-read wait reached in onSurfaceCreated, and resumes the main ARM32 context after each worker slice."];
 
     [self
         presentViewController:
