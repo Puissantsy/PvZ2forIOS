@@ -24,6 +24,7 @@ std::uint32_t gWidth = 0;
 std::uint32_t gHeight = 0;
 NSString *gCapturePath = nil;
 std::string gFrameStats;
+std::string gFramebufferStats;
 std::uint64_t gLastNonBlackPixels = 0u;
 
 void DestroySurface() {
@@ -320,6 +321,181 @@ PvZ2HostGLESFrameStats(void) {
 
     return
         gFrameStats.c_str();
+}
+
+extern "C" const char*
+PvZ2HostGLESFramebufferStats(
+    std::uint32_t framebuffer,
+    std::uint32_t width,
+    std::uint32_t height) {
+
+    if (gContext == nil ||
+        framebuffer == 0u ||
+        width == 0u ||
+        height == 0u ||
+        width > 4096u ||
+        height > 4096u ||
+        ![EAGLContext setCurrentContext:gContext]) {
+        gFramebufferStats = "unavailable";
+        gLastNonBlackPixels = 0u;
+        return gFramebufferStats.c_str();
+    }
+
+    GLint previous_framebuffer = 0;
+    GLint previous_pack_alignment = 4;
+
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &previous_framebuffer);
+    glGetIntegerv(GL_PACK_ALIGNMENT, &previous_pack_alignment);
+
+    glBindFramebuffer(
+        GL_FRAMEBUFFER,
+        static_cast<GLuint>(framebuffer));
+
+    const GLenum status =
+        glCheckFramebufferStatus(GL_FRAMEBUFFER);
+
+    if (status != GL_FRAMEBUFFER_COMPLETE) {
+        std::ostringstream out;
+        out
+            << "size=" << width << "x" << height
+            << " status=0x" << std::hex
+            << static_cast<unsigned>(status)
+            << " incomplete";
+        gFramebufferStats = out.str();
+        gLastNonBlackPixels = 0u;
+
+        glPixelStorei(GL_PACK_ALIGNMENT, previous_pack_alignment);
+        glBindFramebuffer(
+            GL_FRAMEBUFFER,
+            static_cast<GLuint>(previous_framebuffer));
+        return gFramebufferStats.c_str();
+    }
+
+    const std::size_t pixel_count =
+        static_cast<std::size_t>(width) *
+        static_cast<std::size_t>(height);
+    const std::size_t total_bytes =
+        pixel_count * 4u;
+
+    std::vector<std::uint8_t> pixels(total_bytes);
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+
+    while (glGetError() != GL_NO_ERROR) {
+    }
+
+    glReadPixels(
+        0,
+        0,
+        static_cast<GLsizei>(width),
+        static_cast<GLsizei>(height),
+        GL_RGBA,
+        GL_UNSIGNED_BYTE,
+        pixels.data());
+
+    const GLenum read_error =
+        glGetError();
+
+    std::uint64_t non_black = 0u;
+    std::uint64_t non_transparent = 0u;
+    std::uint64_t sum_r = 0u;
+    std::uint64_t sum_g = 0u;
+    std::uint64_t sum_b = 0u;
+    std::uint64_t fnv =
+        1469598103934665603ull;
+
+    if (read_error == GL_NO_ERROR) {
+        for (std::size_t i = 0u;
+             i < pixel_count;
+             ++i) {
+
+            const std::uint8_t r =
+                pixels[i * 4u + 0u];
+            const std::uint8_t g =
+                pixels[i * 4u + 1u];
+            const std::uint8_t b =
+                pixels[i * 4u + 2u];
+            const std::uint8_t a =
+                pixels[i * 4u + 3u];
+
+            if (r > 4u || g > 4u || b > 4u) {
+                ++non_black;
+            }
+
+            if (a != 0u) {
+                ++non_transparent;
+            }
+
+            sum_r += r;
+            sum_g += g;
+            sum_b += b;
+
+            fnv ^= r;
+            fnv *= 1099511628211ull;
+            fnv ^= g;
+            fnv *= 1099511628211ull;
+            fnv ^= b;
+            fnv *= 1099511628211ull;
+            fnv ^= a;
+            fnv *= 1099511628211ull;
+        }
+    }
+
+    const std::size_t center =
+        ((static_cast<std::size_t>(height) / 2u) *
+             static_cast<std::size_t>(width) +
+         (static_cast<std::size_t>(width) / 2u)) *
+        4u;
+
+    std::ostringstream out;
+    out
+        << "size=" << width << "x" << height
+        << " status=0x" << std::hex
+        << static_cast<unsigned>(status)
+        << " readError=0x"
+        << static_cast<unsigned>(read_error)
+        << std::dec
+        << " pixels=" << pixel_count
+        << " nonBlack=" << non_black
+        << " nonTransparent=" << non_transparent
+        << " avgRGB=("
+        << (pixel_count && read_error == GL_NO_ERROR
+                ? sum_r / pixel_count
+                : 0u)
+        << ","
+        << (pixel_count && read_error == GL_NO_ERROR
+                ? sum_g / pixel_count
+                : 0u)
+        << ","
+        << (pixel_count && read_error == GL_NO_ERROR
+                ? sum_b / pixel_count
+                : 0u)
+        << ") centerRGBA=("
+        << (read_error == GL_NO_ERROR
+                ? static_cast<unsigned>(pixels[center + 0u])
+                : 0u)
+        << ","
+        << (read_error == GL_NO_ERROR
+                ? static_cast<unsigned>(pixels[center + 1u])
+                : 0u)
+        << ","
+        << (read_error == GL_NO_ERROR
+                ? static_cast<unsigned>(pixels[center + 2u])
+                : 0u)
+        << ","
+        << (read_error == GL_NO_ERROR
+                ? static_cast<unsigned>(pixels[center + 3u])
+                : 0u)
+        << ") fnv64=0x" << std::hex << fnv;
+
+    gFramebufferStats = out.str();
+    gLastNonBlackPixels = non_black;
+
+    glPixelStorei(GL_PACK_ALIGNMENT, previous_pack_alignment);
+    glBindFramebuffer(
+        GL_FRAMEBUFFER,
+        static_cast<GLuint>(previous_framebuffer));
+
+    return gFramebufferStats.c_str();
 }
 
 extern "C" std::uint64_t
