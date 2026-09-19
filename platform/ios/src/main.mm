@@ -943,7 +943,7 @@ NSString *NSStringFromStd(
 
     [self
         appendUI:
-            @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v38 preserves every successful native resource lookup, adds a RESFILE-only fallback solely at the verified native NULL-return sites, reports the network as offline to match deterministic HTTP error callbacks, and logs exact GLES viewport/scissor geometry. Safe boundary workers, RSB/PTX virtual assets, host GLES2 and the 600-frame soak remain enabled.""];
+            @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v38 preserves every successful native resource lookup, adds a RESFILE-only fallback solely at the verified native NULL-return sites, reports the network as offline to match deterministic HTTP error callbacks, and logs exact GLES viewport/scissor geometry. Safe boundary workers, RSB/PTX virtual assets, host GLES2 and the 600-frame soak remain enabled."];
 
     [self
         presentViewController:
