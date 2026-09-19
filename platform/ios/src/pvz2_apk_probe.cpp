@@ -1243,12 +1243,22 @@ public:
         std::uint32_t start_routine = 0;
         std::uint32_t argument = 0;
         std::string created_in;
+        bool runtime_started = false;
+        bool runtime_completed = false;
+        bool runtime_failed = false;
+        std::uint32_t stack_top = 0;
+        std::array<std::uint32_t, 16> regs{};
+        std::array<std::uint32_t, 64> ext_regs{};
+        std::uint32_t cpsr = 0x10u;
+        std::uint32_t fpscr = 0u;
+        std::uint64_t runtime_ticks = 0;
     };
 
     std::uint32_t current_constructor_address = 0;
     std::string current_lifecycle_name;
     std::vector<DeferredThread> deferred_threads;
     std::uint32_t current_probe_thread_id = 0;
+    bool soft_slice_timeout = false;
     std::uint32_t next_pthread_key = 1;
     std::uint32_t next_synthetic_thread = 1;
     std::uint32_t next_synthetic_class = 1;
@@ -5982,6 +5992,14 @@ public:
         if (ticks >= ticks_left) {
             ticks_left = 0;
 
+            if (soft_slice_timeout) {
+                if (jit) {
+                    jit->HaltExecution(
+                        Dynarmic::HaltReason::UserDefined4);
+                }
+                return;
+            }
+
             const std::uint32_t pc =
                 jit ? jit->Regs()[15] : 0u;
             const std::uint32_t lr =
@@ -7147,29 +7165,106 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                         std::uint32_t arg3,
                         bool first_draw) -> bool {
 
+                        auto clear_probe_halts =
+                            [&]() {
+                                jit.ClearHalt(
+                                    Dynarmic::HaltReason::UserDefined1);
+                                jit.ClearHalt(
+                                    Dynarmic::HaltReason::UserDefined2);
+                                jit.ClearHalt(
+                                    Dynarmic::HaltReason::UserDefined3);
+                                jit.ClearHalt(
+                                    Dynarmic::HaltReason::UserDefined4);
+                            };
+
+                        auto async_future_snapshot =
+                            [&](std::uint32_t future) {
+                                const std::uint32_t vtable =
+                                    memory.Read32Guest(future);
+
+                                std::ostringstream out;
+                                out
+                                    << "future=0x"
+                                    << JniProbeHex(future)
+                                    << " vtable=0x"
+                                    << JniProbeHex(vtable)
+                                    << " vfn8=0x"
+                                    << JniProbeHex(
+                                        memory.Read32Guest(
+                                            vtable + 0x08u))
+                                    << " vfnC=0x"
+                                    << JniProbeHex(
+                                        memory.Read32Guest(
+                                            vtable + 0x0cu))
+                                    << " vfn10=0x"
+                                    << JniProbeHex(
+                                        memory.Read32Guest(
+                                            vtable + 0x10u))
+                                    << " done="
+                                    << static_cast<unsigned>(
+                                        memory.Read8(
+                                            future + 0x14u))
+                                    << " failed="
+                                    << static_cast<unsigned>(
+                                        memory.Read8(
+                                            future + 0x15u))
+                                    << " w18=0x"
+                                    << JniProbeHex(
+                                        memory.Read32Guest(
+                                            future + 0x18u))
+                                    << " w1C=0x"
+                                    << JniProbeHex(
+                                        memory.Read32Guest(
+                                            future + 0x1cu))
+                                    << " w20=0x"
+                                    << JniProbeHex(
+                                        memory.Read32Guest(
+                                            future + 0x20u))
+                                    << " w24=0x"
+                                    << JniProbeHex(
+                                        memory.Read32Guest(
+                                            future + 0x24u))
+                                    << " w28=0x"
+                                    << JniProbeHex(
+                                        memory.Read32Guest(
+                                            future + 0x28u))
+                                    << " w2C=0x"
+                                    << JniProbeHex(
+                                        memory.Read32Guest(
+                                            future + 0x2cu))
+                                    << " w30=0x"
+                                    << JniProbeHex(
+                                        memory.Read32Guest(
+                                            future + 0x30u));
+
+                                return out.str();
+                            };
+
+                        auto in_async_poll =
+                            [&](std::uint32_t pc) {
+                                return
+                                    pc >=
+                                        kGuestBase + 0x009f6f24u &&
+                                    pc <=
+                                        kGuestBase + 0x009f7050u;
+                            };
+
                         callbacks.return_mode =
                             PvZ2JniCallbacks::ReturnMode::Lifecycle;
                         callbacks.current_lifecycle_name =
                             name;
+                        callbacks.current_probe_thread_id = 0;
                         callbacks.control_returned = false;
-                        callbacks.ticks_left = 50000000ull;
-                        callbacks.ticks_consumed = 0;
-                        callbacks.next_tick_report = 5000000ull;
+                        callbacks.soft_slice_timeout = true;
 
                         result.message.clear();
                         result.first_unsupported_import.clear();
                         result.unsupported_jni_slot = 0xffffffffu;
 
-                        jit.ClearHalt(
-                            Dynarmic::HaltReason::UserDefined1);
-                        jit.ClearHalt(
-                            Dynarmic::HaltReason::UserDefined2);
-                        jit.ClearHalt(
-                            Dynarmic::HaltReason::UserDefined3);
-                        jit.ClearHalt(
-                            Dynarmic::HaltReason::UserDefined4);
+                        clear_probe_halts();
 
                         jit.Regs().fill(0);
+                        jit.ExtRegs().fill(0);
                         jit.Regs()[0] =
                             callbacks.env_object;
                         jit.Regs()[1] =
@@ -7191,6 +7286,8 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             (function & 1u)
                                 ? 0x30u
                                 : 0x10u);
+                        jit.SetFpscr(0u);
+                        jit.ClearExclusiveState();
 
                         if (first_draw) {
                             result.reached_first_draw_frame = true;
@@ -7200,104 +7297,151 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             "Entering " +
                             std::string{name} +
                             " at 0x" +
-                            JniProbeHex(function));
+                            JniProbeHex(function) +
+                            " with v21 persistent cooperative worker scheduling; deferred_threads=" +
+                            std::to_string(
+                                callbacks.deferred_threads.size()));
 
-                        const Dynarmic::HaltReason lifecycle_halt =
-                            jit.Run();
+                        constexpr std::uint64_t kMainSliceTicks =
+                            5000000ull;
+                        constexpr std::uint64_t kWorkerSliceTicks =
+                            750000ull;
+                        constexpr std::uint64_t kLifecycleTotalBudget =
+                            200000000ull;
+                        constexpr std::uint32_t kWorkerStackSize =
+                            64u * 1024u;
 
-                        result.final_pc =
-                            jit.Regs()[15];
+                        std::uint64_t lifecycle_ticks = 0;
+                        std::uint32_t async_round = 0;
 
-                        result.halt_reason =
-                            static_cast<std::uint32_t>(
-                                lifecycle_halt);
+                        while (lifecycle_ticks <
+                               kLifecycleTotalBudget) {
 
-                        result.supported_import_calls =
-                            callbacks.supported_calls;
+                            callbacks.return_mode =
+                                PvZ2JniCallbacks::ReturnMode::Lifecycle;
+                            callbacks.current_lifecycle_name =
+                                name;
+                            callbacks.current_probe_thread_id = 0;
+                            callbacks.control_returned = false;
+                            callbacks.soft_slice_timeout = true;
+                            callbacks.ticks_left =
+                                kMainSliceTicks;
+                            callbacks.ticks_consumed = 0;
+                            callbacks.next_tick_report =
+                                kMainSliceTicks;
 
-                        result.trace =
-                            callbacks.Trace();
+                            result.message.clear();
+                            clear_probe_halts();
 
-                        const bool hit_budget =
-                            Dynarmic::Has(
-                                lifecycle_halt,
-                                Dynarmic::HaltReason::UserDefined4);
+                            const Dynarmic::HaltReason lifecycle_halt =
+                                jit.Run();
 
-                        const bool main_pak_poll =
-                            std::string{name} ==
-                                "Native_applicationWillFinishLaunching" &&
-                            result.final_pc >=
-                                kGuestBase + 0x009f6f24u &&
-                            result.final_pc <=
-                                kGuestBase + 0x009f7050u;
+                            lifecycle_ticks +=
+                                callbacks.ticks_consumed;
 
-                        if (hit_budget &&
-                            main_pak_poll &&
-                            !callbacks.deferred_threads.empty()) {
+                            result.final_pc =
+                                jit.Regs()[15];
+
+                            result.halt_reason =
+                                static_cast<std::uint32_t>(
+                                    lifecycle_halt);
+
+                            result.supported_import_calls =
+                                callbacks.supported_calls;
+
+                            const bool lifecycle_fatal =
+                                Dynarmic::Has(
+                                    lifecycle_halt,
+                                    Dynarmic::HaltReason::UserDefined2) ||
+                                Dynarmic::Has(
+                                    lifecycle_halt,
+                                    Dynarmic::HaltReason::UserDefined3);
+
+                            if (callbacks.control_returned &&
+                                !lifecycle_fatal &&
+                                Dynarmic::Has(
+                                    lifecycle_halt,
+                                    Dynarmic::HaltReason::UserDefined1)) {
+
+                                callbacks.soft_slice_timeout = false;
+
+                                ++result.lifecycle_calls_completed;
+
+                                if (first_draw) {
+                                    result.returned_first_draw_frame =
+                                        true;
+                                }
+
+                                callbacks.Append(
+                                    "V21 LIFECYCLE RETURN: " +
+                                    std::string{name} +
+                                    " completed after " +
+                                    std::to_string(
+                                        lifecycle_ticks) +
+                                    " scheduled ticks.");
+
+                                result.trace =
+                                    callbacks.Trace();
+
+                                return true;
+                            }
+
+                            if (lifecycle_fatal) {
+                                callbacks.soft_slice_timeout = false;
+                                result.lifecycle_failure_name =
+                                    name;
+                                result.trace =
+                                    callbacks.Trace();
+
+                                if (result.message.empty()) {
+                                    result.message =
+                                        std::string{name} +
+                                        " halted fatally at guest PC 0x" +
+                                        JniProbeHex(
+                                            result.final_pc) +
+                                        ".";
+                                }
+
+                                return false;
+                            }
+
+                            const bool hit_slice =
+                                Dynarmic::Has(
+                                    lifecycle_halt,
+                                    Dynarmic::HaltReason::UserDefined4);
+
+                            if (!hit_slice) {
+                                callbacks.soft_slice_timeout = false;
+                                result.lifecycle_failure_name =
+                                    name;
+                                result.trace =
+                                    callbacks.Trace();
+
+                                result.message =
+                                    std::string{name} +
+                                    " halted unexpectedly at guest PC 0x" +
+                                    JniProbeHex(
+                                        result.final_pc) +
+                                    ".";
+
+                                return false;
+                            }
+
+                            // A slice may simply expire while useful native
+                            // work is progressing. Only schedule background
+                            // pthreads when the main thread is actually in one
+                            // of the verified async-future poll helpers.
+                            if (!in_async_poll(
+                                    result.final_pc) ||
+                                callbacks.deferred_threads.empty()) {
+
+                                continue;
+                            }
+
+                            ++async_round;
 
                             const std::uint32_t future =
                                 jit.Regs()[4];
-
-                            auto future_snapshot =
-                                [&]() {
-                                    const std::uint32_t vtable =
-                                        memory.Read32Guest(future);
-                                    std::ostringstream out;
-                                    out
-                                        << "future=0x"
-                                        << JniProbeHex(future)
-                                        << " vtable=0x"
-                                        << JniProbeHex(vtable)
-                                        << " vfn8=0x"
-                                        << JniProbeHex(
-                                            memory.Read32Guest(
-                                                vtable + 0x08u))
-                                        << " vfnC=0x"
-                                        << JniProbeHex(
-                                            memory.Read32Guest(
-                                                vtable + 0x0cu))
-                                        << " vfn10=0x"
-                                        << JniProbeHex(
-                                            memory.Read32Guest(
-                                                vtable + 0x10u))
-                                        << " done="
-                                        << static_cast<unsigned>(
-                                            memory.Read8(
-                                                future + 0x14u))
-                                        << " failed="
-                                        << static_cast<unsigned>(
-                                            memory.Read8(
-                                                future + 0x15u))
-                                        << " w18=0x"
-                                        << JniProbeHex(
-                                            memory.Read32Guest(
-                                                future + 0x18u))
-                                        << " w1C=0x"
-                                        << JniProbeHex(
-                                            memory.Read32Guest(
-                                                future + 0x1cu))
-                                        << " w20=0x"
-                                        << JniProbeHex(
-                                            memory.Read32Guest(
-                                                future + 0x20u))
-                                        << " w24=0x"
-                                        << JniProbeHex(
-                                            memory.Read32Guest(
-                                                future + 0x24u))
-                                        << " w28=0x"
-                                        << JniProbeHex(
-                                            memory.Read32Guest(
-                                                future + 0x28u))
-                                        << " w2C=0x"
-                                        << JniProbeHex(
-                                            memory.Read32Guest(
-                                                future + 0x2cu))
-                                        << " w30=0x"
-                                        << JniProbeHex(
-                                            memory.Read32Guest(
-                                                future + 0x30u));
-                                    return out.str();
-                                };
 
                             std::array<std::uint8_t, 64> future_before{};
                             for (std::size_t bi = 0;
@@ -7310,9 +7454,15 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             }
 
                             callbacks.Append(
-                                "V20 ASYNC FILE POLL CONFIRMED: " +
-                                future_snapshot() +
-                                " deferred_threads=" +
+                                "V21 ASYNC ROUND " +
+                                std::to_string(async_round) +
+                                ": main paused at PC=0x" +
+                                JniProbeHex(
+                                    result.final_pc) +
+                                " " +
+                                async_future_snapshot(
+                                    future) +
+                                " workers=" +
                                 std::to_string(
                                     callbacks.deferred_threads.size()));
 
@@ -7325,22 +7475,8 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             const std::uint32_t main_fpscr =
                                 jit.Fpscr();
 
-                            const auto saved_mode =
-                                callbacks.return_mode;
-                            const bool saved_control =
-                                callbacks.control_returned;
-                            const std::uint64_t saved_ticks_left =
-                                callbacks.ticks_left;
-                            const std::uint64_t saved_ticks_consumed =
-                                callbacks.ticks_consumed;
-                            const std::uint64_t saved_next_report =
-                                callbacks.next_tick_report;
-
                             bool future_changed = false;
-                            constexpr std::uint32_t kWorkerStackSize =
-                                64u * 1024u;
-                            constexpr std::uint64_t kWorkerProbeTicks =
-                                750000ull;
+                            bool any_worker_ran = false;
 
                             const std::size_t worker_limit =
                                 std::min<std::size_t>(
@@ -7350,100 +7486,124 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             for (std::size_t wi = 0;
                                  wi < worker_limit;
                                  ++wi) {
-                                const auto& listed =
-                                    callbacks.deferred_threads[wi];
 
-                                callbacks.Append(
-                                    "V20 WORKER CANDIDATE[" +
-                                    std::to_string(wi) +
-                                    "]: tid=" +
-                                    std::to_string(listed.id) +
-                                    " start=0x" +
-                                    JniProbeHex(listed.start_routine) +
-                                    " arg=0x" +
-                                    JniProbeHex(listed.argument) +
-                                    " created_in=" +
-                                    listed.created_in);
-                            }
-
-                            for (std::size_t wi = 0;
-                                 wi < worker_limit;
-                                 ++wi) {
-
-                                const auto worker =
-                                    callbacks.deferred_threads[wi];
-
-                                const std::uint32_t stack_base =
-                                    memory.AllocateHeap(
-                                        kWorkerStackSize,
-                                        16u);
-
-                                if (!stack_base) {
-                                    callbacks.Append(
-                                        "V20 WORKER probe stopped: guest heap could not allocate a 64K worker stack.");
+                                if (wi >=
+                                    callbacks.deferred_threads.size()) {
                                     break;
                                 }
 
-                                jit.ClearHalt(
-                                    Dynarmic::HaltReason::UserDefined1);
-                                jit.ClearHalt(
-                                    Dynarmic::HaltReason::UserDefined2);
-                                jit.ClearHalt(
-                                    Dynarmic::HaltReason::UserDefined3);
-                                jit.ClearHalt(
-                                    Dynarmic::HaltReason::UserDefined4);
+                                auto worker_state =
+                                    callbacks.deferred_threads[wi];
 
-                                jit.Regs().fill(0);
-                                jit.ExtRegs().fill(0);
-                                jit.Regs()[0] =
-                                    worker.argument;
-                                jit.Regs()[13] =
-                                    stack_base +
-                                    kWorkerStackSize -
-                                    0x100u;
-                                jit.Regs()[14] =
-                                    return_trampoline;
-                                jit.Regs()[15] =
-                                    worker.start_routine & ~1u;
+                                if (worker_state.runtime_completed ||
+                                    worker_state.runtime_failed) {
+                                    continue;
+                                }
+
+                                if (!worker_state.runtime_started) {
+                                    const std::uint32_t stack_base =
+                                        memory.AllocateHeap(
+                                            kWorkerStackSize,
+                                            16u);
+
+                                    if (!stack_base) {
+                                        callbacks.Append(
+                                            "V21 WORKER: unable to allocate persistent guest stack for tid=" +
+                                            std::to_string(
+                                                worker_state.id));
+                                        worker_state.runtime_failed =
+                                            true;
+                                        callbacks.deferred_threads[wi] =
+                                            worker_state;
+                                        continue;
+                                    }
+
+                                    worker_state.stack_top =
+                                        stack_base +
+                                        kWorkerStackSize -
+                                        0x100u;
+
+                                    worker_state.regs.fill(0);
+                                    worker_state.ext_regs.fill(0);
+                                    worker_state.regs[0] =
+                                        worker_state.argument;
+                                    worker_state.regs[13] =
+                                        worker_state.stack_top;
+                                    worker_state.regs[14] =
+                                        return_trampoline;
+                                    worker_state.regs[15] =
+                                        worker_state.start_routine &
+                                        ~1u;
+                                    worker_state.cpsr =
+                                        (worker_state.start_routine &
+                                         1u)
+                                            ? 0x30u
+                                            : 0x10u;
+                                    worker_state.fpscr = 0u;
+                                    worker_state.runtime_started =
+                                        true;
+
+                                    callbacks.Append(
+                                        "V21 WORKER START tid=" +
+                                        std::to_string(
+                                            worker_state.id) +
+                                        " start=0x" +
+                                        JniProbeHex(
+                                            worker_state.start_routine) +
+                                        " arg=0x" +
+                                        JniProbeHex(
+                                            worker_state.argument) +
+                                        " created_in=" +
+                                        worker_state.created_in +
+                                        " stack=0x" +
+                                        JniProbeHex(
+                                            worker_state.stack_top));
+                                }
+
+                                jit.Regs() =
+                                    worker_state.regs;
+                                jit.ExtRegs() =
+                                    worker_state.ext_regs;
                                 jit.SetCpsr(
-                                    (worker.start_routine & 1u)
-                                        ? 0x30u
-                                        : 0x10u);
-                                jit.SetFpscr(0u);
+                                    worker_state.cpsr);
+                                jit.SetFpscr(
+                                    worker_state.fpscr);
                                 jit.ClearExclusiveState();
 
                                 callbacks.return_mode =
                                     PvZ2JniCallbacks::ReturnMode::Lifecycle;
                                 callbacks.current_lifecycle_name =
-                                    "V20_worker_probe_tid_" +
-                                    std::to_string(worker.id);
+                                    "V21_worker_tid_" +
+                                    std::to_string(
+                                        worker_state.id);
                                 callbacks.current_probe_thread_id =
-                                    worker.id;
+                                    worker_state.id;
                                 callbacks.control_returned = false;
+                                callbacks.soft_slice_timeout = true;
                                 callbacks.ticks_left =
-                                    kWorkerProbeTicks;
+                                    kWorkerSliceTicks;
                                 callbacks.ticks_consumed = 0;
                                 callbacks.next_tick_report =
-                                    500000ull;
+                                    kWorkerSliceTicks;
 
                                 result.message.clear();
+                                clear_probe_halts();
 
-                                callbacks.Append(
-                                    "V20 WORKER begin tid=" +
-                                    std::to_string(worker.id) +
-                                    " start=0x" +
-                                    JniProbeHex(
-                                        worker.start_routine) +
-                                    " arg=0x" +
-                                    JniProbeHex(worker.argument) +
-                                    " created_in=" +
-                                    worker.created_in +
-                                    " before{" +
-                                    future_snapshot() +
-                                    "}");
+                                any_worker_ran = true;
 
                                 const Dynarmic::HaltReason worker_halt =
                                     jit.Run();
+
+                                worker_state.regs =
+                                    jit.Regs();
+                                worker_state.ext_regs =
+                                    jit.ExtRegs();
+                                worker_state.cpsr =
+                                    jit.Cpsr();
+                                worker_state.fpscr =
+                                    jit.Fpscr();
+                                worker_state.runtime_ticks +=
+                                    callbacks.ticks_consumed;
 
                                 const bool worker_returned =
                                     callbacks.control_returned &&
@@ -7459,25 +7619,43 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                         worker_halt,
                                         Dynarmic::HaltReason::UserDefined3);
 
-                                callbacks.Append(
-                                    "V20 WORKER end tid=" +
-                                    std::to_string(worker.id) +
-                                    " returned=" +
-                                    (worker_returned ? "YES" : "NO") +
-                                    " fatal=" +
-                                    (worker_fatal ? "YES" : "NO") +
-                                    " PC=0x" +
-                                    JniProbeHex(jit.Regs()[15]) +
-                                    " after{" +
-                                    future_snapshot() +
-                                    "}");
+                                if (worker_returned) {
+                                    worker_state.runtime_completed =
+                                        true;
+                                }
 
-                                const bool now_done =
-                                    memory.Read8(
-                                        future + 0x14u) != 0u;
-                                const bool now_failed =
-                                    memory.Read8(
-                                        future + 0x15u) != 0u;
+                                if (worker_fatal) {
+                                    worker_state.runtime_failed =
+                                        true;
+                                }
+
+                                // Re-acquire by index after jit.Run(): guest
+                                // pthread_create may have appended more
+                                // deferred threads and reallocated the vector.
+                                if (wi <
+                                    callbacks.deferred_threads.size()) {
+                                    callbacks.deferred_threads[wi] =
+                                        worker_state;
+                                }
+
+                                callbacks.Append(
+                                    "V21 WORKER SLICE tid=" +
+                                    std::to_string(
+                                        worker_state.id) +
+                                    " PC=0x" +
+                                    JniProbeHex(
+                                        worker_state.regs[15]) +
+                                    " total_ticks=" +
+                                    std::to_string(
+                                        worker_state.runtime_ticks) +
+                                    " returned=" +
+                                    (worker_state.runtime_completed
+                                        ? "YES"
+                                        : "NO") +
+                                    " failed=" +
+                                    (worker_state.runtime_failed
+                                        ? "YES"
+                                        : "NO"));
 
                                 bool object_changed = false;
                                 for (std::size_t bi = 0;
@@ -7492,109 +7670,91 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                     }
                                 }
 
-                                if (now_done ||
-                                    now_failed ||
-                                    object_changed) {
+                                if (object_changed) {
                                     future_changed = true;
+
                                     callbacks.Append(
-                                        "V20 WORKER HIT: tid=" +
-                                        std::to_string(worker.id) +
-                                        " changed async future -> " +
-                                        future_snapshot());
+                                        "V21 ASYNC PROGRESS by tid=" +
+                                        std::to_string(
+                                            worker_state.id) +
+                                        ": " +
+                                        async_future_snapshot(
+                                            future));
+
                                     break;
                                 }
                             }
 
-                            jit.ClearHalt(
-                                Dynarmic::HaltReason::UserDefined1);
-                            jit.ClearHalt(
-                                Dynarmic::HaltReason::UserDefined2);
-                            jit.ClearHalt(
-                                Dynarmic::HaltReason::UserDefined3);
-                            jit.ClearHalt(
-                                Dynarmic::HaltReason::UserDefined4);
+                            clear_probe_halts();
 
                             jit.Regs() =
                                 main_regs;
                             jit.ExtRegs() =
                                 main_ext_regs;
-                            jit.SetCpsr(main_cpsr);
-                            jit.SetFpscr(main_fpscr);
+                            jit.SetCpsr(
+                                main_cpsr);
+                            jit.SetFpscr(
+                                main_fpscr);
                             jit.ClearExclusiveState();
 
                             callbacks.return_mode =
-                                saved_mode;
+                                PvZ2JniCallbacks::ReturnMode::Lifecycle;
                             callbacks.current_lifecycle_name =
                                 name;
                             callbacks.current_probe_thread_id = 0;
-                            callbacks.control_returned =
-                                saved_control;
-                            callbacks.ticks_left =
-                                saved_ticks_left;
-                            callbacks.ticks_consumed =
-                                saved_ticks_consumed;
-                            callbacks.next_tick_report =
-                                saved_next_report;
+                            callbacks.control_returned = false;
+                            callbacks.soft_slice_timeout = true;
 
-                            if (future_changed) {
+                            if (!any_worker_ran) {
+                                callbacks.soft_slice_timeout = false;
+                                result.lifecycle_failure_name =
+                                    name;
                                 result.message =
-                                    "V20 identified a deferred pthread worker that changes the async file future. " +
-                                    future_snapshot() +
-                                    " Main lifecycle was intentionally not resumed in this diagnostic build.";
-                            } else {
-                                result.message =
-                                    "V20 probed deferred pthread workers but the async future remained byte-for-byte unchanged. " +
-                                    future_snapshot() +
-                                    " The next blocker is likely the still-synthetic expansion/filesystem bridge or a worker outside the bounded candidate set.";
+                                    "v21 reached an async-file poll but no runnable deferred guest worker remained. " +
+                                    async_future_snapshot(
+                                        future);
+                                callbacks.Append(
+                                    "V21 SCHEDULER STOP: " +
+                                    result.message);
+                                result.trace =
+                                    callbacks.Trace();
+                                return false;
                             }
 
-                            callbacks.Append(
-                                "V20 SUMMARY: " +
-                                result.message);
-
-                            result.trace =
-                                callbacks.Trace();
-                            result.lifecycle_failure_name =
-                                name;
-                            return false;
-                        }
-
-                        const bool lifecycle_fatal =
-                            Dynarmic::Has(
-                                lifecycle_halt,
-                                Dynarmic::HaltReason::UserDefined2) ||
-                            Dynarmic::Has(
-                                lifecycle_halt,
-                                Dynarmic::HaltReason::UserDefined3) ||
-                            Dynarmic::Has(
-                                lifecycle_halt,
-                                Dynarmic::HaltReason::UserDefined4);
-
-                        if (callbacks.control_returned &&
-                            !lifecycle_fatal &&
-                            Dynarmic::Has(
-                                lifecycle_halt,
-                                Dynarmic::HaltReason::UserDefined1)) {
-
-                            ++result.lifecycle_calls_completed;
-
-                            if (first_draw) {
-                                result.returned_first_draw_frame = true;
+                            if (!future_changed) {
+                                callbacks.Append(
+                                    "V21 ASYNC ROUND " +
+                                    std::to_string(async_round) +
+                                    ": future unchanged after one persistent worker slice; main thread will receive another slice before retrying.");
                             }
-
-                            return true;
                         }
+
+                        callbacks.soft_slice_timeout = false;
+                        callbacks.current_probe_thread_id = 0;
 
                         result.lifecycle_failure_name =
                             name;
 
-                        if (result.message.empty()) {
-                            result.message =
-                                std::string{name} +
-                                " halted before returning at guest PC 0x" +
-                                JniProbeHex(result.final_pc) +
-                                ".";
-                        }
+                        std::ostringstream timeout;
+                        timeout
+                            << name
+                            << " exceeded v21 cooperative lifecycle budget at PC=0x"
+                            << JniProbeHex(jit.Regs()[15])
+                            << " after "
+                            << lifecycle_ticks
+                            << " main-thread ticks and "
+                            << async_round
+                            << " async scheduling rounds.";
+
+                        result.message =
+                            timeout.str();
+
+                        callbacks.Append(
+                            "V21 SCHEDULER TIMEOUT: " +
+                            result.message);
+
+                        result.trace =
+                            callbacks.Trace();
 
                         return false;
                     };
