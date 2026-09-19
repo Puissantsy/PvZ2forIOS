@@ -732,6 +732,10 @@ constexpr std::uint32_t kJniProbeSvcResourceRegistryEntry = 0x00f023u;
 // instruction is LDR r0,[r10,#0x14]. A found key can still carry a null
 // ResourceInfo* value, which is exactly the path v44 did not observe.
 constexpr std::uint32_t kJniProbeSvcResourceRegistryGlobalValue = 0x00f024u;
+// v48: observe the two final return points in the GenericResFile wrapper,
+// where the requested ID and manager/group arguments are still intact.
+constexpr std::uint32_t kJniProbeSvcResourceWrapperDirectReturn = 0x00f025u;
+constexpr std::uint32_t kJniProbeSvcResourceWrapperExhausted = 0x00f026u;
 constexpr std::uint32_t kJniProbeSvcUnsupportedJniBase = 0x00e000u;
 constexpr std::uint32_t kJniProbeJniSlotCount = 256u;
 
@@ -1758,6 +1762,9 @@ public:
     std::uint32_t resource_null_node_heals = 0u;
     std::uint32_t resource_global_null_node_diagnostics = 0u;
     std::uint32_t resource_global_null_node_heals = 0u;
+    std::uint32_t resource_wrapper_direct_nulls = 0u;
+    std::uint32_t resource_wrapper_exhausted_nulls = 0u;
+    std::uint32_t resource_wrapper_recoveries = 0u;
     std::unordered_map<std::uint32_t, std::string>
         resource_lookup_entry_ids;
 
@@ -1814,9 +1821,13 @@ public:
         case 0x0086fa84u:
             return "ResourceRegistryLookup.global found-value load";
         case 0x0087a704u:
-            return "GenericResFileRes.lookup callsite A";
+            return "GenericResFileRes.direct-group lookup call";
+        case 0x0087a708u:
+            return "GenericResFileRes.direct-group return branch";
         case 0x0087a758u:
-            return "GenericResFileRes.lookup callsite B";
+            return "GenericResFileRes.group-loop lookup call";
+        case 0x0087a76cu:
+            return "GenericResFileRes.group-loop exhausted null";
         case 0x009ead80u:
             return "JNI_OnLoad";
         case 0x009ebf80u:
