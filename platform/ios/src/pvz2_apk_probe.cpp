@@ -7854,30 +7854,950 @@ public:
         }
 
         if (name.rfind("gl", 0) == 0) {
-            log_fallback_once("gles-probe");
-
             auto allocate_guest_string =
                 [&](const char* value) {
+                    if (value == nullptr) {
+                        value = "";
+                    }
+
                     const std::size_t length =
                         std::strlen(value);
                     const std::uint32_t guest =
                         mem.AllocateObject(
-                            static_cast<std::uint32_t>(length + 1),
-                            1);
+                            static_cast<std::uint32_t>(
+                                length + 1u),
+                            1u);
 
                     if (guest) {
-                        for (std::size_t i = 0; i < length; ++i) {
+                        for (std::size_t i = 0;
+                             i < length;
+                             ++i) {
                             mem.Write8Guest(
-                                guest + static_cast<std::uint32_t>(i),
-                                static_cast<std::uint8_t>(value[i]));
+                                guest +
+                                    static_cast<std::uint32_t>(i),
+                                static_cast<std::uint8_t>(
+                                    value[i]));
                         }
+
                         mem.Write8Guest(
-                            guest + static_cast<std::uint32_t>(length),
-                            0);
+                            guest +
+                                static_cast<std::uint32_t>(
+                                    length),
+                            0u);
                     }
 
                     return guest;
                 };
+
+            auto guest_arg =
+                [&](std::uint32_t index)
+                    -> std::uint32_t {
+                    if (index < 4u) {
+                        return regs[index];
+                    }
+
+                    return
+                        mem.Read32Guest(
+                            regs[13] +
+                            (index - 4u) * 4u);
+                };
+
+            auto guest_f32 =
+                [&](std::uint32_t index) {
+                    const std::uint32_t bits =
+                        guest_arg(index);
+                    float value = 0.0f;
+                    std::memcpy(
+                        &value,
+                        &bits,
+                        sizeof(value));
+                    return value;
+                };
+
+            auto pixel_bytes =
+                [&](GLsizei width,
+                    GLsizei height,
+                    GLenum format,
+                    GLenum type)
+                    -> std::size_t {
+
+                    if (width <= 0 ||
+                        height <= 0) {
+                        return 0u;
+                    }
+
+                    std::size_t bytes_per_pixel = 0u;
+
+                    if (type == GL_UNSIGNED_BYTE) {
+                        switch (format) {
+                        case GL_RGBA:
+                            bytes_per_pixel = 4u;
+                            break;
+                        case GL_RGB:
+                            bytes_per_pixel = 3u;
+                            break;
+                        case GL_LUMINANCE_ALPHA:
+                            bytes_per_pixel = 2u;
+                            break;
+                        case GL_ALPHA:
+                        case GL_LUMINANCE:
+                            bytes_per_pixel = 1u;
+                            break;
+                        default:
+                            break;
+                        }
+                    } else if (
+                        type == GL_UNSIGNED_SHORT_5_6_5 ||
+                        type == GL_UNSIGNED_SHORT_4_4_4_4 ||
+                        type == GL_UNSIGNED_SHORT_5_5_5_1) {
+                        bytes_per_pixel = 2u;
+                    }
+
+                    if (bytes_per_pixel == 0u) {
+                        return 0u;
+                    }
+
+                    return
+                        static_cast<std::size_t>(width) *
+                        static_cast<std::size_t>(height) *
+                        bytes_per_pixel;
+                };
+
+            if (host_gles_ready) {
+                if (fallback_logged.insert(
+                        "v31-host-gles:" +
+                        name).second) {
+                    Append(
+                        "V31 HOST GLES dispatch: " +
+                        name);
+                }
+
+                if (name == "glGetError") {
+                    regs[0] =
+                        static_cast<std::uint32_t>(
+                            glGetError());
+                } else if (
+                    name == "glCheckFramebufferStatus" ||
+                    name == "glCheckFramebufferStatusOES") {
+
+                    regs[0] =
+                        static_cast<std::uint32_t>(
+                            glCheckFramebufferStatus(
+                                static_cast<GLenum>(
+                                    guest_arg(0u))));
+                } else if (name == "glCreateProgram") {
+                    regs[0] =
+                        static_cast<std::uint32_t>(
+                            glCreateProgram());
+                } else if (name == "glCreateShader") {
+                    regs[0] =
+                        static_cast<std::uint32_t>(
+                            glCreateShader(
+                                static_cast<GLenum>(
+                                    guest_arg(0u))));
+                } else if (
+                    name == "glGenTextures" ||
+                    name == "glGenFramebuffers" ||
+                    name == "glGenFramebuffersOES") {
+
+                    const GLsizei count =
+                        static_cast<GLsizei>(
+                            guest_arg(0u));
+                    const std::uint32_t output =
+                        guest_arg(1u);
+
+                    std::vector<GLuint> objects(
+                        count > 0
+                            ? static_cast<std::size_t>(
+                                  count)
+                            : 0u);
+
+                    if (name == "glGenTextures") {
+                        glGenTextures(
+                            count,
+                            objects.data());
+                    } else {
+                        glGenFramebuffers(
+                            count,
+                            objects.data());
+                    }
+
+                    for (GLsizei i = 0;
+                         i < count;
+                         ++i) {
+                        mem.Write32Guest(
+                            output +
+                                static_cast<std::uint32_t>(
+                                    i) *
+                                    4u,
+                            static_cast<std::uint32_t>(
+                                objects[
+                                    static_cast<std::size_t>(
+                                        i)]));
+                    }
+
+                    regs[0] = 0u;
+                } else if (
+                    name == "glDeleteTextures" ||
+                    name == "glDeleteFramebuffers" ||
+                    name == "glDeleteFramebuffersOES") {
+
+                    const GLsizei count =
+                        static_cast<GLsizei>(
+                            guest_arg(0u));
+                    const std::uint32_t input =
+                        guest_arg(1u);
+
+                    std::vector<GLuint> objects(
+                        count > 0
+                            ? static_cast<std::size_t>(
+                                  count)
+                            : 0u);
+
+                    for (GLsizei i = 0;
+                         i < count;
+                         ++i) {
+                        objects[
+                            static_cast<std::size_t>(i)] =
+                                static_cast<GLuint>(
+                                    mem.Read32Guest(
+                                        input +
+                                        static_cast<std::uint32_t>(
+                                            i) *
+                                        4u));
+                    }
+
+                    if (name == "glDeleteTextures") {
+                        glDeleteTextures(
+                            count,
+                            objects.data());
+                    } else {
+                        glDeleteFramebuffers(
+                            count,
+                            objects.data());
+                    }
+
+                    regs[0] = 0u;
+                } else if (name == "glShaderSource") {
+                    const GLuint shader =
+                        static_cast<GLuint>(
+                            guest_arg(0u));
+                    const GLsizei count =
+                        static_cast<GLsizei>(
+                            guest_arg(1u));
+                    const std::uint32_t strings_address =
+                        guest_arg(2u);
+                    const std::uint32_t lengths_address =
+                        guest_arg(3u);
+
+                    std::vector<std::string> sources;
+                    std::vector<const GLchar*> source_ptrs;
+                    std::vector<GLint> lengths;
+
+                    if (count > 0) {
+                        sources.reserve(
+                            static_cast<std::size_t>(
+                                count));
+                        source_ptrs.reserve(
+                            static_cast<std::size_t>(
+                                count));
+                        lengths.reserve(
+                            static_cast<std::size_t>(
+                                count));
+                    }
+
+                    for (GLsizei i = 0;
+                         i < count;
+                         ++i) {
+                        const std::uint32_t guest_string =
+                            mem.Read32Guest(
+                                strings_address +
+                                static_cast<std::uint32_t>(
+                                    i) *
+                                4u);
+
+                        sources.push_back(
+                            mem.ReadCStringGuest(
+                                guest_string,
+                                1u << 20));
+
+                        lengths.push_back(
+                            lengths_address != 0u
+                                ? static_cast<GLint>(
+                                      mem.Read32Guest(
+                                          lengths_address +
+                                          static_cast<std::uint32_t>(
+                                              i) *
+                                          4u))
+                                : -1);
+                    }
+
+                    for (const auto& source :
+                         sources) {
+                        source_ptrs.push_back(
+                            source.c_str());
+                    }
+
+                    glShaderSource(
+                        shader,
+                        count,
+                        source_ptrs.data(),
+                        lengths_address != 0u
+                            ? lengths.data()
+                            : nullptr);
+
+                    regs[0] = 0u;
+                } else if (name == "glCompileShader") {
+                    glCompileShader(
+                        static_cast<GLuint>(
+                            guest_arg(0u)));
+                    regs[0] = 0u;
+                } else if (name == "glAttachShader") {
+                    glAttachShader(
+                        static_cast<GLuint>(
+                            guest_arg(0u)),
+                        static_cast<GLuint>(
+                            guest_arg(1u)));
+                    regs[0] = 0u;
+                } else if (name == "glBindAttribLocation") {
+                    const std::string attribute =
+                        mem.ReadCStringGuest(
+                            guest_arg(2u),
+                            4096u);
+
+                    glBindAttribLocation(
+                        static_cast<GLuint>(
+                            guest_arg(0u)),
+                        static_cast<GLuint>(
+                            guest_arg(1u)),
+                        attribute.c_str());
+
+                    regs[0] = 0u;
+                } else if (name == "glLinkProgram") {
+                    glLinkProgram(
+                        static_cast<GLuint>(
+                            guest_arg(0u)));
+                    regs[0] = 0u;
+                } else if (
+                    name == "glGetShaderiv" ||
+                    name == "glGetProgramiv") {
+
+                    GLint value = 0;
+
+                    if (name == "glGetShaderiv") {
+                        glGetShaderiv(
+                            static_cast<GLuint>(
+                                guest_arg(0u)),
+                            static_cast<GLenum>(
+                                guest_arg(1u)),
+                            &value);
+                    } else {
+                        glGetProgramiv(
+                            static_cast<GLuint>(
+                                guest_arg(0u)),
+                            static_cast<GLenum>(
+                                guest_arg(1u)),
+                            &value);
+                    }
+
+                    if (guest_arg(2u) != 0u) {
+                        mem.Write32Guest(
+                            guest_arg(2u),
+                            static_cast<std::uint32_t>(
+                                value));
+                    }
+
+                    regs[0] = 0u;
+                } else if (
+                    name == "glGetShaderInfoLog" ||
+                    name == "glGetProgramInfoLog") {
+
+                    const GLsizei capacity =
+                        static_cast<GLsizei>(
+                            guest_arg(1u));
+                    std::vector<GLchar> buffer(
+                        capacity > 0
+                            ? static_cast<std::size_t>(
+                                  capacity)
+                            : 1u);
+                    GLsizei length = 0;
+
+                    if (name == "glGetShaderInfoLog") {
+                        glGetShaderInfoLog(
+                            static_cast<GLuint>(
+                                guest_arg(0u)),
+                            capacity,
+                            &length,
+                            buffer.data());
+                    } else {
+                        glGetProgramInfoLog(
+                            static_cast<GLuint>(
+                                guest_arg(0u)),
+                            capacity,
+                            &length,
+                            buffer.data());
+                    }
+
+                    if (guest_arg(2u) != 0u) {
+                        mem.Write32Guest(
+                            guest_arg(2u),
+                            static_cast<std::uint32_t>(
+                                length));
+                    }
+
+                    if (guest_arg(3u) != 0u &&
+                        capacity > 0) {
+                        const std::size_t copy =
+                            std::min<std::size_t>(
+                                static_cast<std::size_t>(
+                                    std::max<GLsizei>(
+                                        length,
+                                        0)),
+                                static_cast<std::size_t>(
+                                    capacity - 1));
+
+                        if (auto* out =
+                                mem.Ptr(
+                                    guest_arg(3u),
+                                    static_cast<std::size_t>(
+                                        capacity))) {
+                            std::memcpy(
+                                out,
+                                buffer.data(),
+                                copy);
+                            out[copy] = 0u;
+                        }
+                    }
+
+                    regs[0] = 0u;
+                } else if (name == "glGetString") {
+                    const GLubyte* host =
+                        glGetString(
+                            static_cast<GLenum>(
+                                guest_arg(0u)));
+
+                    regs[0] =
+                        allocate_guest_string(
+                            reinterpret_cast<const char*>(
+                                host));
+                } else if (name == "glGetUniformLocation") {
+                    const std::string uniform =
+                        mem.ReadCStringGuest(
+                            guest_arg(1u),
+                            4096u);
+
+                    regs[0] =
+                        static_cast<std::uint32_t>(
+                            glGetUniformLocation(
+                                static_cast<GLuint>(
+                                    guest_arg(0u)),
+                                uniform.c_str()));
+                } else if (name == "glUseProgram") {
+                    glUseProgram(
+                        static_cast<GLuint>(
+                            guest_arg(0u)));
+                    regs[0] = 0u;
+                } else if (name == "glUniform1i") {
+                    glUniform1i(
+                        static_cast<GLint>(
+                            guest_arg(0u)),
+                        static_cast<GLint>(
+                            guest_arg(1u)));
+                    regs[0] = 0u;
+                } else if (name == "glUniform4fv") {
+                    const GLsizei count =
+                        static_cast<GLsizei>(
+                            guest_arg(1u));
+                    const std::size_t bytes =
+                        count > 0
+                            ? static_cast<std::size_t>(
+                                  count) *
+                                  4u *
+                                  sizeof(GLfloat)
+                            : 0u;
+
+                    const GLfloat* values =
+                        reinterpret_cast<const GLfloat*>(
+                            bytes != 0u
+                                ? mem.Ptr(
+                                      guest_arg(2u),
+                                      bytes)
+                                : nullptr);
+
+                    glUniform4fv(
+                        static_cast<GLint>(
+                            guest_arg(0u)),
+                        count,
+                        values);
+                    regs[0] = 0u;
+                } else if (
+                    name == "glUniformMatrix4fv") {
+                    const GLsizei count =
+                        static_cast<GLsizei>(
+                            guest_arg(1u));
+                    const std::size_t bytes =
+                        count > 0
+                            ? static_cast<std::size_t>(
+                                  count) *
+                                  16u *
+                                  sizeof(GLfloat)
+                            : 0u;
+
+                    const GLfloat* values =
+                        reinterpret_cast<const GLfloat*>(
+                            bytes != 0u
+                                ? mem.Ptr(
+                                      guest_arg(3u),
+                                      bytes)
+                                : nullptr);
+
+                    glUniformMatrix4fv(
+                        static_cast<GLint>(
+                            guest_arg(0u)),
+                        count,
+                        static_cast<GLboolean>(
+                            guest_arg(2u)),
+                        values);
+                    regs[0] = 0u;
+                } else if (name == "glBindTexture") {
+                    glBindTexture(
+                        static_cast<GLenum>(
+                            guest_arg(0u)),
+                        static_cast<GLuint>(
+                            guest_arg(1u)));
+                    regs[0] = 0u;
+                } else if (name == "glTexParameteri") {
+                    glTexParameteri(
+                        static_cast<GLenum>(
+                            guest_arg(0u)),
+                        static_cast<GLenum>(
+                            guest_arg(1u)),
+                        static_cast<GLint>(
+                            guest_arg(2u)));
+                    regs[0] = 0u;
+                } else if (name == "glPixelStorei") {
+                    glPixelStorei(
+                        static_cast<GLenum>(
+                            guest_arg(0u)),
+                        static_cast<GLint>(
+                            guest_arg(1u)));
+                    regs[0] = 0u;
+                } else if (name == "glTexImage2D") {
+                    const GLsizei width =
+                        static_cast<GLsizei>(
+                            guest_arg(3u));
+                    const GLsizei height =
+                        static_cast<GLsizei>(
+                            guest_arg(4u));
+                    const GLenum format =
+                        static_cast<GLenum>(
+                            guest_arg(6u));
+                    const GLenum type =
+                        static_cast<GLenum>(
+                            guest_arg(7u));
+                    const std::uint32_t pixels_address =
+                        guest_arg(8u);
+                    const std::size_t bytes =
+                        pixel_bytes(
+                            width,
+                            height,
+                            format,
+                            type);
+
+                    const void* pixels =
+                        pixels_address != 0u
+                            ? mem.Ptr(
+                                  pixels_address,
+                                  bytes != 0u
+                                      ? bytes
+                                      : 1u)
+                            : nullptr;
+
+                    glTexImage2D(
+                        static_cast<GLenum>(
+                            guest_arg(0u)),
+                        static_cast<GLint>(
+                            guest_arg(1u)),
+                        static_cast<GLint>(
+                            guest_arg(2u)),
+                        width,
+                        height,
+                        static_cast<GLint>(
+                            guest_arg(5u)),
+                        format,
+                        type,
+                        pixels);
+                    regs[0] = 0u;
+                } else if (name == "glTexSubImage2D") {
+                    const GLsizei width =
+                        static_cast<GLsizei>(
+                            guest_arg(4u));
+                    const GLsizei height =
+                        static_cast<GLsizei>(
+                            guest_arg(5u));
+                    const GLenum format =
+                        static_cast<GLenum>(
+                            guest_arg(6u));
+                    const GLenum type =
+                        static_cast<GLenum>(
+                            guest_arg(7u));
+                    const std::uint32_t pixels_address =
+                        guest_arg(8u);
+                    const std::size_t bytes =
+                        pixel_bytes(
+                            width,
+                            height,
+                            format,
+                            type);
+
+                    const void* pixels =
+                        pixels_address != 0u
+                            ? mem.Ptr(
+                                  pixels_address,
+                                  bytes != 0u
+                                      ? bytes
+                                      : 1u)
+                            : nullptr;
+
+                    glTexSubImage2D(
+                        static_cast<GLenum>(
+                            guest_arg(0u)),
+                        static_cast<GLint>(
+                            guest_arg(1u)),
+                        static_cast<GLint>(
+                            guest_arg(2u)),
+                        static_cast<GLint>(
+                            guest_arg(3u)),
+                        width,
+                        height,
+                        format,
+                        type,
+                        pixels);
+                    regs[0] = 0u;
+                } else if (
+                    name == "glCompressedTexImage2D") {
+
+                    const GLsizei image_size =
+                        static_cast<GLsizei>(
+                            guest_arg(6u));
+                    const std::uint32_t data_address =
+                        guest_arg(7u);
+
+                    const void* data =
+                        data_address != 0u
+                            ? mem.Ptr(
+                                  data_address,
+                                  image_size > 0
+                                      ? static_cast<std::size_t>(
+                                            image_size)
+                                      : 1u)
+                            : nullptr;
+
+                    glCompressedTexImage2D(
+                        static_cast<GLenum>(
+                            guest_arg(0u)),
+                        static_cast<GLint>(
+                            guest_arg(1u)),
+                        static_cast<GLenum>(
+                            guest_arg(2u)),
+                        static_cast<GLsizei>(
+                            guest_arg(3u)),
+                        static_cast<GLsizei>(
+                            guest_arg(4u)),
+                        static_cast<GLint>(
+                            guest_arg(5u)),
+                        image_size,
+                        data);
+                    regs[0] = 0u;
+                } else if (
+                    name == "glBindFramebuffer" ||
+                    name == "glBindFramebufferOES") {
+
+                    GLuint framebuffer =
+                        static_cast<GLuint>(
+                            guest_arg(1u));
+
+                    if (framebuffer == 0u) {
+                        framebuffer =
+                            static_cast<GLuint>(
+                                host_default_framebuffer);
+                    }
+
+                    glBindFramebuffer(
+                        static_cast<GLenum>(
+                            guest_arg(0u)),
+                        framebuffer);
+                    regs[0] = 0u;
+                } else if (
+                    name == "glFramebufferTexture2D" ||
+                    name == "glFramebufferTexture2DOES") {
+
+                    glFramebufferTexture2D(
+                        static_cast<GLenum>(
+                            guest_arg(0u)),
+                        static_cast<GLenum>(
+                            guest_arg(1u)),
+                        static_cast<GLenum>(
+                            guest_arg(2u)),
+                        static_cast<GLuint>(
+                            guest_arg(3u)),
+                        static_cast<GLint>(
+                            guest_arg(4u)));
+                    regs[0] = 0u;
+                } else if (name == "glViewport") {
+                    glViewport(
+                        static_cast<GLint>(
+                            guest_arg(0u)),
+                        static_cast<GLint>(
+                            guest_arg(1u)),
+                        static_cast<GLsizei>(
+                            guest_arg(2u)),
+                        static_cast<GLsizei>(
+                            guest_arg(3u)));
+                    regs[0] = 0u;
+                } else if (name == "glScissor") {
+                    glScissor(
+                        static_cast<GLint>(
+                            guest_arg(0u)),
+                        static_cast<GLint>(
+                            guest_arg(1u)),
+                        static_cast<GLsizei>(
+                            guest_arg(2u)),
+                        static_cast<GLsizei>(
+                            guest_arg(3u)));
+                    regs[0] = 0u;
+                } else if (name == "glClearColor") {
+                    glClearColor(
+                        guest_f32(0u),
+                        guest_f32(1u),
+                        guest_f32(2u),
+                        guest_f32(3u));
+                    regs[0] = 0u;
+                } else if (name == "glClear") {
+                    glClear(
+                        static_cast<GLbitfield>(
+                            guest_arg(0u)));
+                    regs[0] = 0u;
+                } else if (name == "glClearDepthf") {
+                    glClearDepthf(
+                        guest_f32(0u));
+                    regs[0] = 0u;
+                } else if (name == "glDepthRangef") {
+                    glDepthRangef(
+                        guest_f32(0u),
+                        guest_f32(1u));
+                    regs[0] = 0u;
+                } else if (name == "glDepthMask") {
+                    glDepthMask(
+                        static_cast<GLboolean>(
+                            guest_arg(0u)));
+                    regs[0] = 0u;
+                } else if (name == "glDepthFunc") {
+                    glDepthFunc(
+                        static_cast<GLenum>(
+                            guest_arg(0u)));
+                    regs[0] = 0u;
+                } else if (name == "glEnable") {
+                    glEnable(
+                        static_cast<GLenum>(
+                            guest_arg(0u)));
+                    regs[0] = 0u;
+                } else if (name == "glDisable") {
+                    glDisable(
+                        static_cast<GLenum>(
+                            guest_arg(0u)));
+                    regs[0] = 0u;
+                } else if (name == "glBlendFunc") {
+                    glBlendFunc(
+                        static_cast<GLenum>(
+                            guest_arg(0u)),
+                        static_cast<GLenum>(
+                            guest_arg(1u)));
+                    regs[0] = 0u;
+                } else if (name == "glFrontFace") {
+                    glFrontFace(
+                        static_cast<GLenum>(
+                            guest_arg(0u)));
+                    regs[0] = 0u;
+                } else if (name == "glCullFace") {
+                    glCullFace(
+                        static_cast<GLenum>(
+                            guest_arg(0u)));
+                    regs[0] = 0u;
+                } else if (name == "glLineWidth") {
+                    glLineWidth(
+                        guest_f32(0u));
+                    regs[0] = 0u;
+                } else if (name == "glColorMask") {
+                    glColorMask(
+                        static_cast<GLboolean>(
+                            guest_arg(0u)),
+                        static_cast<GLboolean>(
+                            guest_arg(1u)),
+                        static_cast<GLboolean>(
+                            guest_arg(2u)),
+                        static_cast<GLboolean>(
+                            guest_arg(3u)));
+                    regs[0] = 0u;
+                } else if (name == "glActiveTexture") {
+                    glActiveTexture(
+                        static_cast<GLenum>(
+                            guest_arg(0u)));
+                    regs[0] = 0u;
+                } else if (
+                    name == "glEnableVertexAttribArray") {
+                    glEnableVertexAttribArray(
+                        static_cast<GLuint>(
+                            guest_arg(0u)));
+                    regs[0] = 0u;
+                } else if (
+                    name == "glDisableVertexAttribArray") {
+                    glDisableVertexAttribArray(
+                        static_cast<GLuint>(
+                            guest_arg(0u)));
+                    regs[0] = 0u;
+                } else if (
+                    name == "glVertexAttribPointer") {
+                    const std::uint32_t pointer_address =
+                        guest_arg(5u);
+                    const void* pointer =
+                        pointer_address != 0u
+                            ? mem.Ptr(
+                                  pointer_address,
+                                  1u)
+                            : nullptr;
+
+                    glVertexAttribPointer(
+                        static_cast<GLuint>(
+                            guest_arg(0u)),
+                        static_cast<GLint>(
+                            guest_arg(1u)),
+                        static_cast<GLenum>(
+                            guest_arg(2u)),
+                        static_cast<GLboolean>(
+                            guest_arg(3u)),
+                        static_cast<GLsizei>(
+                            guest_arg(4u)),
+                        pointer);
+                    regs[0] = 0u;
+                } else if (name == "glDrawArrays") {
+                    glDrawArrays(
+                        static_cast<GLenum>(
+                            guest_arg(0u)),
+                        static_cast<GLint>(
+                            guest_arg(1u)),
+                        static_cast<GLsizei>(
+                            guest_arg(2u)));
+                    regs[0] = 0u;
+                } else if (name == "glDrawElements") {
+                    const GLsizei count =
+                        static_cast<GLsizei>(
+                            guest_arg(1u));
+                    const GLenum type =
+                        static_cast<GLenum>(
+                            guest_arg(2u));
+                    std::size_t index_bytes = 1u;
+
+                    if (type == GL_UNSIGNED_SHORT) {
+                        index_bytes = 2u;
+                    } else if (type == GL_UNSIGNED_INT) {
+                        index_bytes = 4u;
+                    }
+
+                    const std::uint32_t indices_address =
+                        guest_arg(3u);
+                    const void* indices =
+                        indices_address != 0u
+                            ? mem.Ptr(
+                                  indices_address,
+                                  count > 0
+                                      ? static_cast<std::size_t>(
+                                            count) *
+                                            index_bytes
+                                      : 1u)
+                            : nullptr;
+
+                    glDrawElements(
+                        static_cast<GLenum>(
+                            guest_arg(0u)),
+                        count,
+                        type,
+                        indices);
+                    regs[0] = 0u;
+                } else if (name == "glGetIntegerv") {
+                    GLint value = 0;
+                    glGetIntegerv(
+                        static_cast<GLenum>(
+                            guest_arg(0u)),
+                        &value);
+
+                    if (static_cast<GLenum>(
+                            guest_arg(0u)) ==
+                            GL_FRAMEBUFFER_BINDING &&
+                        static_cast<GLuint>(
+                            value) ==
+                            static_cast<GLuint>(
+                                host_default_framebuffer)) {
+                        value = 0;
+                    }
+
+                    if (guest_arg(1u) != 0u) {
+                        mem.Write32Guest(
+                            guest_arg(1u),
+                            static_cast<std::uint32_t>(
+                                value));
+                    }
+
+                    regs[0] = 0u;
+                } else if (name == "glIsProgram") {
+                    regs[0] =
+                        static_cast<std::uint32_t>(
+                            glIsProgram(
+                                static_cast<GLuint>(
+                                    guest_arg(0u))));
+                } else if (name == "glIsShader") {
+                    regs[0] =
+                        static_cast<std::uint32_t>(
+                            glIsShader(
+                                static_cast<GLuint>(
+                                    guest_arg(0u))));
+                } else if (name == "glIsTexture") {
+                    regs[0] =
+                        static_cast<std::uint32_t>(
+                            glIsTexture(
+                                static_cast<GLuint>(
+                                    guest_arg(0u))));
+                } else if (name == "glDeleteProgram") {
+                    glDeleteProgram(
+                        static_cast<GLuint>(
+                            guest_arg(0u)));
+                    regs[0] = 0u;
+                } else if (name == "glDeleteShader") {
+                    glDeleteShader(
+                        static_cast<GLuint>(
+                            guest_arg(0u)));
+                    regs[0] = 0u;
+                } else {
+                    // Fixed-function GLES1 calls are not part of the real
+                    // ES2 path observed by the v30 first frame. Keep them
+                    // harmless while recording exactly which one becomes
+                    // relevant in later frames.
+                    if (fallback_logged.insert(
+                            "v31-host-gles-unforwarded:" +
+                            name).second) {
+                        Append(
+                            "V31 HOST GLES unforwarded compatibility call: " +
+                            name);
+                    }
+
+                    regs[0] = 0u;
+                }
+
+                ++supported_calls;
+                return;
+            }
+
+            log_fallback_once("gles-probe");
 
             if (name == "glGetError") {
                 regs[0] = 0;
@@ -7905,7 +8825,6 @@ public:
             } else if (name == "glGetShaderiv" ||
                        name == "glGetProgramiv") {
                 if (regs[2]) {
-                    // Successful compile/link, zero-length info log.
                     mem.Write32Guest(regs[2], 1);
                 }
                 regs[0] = 0;
