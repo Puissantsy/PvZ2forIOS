@@ -1907,6 +1907,78 @@ public:
                             ? std::string{}
                             : sig_it->second;
 
+                    const std::uint32_t call_variant =
+                        (slot - family_base) % 3u;
+
+                    auto java_arg_word =
+                        [&](std::uint32_t index)
+                            -> std::uint32_t {
+
+                            if (nonvirtual) {
+                                if (call_variant == 0u) {
+                                    return
+                                        mem.Read32Guest(
+                                            regs[13] +
+                                            index * 4u);
+                                }
+
+                                const std::uint32_t argument_block =
+                                    mem.Read32Guest(
+                                        regs[13]);
+
+                                if (call_variant == 1u) {
+                                    return
+                                        mem.Read32Guest(
+                                            argument_block +
+                                            index * 4u);
+                                }
+
+                                return
+                                    mem.Read32Guest(
+                                        argument_block +
+                                        index * 8u);
+                            }
+
+                            if (call_variant == 0u) {
+                                if (index == 0u) {
+                                    return regs[3];
+                                }
+
+                                return
+                                    mem.Read32Guest(
+                                        regs[13] +
+                                        (index - 1u) * 4u);
+                            }
+
+                            const std::uint32_t argument_block =
+                                regs[3];
+
+                            if (call_variant == 1u) {
+                                return
+                                    mem.Read32Guest(
+                                        argument_block +
+                                        index * 4u);
+                            }
+
+                            return
+                                mem.Read32Guest(
+                                    argument_block +
+                                    index * 8u);
+                        };
+
+                    auto java_string_value =
+                        [&](std::uint32_t handle)
+                            -> std::string {
+
+                            const auto it =
+                                jni_strings.find(handle);
+
+                            return
+                                it == jni_strings.end()
+                                    ? std::string{}
+                                    : it->second;
+                        };
+
                     if (fallback_logged.insert(
                             "jni-call:" + method_name + ":" +
                             std::to_string(family)).second) {
@@ -1975,6 +2047,258 @@ public:
                             "JNI bridge: " +
                             method_name +
                             " -> /data/data/com.ea.game.pvz2_row/cache");
+                        return true;
+                    }
+
+                    // v25 semantic Android/JNI bridge batch. These are
+                    // high-confidence methods observed by the v24 sweep
+                    // before any speculative recovery.
+                    if (family == 0 &&
+                        method_name ==
+                            "Info_SysGetPackageName") {
+
+                        regs[0] =
+                            new_string(
+                                "com.ea.game.pvz2_row");
+                        Append(
+                            "JNI bridge: Info_SysGetPackageName -> com.ea.game.pvz2_row");
+                        return true;
+                    }
+
+                    if (family == 0 &&
+                        method_name ==
+                            "Info_SysGetProductVersionString") {
+
+                        regs[0] =
+                            new_string(
+                                "1.5.252752");
+                        Append(
+                            "JNI bridge: Info_SysGetProductVersionString -> 1.5.252752");
+                        return true;
+                    }
+
+                    if (family == 0 &&
+                        method_name ==
+                            "Info_SysGetUserLocale") {
+
+                        // Keep resource discovery deterministic for the
+                        // original 2013 data set. A later presentation layer
+                        // can expose the real iOS locale.
+                        regs[0] =
+                            new_string(
+                                "en_US");
+                        Append(
+                            "JNI bridge: Info_SysGetUserLocale -> en_US");
+                        return true;
+                    }
+
+                    if (family == 0 &&
+                        method_name ==
+                            "Device_GetDeviceName") {
+
+                        regs[0] =
+                            new_string(
+                                "iPad13,18");
+                        Append(
+                            "JNI bridge: Device_GetDeviceName -> iPad13,18");
+                        return true;
+                    }
+
+                    if (family == 5 &&
+                        method_name ==
+                            "GetNetworkStatus") {
+
+                        // Connected/available. Networking itself is still a
+                        // separate compatibility surface.
+                        regs[0] = 1u;
+                        Append(
+                            "JNI bridge: GetNetworkStatus -> 1");
+                        return true;
+                    }
+
+                    if (family == 5 &&
+                        method_name ==
+                            "Device_GetCurrentUIOrientation") {
+
+                        // Android Configuration.ORIENTATION_LANDSCAPE.
+                        regs[0] = 2u;
+                        Append(
+                            "JNI bridge: Device_GetCurrentUIOrientation -> 2 (landscape)");
+                        return true;
+                    }
+
+                    if (family == 1 &&
+                        method_name ==
+                            "Graphics_IsOpenGLES20") {
+
+                        regs[0] = 1u;
+                        Append(
+                            "JNI bridge: Graphics_IsOpenGLES20 -> true");
+                        return true;
+                    }
+
+                    if (family == 9 &&
+                        method_name ==
+                            "Graphics_GetScreenSizeInPixels") {
+
+                        const std::uint32_t array =
+                            java_arg_word(0u);
+
+                        const auto data_it =
+                            jni_array_data.find(array);
+                        const auto length_it =
+                            jni_array_lengths.find(array);
+
+                        if (data_it !=
+                                jni_array_data.end() &&
+                            length_it !=
+                                jni_array_lengths.end() &&
+                            length_it->second >= 2u &&
+                            data_it->second != 0u) {
+
+                            // iPad 10th-generation native pixel resolution in
+                            // the current landscape orientation.
+                            mem.Write32Guest(
+                                data_it->second + 0u,
+                                2360u);
+                            mem.Write32Guest(
+                                data_it->second + 4u,
+                                1640u);
+                        }
+
+                        regs[0] = 0u;
+                        Append(
+                            "JNI bridge: Graphics_GetScreenSizeInPixels -> 2360x1640");
+                        return true;
+                    }
+
+                    if (family == 1 &&
+                        method_name ==
+                            "Config_ConfigKeyExists") {
+
+                        regs[0] = 0u;
+                        Append(
+                            "JNI bridge: Config_ConfigKeyExists -> false");
+                        return true;
+                    }
+
+                    if (family == 1 &&
+                        (method_name ==
+                             "Config_ConfigWriteInteger" ||
+                         method_name ==
+                             "Config_ConfigWriteString")) {
+
+                        regs[0] = 1u;
+                        Append(
+                            "JNI bridge: " +
+                            method_name +
+                            " -> true");
+                        return true;
+                    }
+
+                    if (family == 0 &&
+                        method_name ==
+                            "Config_ConfigReadString") {
+
+                        const std::uint32_t default_value =
+                            java_arg_word(1u);
+
+                        regs[0] =
+                            default_value != 0u
+                                ? default_value
+                                : new_string("");
+
+                        Append(
+                            "JNI bridge: Config_ConfigReadString -> caller default");
+                        return true;
+                    }
+
+                    if (family == 6 &&
+                        method_name ==
+                            "Resources_GetAssetFileSize") {
+
+                        const std::string requested =
+                            java_string_value(
+                                java_arg_word(0u));
+
+                        const std::uint64_t size =
+                            obb_data != nullptr &&
+                                    obb_size != 0u
+                                ? static_cast<std::uint64_t>(
+                                    obb_size)
+                                : 0ull;
+
+                        regs[0] =
+                            static_cast<std::uint32_t>(
+                                size);
+                        regs[1] =
+                            static_cast<std::uint32_t>(
+                                size >> 32);
+
+                        Append(
+                            "JNI bridge: Resources_GetAssetFileSize(\"" +
+                            requested +
+                            "\") -> " +
+                            std::to_string(size));
+                        return true;
+                    }
+
+                    if (family == 0 &&
+                        method_name ==
+                            "Resources_GetAssetFileInfo") {
+
+                        const std::string requested =
+                            java_string_value(
+                                java_arg_word(0u));
+
+                        const std::uint32_t info_array =
+                            java_arg_word(1u);
+
+                        const auto data_it =
+                            jni_array_data.find(
+                                info_array);
+                        const auto length_it =
+                            jni_array_lengths.find(
+                                info_array);
+
+                        if (data_it !=
+                                jni_array_data.end() &&
+                            length_it !=
+                                jni_array_lengths.end() &&
+                            data_it->second != 0u) {
+
+                            const std::uint32_t bytes =
+                                length_it->second;
+
+                            if (auto* p =
+                                    mem.Ptr(
+                                        data_it->second,
+                                        bytes)) {
+                                std::memset(
+                                    p,
+                                    0,
+                                    bytes);
+                            }
+                        }
+
+                        if (requested == "main.pak" ||
+                            requested == "ASSET:main.pak" ||
+                            requested.find(".obb") !=
+                                std::string::npos) {
+
+                            regs[0] =
+                                new_string(
+                                    "/storage/emulated/0/Android/obb/com.ea.game.pvz2_row/main.7.com.ea.game.pvz2_row.obb");
+                        } else {
+                            regs[0] =
+                                new_string(
+                                    requested);
+                        }
+
+                        Append(
+                            "JNI bridge: Resources_GetAssetFileInfo(\"" +
+                            requested +
+                            "\") -> concrete asset path");
                         return true;
                     }
 
