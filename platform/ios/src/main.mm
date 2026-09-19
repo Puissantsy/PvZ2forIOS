@@ -245,7 +245,7 @@ NSString *NSStringFromStd(
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — Offline HTTP v34";
+        @"PvZ2forIOS — Resource Registry v35";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -254,7 +254,7 @@ NSString *NSStringFromStd(
         NO;
 
     title.text =
-        @"PvZ2forIOS — offline HTTP v34";
+        @"PvZ2forIOS — resource registry v35";
 
     title.font =
         [UIFont
@@ -270,8 +270,8 @@ NSString *NSStringFromStd(
         NO;
 
     explanation.text =
-        @"v33 finally rendered the real animated EA startup splash: the best sampled frame was #15 with 114807 non-black pixels, the logo then faded out, and the game kept drawing a black framebuffer through frame 600. GLES remained active, but AndroidHttpTransaction.Start was still a no-op, leaving startup web requests permanently in flight because their registered native completion/error callbacks were never invoked. "
-         @"v34 keeps the working RSB/PTX and real iOS GLES2 path, tracks the native peer passed into each AndroidHttpTransaction Java object, and converts Start into a deterministic offline transaction. At safe lifecycle/frame boundaries it invokes PvZ2's real registered HttpTransactionError(J) callback, never in the middle of a guest frame. The 600-frame best-frame capture remains enabled so we can see immediately whether the post-EA state finally advances.";
+        @"v34 proved that AndroidHttpTransaction was not the post-EA blocker: the queued offline errors reached PvZ2's real HttpTransactionError callback, yet the render still produced the same EA splash and then black through frame 600 with only five texture uploads. The same run exposed hundreds of GenericResFileRes lookup failures even though the corresponding RTON files physically exist in the selected RSB/OBB. "
+         @"v35 targets that structural mismatch without inventing fake resources. It replaces only the two verified GenericResFileRes ID-lookup callsites in the exact 1.5.252752 ARM binary. The bridge first searches the game's real group-local ResourceInfo maps; when an ID is absent, it derives the matching RTON path from the RSB outer index and searches the game's already-populated global path→ResourceInfo* tree. A fallback is returned only when a real native ResourceInfo object already exists for that physical member. The 600-frame best-frame capture stays enabled to show whether resolving those registry aliases unlocks the screen after EA.";
 
     explanation.numberOfLines = 0;
 
@@ -574,7 +574,7 @@ NSString *NSStringFromStd(
             monospacedSystemFontOfSize:13.0
             weight:UIFontWeightRegular];
     caption.text =
-        @"v34 — best non-black sampled iOS GLES2 framebuffer after deterministic offline HTTP completion\nTap Close to return to the full diagnostic log.";
+        @"v35 — best non-black sampled iOS GLES2 framebuffer after native ResourceInfo registry bridging\nTap Close to return to the full diagnostic log.";
 
     UIButton *closeButton =
         [UIButton
@@ -943,7 +943,7 @@ NSString *NSStringFromStd(
 
     [self
         appendUI:
-            @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v34 keeps the cooperative scheduler, RSB/PTX virtual assets and real iOS GLES2 bridge. AndroidHttpTransaction.Start now queues PvZ2's real native HttpTransactionError callback and delivers it only at safe lifecycle/frame boundaries, so offline startup requests cannot remain pending forever. The probe then runs 600 timed frames and preserves the best rendered framebuffer."];
+            @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v35 keeps the working scheduler, deterministic offline HTTP, RSB/PTX virtual assets and real iOS GLES2 bridge. It additionally bridges GenericResFileRes IDs to real ResourceInfo objects already present in PvZ2's global path registry when the physical RTON exists in the selected RSB. The probe then runs 600 timed frames and preserves the best rendered framebuffer."];
 
     [self
         presentViewController:
@@ -1004,7 +1004,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v34 probe run started; PID=%d ===",
+                    @"=== PvZ2 v35 probe run started; PID=%d ===",
                     getpid()]];
 
     self.jniRunning =
@@ -1170,9 +1170,14 @@ NSString *NSStringFromStd(
                         appendUI:
                             [NSString
                                 stringWithFormat:
-                                    @"STEP 3C2: RSB manifest=%@ | indexed files=%u | malloc=%llu free=%llu realloc=%llu | heap high-water=%u live=%u in %u allocations",
+                                    @"STEP 3C2: RSB manifest=%@ | indexed files=%u | registry lookups=%u direct=%u pathFallback=%u misses=%u pathKeys=%u | malloc=%llu free=%llu realloc=%llu | heap high-water=%u live=%u in %u allocations",
                                     result.rsb_manifest_resolved ? @"RESOLVED" : @"NOT OBSERVED",
                                     result.rsb_resolved_files,
+                                    result.resource_registry_lookup_calls,
+                                    result.resource_registry_direct_hits,
+                                    result.resource_registry_path_fallback_hits,
+                                    result.resource_registry_misses,
+                                    result.resource_path_index_entries,
                                     (unsigned long long)result.malloc_calls,
                                     (unsigned long long)result.free_calls,
                                     (unsigned long long)result.realloc_calls,
@@ -1252,7 +1257,7 @@ NSString *NSStringFromStd(
                     if (result.ok) {
                         [selfRef
                             appendUI:
-                                @"SUCCESS STEP 3: PvZ2 completed lifecycle + surface setup + v34 deterministic-offline HTTP + 600-frame host GLES soak."];
+                                @"SUCCESS STEP 3: PvZ2 completed lifecycle + surface setup + v35 native ResourceInfo registry bridge + 600-frame host GLES soak."];
 
                         if (!result.host_frame_png_path.empty()) {
                             [selfRef
@@ -1270,11 +1275,11 @@ NSString *NSStringFromStd(
                         } else {
                             [selfRef
                                 showResult:
-                                    @"PvZ2 v34 frame soak returned"
+                                    @"PvZ2 v35 frame soak returned"
                                 message:
                                     [NSString
                                         stringWithFormat:
-                                            @"PvZ2 completed its native startup and v34 frame soak.\n\nGameAppInitialize: %u\nLifecycle calls completed: %u\nFrames returned: %u\nHost GLES active: %@\nBest sampled frame: %u (%llu non-black pixels)\nConstructors: %u/%u\nJNI_OnLoad: 0x%08x\n\nNo PNG capture was produced, so check the V34 HTTP / FRAME STATS / BEST FRAME lines in the full log.",
+                                            @"PvZ2 completed its native startup and v35 frame soak.\n\nGameAppInitialize: %u\nLifecycle calls completed: %u\nFrames returned: %u\nHost GLES active: %@\nBest sampled frame: %u (%llu non-black pixels)\nConstructors: %u/%u\nJNI_OnLoad: 0x%08x\n\nNo PNG capture was produced, so check the V35 RESOURCE / FRAME STATS / BEST FRAME lines in the full log.",
                                             result.game_app_initialize_return & 0xffu,
                                             result.lifecycle_calls_completed,
                                             result.draw_frames_completed,
