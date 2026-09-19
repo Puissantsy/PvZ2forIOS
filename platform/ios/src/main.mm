@@ -943,7 +943,7 @@ NSString *NSStringFromStd(
 
     [self
         appendUI:
-            @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v42 keeps the working v39/v40 geometry/capture path, traces and narrowly normalizes the startup atlas vertex-color factor, and recovers RESFILE_* names from live ARM register/stack state before retrying real ResourceInfo maps. The normal 600-frame soak remains enabled.""];
+            @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v42 keeps the working v39/v40 geometry/capture path, traces and narrowly normalizes the startup atlas vertex-color factor, and recovers RESFILE_* names from live ARM register/stack state before retrying real ResourceInfo maps. The normal 600-frame soak remains enabled."];
 
     [self
         presentViewController:
