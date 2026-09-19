@@ -4061,7 +4061,26 @@ public:
                     << ", LR=0x" << JniProbeHex(lr)
                     << ", caller=0x" << JniProbeHex(caller)
                     << ", SP=0x" << JniProbeHex(sp)
-                    << ", stack[0..3]={0x"
+                    << ", regs{r4=0x"
+                    << JniProbeHex(regs[4])
+                    << ",r5=0x"
+                    << JniProbeHex(regs[5])
+                    << ",r6=0x"
+                    << JniProbeHex(regs[6])
+                    << ",r7=0x"
+                    << JniProbeHex(regs[7])
+                    << ",r8=0x"
+                    << JniProbeHex(regs[8])
+                    << ",r9=0x"
+                    << JniProbeHex(regs[9])
+                    << ",r10=0x"
+                    << JniProbeHex(regs[10])
+                    << ",r11=0x"
+                    << JniProbeHex(regs[11])
+                    << ",r12=0x"
+                    << JniProbeHex(regs[12])
+                    << "}"
+                    << ", stack[0..7]={0x"
                     << JniProbeHex(mem.Read32Guest(sp + 0u))
                     << ",0x"
                     << JniProbeHex(mem.Read32Guest(sp + 4u))
@@ -4069,7 +4088,36 @@ public:
                     << JniProbeHex(mem.Read32Guest(sp + 8u))
                     << ",0x"
                     << JniProbeHex(mem.Read32Guest(sp + 12u))
-                    << "}.";
+                    << ",0x"
+                    << JniProbeHex(mem.Read32Guest(sp + 16u))
+                    << ",0x"
+                    << JniProbeHex(mem.Read32Guest(sp + 20u))
+                    << ",0x"
+                    << JniProbeHex(mem.Read32Guest(sp + 24u))
+                    << ",0x"
+                    << JniProbeHex(mem.Read32Guest(sp + 28u))
+                    << "}";
+
+                if (lr == kGuestBase + 0x007a24f0u) {
+                    fault
+                        << ", vectorRangeInsert{newBegin=0x"
+                        << JniProbeHex(regs[5])
+                        << ",oldBegin=0x"
+                        << JniProbeHex(regs[9])
+                        << ",insertPos=0x"
+                        << JniProbeHex(regs[10])
+                        << ",prefixBytes=0x"
+                        << JniProbeHex(regs[8])
+                        << ",insertBytes=0x"
+                        << JniProbeHex(regs[6])
+                        << ",oldEnd=0x"
+                        << JniProbeHex(regs[7])
+                        << ",vectorThis=0x"
+                        << JniProbeHex(regs[11])
+                        << "}";
+                }
+
+                fault << ".";
 
                 result.message = fault.str();
                 Append("MEMORY FAULT: " + result.message);
@@ -9812,12 +9860,22 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                 return false;
                             }
 
-                            // Real pthread workers are concurrent with the
-                            // lifecycle, not only with one specific future
-                            // helper. v21 reached a higher-level RSB read loop
-                            // at 0x864968, proving that PC-gating the scheduler
-                            // was too narrow. Give runnable workers a slice
-                            // after every expired main-thread quantum.
+                            // v29 exposed a scheduler correctness issue. Guest
+                            // pthread mutex/cond primitives are still synthetic,
+                            // so running background workers after *every* plain
+                            // CPU quantum can create interleavings that cannot
+                            // occur safely with the current compatibility layer.
+                            // In particular, a worker ran while
+                            // Native_onSurfaceCreated was mutating a
+                            // std::vector<unsigned char>, and the main thread
+                            // later observed begin==NULL with end!=NULL.
+                            //
+                            // Keep cooperative workers available for *real*
+                            // async waits (future-poll / known wait PCs), where
+                            // the main thread is intentionally blocked and a
+                            // worker must make progress. For an ordinary
+                            // timeslice, resume the main guest immediately and
+                            // do not inject a synthetic worker interleaving.
                             if (callbacks.deferred_threads.empty()) {
                                 continue;
                             }
@@ -9853,7 +9911,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
 
                             if (concrete_wait) {
                                 callbacks.Append(
-                                    "V27 SCHED ROUND " +
+                                    "V30 SCHED WAIT " +
                                     std::to_string(async_round) +
                                     ": kind=" +
                                     current_wait_kind +
@@ -9866,36 +9924,43 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                     "} workers=" +
                                     std::to_string(
                                         callbacks.deferred_threads.size()));
-                            } else if (async_round <= 8u ||
-                                       (async_round % 50u) == 0u) {
-                                callbacks.Append(
-                                    "V27 CPU PROGRESS round=" +
-                                    std::to_string(async_round) +
-                                    " main PC=0x" +
-                                    JniProbeHex(
-                                        result.final_pc) +
-                                    " r0=0x" +
-                                    JniProbeHex(jit.Regs()[0]) +
-                                    " r4=0x" +
-                                    JniProbeHex(jit.Regs()[4]) +
-                                    " r5=0x" +
-                                    JniProbeHex(jit.Regs()[5]) +
-                                    " r6=0x" +
-                                    JniProbeHex(jit.Regs()[6]) +
-                                    " r7=0x" +
-                                    JniProbeHex(jit.Regs()[7]) +
-                                    " heapHighWater=" +
-                                    std::to_string(
-                                        memory.HeapHighWater()) +
-                                    " heapLive=" +
-                                    std::to_string(
-                                        memory.HeapLiveBytes()) +
-                                    " supportedCalls=" +
-                                    std::to_string(
-                                        callbacks.supported_calls) +
-                                    " workers=" +
-                                    std::to_string(
-                                        callbacks.deferred_threads.size()));
+                            } else {
+                                if (async_round <= 8u ||
+                                    (async_round % 50u) == 0u) {
+                                    callbacks.Append(
+                                        "V30 MAIN-ONLY CPU round=" +
+                                        std::to_string(async_round) +
+                                        " main PC=0x" +
+                                        JniProbeHex(
+                                            result.final_pc) +
+                                        " r0=0x" +
+                                        JniProbeHex(jit.Regs()[0]) +
+                                        " r4=0x" +
+                                        JniProbeHex(jit.Regs()[4]) +
+                                        " r5=0x" +
+                                        JniProbeHex(jit.Regs()[5]) +
+                                        " r6=0x" +
+                                        JniProbeHex(jit.Regs()[6]) +
+                                        " r7=0x" +
+                                        JniProbeHex(jit.Regs()[7]) +
+                                        " heapHighWater=" +
+                                        std::to_string(
+                                            memory.HeapHighWater()) +
+                                        " heapLive=" +
+                                        std::to_string(
+                                            memory.HeapLiveBytes()) +
+                                        " supportedCalls=" +
+                                        std::to_string(
+                                            callbacks.supported_calls) +
+                                        " deferredWorkers=" +
+                                        std::to_string(
+                                            callbacks.deferred_threads.size()));
+                                }
+
+                                // No worker switch on a plain CPU quantum.
+                                // This keeps guest object mutation atomic with
+                                // respect to synthetic pthread synchronization.
+                                continue;
                             }
 
                             const auto main_regs =
@@ -10110,7 +10175,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                     future_changed = true;
 
                                     callbacks.Append(
-                                        "V27 WAIT OBJECT PROGRESS by tid=" +
+                                        "V30 WAIT OBJECT PROGRESS by tid=" +
                                         std::to_string(
                                             worker_state.id) +
                                         ": " +
@@ -10147,11 +10212,11 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                     result.lifecycle_failure_name =
                                         name;
                                     result.message =
-                                        "v27 reached a concrete async wait with no runnable deferred guest worker. " +
+                                        "v30 reached a concrete async wait with no runnable deferred guest worker. " +
                                         async_future_snapshot(
                                             future);
                                     callbacks.Append(
-                                        "V27 SCHEDULER STOP: " +
+                                        "V30 SCHEDULER STOP: " +
                                         result.message);
                                     result.trace =
                                         callbacks.Trace();
@@ -10168,7 +10233,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             if (concrete_wait &&
                                 !future_changed) {
                                 callbacks.Append(
-                                    "V27 SCHED ROUND " +
+                                    "V30 SCHED WAIT " +
                                     std::to_string(async_round) +
                                     ": wait object unchanged after one persistent worker slice; main thread will receive another slice before retrying.");
                             }
@@ -10183,7 +10248,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                         std::ostringstream timeout;
                         timeout
                             << name
-                            << " exceeded the v27 2B-tick safety ceiling at PC=0x"
+                            << " exceeded the v30 2B-tick safety ceiling at PC=0x"
                             << JniProbeHex(jit.Regs()[15])
                             << " after "
                             << lifecycle_ticks
@@ -10208,7 +10273,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             timeout.str();
 
                         callbacks.Append(
-                            "V27 SCHEDULER TIMEOUT: " +
+                            "V30 SCHEDULER TIMEOUT: " +
                             result.message);
 
                         result.trace =
