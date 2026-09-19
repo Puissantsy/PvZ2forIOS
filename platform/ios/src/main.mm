@@ -245,7 +245,7 @@ NSString *NSStringFromStd(
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — Frame Soak v32";
+        @"PvZ2forIOS — Best Frame v33";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -254,7 +254,7 @@ NSString *NSStringFromStd(
         NO;
 
     title.text =
-        @"PvZ2forIOS — frame soak v32";
+        @"PvZ2forIOS — best frame v33";
 
     title.font =
         [UIFont
@@ -270,8 +270,8 @@ NSString *NSStringFromStd(
         NO;
 
     explanation.text =
-        @"v31 proved the real iOS GLES bridge is stable: PvZ2 returned from three consecutive Native_onDrawFrame calls, decoded Init_1536_00 from the RSB PTX payload, and produced a real framebuffer PNG with no speculative recovery. "
-         @"v32 turns that proof into a timed 120-frame soak. Selected frames are read back and measured (non-black pixels, average RGB, center pixel and framebuffer hash) so a black or changing frame can be diagnosed directly from the log. It also resolves the _Name/Name_ atlas aliases PvZ2 probes and records register/stack string candidates for the still-empty GenericResFileRes errors, so the next resource problem is identified as a family rather than one path at a time.";
+        @"v32 completed all 120 native frames without a recovery. The final capture was black, but framebuffer statistics proved that rendering was not actually black throughout the run: frames 15 through 60 contained more than 114k non-black pixels before the surface transitioned back to black. "
+         @"v33 runs 600 timed frames, preserves the sampled framebuffer with the most non-black pixels instead of blindly showing the final frame, and logs GLES draw/clear/texture-upload totals. The GenericResFileRes diagnostic now also recovers the caller behind Android's logging wrapper and identifies RESFILE package IDs; when a level ID maps to a real RSB member, the log explicitly marks it as a registry lookup miss rather than a missing file.";
 
     explanation.numberOfLines = 0;
 
@@ -574,7 +574,7 @@ NSString *NSStringFromStd(
             monospacedSystemFontOfSize:13.0
             weight:UIFontWeightRegular];
     caption.text =
-        @"v32 — real iOS GLES2 framebuffer after 120 timed frames\nTap Close to return to the full diagnostic log.";
+        @"v33 — best non-black sampled iOS GLES2 framebuffer from the 600-frame run\nTap Close to return to the full diagnostic log.";
 
     UIButton *closeButton =
         [UIButton
@@ -943,7 +943,7 @@ NSString *NSStringFromStd(
 
     [self
         appendUI:
-            @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v32 keeps the cooperative scheduler, RSB/PTX virtual assets and real iOS GLES2 bridge, then runs 120 timed Native_onDrawFrame calls. It logs framebuffer statistics at frames 1/2/3/15/30/60/120, diagnoses the blank GenericResFileRes paths from guest register/stack context, and captures the final framebuffer as PNG."];
+            @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v33 keeps the cooperative scheduler, RSB/PTX virtual assets and real iOS GLES2 bridge, then runs 600 timed Native_onDrawFrame calls. It samples the framebuffer through the run, preserves the most populated non-black frame, records GLES activity totals, and traces GenericResFileRes misses back through the Android log wrapper to their actual RESFILE identifiers and physical RSB members."];
 
     [self
         presentViewController:
@@ -1004,7 +1004,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v32 probe run started; PID=%d ===",
+                    @"=== PvZ2 v33 probe run started; PID=%d ===",
                     getpid()]];
 
     self.jniRunning =
@@ -1154,7 +1154,7 @@ NSString *NSStringFromStd(
                         appendUI:
                             [NSString
                                 stringWithFormat:
-                                    @"STEP 3C: JNI_OnLoad=%@ | GameAppInit returned=%@ result=%u | lifecycle=%u | firstDraw reached=%@ returned=%@ | frames=%u | hostGLES=%@",
+                                    @"STEP 3C: JNI_OnLoad=%@ | GameAppInit returned=%@ result=%u | lifecycle=%u | firstDraw reached=%@ returned=%@ | frames=%u | hostGLES=%@ | bestFrame=%u nonBlack=%llu",
                                     result.returned_from_jni_onload ? @"YES" : @"NO",
                                     result.returned_game_app_initialize ? @"YES" : @"NO",
                                     result.game_app_initialize_return & 0xffu,
@@ -1162,7 +1162,9 @@ NSString *NSStringFromStd(
                                     result.reached_first_draw_frame ? @"YES" : @"NO",
                                     result.returned_first_draw_frame ? @"YES" : @"NO",
                                     result.draw_frames_completed,
-                                    result.host_gles_active ? @"YES" : @"NO"]];
+                                    result.host_gles_active ? @"YES" : @"NO",
+                                    result.best_frame_number,
+                                    (unsigned long long)result.best_frame_nonblack]];
 
                     [selfRef
                         appendUI:
@@ -1250,14 +1252,14 @@ NSString *NSStringFromStd(
                     if (result.ok) {
                         [selfRef
                             appendUI:
-                                @"SUCCESS STEP 3: PvZ2 completed lifecycle + surface setup + v32 120-frame host GLES soak."];
+                                @"SUCCESS STEP 3: PvZ2 completed lifecycle + surface setup + v33 600-frame host GLES soak."];
 
                         if (!result.host_frame_png_path.empty()) {
                             [selfRef
                                 appendUI:
                                     [NSString
                                         stringWithFormat:
-                                            @"STEP 3G: real GLES framebuffer PNG = %@",
+                                            @"STEP 3G: best sampled GLES framebuffer PNG = %@",
                                             NSStringFromStd(
                                                 result.host_frame_png_path)]];
 
@@ -1268,15 +1270,17 @@ NSString *NSStringFromStd(
                         } else {
                             [selfRef
                                 showResult:
-                                    @"PvZ2 v32 frame soak returned"
+                                    @"PvZ2 v33 frame soak returned"
                                 message:
                                     [NSString
                                         stringWithFormat:
-                                            @"PvZ2 completed its native startup and v32 frame soak.\n\nGameAppInitialize: %u\nLifecycle calls completed: %u\nFrames returned: %u\nHost GLES active: %@\nConstructors: %u/%u\nJNI_OnLoad: 0x%08x\n\nNo PNG capture was produced, so check the V32 FRAME STATS / HOST GLES lines in the full log.",
+                                            @"PvZ2 completed its native startup and v33 frame soak.\n\nGameAppInitialize: %u\nLifecycle calls completed: %u\nFrames returned: %u\nHost GLES active: %@\nBest sampled frame: %u (%llu non-black pixels)\nConstructors: %u/%u\nJNI_OnLoad: 0x%08x\n\nNo PNG capture was produced, so check the V33 FRAME STATS / BEST FRAME lines in the full log.",
                                             result.game_app_initialize_return & 0xffu,
                                             result.lifecycle_calls_completed,
                                             result.draw_frames_completed,
                                             result.host_gles_active ? @"YES" : @"NO",
+                                            result.best_frame_number,
+                                            (unsigned long long)result.best_frame_nonblack,
                                             result.constructors_completed,
                                             result.constructors_total,
                                             result.return_value]];
