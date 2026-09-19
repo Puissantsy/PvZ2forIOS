@@ -515,6 +515,134 @@ NSString *NSStringFromStd(
     }
 }
 
+- (void)dismissCapturedFrame {
+    [self.presentedViewController
+        dismissViewControllerAnimated:YES
+        completion:nil];
+}
+
+- (void)showCapturedFrameAtPath:
+        (NSString *)path {
+
+    UIImage *image =
+        [UIImage
+            imageWithContentsOfFile:path];
+
+    if (image == nil) {
+        [self
+            showResult:
+                @"Host GLES capture unavailable"
+            message:
+                [NSString
+                    stringWithFormat:
+                        @"v31 returned a capture path but UIKit could not decode the PNG:\n%@",
+                        path ?: @"(null)"]];
+        return;
+    }
+
+    UIViewController *frameController =
+        [[UIViewController alloc] init];
+
+    frameController.modalPresentationStyle =
+        UIModalPresentationFullScreen;
+
+    frameController.view.backgroundColor =
+        UIColor.blackColor;
+
+    UIImageView *imageView =
+        [[UIImageView alloc]
+            initWithImage:image];
+
+    imageView.translatesAutoresizingMaskIntoConstraints =
+        NO;
+    imageView.contentMode =
+        UIViewContentModeScaleAspectFit;
+
+    UILabel *caption =
+        [[UILabel alloc] init];
+
+    caption.translatesAutoresizingMaskIntoConstraints =
+        NO;
+    caption.textColor =
+        UIColor.whiteColor;
+    caption.textAlignment =
+        NSTextAlignmentCenter;
+    caption.numberOfLines =
+        0;
+    caption.font =
+        [UIFont
+            monospacedSystemFontOfSize:13.0
+            weight:UIFontWeightRegular];
+    caption.text =
+        @"v31 — real iOS GLES2 framebuffer capture\nTap Close to return to the full diagnostic log.";
+
+    UIButton *closeButton =
+        [UIButton
+            buttonWithType:UIButtonTypeSystem];
+
+    closeButton.translatesAutoresizingMaskIntoConstraints =
+        NO;
+    [closeButton
+        setTitle:@"Close"
+        forState:UIControlStateNormal];
+    closeButton.titleLabel.font =
+        [UIFont
+            boldSystemFontOfSize:18.0];
+    [closeButton
+        addTarget:self
+        action:@selector(dismissCapturedFrame)
+        forControlEvents:UIControlEventTouchUpInside];
+
+    [frameController.view
+        addSubview:imageView];
+    [frameController.view
+        addSubview:caption];
+    [frameController.view
+        addSubview:closeButton];
+
+    UILayoutGuide *guide =
+        frameController.view.safeAreaLayoutGuide;
+
+    [NSLayoutConstraint
+        activateConstraints:@[
+            [caption.topAnchor
+                constraintEqualToAnchor:guide.topAnchor
+                constant:12.0],
+            [caption.leadingAnchor
+                constraintEqualToAnchor:guide.leadingAnchor
+                constant:20.0],
+            [caption.trailingAnchor
+                constraintEqualToAnchor:guide.trailingAnchor
+                constant:-20.0],
+
+            [imageView.topAnchor
+                constraintEqualToAnchor:caption.bottomAnchor
+                constant:10.0],
+            [imageView.leadingAnchor
+                constraintEqualToAnchor:guide.leadingAnchor
+                constant:8.0],
+            [imageView.trailingAnchor
+                constraintEqualToAnchor:guide.trailingAnchor
+                constant:-8.0],
+
+            [closeButton.topAnchor
+                constraintEqualToAnchor:imageView.bottomAnchor
+                constant:10.0],
+            [closeButton.bottomAnchor
+                constraintEqualToAnchor:guide.bottomAnchor
+                constant:-12.0],
+            [closeButton.centerXAnchor
+                constraintEqualToAnchor:guide.centerXAnchor],
+            [closeButton.heightAnchor
+                constraintEqualToConstant:44.0],
+        ]];
+
+    [self
+        presentViewController:frameController
+        animated:YES
+        completion:nil];
+}
+
 - (void)showResult:
         (NSString *)title
     message:
@@ -1124,24 +1252,35 @@ NSString *NSStringFromStd(
                             appendUI:
                                 @"SUCCESS STEP 3: PvZ2 completed lifecycle + surface setup + v31 host GLES frame loop."];
 
-                        [selfRef
-                            showResult:
-                                @"PvZ2 host GLES frame loop returned"
-                            message:
-                                [NSString
-                                    stringWithFormat:
-                                        @"PvZ2 completed its native startup and v31 frame loop.\n\nGameAppInitialize: %u\nLifecycle calls completed: %u\nFrames returned: %u\nHost GLES active: %@\nCapture: %@\nConstructors: %u/%u\nJNI_OnLoad: 0x%08x\n\nIf the capture is non-empty, this is the first run where guest GLES commands were executed by a real iOS GLES2 context rather than the old no-op probe.",
-                                        result.game_app_initialize_return & 0xffu,
-                                        result.lifecycle_calls_completed,
-                                        result.draw_frames_completed,
-                                        result.host_gles_active ? @"YES" : @"NO",
-                                        result.host_frame_png_path.empty()
-                                            ? @"(none)"
-                                            : NSStringFromStd(
-                                                  result.host_frame_png_path),
-                                        result.constructors_completed,
-                                        result.constructors_total,
-                                        result.return_value]];
+                        if (!result.host_frame_png_path.empty()) {
+                            [selfRef
+                                appendUI:
+                                    [NSString
+                                        stringWithFormat:
+                                            @"STEP 3G: real GLES framebuffer PNG = %@",
+                                            NSStringFromStd(
+                                                result.host_frame_png_path)]];
+
+                            [selfRef
+                                showCapturedFrameAtPath:
+                                    NSStringFromStd(
+                                        result.host_frame_png_path)];
+                        } else {
+                            [selfRef
+                                showResult:
+                                    @"PvZ2 host GLES frame loop returned"
+                                message:
+                                    [NSString
+                                        stringWithFormat:
+                                            @"PvZ2 completed its native startup and v31 frame loop.\n\nGameAppInitialize: %u\nLifecycle calls completed: %u\nFrames returned: %u\nHost GLES active: %@\nConstructors: %u/%u\nJNI_OnLoad: 0x%08x\n\nNo PNG capture was produced, so check the V31 HOST GLES lines in the full log.",
+                                            result.game_app_initialize_return & 0xffu,
+                                            result.lifecycle_calls_completed,
+                                            result.draw_frames_completed,
+                                            result.host_gles_active ? @"YES" : @"NO",
+                                            result.constructors_completed,
+                                            result.constructors_total,
+                                            result.return_value]];
+                        }
                     } else {
                         NSString *message =
                             NSStringFromStd(
