@@ -123,7 +123,7 @@ void AppendPersistentLog(NSString *line) {
     [handle closeFile];
 }
 
-NSString *ReadPersistentLog() {
+NSString *ReadPersistentLogFull() {
     NSError *error = nil;
 
     NSString *text =
@@ -135,9 +135,12 @@ NSString *ReadPersistentLog() {
                             error:
                 &error];
 
-    if (text == nil) {
-        return @"";
-    }
+    return text ?: @"";
+}
+
+NSString *ReadPersistentLog() {
+    NSString *text =
+        ReadPersistentLogFull();
 
     if (text.length > 32000) {
         return
@@ -147,6 +150,14 @@ NSString *ReadPersistentLog() {
     }
 
     return text;
+}
+
+void ResetPersistentLog() {
+    [[NSFileManager defaultManager]
+        removeItemAtPath:
+            LogFilePath()
+                   error:
+            nil];
 }
 
 NSString *NSStringFromStd(
@@ -234,7 +245,7 @@ NSString *NSStringFromStd(
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — RSB Resource VFS v26";
+        @"PvZ2forIOS — Progress Runtime v27";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -243,7 +254,7 @@ NSString *NSStringFromStd(
         NO;
 
     title.text =
-        @"PvZ2forIOS — RSB resource VFS v26";
+        @"PvZ2forIOS — progress runtime v27";
 
     title.font =
         [UIFont
@@ -259,8 +270,8 @@ NSString *NSStringFromStd(
         NO;
 
     explanation.text =
-        @"v25 removed all fourteen observed JNI fallbacks and reduced the natural failure chain to one root: RESFILE_PACKAGES_VERSION is not registered, followed by a null virtual callback and an uncaught std::logic_error. Static OBB analysis shows why: the RSB outer index is loaded, but PROPERTIES\\RESOURCES.RTON lives inside __MANIFESTGROUP__ and had never been exposed as a file. "
-         @"v26 adds an indexed RSB subfile VFS. It decodes the outer compressed file index, resolves the owning RSGP, decodes that group's file list, and exposes uncompressed part-0 members such as PROPERTIES\\RESOURCES.RTON as bounded files backed directly by the selected OBB. APK AssetManager queries are also separated from OBB semantics. The bulk sweep remains active.";
+        @"v26 no longer ended on the old RESFILE_PACKAGES_VERSION/null-callback chain. Instead, Native_onSurfaceCreated kept executing real ARM code until the probe's old 200M-tick scheduler ceiling fired. The tail also showed tens of megabytes of repeated temporary allocations while the probe heap never reused freed blocks. "
+         @"v27 fixes those probe-runtime limits rather than special-casing one game resource: freed guest heap blocks are reusable/coalesced, hot malloc/memset trace spam is rate-limited, plain CPU timeslices are no longer treated as fake async futures, completed workers no longer stop CPU work, and the lifecycle gets a much larger safety ceiling with register/heap progress snapshots. The RSB resolver remains active and its manifest success is now carried into the final summary.";
 
     explanation.numberOfLines = 0;
 
@@ -463,7 +474,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 RSB-resource-VFS v26 session started; PID=%d ===",
+                    @"=== PvZ2 progress-runtime v27 session started; PID=%d ===",
                     getpid()]];
 
     [self
@@ -539,18 +550,23 @@ NSString *NSStringFromStd(
 
 - (void)copyFullLog {
     NSString *fullLog =
-        self.logView.text ?: @"";
+        ReadPersistentLogFull();
+
+    if (fullLog.length == 0) {
+        fullLog =
+            self.logView.text ?: @"";
+    }
 
     UIPasteboard.generalPasteboard.string =
         fullLog;
 
     [self
         showResult:
-            @"Full log copied"
+            @"Full persistent log copied"
         message:
             [NSString
                 stringWithFormat:
-                    @"Copied %lu characters to the clipboard. Paste the text directly into ChatGPT so the entire v24 sweep can be analyzed at once.",
+                    @"Copied %lu characters from the persistent probe log. Unlike v26, this is not limited to the 32k-character UI tail, so the early RSB lines survive an app restart.",
                     (unsigned long)fullLog.length]];
 }
 
@@ -799,7 +815,7 @@ NSString *NSStringFromStd(
 
     [self
         appendUI:
-            @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v26 keeps the semantic JNI batch and bulk sweep, and additionally exposes internal uncompressed RSB resources such as PROPERTIES\\RESOURCES.RTON through the same POSIX VFS, so ResourceManager can register RESFILE_PACKAGES_VERSION and the other package resources."];
+            @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v27 keeps the RSB VFS and bulk sweep, reuses freed guest heap memory, suppresses hot allocator trace spam, and distinguishes real async waits from ordinary CPU-heavy timeslices while continuing toward the first frame."];
 
     [self
         presentViewController:
@@ -852,6 +868,16 @@ NSString *NSStringFromStd(
 
         return;
     }
+
+    ResetPersistentLog();
+    self.logView.text = @"";
+
+    [self
+        appendUI:
+            [NSString
+                stringWithFormat:
+                    @"=== PvZ2 v27 probe run started; PID=%d ===",
+                    getpid()]];
 
     self.jniRunning =
         YES;
@@ -1007,6 +1033,20 @@ NSString *NSStringFromStd(
                                     result.lifecycle_calls_completed,
                                     result.reached_first_draw_frame ? @"YES" : @"NO",
                                     result.returned_first_draw_frame ? @"YES" : @"NO"]];
+
+                    [selfRef
+                        appendUI:
+                            [NSString
+                                stringWithFormat:
+                                    @"STEP 3C2: RSB manifest=%@ | indexed files=%u | malloc=%llu free=%llu realloc=%llu | heap high-water=%u live=%u in %u allocations",
+                                    result.rsb_manifest_resolved ? @"RESOLVED" : @"NOT OBSERVED",
+                                    result.rsb_resolved_files,
+                                    (unsigned long long)result.malloc_calls,
+                                    (unsigned long long)result.free_calls,
+                                    (unsigned long long)result.realloc_calls,
+                                    result.heap_high_water,
+                                    result.heap_live_bytes,
+                                    result.heap_live_allocations]];
 
                     if (!result.trace.empty()) {
                         [selfRef
