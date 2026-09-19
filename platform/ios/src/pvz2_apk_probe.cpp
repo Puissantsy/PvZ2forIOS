@@ -5748,6 +5748,561 @@ public:
                         ".obb") == 0;
             };
 
+        auto resolve_obb_virtual_file =
+            [&](const std::string& raw)
+                -> std::optional<ProbeObbHandle> {
+
+                if (obb_data == nullptr ||
+                    obb_size < 0x70u) {
+                    return std::nullopt;
+                }
+
+                if (is_expansion_path(raw)) {
+                    ProbeObbHandle handle;
+                    handle.base = 0u;
+                    handle.length =
+                        static_cast<std::uint64_t>(
+                            obb_size);
+                    handle.offset = 0u;
+                    handle.eof = false;
+                    handle.label = "expansion";
+                    return handle;
+                }
+
+                auto normalized =
+                    normalize_guest_path(raw);
+
+                while (normalized.rfind("./", 0) == 0) {
+                    normalized.erase(0, 2);
+                }
+
+                while (!normalized.empty() &&
+                       normalized.front() == '/') {
+                    normalized.erase(
+                        normalized.begin());
+                }
+
+                std::transform(
+                    normalized.begin(),
+                    normalized.end(),
+                    normalized.begin(),
+                    [](unsigned char ch) {
+                        return
+                            static_cast<char>(
+                                std::toupper(ch));
+                    });
+
+                auto read_u24 =
+                    [&](std::uint64_t offset,
+                        std::uint32_t& value) {
+                        if (offset + 3u >
+                            obb_size) {
+                            return false;
+                        }
+
+                        value =
+                            static_cast<std::uint32_t>(
+                                obb_data[offset]) |
+                            (static_cast<std::uint32_t>(
+                                 obb_data[offset + 1u])
+                             << 8u) |
+                            (static_cast<std::uint32_t>(
+                                 obb_data[offset + 2u])
+                             << 16u);
+
+                        return true;
+                    };
+
+                auto read_u32 =
+                    [&](std::uint64_t offset,
+                        std::uint32_t& value) {
+                        if (offset + 4u >
+                            obb_size) {
+                            return false;
+                        }
+
+                        value =
+                            static_cast<std::uint32_t>(
+                                obb_data[offset]) |
+                            (static_cast<std::uint32_t>(
+                                 obb_data[offset + 1u])
+                             << 8u) |
+                            (static_cast<std::uint32_t>(
+                                 obb_data[offset + 2u])
+                             << 16u) |
+                            (static_cast<std::uint32_t>(
+                                 obb_data[offset + 3u])
+                             << 24u);
+
+                        return true;
+                    };
+
+                struct PrefixDefault {
+                    std::string name;
+                    std::uint32_t end_words =
+                        0xffffffffu;
+                };
+
+                auto find_outer_group =
+                    [&](const std::string& target)
+                        -> std::optional<std::uint32_t> {
+
+                        std::uint32_t list_length = 0;
+                        std::uint32_t list_begin = 0;
+
+                        if (!read_u32(
+                                0x10u,
+                                list_length) ||
+                            !read_u32(
+                                0x14u,
+                                list_begin) ||
+                            static_cast<std::uint64_t>(
+                                list_begin) +
+                                    list_length >
+                                obb_size) {
+                            return std::nullopt;
+                        }
+
+                        const std::uint64_t begin =
+                            list_begin;
+                        const std::uint64_t end =
+                            begin + list_length;
+                        std::uint64_t pos = begin;
+
+                        std::vector<PrefixDefault>
+                            defaults;
+                        defaults.push_back(
+                            PrefixDefault{});
+
+                        while (pos < end) {
+                            std::string head;
+
+                            for (std::size_t i = 0;
+                                 i < defaults.size();) {
+
+                                if (pos <
+                                    begin +
+                                        static_cast<std::uint64_t>(
+                                            defaults[i].end_words) *
+                                            4ull) {
+
+                                    head +=
+                                        defaults[i].name;
+                                    ++i;
+                                } else {
+                                    defaults.erase(
+                                        defaults.begin() +
+                                        static_cast<std::ptrdiff_t>(
+                                            i));
+                                }
+                            }
+
+                            if (defaults.empty()) {
+                                defaults.push_back(
+                                    PrefixDefault{});
+                            }
+
+                            std::string tail;
+                            std::size_t prefix_start = 0;
+                            std::uint32_t prefix_end =
+                                defaults.back().end_words;
+
+                            bool terminated = false;
+
+                            while (pos + 4u <= end) {
+                                const std::uint8_t ch =
+                                    obb_data[pos];
+
+                                std::uint32_t cover = 0;
+                                if (!read_u24(
+                                        pos + 1u,
+                                        cover)) {
+                                    return std::nullopt;
+                                }
+
+                                pos += 4u;
+
+                                if (ch == 0u) {
+                                    if (cover != 0u &&
+                                        tail.size() != 1u &&
+                                        prefix_start <
+                                            tail.size()) {
+
+                                        defaults.push_back(
+                                            PrefixDefault{
+                                                tail.substr(
+                                                    prefix_start),
+                                                prefix_end});
+                                    }
+
+                                    terminated = true;
+                                    break;
+                                }
+
+                                tail.push_back(
+                                    static_cast<char>(ch));
+
+                                if (cover != 0u) {
+                                    if (tail.size() != 1u &&
+                                        prefix_start <
+                                            tail.size() - 1u) {
+
+                                        defaults.push_back(
+                                            PrefixDefault{
+                                                tail.substr(
+                                                    prefix_start,
+                                                    tail.size() -
+                                                        1u -
+                                                        prefix_start),
+                                                prefix_end});
+                                    }
+
+                                    prefix_start =
+                                        tail.size() - 1u;
+                                    prefix_end = cover;
+                                }
+                            }
+
+                            if (!terminated ||
+                                pos + 4u > end) {
+                                return std::nullopt;
+                            }
+
+                            std::uint32_t group_index = 0;
+                            if (!read_u32(
+                                    pos,
+                                    group_index)) {
+                                return std::nullopt;
+                            }
+
+                            pos += 4u;
+
+                            std::string full =
+                                head + tail;
+
+                            std::transform(
+                                full.begin(),
+                                full.end(),
+                                full.begin(),
+                                [](unsigned char ch) {
+                                    return ch == '\\'
+                                        ? '/'
+                                        : static_cast<char>(
+                                              std::toupper(ch));
+                                });
+
+                            if (full == target) {
+                                return group_index;
+                            }
+                        }
+
+                        return std::nullopt;
+                    };
+
+                const auto group_index =
+                    find_outer_group(
+                        normalized);
+
+                if (!group_index.has_value()) {
+                    return std::nullopt;
+                }
+
+                std::uint32_t group_count = 0;
+                std::uint32_t group_info_begin = 0;
+                std::uint32_t group_info_each = 0;
+
+                if (!read_u32(
+                        0x28u,
+                        group_count) ||
+                    !read_u32(
+                        0x2cu,
+                        group_info_begin) ||
+                    !read_u32(
+                        0x30u,
+                        group_info_each) ||
+                    group_info_each < 0xa4u ||
+                    *group_index >= group_count) {
+
+                    return std::nullopt;
+                }
+
+                const std::uint64_t info =
+                    static_cast<std::uint64_t>(
+                        group_info_begin) +
+                    static_cast<std::uint64_t>(
+                        *group_index) *
+                        group_info_each;
+
+                std::uint32_t group_offset = 0;
+                std::uint32_t group_size = 0;
+                std::uint32_t part0_offset = 0;
+                std::uint32_t part0_zsize = 0;
+                std::uint32_t part0_size = 0;
+
+                if (!read_u32(
+                        info + 0x80u,
+                        group_offset) ||
+                    !read_u32(
+                        info + 0x84u,
+                        group_size) ||
+                    !read_u32(
+                        info + 0x94u,
+                        part0_offset) ||
+                    !read_u32(
+                        info + 0x98u,
+                        part0_zsize) ||
+                    !read_u32(
+                        info + 0x9cu,
+                        part0_size) ||
+                    static_cast<std::uint64_t>(
+                        group_offset) +
+                            group_size >
+                        obb_size) {
+
+                    return std::nullopt;
+                }
+
+                // The supported 1.5.252752 manifest and package groups store
+                // their part-0 files uncompressed. Compressed RSGP members can
+                // be added later when a real runtime path reaches one.
+                if (part0_zsize != part0_size) {
+                    Append(
+                        "V26 RSB VFS: internal file " +
+                        normalized +
+                        " belongs to compressed part0; deferred.");
+                    return std::nullopt;
+                }
+
+                std::uint32_t rsgp_magic = 0;
+                std::uint32_t file_list_length = 0;
+                std::uint32_t file_list_begin = 0;
+
+                if (!read_u32(
+                        group_offset,
+                        rsgp_magic) ||
+                    rsgp_magic != 0x72736770u ||
+                    !read_u32(
+                        static_cast<std::uint64_t>(
+                            group_offset) +
+                            0x48u,
+                        file_list_length) ||
+                    !read_u32(
+                        static_cast<std::uint64_t>(
+                            group_offset) +
+                            0x4cu,
+                        file_list_begin)) {
+
+                    return std::nullopt;
+                }
+
+                const std::uint64_t list_begin =
+                    static_cast<std::uint64_t>(
+                        group_offset) +
+                    file_list_begin;
+                const std::uint64_t list_end =
+                    list_begin +
+                    file_list_length;
+
+                if (list_end > obb_size) {
+                    return std::nullopt;
+                }
+
+                std::vector<PrefixDefault>
+                    defaults;
+                defaults.push_back(
+                    PrefixDefault{});
+
+                std::uint64_t pos =
+                    list_begin;
+
+                while (pos < list_end) {
+                    std::string head;
+
+                    for (std::size_t i = 0;
+                         i < defaults.size();) {
+
+                        if (pos <
+                            list_begin +
+                                static_cast<std::uint64_t>(
+                                    defaults[i].end_words) *
+                                4ull) {
+
+                            head +=
+                                defaults[i].name;
+                            ++i;
+                        } else {
+                            defaults.erase(
+                                defaults.begin() +
+                                static_cast<std::ptrdiff_t>(
+                                    i));
+                        }
+                    }
+
+                    if (defaults.empty()) {
+                        defaults.push_back(
+                            PrefixDefault{});
+                    }
+
+                    std::string tail;
+                    std::size_t prefix_start = 0;
+                    std::uint32_t prefix_end =
+                        defaults.back().end_words;
+
+                    bool terminated = false;
+
+                    while (pos + 4u <=
+                           list_end) {
+                        const std::uint8_t ch =
+                            obb_data[pos];
+
+                        std::uint32_t cover = 0;
+                        if (!read_u24(
+                                pos + 1u,
+                                cover)) {
+                            return std::nullopt;
+                        }
+
+                        pos += 4u;
+
+                        if (ch == 0u) {
+                            if (cover != 0u &&
+                                tail.size() != 1u &&
+                                prefix_start <
+                                    tail.size()) {
+
+                                defaults.push_back(
+                                    PrefixDefault{
+                                        tail.substr(
+                                            prefix_start),
+                                        prefix_end});
+                            }
+
+                            terminated = true;
+                            break;
+                        }
+
+                        tail.push_back(
+                            static_cast<char>(ch));
+
+                        if (cover != 0u) {
+                            if (tail.size() != 1u &&
+                                prefix_start <
+                                    tail.size() - 1u) {
+
+                                defaults.push_back(
+                                    PrefixDefault{
+                                        tail.substr(
+                                            prefix_start,
+                                            tail.size() -
+                                                1u -
+                                                prefix_start),
+                                        prefix_end});
+                            }
+
+                            prefix_start =
+                                tail.size() - 1u;
+                            prefix_end = cover;
+                        }
+                    }
+
+                    if (!terminated ||
+                        pos + 12u >
+                            list_end) {
+                        return std::nullopt;
+                    }
+
+                    std::uint32_t type = 0;
+                    std::uint32_t file_offset = 0;
+                    std::uint32_t file_size = 0;
+
+                    if (!read_u32(
+                            pos,
+                            type) ||
+                        !read_u32(
+                            pos + 4u,
+                            file_offset) ||
+                        !read_u32(
+                            pos + 8u,
+                            file_size)) {
+
+                        return std::nullopt;
+                    }
+
+                    pos +=
+                        type == 0u
+                            ? 12u
+                            : 32u;
+
+                    std::string full =
+                        head + tail;
+
+                    std::transform(
+                        full.begin(),
+                        full.end(),
+                        full.begin(),
+                        [](unsigned char ch) {
+                            return ch == '\\'
+                                ? '/'
+                                : static_cast<char>(
+                                      std::toupper(ch));
+                        });
+
+                    if (full != normalized) {
+                        continue;
+                    }
+
+                    if (type != 0u) {
+                        Append(
+                            "V26 RSB VFS: " +
+                            normalized +
+                            " is a texture/part1 member; not exposed as a flat file.");
+                        return std::nullopt;
+                    }
+
+                    const std::uint64_t base =
+                        static_cast<std::uint64_t>(
+                            group_offset) +
+                        part0_offset +
+                        file_offset;
+
+                    if (base + file_size >
+                        obb_size) {
+                        return std::nullopt;
+                    }
+
+                    ProbeObbHandle handle;
+                    handle.base = base;
+                    handle.length = file_size;
+                    handle.offset = 0u;
+                    handle.eof = false;
+                    handle.label =
+                        "rsb:" + normalized;
+
+                    if (fallback_logged.insert(
+                            "v26-rsb-index:" +
+                            normalized).second) {
+
+                        Append(
+                            "V26 RSB VFS resolved \"" +
+                            raw +
+                            "\" -> group=" +
+                            std::to_string(
+                                *group_index) +
+                            " base=0x" +
+                            JniProbeHex(
+                                static_cast<std::uint32_t>(
+                                    base)) +
+                            " size=" +
+                            std::to_string(
+                                file_size));
+                    }
+
+                    return handle;
+                }
+
+                return std::nullopt;
+            };
+
         auto write_armeabi_stat =
             [&](std::uint32_t address,
                 std::uint64_t size) {
