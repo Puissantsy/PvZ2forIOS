@@ -1266,8 +1266,11 @@ public:
     std::uint32_t next_synthetic_field = 1;
     std::uint32_t next_synthetic_object = 1;
     struct ProbeObbHandle {
+        std::uint64_t base = 0;
+        std::uint64_t length = 0;
         std::uint64_t offset = 0;
         bool eof = false;
+        std::string label;
     };
 
     std::uint32_t next_gl_object = 1;
@@ -2241,25 +2244,16 @@ public:
                             java_string_value(
                                 java_arg_word(0u));
 
-                        const std::uint64_t size =
-                            obb_data != nullptr &&
-                                    obb_size != 0u
-                                ? static_cast<std::uint64_t>(
-                                    obb_size)
-                                : 0ull;
-
-                        regs[0] =
-                            static_cast<std::uint32_t>(
-                                size);
-                        regs[1] =
-                            static_cast<std::uint32_t>(
-                                size >> 32);
+                        // AndroidGameApp implements this with
+                        // AssetManager.openFd(). The supported APK contains
+                        // no assets/ files; IOException returns -1L.
+                        regs[0] = 0xffffffffu;
+                        regs[1] = 0xffffffffu;
 
                         Append(
                             "JNI bridge: Resources_GetAssetFileSize(\"" +
                             requested +
-                            "\") -> " +
-                            std::to_string(size));
+                            "\") -> -1 (not an APK AssetManager asset)");
                         return true;
                     }
 
@@ -2287,8 +2281,16 @@ public:
                                 jni_array_lengths.end() &&
                             data_it->second != 0u) {
 
-                            const std::uint32_t bytes =
-                                length_it->second;
+                            const std::uint64_t bytes64 =
+                                static_cast<std::uint64_t>(
+                                    length_it->second) *
+                                8ull;
+
+                            const std::size_t bytes =
+                                static_cast<std::size_t>(
+                                    std::min<std::uint64_t>(
+                                        bytes64,
+                                        0xffffffffull));
 
                             if (auto* p =
                                     mem.Ptr(
@@ -2301,24 +2303,14 @@ public:
                             }
                         }
 
-                        if (requested == "main.pak" ||
-                            requested == "ASSET:main.pak" ||
-                            requested.find(".obb") !=
-                                std::string::npos) {
-
-                            regs[0] =
-                                new_string(
-                                    "/storage/emulated/0/Android/obb/com.ea.game.pvz2_row/main.7.com.ea.game.pvz2_row.obb");
-                        } else {
-                            regs[0] =
-                                new_string(
-                                    requested);
-                        }
+                        // AndroidGameApp returns null when AssetManager.openFd
+                        // throws. OBB resources are not APK assets.
+                        regs[0] = 0u;
 
                         Append(
                             "JNI bridge: Resources_GetAssetFileInfo(\"" +
                             requested +
-                            "\") -> concrete asset path");
+                            "\") -> null (not an APK AssetManager asset)");
                         return true;
                     }
 
