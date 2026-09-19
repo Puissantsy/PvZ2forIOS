@@ -1777,6 +1777,62 @@ public:
                             std::to_string(slot));
                     }
 
+                    // Method-specific Android surface needed by the real
+                    // PvZ2 1.5 resource loader. The original Java returns an
+                    // absolute .obb path; the in-memory VFS below recognizes
+                    // that guest path and serves the selected expansion bytes.
+                    if (family == 0 &&
+                        method_name ==
+                            "FrameworkInfo_SysGetMainExpansionFilePath") {
+
+                        regs[0] =
+                            new_string(
+                                "/main.7.com.ea.game.pvz2_row.obb");
+
+                        Append(
+                            "JNI bridge: FrameworkInfo_SysGetMainExpansionFilePath -> /main.7.com.ea.game.pvz2_row.obb");
+                        return true;
+                    }
+
+                    if (family == 0 &&
+                        (method_name == "Device_GetCachesDir" ||
+                         method_name == "Resources_GetResourceFolder" ||
+                         method_name == "Resources_GetUserDataFolder" ||
+                         method_name == "Resources_GetCacheDataFolder" ||
+                         method_name == "Resources_GetAppSupportDataFolder" ||
+                         method_name == "Resources_GetExternalStorageDirectory")) {
+
+                        regs[0] = new_string(".");
+                        Append(
+                            "JNI bridge: " +
+                            method_name +
+                            " -> .");
+                        return true;
+                    }
+
+                    if (family == 1) {
+                        if (method_name == "expansionFileDelivered" ||
+                            method_name == "isGooglePlayExpansionEnabled" ||
+                            method_name == "fetchExpansionFile") {
+                            regs[0] = 1;
+                            Append(
+                                "JNI bridge: " +
+                                method_name +
+                                " -> true");
+                            return true;
+                        }
+
+                        if (method_name == "needsToUpdateDB" ||
+                            method_name == "needToDownloadExpansionFile") {
+                            regs[0] = 0;
+                            Append(
+                                "JNI bridge: " +
+                                method_name +
+                                " -> false");
+                            return true;
+                        }
+                    }
+
                     // 0 Object, 1 boolean, 2 byte, 3 char, 4 short,
                     // 5 int, 6 long, 7 float, 8 double, 9 void.
                     if (family == 0) {
