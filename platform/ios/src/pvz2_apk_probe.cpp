@@ -1292,6 +1292,7 @@ public:
     std::uint32_t sweep_recoveries = 0;
     bool sweep_speculative = false;
     std::unordered_set<std::string> sweep_issue_keys;
+    std::unordered_set<std::string> sweep_recovery_keys;
     std::vector<std::string> sweep_issues;
 
     std::unordered_map<std::uint32_t, ProbeObbHandle> obb_fds;
@@ -1389,11 +1390,30 @@ public:
             return false;
         }
 
+        // Recovery quota is for distinct compatibility boundaries, not for
+        // repeatedly returning from the same abort/null/import site. v24
+        // burned all 48 recoveries on one abort loop; v25 only permits one
+        // speculative bypass per unique site/detail.
+        const std::string recovery_key =
+            kind + ":" + detail;
+
+        if (!sweep_recovery_keys.insert(
+                recovery_key).second) {
+
+            Append(
+                "V25 SWEEP STOP: repeated speculative recovery site [" +
+                kind +
+                "] " +
+                detail);
+
+            return false;
+        }
+
         ++sweep_recoveries;
         sweep_speculative = true;
 
         Append(
-            "V24 SWEEP RECOVERY #" +
+            "V25 SWEEP RECOVERY #" +
             std::to_string(
                 sweep_recoveries) +
             " [" +
