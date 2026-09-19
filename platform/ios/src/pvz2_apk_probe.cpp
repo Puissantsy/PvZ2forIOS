@@ -11227,6 +11227,38 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                 constexpr std::uint32_t kNativeOnDrawFrame =
                     kGuestBase + 0x009f190cu;
 
+                callbacks.host_gles_ready =
+                    PvZ2HostGLESBegin(
+                        1180u,
+                        820u);
+
+                callbacks.host_default_framebuffer =
+                    callbacks.host_gles_ready
+                        ? PvZ2HostGLESDefaultFramebuffer()
+                        : 0u;
+
+                result.host_gles_active =
+                    callbacks.host_gles_ready;
+
+                callbacks.Append(
+                    std::string{
+                        "V31 HOST GLES: "} +
+                    (callbacks.host_gles_ready
+                        ? "READY offscreen=1180x820 hostFBO=0x" +
+                            JniProbeHex(
+                                callbacks.host_default_framebuffer)
+                        : "UNAVAILABLE; retaining synthetic GLES probe fallback"));
+
+                struct HostGLESGuard {
+                    bool active = false;
+                    ~HostGLESGuard() {
+                        if (active) {
+                            PvZ2HostGLESEnd();
+                        }
+                    }
+                } host_gles_guard{
+                    callbacks.host_gles_ready};
+
                 // Null launch-string is an accepted path in the original
                 // native function and avoids inventing a fake Java String.
                 if (!run_lifecycle(
@@ -11293,19 +11325,71 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                     return result;
                 }
 
-                if (!run_lifecycle(
-                        "Native_onDrawFrame",
-                        kNativeOnDrawFrame,
-                        kSurfaceThis,
-                        0,
-                        0,
-                        true)) {
-                    return result;
+                constexpr std::uint32_t kV31FrameCount = 3u;
+
+                for (std::uint32_t frame = 0u;
+                     frame < kV31FrameCount;
+                     ++frame) {
+
+                    callbacks.Append(
+                        "V31 FRAME LOOP: begin frame " +
+                        std::to_string(frame + 1u) +
+                        "/" +
+                        std::to_string(kV31FrameCount));
+
+                    if (!run_lifecycle(
+                            "Native_onDrawFrame",
+                            kNativeOnDrawFrame,
+                            kSurfaceThis,
+                            0,
+                            0,
+                            true)) {
+
+                        if (callbacks.host_gles_ready) {
+                            const char* partial =
+                                PvZ2HostGLESCapturePNG();
+
+                            if (partial != nullptr &&
+                                *partial != '\0') {
+                                result.host_frame_png_path =
+                                    partial;
+                            }
+                        }
+
+                        return result;
+                    }
+
+                    result.draw_frames_completed =
+                        frame + 1u;
+
+                    callbacks.Append(
+                        "V31 FRAME LOOP: returned frame " +
+                        std::to_string(frame + 1u) +
+                        "/" +
+                        std::to_string(kV31FrameCount));
+                }
+
+                if (callbacks.host_gles_ready) {
+                    const char* capture =
+                        PvZ2HostGLESCapturePNG();
+
+                    if (capture != nullptr &&
+                        *capture != '\0') {
+                        result.host_frame_png_path =
+                            capture;
+
+                        callbacks.Append(
+                            "V31 HOST GLES CAPTURE: " +
+                            result.host_frame_png_path);
+                    } else {
+                        callbacks.Append(
+                            "V31 HOST GLES CAPTURE: failed");
+                    }
                 }
 
                 result.ok = true;
                 result.message =
-                    "PvZ2 completed GameAppInitialize, lifecycle, surface creation/change, and one real Native_onDrawFrame call under Dynarmic.";
+                    "PvZ2 completed GameAppInitialize, lifecycle, surface setup, and three consecutive Native_onDrawFrame calls with the v31 host GLES bridge.";
                 return result;
             }
 
