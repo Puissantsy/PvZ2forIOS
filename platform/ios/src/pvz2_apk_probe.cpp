@@ -16,6 +16,7 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include <map>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -918,8 +919,11 @@ public:
         std::vector<std::uint8_t>(kJniProbeObjectSize, 0);
 
     std::uint32_t heap_next = 0;
+    std::uint32_t heap_high_water = 0;
+    std::uint32_t heap_live_bytes = 0;
     std::uint32_t object_next = 0;
     std::unordered_map<std::uint32_t, std::uint32_t> heap_allocations;
+    std::map<std::uint32_t, std::uint32_t> heap_free_blocks;
 
     const std::uint8_t* Ptr(
         std::uint32_t address,
@@ -1016,23 +1020,195 @@ public:
         Write32Guest(address + 4, static_cast<std::uint32_t>(value >> 32));
     }
 
+    std::uint32_t AlignHeapOffset(
+        std::uint32_t value,
+        std::uint32_t alignment) const {
+
+        const std::uint32_t safe_alignment =
+            std::max<std::uint32_t>(
+                alignment,
+                1u);
+
+        const std::uint32_t remainder =
+            value % safe_alignment;
+
+        if (remainder == 0u) {
+            return value;
+        }
+
+        const std::uint64_t aligned =
+            static_cast<std::uint64_t>(value) +
+            (safe_alignment - remainder);
+
+        return aligned <=
+                std::numeric_limits<std::uint32_t>::max()
+            ? static_cast<std::uint32_t>(aligned)
+            : 0xffffffffu;
+    }
+
+    void InsertFreeHeapBlock(
+        std::uint32_t offset,
+        std::uint32_t size) {
+
+        if (size == 0u) {
+            return;
+        }
+
+        auto next =
+            heap_free_blocks.lower_bound(offset);
+
+        if (next != heap_free_blocks.begin()) {
+            auto previous =
+                std::prev(next);
+
+            if (previous->first +
+                    previous->second ==
+                offset) {
+
+                offset =
+                    previous->first;
+                size +=
+                    previous->second;
+                heap_free_blocks.erase(
+                    previous);
+            }
+        }
+
+        next =
+            heap_free_blocks.lower_bound(offset);
+
+        if (next != heap_free_blocks.end() &&
+            offset + size == next->first) {
+
+            size +=
+                next->second;
+            heap_free_blocks.erase(next);
+        }
+
+        heap_free_blocks[offset] =
+            size;
+
+        while (!heap_free_blocks.empty()) {
+            auto tail =
+                std::prev(
+                    heap_free_blocks.end());
+
+            if (tail->first +
+                    tail->second !=
+                heap_next) {
+                break;
+            }
+
+            heap_next =
+                tail->first;
+            heap_free_blocks.erase(tail);
+        }
+    }
+
     std::uint32_t AllocateHeap(
         std::uint32_t size,
         std::uint32_t alignment = 16) {
 
-        const std::uint32_t aligned =
-            (heap_next + alignment - 1) & ~(alignment - 1);
+        const std::uint32_t requested =
+            std::max<std::uint32_t>(
+                size,
+                1u);
 
-        if (aligned > kJniProbeHeapSize ||
-            size > kJniProbeHeapSize - aligned) {
+        const std::uint32_t safe_alignment =
+            std::max<std::uint32_t>(
+                alignment,
+                1u);
+
+        for (auto it =
+                 heap_free_blocks.begin();
+             it != heap_free_blocks.end();
+             ++it) {
+
+            const std::uint32_t block_begin =
+                it->first;
+            const std::uint32_t block_size =
+                it->second;
+            const std::uint32_t aligned =
+                AlignHeapOffset(
+                    block_begin,
+                    safe_alignment);
+
+            if (aligned == 0xffffffffu ||
+                aligned < block_begin) {
+                continue;
+            }
+
+            const std::uint32_t prefix =
+                aligned - block_begin;
+
+            if (prefix > block_size ||
+                requested >
+                    block_size - prefix) {
+                continue;
+            }
+
+            const std::uint32_t block_end =
+                block_begin + block_size;
+            const std::uint32_t allocation_end =
+                aligned + requested;
+
+            heap_free_blocks.erase(it);
+
+            if (prefix != 0u) {
+                heap_free_blocks[
+                    block_begin] =
+                    prefix;
+            }
+
+            if (allocation_end <
+                block_end) {
+                heap_free_blocks[
+                    allocation_end] =
+                    block_end -
+                    allocation_end;
+            }
+
+            const std::uint32_t address =
+                kJniProbeHeapBase +
+                aligned;
+
+            heap_allocations[address] =
+                requested;
+            heap_live_bytes +=
+                requested;
+
+            return address;
+        }
+
+        const std::uint32_t aligned =
+            AlignHeapOffset(
+                heap_next,
+                safe_alignment);
+
+        if (aligned == 0xffffffffu ||
+            aligned > kJniProbeHeapSize ||
+            requested >
+                kJniProbeHeapSize -
+                    aligned) {
             return 0;
         }
 
-        heap_next = aligned + size;
-        const std::uint32_t address =
-            kJniProbeHeapBase + aligned;
+        heap_next =
+            aligned + requested;
+        heap_high_water =
+            std::max(
+                heap_high_water,
+                heap_next);
 
-        heap_allocations[address] = size;
+        const std::uint32_t address =
+            kJniProbeHeapBase +
+            aligned;
+
+        heap_allocations[address] =
+            requested;
+        heap_live_bytes +=
+            requested;
+
         return address;
     }
 
@@ -1041,43 +1217,124 @@ public:
         std::uint32_t new_size) {
 
         if (old_address == 0) {
-            return AllocateHeap(new_size, 16);
+            return AllocateHeap(
+                new_size,
+                16);
         }
 
         if (new_size == 0) {
-            heap_allocations.erase(old_address);
+            FreeHeap(old_address);
             return 0;
         }
 
+        const auto old_it =
+            heap_allocations.find(
+                old_address);
+
+        if (old_it ==
+            heap_allocations.end()) {
+            return AllocateHeap(
+                new_size,
+                16);
+        }
+
+        const std::uint32_t old_size =
+            old_it->second;
+        const std::uint32_t requested =
+            std::max<std::uint32_t>(
+                new_size,
+                1u);
+
+        if (requested <= old_size) {
+            const std::uint32_t released =
+                old_size - requested;
+
+            old_it->second =
+                requested;
+            heap_live_bytes -=
+                released;
+
+            if (released != 0u) {
+                InsertFreeHeapBlock(
+                    old_address -
+                        kJniProbeHeapBase +
+                        requested,
+                    released);
+            }
+
+            return old_address;
+        }
+
         const std::uint32_t new_address =
-            AllocateHeap(new_size, 16);
+            AllocateHeap(
+                requested,
+                16);
 
         if (!new_address) {
             return 0;
         }
 
-        const auto it =
-            heap_allocations.find(old_address);
+        auto* dst =
+            Ptr(
+                new_address,
+                old_size);
+        const auto* src =
+            Ptr(
+                old_address,
+                old_size);
 
-        if (it != heap_allocations.end()) {
-            const std::uint32_t copy_size =
-                std::min(it->second, new_size);
-
-            auto* dst = Ptr(new_address, copy_size);
-            const auto* src = Ptr(old_address, copy_size);
-
-            if (dst && src) {
-                std::memmove(dst, src, copy_size);
-            }
-
-            heap_allocations.erase(it);
+        if (dst && src) {
+            std::memmove(
+                dst,
+                src,
+                old_size);
         }
+
+        FreeHeap(old_address);
 
         return new_address;
     }
 
     void FreeHeap(std::uint32_t address) {
-        heap_allocations.erase(address);
+        const auto it =
+            heap_allocations.find(
+                address);
+
+        if (it ==
+            heap_allocations.end()) {
+            return;
+        }
+
+        const std::uint32_t size =
+            it->second;
+
+        heap_allocations.erase(it);
+
+        if (heap_live_bytes >= size) {
+            heap_live_bytes -= size;
+        } else {
+            heap_live_bytes = 0;
+        }
+
+        InsertFreeHeapBlock(
+            address -
+                kJniProbeHeapBase,
+            size);
+    }
+
+    std::uint32_t HeapHighWater() const {
+        return heap_high_water;
+    }
+
+    std::uint32_t HeapLiveBytes() const {
+        return heap_live_bytes;
+    }
+
+    std::uint32_t HeapLiveAllocations() const {
+        return static_cast<std::uint32_t>(
+            std::min<std::size_t>(
+                heap_allocations.size(),
+                std::numeric_limits<std::uint32_t>::max()));
     }
 
     std::uint32_t AllocateObject(
@@ -1290,6 +1547,11 @@ public:
     std::uint64_t last_obb_seek_target = 0;
     std::uint32_t null_execute_recoveries = 0;
     std::string last_android_log;
+    std::uint64_t malloc_calls = 0;
+    std::uint64_t free_calls = 0;
+    std::uint64_t realloc_calls = 0;
+    std::uint64_t memset_calls = 0;
+    std::uint32_t rsb_resolved_files = 0;
 
     static constexpr std::uint32_t kSweepRecoveryLimit = 48u;
     std::uint32_t sweep_recoveries = 0;
@@ -3163,14 +3425,42 @@ public:
 
             regs[0] = address;
             ++supported_calls;
+            ++malloc_calls;
 
-            Append(
-                "import " +
-                name +
-                "(" +
-                std::to_string(requested) +
-                ") -> 0x" +
-                JniProbeHex(address));
+            result.malloc_calls =
+                malloc_calls;
+            result.heap_high_water =
+                mem.HeapHighWater();
+            result.heap_live_bytes =
+                mem.HeapLiveBytes();
+            result.heap_live_allocations =
+                mem.HeapLiveAllocations();
+
+            if (malloc_calls <= 8u ||
+                (malloc_calls % 4096u) == 0u ||
+                address == 0u) {
+
+                Append(
+                    "V27 HEAP " +
+                    name +
+                    " #" +
+                    std::to_string(
+                        malloc_calls) +
+                    " requested=" +
+                    std::to_string(
+                        requested) +
+                    " -> 0x" +
+                    JniProbeHex(address) +
+                    " highWater=" +
+                    std::to_string(
+                        mem.HeapHighWater()) +
+                    " liveBytes=" +
+                    std::to_string(
+                        mem.HeapLiveBytes()) +
+                    " liveAllocs=" +
+                    std::to_string(
+                        mem.HeapLiveAllocations()));
+            }
             return;
         }
 
@@ -3178,6 +3468,16 @@ public:
             mem.FreeHeap(regs[0]);
             regs[0] = 0;
             ++supported_calls;
+            ++free_calls;
+
+            result.free_calls =
+                free_calls;
+            result.heap_high_water =
+                mem.HeapHighWater();
+            result.heap_live_bytes =
+                mem.HeapLiveBytes();
+            result.heap_live_allocations =
+                mem.HeapLiveAllocations();
             return;
         }
 
@@ -3189,6 +3489,16 @@ public:
 
             regs[0] = address;
             ++supported_calls;
+            ++realloc_calls;
+
+            result.realloc_calls =
+                realloc_calls;
+            result.heap_high_water =
+                mem.HeapHighWater();
+            result.heap_live_bytes =
+                mem.HeapLiveBytes();
+            result.heap_live_allocations =
+                mem.HeapLiveAllocations();
             return;
         }
 
@@ -5586,16 +5896,24 @@ public:
                 regs[0] = destination;
                 ++supported_calls;
 
-                Append(
-                    "import " +
-                    name +
-                    "(dest=0x" +
-                    JniProbeHex(destination) +
-                    ", size=" +
-                    std::to_string(size) +
-                    ", value=" +
-                    std::to_string(value) +
-                    ")");
+                ++memset_calls;
+
+                if (memset_calls <= 4u ||
+                    (memset_calls % 4096u) == 0u) {
+                    Append(
+                        "V27 MEMSET #" +
+                        std::to_string(
+                            memset_calls) +
+                        " " +
+                        name +
+                        "(dest=0x" +
+                        JniProbeHex(destination) +
+                        ", size=" +
+                        std::to_string(size) +
+                        ", value=" +
+                        std::to_string(value) +
+                        ")");
+                }
                 return;
             }
 
@@ -6282,8 +6600,18 @@ public:
                             "v26-rsb-index:" +
                             normalized).second) {
 
+                        ++rsb_resolved_files;
+                        result.rsb_resolved_files =
+                            rsb_resolved_files;
+
+                        if (normalized ==
+                            "PROPERTIES/RESOURCES.RTON") {
+                            result.rsb_manifest_resolved =
+                                true;
+                        }
+
                         Append(
-                            "V26 RSB VFS resolved \"" +
+                            "V27 RSB VFS resolved \"" +
                             raw +
                             "\" -> group=" +
                             std::to_string(
