@@ -15041,7 +15041,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                         if (non_black > best_non_black) {
                             const char* best =
                                 PvZ2HostGLESCapturePNGNamed(
-                                    "pvz2-v39-best-frame.png");
+                                    "pvz2-v40-best-frame.png");
 
                             if (best != nullptr &&
                                 *best != '\0') {
@@ -15057,7 +15057,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                     best;
 
                                 callbacks.Append(
-                                    "V38 BEST FRAME: #" +
+                                    "V40 BEST FRAME: #" +
                                     std::to_string(
                                         best_frame) +
                                     " nonBlack=" +
@@ -15078,7 +15078,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
 
                             const char* post_ea =
                                 PvZ2HostGLESCapturePNGNamed(
-                                    "pvz2-v39-post-ea-best.png");
+                                    "pvz2-v40-post-ea-best.png");
 
                             if (post_ea != nullptr &&
                                 *post_ea != '\0') {
@@ -15121,11 +15121,11 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                 if (callbacks.host_gles_ready) {
                     const char* final_capture =
                         PvZ2HostGLESCapturePNGNamed(
-                            "pvz2-v39-final-frame.png");
+                            "pvz2-v40-final-frame.png");
 
                     callbacks.Append(
                         std::string{
-                            "V39 FINAL GLES CAPTURE: "} +
+                            "V40 FINAL GLES CAPTURE: "} +
                         (final_capture != nullptr &&
                          *final_capture != '\0'
                             ? final_capture
@@ -15140,7 +15140,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                 }
 
                 callbacks.Append(
-                    "V39 BEST FRAME SUMMARY: frame=" +
+                    "V40 BEST FRAME SUMMARY: frame=" +
                     std::to_string(
                         best_frame) +
                     " nonBlack=" +

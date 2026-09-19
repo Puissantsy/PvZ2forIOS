@@ -6,6 +6,7 @@
 
 #include "host_gles.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
