@@ -245,7 +245,7 @@ NSString *NSStringFromStd(
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — Resource Registry v35";
+        @"PvZ2forIOS — Registry + Workers v36";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -254,7 +254,7 @@ NSString *NSStringFromStd(
         NO;
 
     title.text =
-        @"PvZ2forIOS — resource registry v35";
+        @"PvZ2forIOS — registry + workers v36";
 
     title.font =
         [UIFont
@@ -270,8 +270,8 @@ NSString *NSStringFromStd(
         NO;
 
     explanation.text =
-        @"v34 proved that AndroidHttpTransaction was not the post-EA blocker: the queued offline errors reached PvZ2's real HttpTransactionError callback, yet the render still produced the same EA splash and then black through frame 600 with only five texture uploads. The same run exposed hundreds of GenericResFileRes lookup failures even though the corresponding RTON files physically exist in the selected RSB/OBB. "
-         @"v35 targets that structural mismatch without inventing fake resources. It replaces only the two verified GenericResFileRes ID-lookup callsites in the exact 1.5.252752 ARM binary. The bridge first searches the game's real group-local ResourceInfo maps; when an ID is absent, it derives the matching RTON path from the RSB outer index and searches the game's already-populated global path→ResourceInfo* tree. A fallback is returned only when a real native ResourceInfo object already exists for that physical member. The 600-frame best-frame capture stays enabled to show whether resolving those registry aliases unlocks the screen after EA.";
+        @"v34 proved that AndroidHttpTransaction was not the post-EA blocker: the real HttpTransactionError callbacks were delivered and dispatched, but the EA splash still faded to black. Static/runtime analysis then exposed two structural issues at once. First, GenericResFileRes IDs can miss even when the corresponding RTON physically exists in the selected RSB. Second, the v30 scheduler's safety rule prevents background guest workers from running during ordinary CPU timeslices; in the v34 log only tid=1 ever started, while later workers remained deferred. "
+         @"v36 batches both fixes. The verified ResourceInfo bridge from v35 resolves an ID only to a real already-existing native ResourceInfo object for the matching physical RTON. Separately, deferred workers now receive fair short slices only at lifecycle/frame boundaries, never in the middle of Native_onDrawFrame or surface mutation. The 600-frame run keeps both the overall best frame and a separate post-EA best frame so an unlocked menu/loading screen is not hidden by the denser EA logo.";
 
     explanation.numberOfLines = 0;
 
@@ -574,7 +574,7 @@ NSString *NSStringFromStd(
             monospacedSystemFontOfSize:13.0
             weight:UIFontWeightRegular];
     caption.text =
-        @"v35 — best non-black sampled iOS GLES2 framebuffer after native ResourceInfo registry bridging\nTap Close to return to the full diagnostic log.";
+        @"v36 — best post-EA sampled iOS GLES2 framebuffer after ResourceInfo bridging + safe background-worker scheduling\nTap Close to return to the full diagnostic log.";
 
     UIButton *closeButton =
         [UIButton
@@ -943,7 +943,7 @@ NSString *NSStringFromStd(
 
     [self
         appendUI:
-            @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v35 keeps the working scheduler, deterministic offline HTTP, RSB/PTX virtual assets and real iOS GLES2 bridge. It additionally bridges GenericResFileRes IDs to real ResourceInfo objects already present in PvZ2's global path registry when the physical RTON exists in the selected RSB. The probe then runs 600 timed frames and preserves the best rendered framebuffer."];
+            @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v36 keeps deterministic offline HTTP, RSB/PTX virtual assets and the real iOS GLES2 bridge. It combines the verified native ResourceInfo registry bridge with safe frame-boundary scheduling for deferred guest workers. No worker is injected while Native_onDrawFrame is active. The probe then runs 600 timed frames and preserves a separate post-EA framebuffer when anything new appears after the splash."];
 
     [self
         presentViewController:
@@ -1004,7 +1004,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v35 probe run started; PID=%d ===",
+                    @"=== PvZ2 v36 probe run started; PID=%d ===",
                     getpid()]];
 
     self.jniRunning =
@@ -1257,7 +1257,7 @@ NSString *NSStringFromStd(
                     if (result.ok) {
                         [selfRef
                             appendUI:
-                                @"SUCCESS STEP 3: PvZ2 completed lifecycle + surface setup + v35 native ResourceInfo registry bridge + 600-frame host GLES soak."];
+                                @"SUCCESS STEP 3: PvZ2 completed lifecycle + surface setup + v36 ResourceInfo bridge + safe boundary-worker scheduling + 600-frame host GLES soak."];
 
                         if (!result.host_frame_png_path.empty()) {
                             [selfRef
@@ -1275,11 +1275,11 @@ NSString *NSStringFromStd(
                         } else {
                             [selfRef
                                 showResult:
-                                    @"PvZ2 v35 frame soak returned"
+                                    @"PvZ2 v36 frame soak returned"
                                 message:
                                     [NSString
                                         stringWithFormat:
-                                            @"PvZ2 completed its native startup and v35 frame soak.\n\nGameAppInitialize: %u\nLifecycle calls completed: %u\nFrames returned: %u\nHost GLES active: %@\nBest sampled frame: %u (%llu non-black pixels)\nConstructors: %u/%u\nJNI_OnLoad: 0x%08x\n\nNo PNG capture was produced, so check the V35 RESOURCE / FRAME STATS / BEST FRAME lines in the full log.",
+                                            @"PvZ2 completed its native startup and v36 frame soak.\n\nGameAppInitialize: %u\nLifecycle calls completed: %u\nFrames returned: %u\nHost GLES active: %@\nBest sampled frame: %u (%llu non-black pixels)\nConstructors: %u/%u\nJNI_OnLoad: 0x%08x\n\nNo PNG capture was produced, so check the V35 RESOURCE and V36 BOUNDARY WORKER / FRAME STATS / POST-EA lines in the full log.",
                                             result.game_app_initialize_return & 0xffu,
                                             result.lifecycle_calls_completed,
                                             result.draw_frames_completed,
