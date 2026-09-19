@@ -943,7 +943,7 @@ NSString *NSStringFromStd(
 
     [self
         appendUI:
-            @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v40 keeps the corrected v39 1180x820 surface geometry and changes only the diagnostic framebuffer export: partially transparent readback pixels are converted back to straight RGB and exported fully opaque so UIKit cannot darken the already-composited splash a second time. All v38/v39 startup, resource, worker and GLES diagnostics remain enabled.""];
+            @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v40 keeps the corrected v39 1180x820 surface geometry and changes only the diagnostic framebuffer export: partially transparent readback pixels are converted back to straight RGB and exported fully opaque so UIKit cannot darken the already-composited splash a second time. All v38/v39 startup, resource, worker and GLES diagnostics remain enabled."];
 
     [self
         presentViewController:
