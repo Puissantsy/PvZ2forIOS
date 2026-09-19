@@ -234,7 +234,7 @@ NSString *NSStringFromStd(
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — Null-Call Recovery v23";
+        @"PvZ2forIOS — Bulk Compatibility Sweep v24";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -243,7 +243,7 @@ NSString *NSStringFromStd(
         NO;
 
     title.text =
-        @"PvZ2forIOS — null-call recovery v23";
+        @"PvZ2forIOS — bulk compatibility sweep v24";
 
     title.font =
         [UIFont
@@ -259,8 +259,8 @@ NSString *NSStringFromStd(
         NO;
 
     explanation.text =
-        @"v22 advanced deep into resource registration and then hit a direct NoExecuteFault at guest PC 0 immediately after PvZ2 logged that RESFILE_PACKAGES_VERSION was not found. "
-         @"v23 adds a full null-call diagnostic (LR/callsite, registers, stack words, phase/thread, recent Android log, and OBB read/seek coverage), verifies whether RESFILE_PACKAGES_VERSION is physically present in the selected OBB, and can recover up to four lifecycle null callbacks by synthesizing a zero return and resuming at LR. APK+OBB VFS and the persistent worker scheduler remain active; GLES is still probe/no-op.";
+        @"v23 proved that RESFILE_PACKAGES_VERSION is physically present in the selected OBB, recovered the first null callback, and then reached a deliberate guest abort. "
+         @"v24 changes strategy: it is a bulk compatibility sweep. It records unique missing resources, generic JNI fallbacks, unsupported JNI/import calls, Android assertions, null callbacks and guest control-flow terminations in one run. Up to 48 bounded diagnostic recoveries are allowed so one test can reveal a chain of likely compatibility gaps. Findings after the first speculative recovery are explicitly marked speculative. Hard memory/control-flow corruption still stops immediately. A Copy full log button is provided for long reports.";
 
     explanation.numberOfLines = 0;
 
@@ -333,6 +333,32 @@ NSString *NSStringFromStd(
             selector:
                 @selector(refreshStatus)];
 
+    UIButton *copyLogButton =
+        [self
+            makeButton:
+                @"Copy full log"
+            selector:
+                @selector(copyFullLog)];
+
+    UIStackView *utilityButtons =
+        [[UIStackView alloc]
+            initWithArrangedSubviews:
+                @[
+                    refreshButton,
+                    copyLogButton
+                ]];
+
+    utilityButtons.translatesAutoresizingMaskIntoConstraints =
+        NO;
+
+    utilityButtons.axis =
+        UILayoutConstraintAxisHorizontal;
+
+    utilityButtons.spacing = 12.0;
+
+    utilityButtons.distribution =
+        UIStackViewDistributionFillEqually;
+
     self.logView =
         [[UITextView alloc] init];
 
@@ -369,7 +395,7 @@ NSString *NSStringFromStd(
                     explanation,
                     self.statusLabel,
                     mainButtons,
-                    refreshButton,
+                    utilityButtons,
                     self.logView
                 ]];
 
@@ -418,7 +444,7 @@ NSString *NSStringFromStd(
                     constraintEqualToConstant:
                         62.0],
 
-                [refreshButton.heightAnchor
+                [utilityButtons.heightAnchor
                     constraintEqualToConstant:
                         38.0],
 
@@ -437,7 +463,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 null-call-recovery v23 session started; PID=%d ===",
+                    @"=== PvZ2 bulk-compatibility-sweep v24 session started; PID=%d ===",
                     getpid()]];
 
     [self
@@ -509,6 +535,23 @@ NSString *NSStringFromStd(
             YES
         completion:
             nil];
+}
+
+- (void)copyFullLog {
+    NSString *fullLog =
+        self.logView.text ?: @"";
+
+    UIPasteboard.generalPasteboard.string =
+        fullLog;
+
+    [self
+        showResult:
+            @"Full log copied"
+        message:
+            [NSString
+                stringWithFormat:
+                    @"Copied %lu characters to the clipboard. Paste the text directly into ChatGPT so the entire v24 sweep can be analyzed at once.",
+                    (unsigned long)fullLog.length]];
 }
 
 - (void)refreshStatus {
@@ -756,7 +799,7 @@ NSString *NSStringFromStd(
 
     [self
         appendUI:
-            @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v23 continues the persistent worker scheduler, audits OBB read/seek coverage at any fault, and records/recoveries a bounded number of direct null callback calls so execution can continue to the next concrete blocker."];
+            @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v24 performs a bulk compatibility sweep: it keeps the persistent worker scheduler and VFS active, collects unique runtime gaps, and applies up to 48 bounded diagnostic recoveries so a single run can expose many consecutive blockers."];
 
     [self
         presentViewController:
@@ -987,6 +1030,32 @@ NSString *NSStringFromStd(
                                     @"STEP 3D: %@",
                                     NSStringFromStd(
                                         result.message)]];
+
+                    if (!result.sweep_summary.empty()) {
+                        [selfRef
+                            appendUI:
+                                @"----- V24 BULK SWEEP SUMMARY -----"];
+
+                        [selfRef
+                            appendUI:
+                                NSStringFromStd(
+                                    result.sweep_summary)];
+
+                        [selfRef
+                            appendUI:
+                                [NSString
+                                    stringWithFormat:
+                                        @"Sweep counters: unique=%u recoveries=%u speculative=%@",
+                                        result.sweep_issue_count,
+                                        result.sweep_recovery_count,
+                                        result.sweep_speculative
+                                            ? @"YES"
+                                            : @"NO"]];
+
+                        [selfRef
+                            appendUI:
+                                @"----- END V24 BULK SWEEP SUMMARY -----"];
+                    }
 
                     if (!result.first_unsupported_import.empty()) {
                         [selfRef
