@@ -943,7 +943,7 @@ NSString *NSStringFromStd(
 
     [self
         appendUI:
-            @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v39 applies the verified surface-dimension order fix: the host remains 1180x820 landscape, while Native_onSurfaceChanged is called with its native height,width order 820,1180 so PvZ2 restores a 1180x820 viewport instead of the broken 820x1180 portrait viewport. All v38 startup/resource/worker diagnostics remain enabled.""];
+            @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v39 applies the verified surface-dimension order fix: the host remains 1180x820 landscape, while Native_onSurfaceChanged is called with its native height,width order 820,1180 so PvZ2 restores a 1180x820 viewport instead of the broken 820x1180 portrait viewport. All v38 startup/resource/worker diagnostics remain enabled."];
 
     [self
         presentViewController:
