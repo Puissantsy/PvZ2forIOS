@@ -1583,6 +1583,15 @@ public:
     std::uint64_t gles_draw_calls = 0;
     std::uint64_t gles_clear_calls = 0;
     std::uint64_t gles_texture_uploads = 0;
+    std::uint64_t gles_shader_source_calls = 0;
+    std::uint64_t gles_uniform4_calls = 0;
+    std::uint64_t gles_blend_state_changes = 0;
+    bool gles_blend_enabled = false;
+    GLenum gles_blend_src = GL_ONE;
+    GLenum gles_blend_dst = GL_ZERO;
+    GLuint gles_current_program = 0u;
+    std::unordered_map<std::uint64_t, std::string>
+        gles_uniform_names;
     std::uint64_t gles_viewport_calls = 0;
     std::uint64_t gles_scissor_calls = 0;
     bool gles_viewport_seen = false;
@@ -1607,6 +1616,9 @@ public:
         resource_id_index;
     std::unordered_set<std::string>
         resource_registry_logged_ids;
+    std::uint32_t resource_native_miss_diagnostics = 0u;
+    std::size_t resource_id_index_last_logged_entries =
+        std::numeric_limits<std::size_t>::max();
 
     static constexpr std::uint32_t kSweepRecoveryLimit = 48u;
     std::uint32_t sweep_recoveries = 0;
@@ -2488,10 +2500,12 @@ public:
     void EnsureManagerResourceIdIndex(
         std::uint32_t manager) {
 
-        if (resource_id_index_manager ==
-            manager) {
-            return;
-        }
+        // v41: ResourceManager is populated incrementally during startup.
+        // Re-snapshot the group ID trees on every native miss, just like the
+        // v38 path map. Caching the first manager snapshot can permanently
+        // preserve an empty/partial view.
+        const bool manager_changed =
+            resource_id_index_manager != manager;
 
         resource_id_index_manager =
             manager;
@@ -2543,12 +2557,20 @@ public:
                 resource_id_index);
         }
 
-        Append(
-            "V35 RESOURCE-ID MAP SNAPSHOT: manager=0x" +
-            JniProbeHex(manager) +
-            " keys=" +
-            std::to_string(
-                resource_id_index.size()));
+        if (manager_changed ||
+            resource_id_index_last_logged_entries !=
+                resource_id_index.size()) {
+
+            resource_id_index_last_logged_entries =
+                resource_id_index.size();
+
+            Append(
+                "V41 RESOURCE-ID MAP SNAPSHOT: manager=0x" +
+                JniProbeHex(manager) +
+                " keys=" +
+                std::to_string(
+                    resource_id_index.size()));
+        }
     }
 
     void EnsureManagerResourcePathIndex(
@@ -2780,6 +2802,148 @@ public:
                 0u) != 0u) {
             ++result.resource_registry_misses;
             return 0u;
+        }
+
+        if (resource_native_miss_diagnostics < 8u) {
+            ++resource_native_miss_diagnostics;
+
+            std::ostringstream diagnostic;
+            diagnostic
+                << "V41 RES MISS #"
+                << resource_native_miss_diagnostics
+                << " id=\""
+                << normalized
+                << "\" site="
+                << (site != nullptr
+                        ? site
+                        : "n/a")
+                << " manager=0x"
+                << JniProbeHex(manager)
+                << " group=0x"
+                << JniProbeHex(group)
+                << " managerWords={";
+
+            if (manager != 0u &&
+                mem.Ptr(manager, 72u) != nullptr) {
+                for (std::uint32_t offset = 0u;
+                     offset <= 68u;
+                     offset += 4u) {
+
+                    if (offset != 0u) {
+                        diagnostic << ",";
+                    }
+
+                    diagnostic
+                        << "+"
+                        << offset
+                        << ":0x"
+                        << JniProbeHex(
+                               mem.Read32Guest(
+                                   manager + offset));
+                }
+            } else {
+                diagnostic << "unreadable";
+            }
+
+            diagnostic << "}";
+            Append(diagnostic.str());
+
+            // Probe likely std::map offsets without mutating guest memory.
+            // Limit traversal aggressively: this is layout discovery only.
+            if (resource_native_miss_diagnostics <= 2u &&
+                manager != 0u) {
+
+                for (std::uint32_t offset = 0u;
+                     offset <= 80u;
+                     offset += 4u) {
+
+                    if (mem.Ptr(
+                            manager + offset,
+                            12u) == nullptr) {
+                        continue;
+                    }
+
+                    std::unordered_map<
+                        std::string,
+                        std::uint32_t> candidate;
+
+                    IndexResourceInfoTree(
+                        manager + offset,
+                        candidate,
+                        128u);
+
+                    if (candidate.empty()) {
+                        continue;
+                    }
+
+                    const auto wanted =
+                        candidate.find(
+                            normalized);
+
+                    Append(
+                        "V41 RES MAP CANDIDATE offset=+" +
+                        std::to_string(offset) +
+                        " keys=" +
+                        std::to_string(
+                            candidate.size()) +
+                        " exact=" +
+                        (wanted != candidate.end()
+                            ? ("0x" +
+                               JniProbeHex(
+                                   wanted->second))
+                            : std::string{"NO"}));
+                }
+            }
+        }
+
+        // v41: before translating an ID to a physical RSB path, retry the
+        // exact ID against the already-populated runtime trees. This is safe:
+        // the returned pointer comes from PvZ2's own ResourceInfo map.
+        std::uint32_t direct = 0u;
+
+        if (group != 0u &&
+            mem.Ptr(
+                group,
+                68u) != nullptr) {
+            direct =
+                FindResourceInfoInTree(
+                    group + 56u,
+                    normalized);
+        }
+
+        if (direct == 0u) {
+            EnsureManagerResourceIdIndex(
+                manager);
+
+            const auto exact =
+                resource_id_index.find(
+                    normalized);
+
+            if (exact !=
+                resource_id_index.end()) {
+                direct = exact->second;
+            }
+        }
+
+        if (direct != 0u) {
+            ++result.resource_registry_direct_hits;
+
+            if (resource_registry_logged_ids
+                    .insert(
+                        "V41EXACT:" + normalized)
+                    .second) {
+                Append(
+                    "V41 RESFILE EXACT FALLBACK " +
+                    normalized +
+                    " -> ResourceInfo*=0x" +
+                    JniProbeHex(direct) +
+                    " site=" +
+                    (site != nullptr
+                        ? std::string{site}
+                        : std::string{"n/a"}));
+            }
+
+            return direct;
         }
 
         const auto physical =
@@ -11212,6 +11376,54 @@ public:
                             ? lengths.data()
                             : nullptr);
 
+                    ++gles_shader_source_calls;
+
+                    if (gles_shader_source_calls <= 8u) {
+                        std::ostringstream diagnostic;
+                        diagnostic
+                            << "V41 GLES SHADER #"
+                            << gles_shader_source_calls
+                            << " object="
+                            << shader
+                            << " parts="
+                            << count
+                            << " source=\"";
+
+                        std::size_t emitted = 0u;
+
+                        for (const auto& source :
+                             sources) {
+                            for (const char ch : source) {
+                                if (emitted >= 4096u) {
+                                    break;
+                                }
+
+                                if (ch == '\n' ||
+                                    ch == '\r' ||
+                                    ch == '\t') {
+                                    diagnostic << ' ';
+                                } else if (ch == '\"') {
+                                    diagnostic << '\'';
+                                } else {
+                                    diagnostic << ch;
+                                }
+
+                                ++emitted;
+                            }
+
+                            if (emitted >= 4096u) {
+                                break;
+                            }
+                        }
+
+                        if (emitted >= 4096u) {
+                            diagnostic << "...";
+                        }
+
+                        diagnostic << "\"";
+                        Append(diagnostic.str());
+                    }
+
                     regs[0] = 0u;
                 } else if (name == "glCompileShader") {
                     glCompileShader(
@@ -11352,16 +11564,45 @@ public:
                             guest_arg(1u),
                             4096u);
 
+                    const GLuint program =
+                        static_cast<GLuint>(
+                            guest_arg(0u));
+
+                    const GLint location =
+                        glGetUniformLocation(
+                            program,
+                            uniform.c_str());
+
                     regs[0] =
                         static_cast<std::uint32_t>(
-                            glGetUniformLocation(
-                                static_cast<GLuint>(
-                                    guest_arg(0u)),
-                                uniform.c_str()));
+                            location);
+
+                    if (location >= 0) {
+                        const std::uint64_t key =
+                            (static_cast<std::uint64_t>(
+                                 program) << 32u) |
+                            static_cast<std::uint32_t>(
+                                location);
+
+                        gles_uniform_names[key] =
+                            uniform;
+
+                        Append(
+                            "V41 GLES UNIFORM LOCATION program=" +
+                            std::to_string(program) +
+                            " loc=" +
+                            std::to_string(location) +
+                            " name=\"" +
+                            uniform +
+                            "\"");
+                    }
                 } else if (name == "glUseProgram") {
-                    glUseProgram(
+                    gles_current_program =
                         static_cast<GLuint>(
-                            guest_arg(0u)));
+                            guest_arg(0u));
+
+                    glUseProgram(
+                        gles_current_program);
                     regs[0] = 0u;
                 } else if (name == "glUniform1i") {
                     glUniform1i(
@@ -11390,11 +11631,56 @@ public:
                                       bytes)
                                 : nullptr);
 
-                    glUniform4fv(
+                    const GLint location =
                         static_cast<GLint>(
-                            guest_arg(0u)),
+                            guest_arg(0u));
+
+                    glUniform4fv(
+                        location,
                         count,
                         values);
+
+                    ++gles_uniform4_calls;
+
+                    if (gles_uniform4_calls <= 128u &&
+                        count > 0 &&
+                        values != nullptr) {
+
+                        const std::uint64_t key =
+                            (static_cast<std::uint64_t>(
+                                 gles_current_program) << 32u) |
+                            static_cast<std::uint32_t>(
+                                location);
+
+                        const auto found =
+                            gles_uniform_names.find(
+                                key);
+
+                        std::ostringstream diagnostic;
+                        diagnostic
+                            << "V41 GLES UNIFORM4 #"
+                            << gles_uniform4_calls
+                            << " program="
+                            << gles_current_program
+                            << " loc="
+                            << location
+                            << " name=\""
+                            << (found !=
+                                    gles_uniform_names.end()
+                                    ? found->second
+                                    : std::string{"?"})
+                            << "\" value=("
+                            << values[0]
+                            << ","
+                            << values[1]
+                            << ","
+                            << values[2]
+                            << ","
+                            << values[3]
+                            << ")";
+                        Append(diagnostic.str());
+                    }
+
                     regs[0] = 0u;
                 } else if (
                     name == "glUniformMatrix4fv") {
@@ -11479,6 +11765,115 @@ public:
                                       ? bytes
                                       : 1u)
                             : nullptr;
+
+                    if (gles_texture_uploads <= 12u) {
+                        std::ostringstream diagnostic;
+                        diagnostic
+                            << "V41 GLES TEXUPLOAD #"
+                            << gles_texture_uploads
+                            << " size="
+                            << width
+                            << "x"
+                            << height
+                            << " format=0x"
+                            << std::hex
+                            << format
+                            << " type=0x"
+                            << type
+                            << std::dec
+                            << " bytes="
+                            << bytes;
+
+                        if (pixels != nullptr &&
+                            bytes >= 4u &&
+                            type == GL_UNSIGNED_BYTE &&
+                            (format == GL_RGBA ||
+                             format == GL_BGRA)) {
+
+                            const auto* p =
+                                static_cast<
+                                    const std::uint8_t*>(
+                                        pixels);
+
+                            const std::size_t pixel_count =
+                                std::min<std::size_t>(
+                                    bytes / 4u,
+                                    static_cast<std::size_t>(
+                                        std::max<GLsizei>(
+                                            width,
+                                            0)) *
+                                    static_cast<std::size_t>(
+                                        std::max<GLsizei>(
+                                            height,
+                                            0)));
+
+                            std::uint64_t sum_r = 0u;
+                            std::uint64_t sum_g = 0u;
+                            std::uint64_t sum_b = 0u;
+                            std::uint64_t sum_a = 0u;
+                            std::uint64_t partial_a = 0u;
+                            std::uint64_t opaque_a = 0u;
+                            std::uint64_t zero_a = 0u;
+
+                            for (std::size_t i = 0u;
+                                 i < pixel_count;
+                                 ++i) {
+                                const std::uint8_t c0 =
+                                    p[i * 4u + 0u];
+                                const std::uint8_t c1 =
+                                    p[i * 4u + 1u];
+                                const std::uint8_t c2 =
+                                    p[i * 4u + 2u];
+                                const std::uint8_t a =
+                                    p[i * 4u + 3u];
+
+                                const std::uint8_t r =
+                                    format == GL_BGRA
+                                        ? c2
+                                        : c0;
+                                const std::uint8_t g =
+                                    c1;
+                                const std::uint8_t b =
+                                    format == GL_BGRA
+                                        ? c0
+                                        : c2;
+
+                                sum_r += r;
+                                sum_g += g;
+                                sum_b += b;
+                                sum_a += a;
+
+                                if (a == 0u) {
+                                    ++zero_a;
+                                } else if (a == 255u) {
+                                    ++opaque_a;
+                                } else {
+                                    ++partial_a;
+                                }
+                            }
+
+                            if (pixel_count != 0u) {
+                                diagnostic
+                                    << " avgRGBA=("
+                                    << sum_r / pixel_count
+                                    << ","
+                                    << sum_g / pixel_count
+                                    << ","
+                                    << sum_b / pixel_count
+                                    << ","
+                                    << sum_a / pixel_count
+                                    << ") alpha{0="
+                                    << zero_a
+                                    << ",partial="
+                                    << partial_a
+                                    << ",255="
+                                    << opaque_a
+                                    << "}";
+                            }
+                        }
+
+                        Append(diagnostic.str());
+                    }
 
                     glTexImage2D(
                         static_cast<GLenum>(
@@ -11742,21 +12137,75 @@ public:
                             guest_arg(0u)));
                     regs[0] = 0u;
                 } else if (name == "glEnable") {
-                    glEnable(
+                    const GLenum capability =
                         static_cast<GLenum>(
-                            guest_arg(0u)));
+                            guest_arg(0u));
+
+                    glEnable(
+                        capability);
+
+                    if (capability == GL_BLEND &&
+                        !gles_blend_enabled) {
+                        gles_blend_enabled = true;
+                        ++gles_blend_state_changes;
+                        Append(
+                            "V41 GLES BLEND enabled change#" +
+                            std::to_string(
+                                gles_blend_state_changes));
+                    }
+
                     regs[0] = 0u;
                 } else if (name == "glDisable") {
-                    glDisable(
+                    const GLenum capability =
                         static_cast<GLenum>(
-                            guest_arg(0u)));
+                            guest_arg(0u));
+
+                    glDisable(
+                        capability);
+
+                    if (capability == GL_BLEND &&
+                        gles_blend_enabled) {
+                        gles_blend_enabled = false;
+                        ++gles_blend_state_changes;
+                        Append(
+                            "V41 GLES BLEND disabled change#" +
+                            std::to_string(
+                                gles_blend_state_changes));
+                    }
+
                     regs[0] = 0u;
                 } else if (name == "glBlendFunc") {
+                    const GLenum src =
+                        static_cast<GLenum>(
+                            guest_arg(0u));
+                    const GLenum dst =
+                        static_cast<GLenum>(
+                            guest_arg(1u));
+
                     glBlendFunc(
-                        static_cast<GLenum>(
-                            guest_arg(0u)),
-                        static_cast<GLenum>(
-                            guest_arg(1u)));
+                        src,
+                        dst);
+
+                    if (src != gles_blend_src ||
+                        dst != gles_blend_dst) {
+                        gles_blend_src = src;
+                        gles_blend_dst = dst;
+                        ++gles_blend_state_changes;
+
+                        Append(
+                            "V41 GLES BLENDFUNC change#" +
+                            std::to_string(
+                                gles_blend_state_changes) +
+                            " src=0x" +
+                            JniProbeHex(
+                                static_cast<std::uint32_t>(
+                                    src)) +
+                            " dst=0x" +
+                            JniProbeHex(
+                                static_cast<std::uint32_t>(
+                                    dst)));
+                    }
+
                     regs[0] = 0u;
                 } else if (name == "glFrontFace") {
                     glFrontFace(
@@ -15041,7 +15490,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                         if (non_black > best_non_black) {
                             const char* best =
                                 PvZ2HostGLESCapturePNGNamed(
-                                    "pvz2-v40-best-frame.png");
+                                    "pvz2-v41-best-frame.png");
 
                             if (best != nullptr &&
                                 *best != '\0') {
@@ -15057,7 +15506,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                     best;
 
                                 callbacks.Append(
-                                    "V40 BEST FRAME: #" +
+                                    "V41 BEST FRAME: #" +
                                     std::to_string(
                                         best_frame) +
                                     " nonBlack=" +
@@ -15078,7 +15527,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
 
                             const char* post_ea =
                                 PvZ2HostGLESCapturePNGNamed(
-                                    "pvz2-v40-post-ea-best.png");
+                                    "pvz2-v41-post-ea-best.png");
 
                             if (post_ea != nullptr &&
                                 *post_ea != '\0') {
@@ -15121,11 +15570,11 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                 if (callbacks.host_gles_ready) {
                     const char* final_capture =
                         PvZ2HostGLESCapturePNGNamed(
-                            "pvz2-v40-final-frame.png");
+                            "pvz2-v41-final-frame.png");
 
                     callbacks.Append(
                         std::string{
-                            "V40 FINAL GLES CAPTURE: "} +
+                            "V41 FINAL GLES CAPTURE: "} +
                         (final_capture != nullptr &&
                          *final_capture != '\0'
                             ? final_capture
@@ -15140,7 +15589,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                 }
 
                 callbacks.Append(
-                    "V40 BEST FRAME SUMMARY: frame=" +
+                    "V41 BEST FRAME SUMMARY: frame=" +
                     std::to_string(
                         best_frame) +
                     " nonBlack=" +
