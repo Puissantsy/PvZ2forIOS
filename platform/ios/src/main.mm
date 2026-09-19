@@ -245,7 +245,7 @@ NSString *NSStringFromStd(
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — Directory VFS v28";
+        @"PvZ2forIOS — First Frame Events v29";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -254,7 +254,7 @@ NSString *NSStringFromStd(
         NO;
 
     title.text =
-        @"PvZ2forIOS — directory VFS v28";
+        @"PvZ2forIOS — first frame events v29";
 
     title.font =
         [UIFont
@@ -270,8 +270,8 @@ NSString *NSStringFromStd(
         NO;
 
     explanation.text =
-        @"v27 confirmed the RSB fix: PROPERTIES/RESOURCES.RTON resolved successfully, thirty indexed RSB members were opened, and the old RESFILE_PACKAGES_VERSION/logic_error chain disappeared. The run later exposed a different generic compatibility bug in the POSIX directory fallback. "
-         @"Android's opendir failure is NULL, but the old fallback returned 0xffffffff; PvZ2 therefore treated an invalid DIR* as valid, readdir also returned 0xffffffff forever, and the game looped through readdir/fnmatch until the 2B-tick safety ceiling. v28 gives opendir/readdir/readdir_r/closedir/fnmatch correct semantics, logs unavailable directory paths, and implements the only new observed JNI method, Util_GetUUIDString, with a stable probe UUID.";
+        @"v28 passed the directory loop completely and reached Native_onDrawFrame for the first time. The remaining crash was not a rendering fault: UI_ProcessEvents received a DirectByteBuffer backed by guest stack memory, but the generic JNI fallback returned false without initializing that buffer. PvZ2 then read a stale word as an enormous event count and eventually called a null event-dispatch-table entry. "
+         @"v29 zeroes the event buffer and returns an explicit empty event pump, so the native decoder sees zero queued events. It also implements the twenty-two real JNI methods observed before the first speculative recovery, plus closely related HTTP, analytics, cloud/social, notification, device and graphics stubs, so the next run can advance in bulk instead of stopping one Java method at a time.";
 
     explanation.numberOfLines = 0;
 
@@ -815,7 +815,7 @@ NSString *NSStringFromStd(
 
     [self
         appendUI:
-            @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v28 keeps the working RSB VFS and reusable guest heap, fixes POSIX directory failure/EOF semantics so readdir cannot spin on an invalid DIR*, provides host fnmatch semantics, and implements Util_GetUUIDString before continuing toward surface change and the first frame."];
+            @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v29 keeps the working RSB/directory VFS, fixes the first-frame UI event DirectByteBuffer so an empty event queue is represented by zeroed data, and bulk-bridges the Java methods observed by v28 before continuing through Native_onDrawFrame."];
 
     [self
         presentViewController:
@@ -876,7 +876,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v28 probe run started; PID=%d ===",
+                    @"=== PvZ2 v29 probe run started; PID=%d ===",
                     getpid()]];
 
     self.jniRunning =
