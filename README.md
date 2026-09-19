@@ -77,3 +77,12 @@ This project is independent and is not affiliated with or endorsed by Electronic
 ## Trademark / copyright notice
 
 Electronic Arts, PopCap Games, Plants vs. Zombies, and related names and marks are the property of their respective owners. References to them in this repository are descriptive and are used to identify the software with which this compatibility project interoperates.
+
+
+## Address resolver
+
+For reverse-engineering full probe logs, see
+[`docs/ADDRESS_RESOLVER.md`](docs/ADDRESS_RESOLVER.md). The standard-library
+tool `tools/pvz2_address_resolver.py` converts guest PC/LR values into
+`libPVZ2.so` offsets, `.ARM.exidx` function ranges and surviving ELF symbols
+without storing the proprietary APK or library in this repository.

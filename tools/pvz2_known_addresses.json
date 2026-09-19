@@ -1,0 +1,19 @@
+{
+  "0x005149c4": "ImageRes.splash-null virtual-call site observed in v36",
+  "0x005149c8": "ImageRes.splash-null virtual-call return observed in v36",
+  "0x0086f66c": "ResourceRegistryLookup.function_start",
+  "0x0086f674": "ResourceRegistryLookup.entry MOV r4,r2",
+  "0x0086f8a0": "ResourceRegistryLookup.group return boundary",
+  "0x0086fa78": "ResourceRegistryLookup.global miss return",
+  "0x0086fa84": "ResourceRegistryLookup.global found-value load",
+  "0x0087a704": "GenericResFileRes.lookup callsite A",
+  "0x0087a758": "GenericResFileRes.lookup callsite B",
+  "0x009ead80": "JNI_OnLoad",
+  "0x009ebf80": "Native_applicationWillFinishLaunching",
+  "0x009ec0a0": "Native_applicationDidFinishLaunching",
+  "0x009ec0bc": "Native_applicationWillBecomeForeground",
+  "0x009ec0c8": "Native_applicationDidBecomeActive",
+  "0x009f1840": "Native_onSurfaceCreated",
+  "0x009f18dc": "Native_onSurfaceChanged",
+  "0x009f190c": "Native_onDrawFrame"
+}
