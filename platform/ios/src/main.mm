@@ -245,7 +245,7 @@ NSString *NSStringFromStd(
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — RESFILE Global-Value Repair v45";
+        @"PvZ2forIOS — Symbolized Logs v46";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -254,7 +254,7 @@ NSString *NSStringFromStd(
         NO;
 
     title.text =
-        @"PvZ2forIOS — RESFILE global-value repair v45";
+        @"PvZ2forIOS — symbolized logs v46";
 
     title.font =
         [UIFont
@@ -270,8 +270,8 @@ NSString *NSStringFromStd(
         NO;
 
     explanation.text =
-        @"v44 gave a decisive negative result: the final counters stayed at 121 indexed files / 171 registry lookups / 85 direct recoveries / 86 misses, and not a single V44 NULL RESOURCE NODE event occurred. That rules out the group-tree null-value theory. The alternating pattern in the full log reveals the missing half returns through a different branch: the global ResourceInfo tree can find the requested key and jump to 0x1086fa84, where the original code directly executes LDR r0,[r10,#0x14]. Because v44 only trapped the true global miss at 0x1086fa78, a found global node whose ResourceInfo* value is null bypassed every recovery hook. "
-         @"v45 therefore adds an exact trap at the verified global found-node load 0x1086fa84. Non-null native values are returned unchanged. A null value reuses the exact RESFILE ID captured at 0x1086f674, reconstructs the selected group from the live ARM registers, invokes the existing narrow runtime/RSB recovery, heals node+0x14, and returns the recovered real ResourceInfo*. Existing group/native success behavior is preserved. The 600-frame soak remains enabled.";
+        @"v46 keeps the complete v45 runtime/resource behavior unchanged and improves the reverse-engineering workflow instead of adding another compatibility guess. libPVZ2.so contains .ARM.exidx unwind metadata even though most original function names are stripped. v46 parses that table into roughly twenty-six thousand stable function starts and combines it with surviving ELF dynamic symbols and the known memory-region layout. "
+         @"High-signal failures now emit V46 ADDRMAP lines that translate PC/LR/SP into libPVZ2.so offsets, inferred function-start+delta, known port landmarks and the nearest useful ELF symbol when available. A companion tools/pvz2_address_resolver.py can apply the same analysis to any old or new full log using the original APK, so previous captures no longer need to be retested just to identify hexadecimal addresses. The v45 global-value RESFILE bridge and 600-frame soak remain intact.";
 
     explanation.numberOfLines = 0;
 
@@ -574,7 +574,7 @@ NSString *NSStringFromStd(
             monospacedSystemFontOfSize:13.0
             weight:UIFontWeightRegular];
     caption.text =
-        @"v45 — RESFILE global-value repair + 600-frame soak\nTap Close to return to the full diagnostic log.";
+        @"v46 — v45 runtime + automatic ARM address/function mapping\nTap Close to return to the full diagnostic log.";
 
     UIButton *closeButton =
         [UIButton
@@ -943,7 +943,7 @@ NSString *NSStringFromStd(
 
     [self
         appendUI:
-            @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v45 adds the missing global-tree found-node bridge at 0x1086fa84. Native non-null ResourceInfo* values pass through unchanged; only a null value triggers exact-ID RESFILE recovery and in-place node repair. Existing group and true-miss hooks remain intact, and the 600-frame soak stays enabled."];
+            @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v46 executes the same v45 RESFILE global-value repair, but now builds an automatic address/function map from ELF dynamic symbols and .ARM.exidx metadata. Exceptions and execution-budget stops include V46 ADDRMAP annotations, while the normal 600-frame soak remains enabled."];
 
     [self
         presentViewController:
@@ -1004,7 +1004,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v45 probe run started; PID=%d ===",
+                    @"=== PvZ2 v46 probe run started; PID=%d ===",
                     getpid()]];
 
     self.jniRunning =
@@ -1257,7 +1257,7 @@ NSString *NSStringFromStd(
                     if (result.ok) {
                         [selfRef
                             appendUI:
-                                @"SUCCESS STEP 3: PvZ2 completed lifecycle + host GLES + v45 global-value RESFILE recovery + 600-frame soak."];
+                                @"SUCCESS STEP 3: PvZ2 completed lifecycle + host GLES + v45 RESFILE recovery + v46 address mapping + 600-frame soak."];
 
                         if (!result.host_frame_png_path.empty()) {
                             [selfRef
@@ -1275,11 +1275,11 @@ NSString *NSStringFromStd(
                         } else {
                             [selfRef
                                 showResult:
-                                    @"PvZ2 v45 frame soak returned"
+                                    @"PvZ2 v46 frame soak returned"
                                 message:
                                     [NSString
                                         stringWithFormat:
-                                            @"PvZ2 completed its native startup and v45 frame soak.\n\nGameAppInitialize: %u\nLifecycle calls completed: %u\nFrames returned: %u\nHost GLES active: %@\nBest sampled frame: %u (%llu non-black pixels)\nConstructors: %u/%u\nJNI_OnLoad: 0x%08x\n\nNo PNG capture was produced, so check the V39 SURFACE GEOMETRY / GLES VIEWPORT / GLES SCISSOR / FRAME STATS plus the v40 corrected capture and V38 RESFILE / BOUNDARY WORKER lines in the full log.",
+                                            @"PvZ2 completed its native startup and v46 frame soak.\n\nGameAppInitialize: %u\nLifecycle calls completed: %u\nFrames returned: %u\nHost GLES active: %@\nBest sampled frame: %u (%llu non-black pixels)\nConstructors: %u/%u\nJNI_OnLoad: 0x%08x\n\nNo PNG capture was produced, so check the V39 SURFACE GEOMETRY / GLES VIEWPORT / GLES SCISSOR / FRAME STATS plus the v40 corrected capture and V38 RESFILE / BOUNDARY WORKER lines in the full log.",
                                             result.game_app_initialize_return & 0xffu,
                                             result.lifecycle_calls_completed,
                                             result.draw_frames_completed,

@@ -46,6 +46,7 @@ constexpr std::uint16_t kElfMachineArm = 40;
 constexpr std::uint32_t kPtLoad = 1;
 constexpr std::uint32_t kPtDynamic = 2;
 constexpr std::uint32_t kShtDynsym = 11;
+constexpr std::uint32_t kShtArmExidx = 0x70000001u;
 constexpr std::uint32_t kShtRel = 9;
 
 constexpr std::int32_t kDtNull = 0;
@@ -373,6 +374,7 @@ const T* CheckedAt(const std::vector<std::uint8_t>& data, std::size_t offset) {
 struct ElfSections {
     const Elf32Shdr* dynsym = nullptr;
     const Elf32Shdr* dynstr = nullptr;
+    const Elf32Shdr* arm_exidx = nullptr;
     std::vector<const Elf32Shdr*> rels;
     const Elf32Shdr* dynamic = nullptr;
 };
@@ -414,6 +416,8 @@ bool ParseSections(
                 eh.shoff + static_cast<std::size_t>(sh->link) * eh.shentsize);
         } else if (sh->type == kShtRel) {
             sections.rels.push_back(sh);
+        } else if (sh->type == kShtArmExidx) {
+            sections.arm_exidx = sh;
         } else if (sh->type == 6) {
             sections.dynamic = sh;
         }
@@ -738,6 +742,7 @@ constexpr std::uint32_t kJniVersion16 = 0x00010006u;
 struct JniProbeLoadedElf {
     std::vector<std::uint8_t> image;
     std::vector<Elf32Sym> dynsyms;
+    std::vector<std::uint32_t> function_starts;
     std::vector<Elf32Rel> relocs;
     const std::uint8_t* dynstr = nullptr;
     std::size_t dynstr_size = 0;
@@ -813,6 +818,74 @@ bool BuildJniProbeElf(
     ElfSections sections;
     if (!ParseSections(elf, *eh, sections, error)) {
         return false;
+    }
+
+    // v46: .ARM.exidx survives stripping. Its PREL31 entries provide stable
+    // function starts for symbolizing PC/LR values even when the original C++
+    // function name is absent from .dynsym.
+    if (sections.arm_exidx != nullptr &&
+        (sections.arm_exidx->size % 8u) == 0u &&
+        RangeOk(
+            sections.arm_exidx->offset,
+            sections.arm_exidx->size,
+            elf.size())) {
+
+        const std::uint32_t entries =
+            sections.arm_exidx->size / 8u;
+
+        loaded.function_starts.reserve(
+            entries);
+
+        for (std::uint32_t i = 0u;
+             i < entries;
+             ++i) {
+
+            const std::uint32_t rel =
+                i * 8u;
+
+            const std::uint32_t word =
+                Read32(
+                    elf.data() +
+                    sections.arm_exidx->offset +
+                    rel);
+
+            std::int64_t delta =
+                static_cast<std::int64_t>(
+                    word & 0x7fffffffu);
+
+            if ((word & 0x40000000u) != 0u) {
+                delta -= 0x80000000ll;
+            }
+
+            const std::int64_t place =
+                static_cast<std::int64_t>(
+                    sections.arm_exidx->addr) +
+                rel;
+
+            const std::int64_t target =
+                place + delta;
+
+            if (target > 0 &&
+                target <
+                    static_cast<std::int64_t>(
+                        loaded.image.size())) {
+
+                loaded.function_starts.push_back(
+                    static_cast<std::uint32_t>(
+                        target) &
+                    ~1u);
+            }
+        }
+
+        std::sort(
+            loaded.function_starts.begin(),
+            loaded.function_starts.end());
+
+        loaded.function_starts.erase(
+            std::unique(
+                loaded.function_starts.begin(),
+                loaded.function_starts.end()),
+            loaded.function_starts.end());
     }
 
     loaded.dynstr = elf.data() + sections.dynstr->offset;
@@ -1501,6 +1574,7 @@ public:
           obb_size(expansion_size) {}
 
     Dynarmic::A32::Jit* jit = nullptr;
+    const JniProbeLoadedElf* loaded_elf = nullptr;
     std::unordered_map<std::uint32_t, JniProbeImportBinding>
         imports_by_svc;
 
@@ -1705,6 +1779,245 @@ public:
     std::unordered_map<std::uint32_t, std::uint64_t> jni_direct_buffer_capacity;
     std::unordered_map<std::uint32_t, z_stream> zstreams;
     std::unordered_map<std::uint32_t, bool> zstream_deflate_mode;
+
+    std::string V46KnownCodeLabel(
+        std::uint32_t offset) const {
+
+        switch (offset) {
+        case 0x005149c4u:
+            return "ImageRes.splash-null virtual-call site";
+        case 0x005149c8u:
+            return "ImageRes.splash-null virtual-call return";
+        case 0x0086f66cu:
+            return "ResourceRegistryLookup.function_start";
+        case 0x0086f674u:
+            return "ResourceRegistryLookup.entry MOV r4,r2";
+        case 0x0086f8a0u:
+            return "ResourceRegistryLookup.group return boundary";
+        case 0x0086fa78u:
+            return "ResourceRegistryLookup.global miss return";
+        case 0x0086fa84u:
+            return "ResourceRegistryLookup.global found-value load";
+        case 0x0087a704u:
+            return "GenericResFileRes.lookup callsite A";
+        case 0x0087a758u:
+            return "GenericResFileRes.lookup callsite B";
+        case 0x009ead80u:
+            return "JNI_OnLoad";
+        case 0x009ebf80u:
+            return "Native_applicationWillFinishLaunching";
+        case 0x009ec0a0u:
+            return "Native_applicationDidFinishLaunching";
+        case 0x009ec0bcu:
+            return "Native_applicationWillBecomeForeground";
+        case 0x009ec0c8u:
+            return "Native_applicationDidBecomeActive";
+        case 0x009f1840u:
+            return "Native_onSurfaceCreated";
+        case 0x009f18dcu:
+            return "Native_onSurfaceChanged";
+        case 0x009f190cu:
+            return "Native_onDrawFrame";
+        default:
+            return {};
+        }
+    }
+
+    std::string V46DescribeGuestAddress(
+        std::uint32_t address) const {
+
+        std::ostringstream out;
+        out << "0x" << JniProbeHex(address);
+        const std::uint32_t plain = address & ~1u;
+
+        auto describe_region =
+            [&](const char* name,
+                std::uint32_t base) {
+                out
+                    << " ["
+                    << name
+                    << "+0x"
+                    << JniProbeHex(plain - base)
+                    << "]";
+            };
+
+        if (plain >= kGuestBase &&
+            static_cast<std::uint64_t>(plain) <
+                static_cast<std::uint64_t>(kGuestBase) +
+                mem.image.size()) {
+
+            const std::uint32_t offset =
+                plain - kGuestBase;
+
+            out
+                << " [libPVZ2.so+0x"
+                << JniProbeHex(offset)
+                << ((address & 1u) != 0u
+                    ? " Thumb"
+                    : " ARM");
+
+            const std::string known =
+                V46KnownCodeLabel(offset);
+
+            if (!known.empty()) {
+                out
+                    << " known=\""
+                    << known
+                    << "\"";
+            }
+
+            if (loaded_elf != nullptr &&
+                !loaded_elf->function_starts.empty()) {
+
+                const auto upper =
+                    std::upper_bound(
+                        loaded_elf->function_starts.begin(),
+                        loaded_elf->function_starts.end(),
+                        offset);
+
+                if (upper !=
+                    loaded_elf->function_starts.begin()) {
+
+                    const auto current =
+                        std::prev(upper);
+                    const std::uint32_t start =
+                        *current;
+
+                    out
+                        << " fn=+0x"
+                        << JniProbeHex(start)
+                        << "+0x"
+                        << JniProbeHex(offset - start);
+
+                    if (upper !=
+                        loaded_elf->function_starts.end()) {
+                        out
+                            << "/0x"
+                            << JniProbeHex(*upper - start);
+                    }
+                }
+            }
+
+            if (loaded_elf != nullptr) {
+                std::uint32_t best_index =
+                    std::numeric_limits<std::uint32_t>::max();
+                std::uint32_t best_value = 0u;
+                std::uint32_t best_distance =
+                    std::numeric_limits<std::uint32_t>::max();
+                bool best_contains = false;
+
+                for (std::uint32_t i = 0u;
+                     i < loaded_elf->dynsyms.size();
+                     ++i) {
+
+                    const auto& sym =
+                        loaded_elf->dynsyms[i];
+
+                    if (sym.shndx == 0u) {
+                        continue;
+                    }
+
+                    const std::uint32_t value =
+                        sym.value & ~1u;
+
+                    if (value > offset) {
+                        continue;
+                    }
+
+                    const std::uint32_t distance =
+                        offset - value;
+
+                    const bool contains =
+                        sym.size != 0u &&
+                        distance < sym.size;
+
+                    if (best_index ==
+                            std::numeric_limits<std::uint32_t>::max() ||
+                        (contains && !best_contains) ||
+                        (contains == best_contains &&
+                         distance < best_distance)) {
+
+                        best_index = i;
+                        best_value = value;
+                        best_distance = distance;
+                        best_contains = contains;
+                    }
+                }
+
+                if (best_index !=
+                        std::numeric_limits<std::uint32_t>::max() &&
+                    (best_contains ||
+                     best_distance <= 0x00010000u)) {
+
+                    const std::string symbol =
+                        JniProbeSymbolName(
+                            *loaded_elf,
+                            best_index);
+
+                    if (!symbol.empty()) {
+                        out
+                            << (best_contains
+                                ? " symbol=\""
+                                : " nearSymbol=\"")
+                            << symbol
+                            << "+0x"
+                            << JniProbeHex(
+                                offset - best_value)
+                            << "\"";
+                    }
+                }
+            }
+
+            out << "]";
+            return out.str();
+        }
+
+        if (plain >= kJniProbeStackBase &&
+            plain < kJniProbeStackBase + kJniProbeStackSize) {
+            describe_region("guest-stack", kJniProbeStackBase);
+        } else if (
+            plain >= kJniProbeHeapBase &&
+            plain < kJniProbeHeapBase + kJniProbeHeapSize) {
+            describe_region("guest-heap", kJniProbeHeapBase);
+        } else if (
+            plain >= kJniProbeTrampolineBase &&
+            plain < kJniProbeTrampolineBase + kJniProbeTrampolineSize) {
+            describe_region("host-trampoline", kJniProbeTrampolineBase);
+        } else if (
+            plain >= kJniProbeJniBase &&
+            plain < kJniProbeJniBase + kJniProbeJniSize) {
+            describe_region("synthetic-JNI", kJniProbeJniBase);
+        } else if (
+            plain >= kJniProbeObjectBase &&
+            plain < kJniProbeObjectBase + kJniProbeObjectSize) {
+            describe_region("synthetic-object", kJniProbeObjectBase);
+        } else if (address == 0u) {
+            out << " [null]";
+        } else {
+            out << " [other]";
+        }
+
+        return out.str();
+    }
+
+    void V46AppendControlFlowMap(
+        const char* reason,
+        std::uint32_t pc,
+        std::uint32_t lr,
+        std::uint32_t sp) {
+
+        Append(
+            std::string{"V46 ADDRMAP "} +
+            reason +
+            " PC=" +
+            V46DescribeGuestAddress(pc) +
+            " LR=" +
+            V46DescribeGuestAddress(lr) +
+            " returnPC=" +
+            V46DescribeGuestAddress(lr & ~1u) +
+            " SP=" +
+            V46DescribeGuestAddress(sp));
+    }
 
     void RefreshSweepSummary() {
         result.sweep_issue_count =
@@ -14122,6 +14435,12 @@ public:
             "V23 EXCEPTION: " +
             diagnostic);
 
+        V46AppendControlFlowMap(
+            "exception",
+            pc,
+            lr,
+            sp);
+
         // A direct branch/call through address 0 is a common artifact of an
         // optional Android callback/resource hook that is absent from the
         // probe environment. For lifecycle/worker execution, recover a small
@@ -14296,6 +14615,12 @@ public:
 
             result.message = timeout.str();
             Append("EXECUTION BUDGET: " + result.message);
+
+            V46AppendControlFlowMap(
+                "execution-budget",
+                pc,
+                lr,
+                sp);
 
             if (jit) {
                 jit->HaltExecution(
@@ -14545,6 +14870,20 @@ bool JniProbePrepareRuntime(
     std::string& error) {
 
     memory.image = loaded.image;
+    callbacks.loaded_elf = &loaded;
+
+    callbacks.Append(
+        "V46 ADDRESS MAP READY: guestBase=0x" +
+        JniProbeHex(kGuestBase) +
+        " imageSize=0x" +
+        JniProbeHex(
+            static_cast<std::uint32_t>(
+                loaded.image.size())) +
+        " dynsyms=" +
+        std::to_string(loaded.dynsyms.size()) +
+        " exidxFunctionStarts=" +
+        std::to_string(loaded.function_starts.size()) +
+        " regions={libPVZ2:0x10000000,stack:0x20000000,heap:0x30000000,trampoline:0x40000000,JNI:0x50000000,objects:0x51000000}");
 
     std::uint32_t trampoline_slot = 0;
     std::uint32_t import_svc_index = 0;
@@ -16843,7 +17182,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                         if (non_black > best_non_black) {
                             const char* best =
                                 PvZ2HostGLESCapturePNGNamed(
-                                    "pvz2-v45-best-frame.png");
+                                    "pvz2-v46-best-frame.png");
 
                             if (best != nullptr &&
                                 *best != '\0') {
@@ -16859,7 +17198,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                     best;
 
                                 callbacks.Append(
-                                    "V45 BEST FRAME: #" +
+                                    "V46 BEST FRAME: #" +
                                     std::to_string(
                                         best_frame) +
                                     " nonBlack=" +
@@ -16880,7 +17219,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
 
                             const char* post_ea =
                                 PvZ2HostGLESCapturePNGNamed(
-                                    "pvz2-v45-post-ea-best.png");
+                                    "pvz2-v46-post-ea-best.png");
 
                             if (post_ea != nullptr &&
                                 *post_ea != '\0') {
@@ -16923,11 +17262,11 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                 if (callbacks.host_gles_ready) {
                     const char* final_capture =
                         PvZ2HostGLESCapturePNGNamed(
-                            "pvz2-v45-final-frame.png");
+                            "pvz2-v46-final-frame.png");
 
                     callbacks.Append(
                         std::string{
-                            "V45 FINAL GLES CAPTURE: "} +
+                            "V46 FINAL GLES CAPTURE: "} +
                         (final_capture != nullptr &&
                          *final_capture != '\0'
                             ? final_capture
@@ -16942,7 +17281,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                 }
 
                 callbacks.Append(
-                    "V45 BEST FRAME SUMMARY: frame=" +
+                    "V46 BEST FRAME SUMMARY: frame=" +
                     std::to_string(
                         best_frame) +
                     " nonBlack=" +
