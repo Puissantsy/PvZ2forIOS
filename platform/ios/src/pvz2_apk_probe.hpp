@@ -50,6 +50,8 @@ struct PvZ2JniProbeResult {
     bool returned_first_draw_frame = false;
     bool host_gles_active = false;
     std::uint32_t draw_frames_completed = 0;
+    std::uint32_t best_frame_number = 0;
+    std::uint64_t best_frame_nonblack = 0;
 
     std::uint32_t return_value = 0;
     std::uint32_t game_app_initialize_address = 0;
