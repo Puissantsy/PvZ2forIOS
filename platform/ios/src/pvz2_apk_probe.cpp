@@ -1704,6 +1704,21 @@ public:
     std::array<GLuint, 8> gles_bound_texture_2d{};
     std::unordered_map<GLuint, V42TextureInfo>
         gles_texture_info;
+
+    // v47: expose the guest render-target topology. Guest FBO 0 is mapped
+    // to the host system framebuffer; generated guest FBO ids are the actual
+    // GLES ids returned by the host and can be sampled independently.
+    GLuint gles_bound_guest_framebuffer = 0u;
+    GLuint gles_bound_host_framebuffer = 0u;
+    std::unordered_set<GLuint>
+        gles_generated_framebuffers;
+    std::unordered_map<GLuint, GLuint>
+        gles_framebuffer_color_texture;
+    std::unordered_map<GLuint, std::uint64_t>
+        gles_draws_by_framebuffer;
+    std::uint64_t gles_framebuffer_bind_changes = 0u;
+    std::uint32_t current_frame_number = 0u;
+
     GLuint gles_splash_texture_candidate = 0u;
     std::uint32_t gles_splash_color_baseline = 0u;
     std::uint64_t gles_vertex_color_traces = 0u;
@@ -12179,15 +12194,28 @@ public:
                     for (GLsizei i = 0;
                          i < count;
                          ++i) {
+                        const GLuint object =
+                            objects[
+                                static_cast<std::size_t>(
+                                    i)];
+
                         mem.Write32Guest(
                             output +
                                 static_cast<std::uint32_t>(
                                     i) *
                                     4u,
                             static_cast<std::uint32_t>(
-                                objects[
-                                    static_cast<std::size_t>(
-                                        i)]));
+                                object));
+
+                        if (name != "glGenTextures") {
+                            gles_generated_framebuffers.insert(
+                                object);
+
+                            Append(
+                                "V47 GLES GEN FBO guest/host=" +
+                                std::to_string(
+                                    object));
+                        }
                     }
 
                     regs[0] = 0u;
@@ -12229,6 +12257,16 @@ public:
                         glDeleteFramebuffers(
                             count,
                             objects.data());
+
+                        for (const GLuint object :
+                             objects) {
+                            gles_generated_framebuffers.erase(
+                                object);
+                            gles_framebuffer_color_texture.erase(
+                                object);
+                            gles_draws_by_framebuffer.erase(
+                                object);
+                        }
                     }
 
                     regs[0] = 0u;
@@ -13073,15 +13111,55 @@ public:
                     name == "glBindFramebuffer" ||
                     name == "glBindFramebufferOES") {
 
-                    GLuint framebuffer =
+                    const GLuint guest_framebuffer =
                         static_cast<GLuint>(
                             guest_arg(1u));
+
+                    GLuint framebuffer =
+                        guest_framebuffer;
 
                     if (framebuffer == 0u) {
                         framebuffer =
                             static_cast<GLuint>(
                                 host_default_framebuffer);
                     }
+
+                    if (guest_framebuffer !=
+                            gles_bound_guest_framebuffer ||
+                        framebuffer !=
+                            gles_bound_host_framebuffer) {
+
+                        ++gles_framebuffer_bind_changes;
+
+                        if (gles_framebuffer_bind_changes <=
+                                96u ||
+                            current_frame_number == 15u ||
+                            current_frame_number == 60u ||
+                            current_frame_number == 75u ||
+                            current_frame_number == 90u ||
+                            current_frame_number == 120u ||
+                            current_frame_number == 600u) {
+
+                            Append(
+                                "V47 GLES BIND FBO change#" +
+                                std::to_string(
+                                    gles_framebuffer_bind_changes) +
+                                " frame=" +
+                                std::to_string(
+                                    current_frame_number) +
+                                " guest=" +
+                                std::to_string(
+                                    guest_framebuffer) +
+                                " host=" +
+                                std::to_string(
+                                    framebuffer));
+                        }
+                    }
+
+                    gles_bound_guest_framebuffer =
+                        guest_framebuffer;
+                    gles_bound_host_framebuffer =
+                        framebuffer;
 
                     glBindFramebuffer(
                         static_cast<GLenum>(
@@ -13092,17 +13170,77 @@ public:
                     name == "glFramebufferTexture2D" ||
                     name == "glFramebufferTexture2DOES") {
 
-                    glFramebufferTexture2D(
+                    const GLenum target =
                         static_cast<GLenum>(
-                            guest_arg(0u)),
+                            guest_arg(0u));
+                    const GLenum attachment =
                         static_cast<GLenum>(
-                            guest_arg(1u)),
+                            guest_arg(1u));
+                    const GLenum textarget =
                         static_cast<GLenum>(
-                            guest_arg(2u)),
+                            guest_arg(2u));
+                    const GLuint texture =
                         static_cast<GLuint>(
-                            guest_arg(3u)),
+                            guest_arg(3u));
+                    const GLint level =
                         static_cast<GLint>(
-                            guest_arg(4u)));
+                            guest_arg(4u));
+
+                    glFramebufferTexture2D(
+                        target,
+                        attachment,
+                        textarget,
+                        texture,
+                        level);
+
+                    if (attachment ==
+                            GL_COLOR_ATTACHMENT0 &&
+                        gles_bound_host_framebuffer !=
+                            0u) {
+
+                        if (texture != 0u) {
+                            gles_framebuffer_color_texture[
+                                gles_bound_host_framebuffer] =
+                                texture;
+                        } else {
+                            gles_framebuffer_color_texture.erase(
+                                gles_bound_host_framebuffer);
+                        }
+
+                        std::string dimensions =
+                            "unknown";
+
+                        if (const auto info =
+                                gles_texture_info.find(
+                                    texture);
+                            info !=
+                                gles_texture_info.end()) {
+
+                            dimensions =
+                                std::to_string(
+                                    info->second.width) +
+                                "x" +
+                                std::to_string(
+                                    info->second.height);
+                        }
+
+                        Append(
+                            "V47 GLES FBO ATTACH frame=" +
+                            std::to_string(
+                                current_frame_number) +
+                            " guestFBO=" +
+                            std::to_string(
+                                gles_bound_guest_framebuffer) +
+                            " hostFBO=" +
+                            std::to_string(
+                                gles_bound_host_framebuffer) +
+                            " colorTex=" +
+                            std::to_string(
+                                texture) +
+                            " size=" +
+                            dimensions);
+                    }
+
                     regs[0] = 0u;
                 } else if (name == "glViewport") {
                     const std::array<std::int32_t, 4> viewport{
@@ -13416,6 +13554,8 @@ public:
                     regs[0] = 0u;
                 } else if (name == "glDrawArrays") {
                     ++gles_draw_calls;
+                    ++gles_draws_by_framebuffer[
+                        gles_bound_host_framebuffer];
 
                     auto splash_texture_bound =
                         [&]() {
@@ -13676,6 +13816,8 @@ public:
                     regs[0] = 0u;
                 } else if (name == "glDrawElements") {
                     ++gles_draw_calls;
+                    ++gles_draws_by_framebuffer[
+                        gles_bound_host_framebuffer];
                     const GLsizei count =
                         static_cast<GLsizei>(
                             guest_arg(1u));
@@ -16940,6 +17082,11 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                 result.host_gles_active =
                     callbacks.host_gles_ready;
 
+                callbacks.gles_bound_guest_framebuffer =
+                    0u;
+                callbacks.gles_bound_host_framebuffer =
+                    callbacks.host_default_framebuffer;
+
                 callbacks.Append(
                     std::string{
                         "V31 HOST GLES: "} +
@@ -17082,6 +17229,17 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                              (frame % 10u) == 0u);
                     };
 
+                auto should_probe_framebuffers =
+                    [](std::uint32_t frame) {
+                        return
+                            frame == 15u ||
+                            frame == 60u ||
+                            frame == 75u ||
+                            frame == 90u ||
+                            frame == 120u ||
+                            frame == 600u;
+                    };
+
                 std::uint64_t best_non_black = 0u;
                 std::uint32_t best_frame = 0u;
                 std::uint64_t post_ea_best_non_black = 0u;
@@ -17097,6 +17255,9 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                     const bool sample =
                         should_sample_frame(
                             frame_number);
+
+                    callbacks.current_frame_number =
+                        frame_number;
 
                     if (sample) {
                         callbacks.Append(
@@ -17179,10 +17340,140 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                 callbacks.gles_texture_uploads) +
                             "}");
 
+                        if (should_probe_framebuffers(
+                                frame_number)) {
+
+                            callbacks.Append(
+                                "V47 FBO SNAPSHOT #" +
+                                std::to_string(
+                                    frame_number) +
+                                " default guest=0 host=" +
+                                std::to_string(
+                                    callbacks
+                                        .host_default_framebuffer) +
+                                " draws=" +
+                                std::to_string(
+                                    callbacks
+                                        .gles_draws_by_framebuffer[
+                                            callbacks
+                                                .host_default_framebuffer]) +
+                                " stats={" +
+                                (stats != nullptr
+                                    ? std::string{stats}
+                                    : std::string{"unavailable"}) +
+                                "}");
+
+                            std::vector<GLuint>
+                                framebuffers(
+                                    callbacks
+                                        .gles_generated_framebuffers
+                                        .begin(),
+                                    callbacks
+                                        .gles_generated_framebuffers
+                                        .end());
+
+                            std::sort(
+                                framebuffers.begin(),
+                                framebuffers.end());
+
+                            for (const GLuint framebuffer :
+                                 framebuffers) {
+
+                                const auto attached =
+                                    callbacks
+                                        .gles_framebuffer_color_texture
+                                        .find(
+                                            framebuffer);
+
+                                if (attached ==
+                                    callbacks
+                                        .gles_framebuffer_color_texture
+                                        .end()) {
+
+                                    callbacks.Append(
+                                        "V47 FBO SNAPSHOT #" +
+                                        std::to_string(
+                                            frame_number) +
+                                        " host=" +
+                                        std::to_string(
+                                            framebuffer) +
+                                        " no-color-texture draws=" +
+                                        std::to_string(
+                                            callbacks
+                                                .gles_draws_by_framebuffer[
+                                                    framebuffer]));
+                                    continue;
+                                }
+
+                                const auto info =
+                                    callbacks
+                                        .gles_texture_info
+                                        .find(
+                                            attached->second);
+
+                                if (info ==
+                                        callbacks
+                                            .gles_texture_info
+                                            .end() ||
+                                    info->second.width <= 0 ||
+                                    info->second.height <= 0) {
+
+                                    callbacks.Append(
+                                        "V47 FBO SNAPSHOT #" +
+                                        std::to_string(
+                                            frame_number) +
+                                        " host=" +
+                                        std::to_string(
+                                            framebuffer) +
+                                        " colorTex=" +
+                                        std::to_string(
+                                            attached->second) +
+                                        " unknown-size draws=" +
+                                        std::to_string(
+                                            callbacks
+                                                .gles_draws_by_framebuffer[
+                                                    framebuffer]));
+                                    continue;
+                                }
+
+                                const char* internal_stats =
+                                    PvZ2HostGLESFramebufferStats(
+                                        static_cast<std::uint32_t>(
+                                            framebuffer),
+                                        static_cast<std::uint32_t>(
+                                            info->second.width),
+                                        static_cast<std::uint32_t>(
+                                            info->second.height));
+
+                                callbacks.Append(
+                                    "V47 FBO SNAPSHOT #" +
+                                    std::to_string(
+                                        frame_number) +
+                                    " guest/host=" +
+                                    std::to_string(
+                                        framebuffer) +
+                                    " colorTex=" +
+                                    std::to_string(
+                                        attached->second) +
+                                    " draws=" +
+                                    std::to_string(
+                                        callbacks
+                                            .gles_draws_by_framebuffer[
+                                                framebuffer]) +
+                                    " stats={" +
+                                    (internal_stats != nullptr
+                                        ? std::string{
+                                              internal_stats}
+                                        : std::string{
+                                              "unavailable"}) +
+                                    "}");
+                            }
+                        }
+
                         if (non_black > best_non_black) {
                             const char* best =
                                 PvZ2HostGLESCapturePNGNamed(
-                                    "pvz2-v46-best-frame.png");
+                                    "pvz2-v47-best-frame.png");
 
                             if (best != nullptr &&
                                 *best != '\0') {
@@ -17198,7 +17489,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                     best;
 
                                 callbacks.Append(
-                                    "V46 BEST FRAME: #" +
+                                    "V47 BEST FRAME: #" +
                                     std::to_string(
                                         best_frame) +
                                     " nonBlack=" +
@@ -17219,7 +17510,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
 
                             const char* post_ea =
                                 PvZ2HostGLESCapturePNGNamed(
-                                    "pvz2-v46-post-ea-best.png");
+                                    "pvz2-v47-post-ea-best.png");
 
                             if (post_ea != nullptr &&
                                 *post_ea != '\0') {
@@ -17262,11 +17553,11 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                 if (callbacks.host_gles_ready) {
                     const char* final_capture =
                         PvZ2HostGLESCapturePNGNamed(
-                            "pvz2-v46-final-frame.png");
+                            "pvz2-v47-final-frame.png");
 
                     callbacks.Append(
                         std::string{
-                            "V46 FINAL GLES CAPTURE: "} +
+                            "V47 FINAL GLES CAPTURE: "} +
                         (final_capture != nullptr &&
                          *final_capture != '\0'
                             ? final_capture
@@ -17281,7 +17572,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                 }
 
                 callbacks.Append(
-                    "V46 BEST FRAME SUMMARY: frame=" +
+                    "V47 BEST FRAME SUMMARY: frame=" +
                     std::to_string(
                         best_frame) +
                     " nonBlack=" +
