@@ -11,6 +11,7 @@
 #include <cmath>
 #include <ctime>
 #include <chrono>
+#include <fnmatch.h>
 #include <limits>
 #include <sstream>
 #include <string>
@@ -2495,6 +2496,23 @@ public:
 
                         Append(
                             "JNI bridge: Config_ConfigReadString -> caller default");
+                        return true;
+                    }
+
+                    if (family == 0 &&
+                        method_name ==
+                            "Util_GetUUIDString") {
+
+                        // The Android helper is used as a persistent device
+                        // identifier/config key. A stable non-empty UUID is
+                        // more faithful than the old empty-string fallback and
+                        // keeps probe runs deterministic.
+                        regs[0] =
+                            new_string(
+                                "8f76d9e4-6a52-4b6a-9f0e-152527520001");
+
+                        Append(
+                            "JNI bridge: Util_GetUUIDString -> stable probe UUID");
                         return true;
                     }
 
@@ -6987,6 +7005,88 @@ public:
         };
 
         if (kPosixFiles.count(name) != 0) {
+            if (name == "opendir") {
+                const std::string guest_path =
+                    mem.ReadCStringGuest(
+                        regs[0],
+                        2048);
+
+                // The probe VFS currently exposes individual APK/OBB/RSB
+                // files, not a writable Android directory hierarchy. v27
+                // returned the generic -1 value as a non-null DIR*, which
+                // made PvZ2 call readdir(-1) forever. POSIX opendir failure is
+                // NULL, so unavailable directories must return 0.
+                set_guest_errno(2u);
+                regs[0] = 0u;
+                ++supported_calls;
+
+                if (fallback_logged.insert(
+                        "v28-opendir:" +
+                        guest_path).second) {
+                    Append(
+                        "V28 DIR opendir(\"" +
+                        guest_path +
+                        "\") -> NULL ENOENT");
+                }
+                return;
+            }
+
+            if (name == "readdir") {
+                // EOF is represented by a null dirent pointer. Returning
+                // 0xffffffff (the old generic fallback) is a valid non-null
+                // pointer to guest code and caused an unbounded
+                // readdir/fnmatch loop.
+                regs[0] = 0u;
+                ++supported_calls;
+                return;
+            }
+
+            if (name == "readdir_r") {
+                // int readdir_r(DIR*, struct dirent*, struct dirent** result)
+                // Successful end-of-directory: return 0 and *result = NULL.
+                if (regs[2] != 0u) {
+                    mem.Write32Guest(
+                        regs[2],
+                        0u);
+                }
+
+                regs[0] = 0u;
+                ++supported_calls;
+                return;
+            }
+
+            if (name == "fnmatch") {
+                const std::string pattern =
+                    mem.ReadCStringGuest(
+                        regs[0],
+                        2048);
+                const std::string candidate =
+                    mem.ReadCStringGuest(
+                        regs[1],
+                        2048);
+
+                regs[0] =
+                    static_cast<std::uint32_t>(
+                        ::fnmatch(
+                            pattern.c_str(),
+                            candidate.c_str(),
+                            static_cast<int>(
+                                regs[2])));
+
+                ++supported_calls;
+                return;
+            }
+
+            if (name == "closedir") {
+                // No synthetic DIR handle is currently produced. Keep failure
+                // semantics correct rather than pretending an invalid handle
+                // closed successfully.
+                set_guest_errno(9u);
+                regs[0] = 0xffffffffu;
+                ++supported_calls;
+                return;
+            }
+
             if (name == "open") {
                 const std::string guest_path =
                     mem.ReadCStringGuest(
@@ -7276,7 +7376,6 @@ public:
                 regs[0] = 0;
             } else if (name == "mkdir" ||
                        name == "fsync" ||
-                       name == "closedir" ||
                        name == "unlink") {
                 regs[0] = 0;
             } else if (name == "poll") {
