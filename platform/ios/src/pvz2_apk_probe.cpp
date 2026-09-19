@@ -17,6 +17,7 @@
 #include <chrono>
 #include <fnmatch.h>
 #include <limits>
+#include <iomanip>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -2782,6 +2783,518 @@ public:
         }
 
         auto& regs = jit->Regs();
+
+        // v31: real ARM32 printf-family formatting. Before this bridge,
+        // snprintf/sprintf/vsnprintf/vsprintf returned zero without writing
+        // their destination buffers. That is not just cosmetic: PvZ2 builds
+        // resource identifiers and paths through libc formatting, so the
+        // no-op fallback could turn valid resource names into empty strings.
+        auto format_guest_printf =
+            [&](const std::string& format,
+                auto&& next32,
+                auto&& next64) {
+                std::string out;
+
+                auto pad =
+                    [](std::string value,
+                       int width,
+                       bool left,
+                       char fill) {
+                        if (width <= 0 ||
+                            static_cast<int>(
+                                value.size()) >= width) {
+                            return value;
+                        }
+
+                        const std::size_t count =
+                            static_cast<std::size_t>(
+                                width -
+                                static_cast<int>(
+                                    value.size()));
+
+                        if (left) {
+                            value.append(
+                                count,
+                                ' ');
+                            return value;
+                        }
+
+                        return
+                            std::string(
+                                count,
+                                fill) +
+                            value;
+                    };
+
+                for (std::size_t i = 0;
+                     i < format.size();) {
+
+                    if (format[i] != '%') {
+                        out.push_back(
+                            format[i++]);
+                        continue;
+                    }
+
+                    ++i;
+
+                    if (i < format.size() &&
+                        format[i] == '%') {
+                        out.push_back('%');
+                        ++i;
+                        continue;
+                    }
+
+                    bool left = false;
+                    bool plus = false;
+                    bool space = false;
+                    bool alternate = false;
+                    bool zero = false;
+
+                    for (;;) {
+                        if (i >= format.size()) {
+                            break;
+                        }
+
+                        const char flag =
+                            format[i];
+
+                        if (flag == '-') {
+                            left = true;
+                        } else if (flag == '+') {
+                            plus = true;
+                        } else if (flag == ' ') {
+                            space = true;
+                        } else if (flag == '#') {
+                            alternate = true;
+                        } else if (flag == '0') {
+                            zero = true;
+                        } else {
+                            break;
+                        }
+
+                        ++i;
+                    }
+
+                    int width = -1;
+
+                    if (i < format.size() &&
+                        format[i] == '*') {
+                        width =
+                            static_cast<std::int32_t>(
+                                next32());
+                        ++i;
+
+                        if (width < 0) {
+                            left = true;
+                            width = -width;
+                        }
+                    } else {
+                        int parsed = 0;
+                        bool any = false;
+
+                        while (i < format.size() &&
+                               std::isdigit(
+                                   static_cast<unsigned char>(
+                                       format[i]))) {
+                            any = true;
+                            parsed =
+                                parsed * 10 +
+                                (format[i] - '0');
+                            ++i;
+                        }
+
+                        if (any) {
+                            width = parsed;
+                        }
+                    }
+
+                    int precision = -1;
+
+                    if (i < format.size() &&
+                        format[i] == '.') {
+                        ++i;
+                        precision = 0;
+
+                        if (i < format.size() &&
+                            format[i] == '*') {
+                            precision =
+                                static_cast<std::int32_t>(
+                                    next32());
+                            ++i;
+
+                            if (precision < 0) {
+                                precision = -1;
+                            }
+                        } else {
+                            while (i < format.size() &&
+                                   std::isdigit(
+                                       static_cast<unsigned char>(
+                                           format[i]))) {
+                                precision =
+                                    precision * 10 +
+                                    (format[i] - '0');
+                                ++i;
+                            }
+                        }
+                    }
+
+                    enum class Length {
+                        Default,
+                        HH,
+                        H,
+                        L,
+                        LL,
+                        Z,
+                        T,
+                        J,
+                        BigL,
+                    };
+
+                    Length length =
+                        Length::Default;
+
+                    if (i + 1u < format.size() &&
+                        format[i] == 'h' &&
+                        format[i + 1u] == 'h') {
+                        length = Length::HH;
+                        i += 2u;
+                    } else if (
+                        i < format.size() &&
+                        format[i] == 'h') {
+                        length = Length::H;
+                        ++i;
+                    } else if (
+                        i + 1u < format.size() &&
+                        format[i] == 'l' &&
+                        format[i + 1u] == 'l') {
+                        length = Length::LL;
+                        i += 2u;
+                    } else if (
+                        i < format.size() &&
+                        format[i] == 'l') {
+                        length = Length::L;
+                        ++i;
+                    } else if (
+                        i < format.size() &&
+                        format[i] == 'z') {
+                        length = Length::Z;
+                        ++i;
+                    } else if (
+                        i < format.size() &&
+                        format[i] == 't') {
+                        length = Length::T;
+                        ++i;
+                    } else if (
+                        i < format.size() &&
+                        format[i] == 'j') {
+                        length = Length::J;
+                        ++i;
+                    } else if (
+                        i < format.size() &&
+                        format[i] == 'L') {
+                        length = Length::BigL;
+                        ++i;
+                    }
+
+                    if (i >= format.size()) {
+                        out.push_back('%');
+                        break;
+                    }
+
+                    const char conversion =
+                        format[i++];
+
+                    auto configure_numeric =
+                        [&](std::ostringstream& stream) {
+                            if (plus) {
+                                stream.setf(
+                                    std::ios::showpos);
+                            }
+
+                            if (alternate) {
+                                stream.setf(
+                                    std::ios::showbase);
+                            }
+
+                            if (precision >= 0) {
+                                stream
+                                    << std::setprecision(
+                                           precision);
+                            }
+                        };
+
+                    std::string value;
+
+                    switch (conversion) {
+                    case 's': {
+                        const std::uint32_t address =
+                            next32();
+
+                        value =
+                            address != 0u
+                                ? mem.ReadCStringGuest(
+                                      address,
+                                      1u << 20)
+                                : "(null)";
+
+                        if (precision >= 0 &&
+                            static_cast<std::size_t>(
+                                precision) <
+                                value.size()) {
+                            value.resize(
+                                static_cast<std::size_t>(
+                                    precision));
+                        }
+
+                        break;
+                    }
+
+                    case 'c':
+                        value.push_back(
+                            static_cast<char>(
+                                next32() & 0xffu));
+                        break;
+
+                    case 'd':
+                    case 'i': {
+                        std::ostringstream stream;
+                        configure_numeric(stream);
+
+                        if (length == Length::LL ||
+                            length == Length::J) {
+                            stream
+                                << static_cast<std::int64_t>(
+                                       next64());
+                        } else {
+                            stream
+                                << static_cast<std::int32_t>(
+                                       next32());
+                        }
+
+                        value = stream.str();
+                        break;
+                    }
+
+                    case 'u':
+                    case 'o':
+                    case 'x':
+                    case 'X': {
+                        std::ostringstream stream;
+                        configure_numeric(stream);
+
+                        if (conversion == 'o') {
+                            stream << std::oct;
+                        } else if (
+                            conversion == 'x' ||
+                            conversion == 'X') {
+                            stream << std::hex;
+
+                            if (conversion == 'X') {
+                                stream.setf(
+                                    std::ios::uppercase);
+                            }
+                        }
+
+                        if (length == Length::LL ||
+                            length == Length::J) {
+                            stream
+                                << static_cast<std::uint64_t>(
+                                       next64());
+                        } else {
+                            stream
+                                << static_cast<std::uint32_t>(
+                                       next32());
+                        }
+
+                        value = stream.str();
+                        break;
+                    }
+
+                    case 'p': {
+                        std::ostringstream stream;
+                        stream
+                            << "0x"
+                            << std::hex
+                            << next32();
+                        value = stream.str();
+                        break;
+                    }
+
+                    case 'f':
+                    case 'F':
+                    case 'e':
+                    case 'E':
+                    case 'g':
+                    case 'G': {
+                        const std::uint64_t bits =
+                            next64();
+                        double number = 0.0;
+
+                        std::memcpy(
+                            &number,
+                            &bits,
+                            sizeof(number));
+
+                        std::ostringstream stream;
+                        configure_numeric(stream);
+
+                        if (conversion == 'f' ||
+                            conversion == 'F') {
+                            stream << std::fixed;
+                        } else if (
+                            conversion == 'e' ||
+                            conversion == 'E') {
+                            stream
+                                << std::scientific;
+                        }
+
+                        if (conversion == 'E' ||
+                            conversion == 'F' ||
+                            conversion == 'G') {
+                            stream.setf(
+                                std::ios::uppercase);
+                        }
+
+                        stream << number;
+                        value = stream.str();
+                        break;
+                    }
+
+                    case 'n': {
+                        const std::uint32_t address =
+                            next32();
+
+                        if (address != 0u) {
+                            mem.Write32Guest(
+                                address,
+                                static_cast<std::uint32_t>(
+                                    out.size()));
+                        }
+
+                        continue;
+                    }
+
+                    default:
+                        value.push_back('%');
+                        value.push_back(
+                            conversion);
+                        break;
+                    }
+
+                    if (space &&
+                        !value.empty() &&
+                        value.front() != '-' &&
+                        value.front() != '+') {
+                        value.insert(
+                            value.begin(),
+                            ' ');
+                    }
+
+                    value =
+                        pad(
+                            std::move(value),
+                            width,
+                            left,
+                            zero && !left
+                                ? '0'
+                                : ' ');
+
+                    out += value;
+                }
+
+                return out;
+            };
+
+        auto format_direct =
+            [&](const std::string& format,
+                std::uint32_t first_register) {
+
+                // Treat r0-r3 followed by stack words as one AAPCS argument
+                // stream. 64-bit varargs are aligned to an even word slot.
+                std::uint32_t cursor =
+                    first_register;
+
+                auto read_absolute_word =
+                    [&](std::uint32_t absolute) {
+                        if (absolute < 4u) {
+                            return regs[absolute];
+                        }
+
+                        return
+                            mem.Read32Guest(
+                                regs[13] +
+                                (absolute - 4u) *
+                                    4u);
+                    };
+
+                auto next32 =
+                    [&]() {
+                        return
+                            read_absolute_word(
+                                cursor++);
+                    };
+
+                auto next64 =
+                    [&]() -> std::uint64_t {
+                        if ((cursor & 1u) != 0u) {
+                            ++cursor;
+                        }
+
+                        const std::uint64_t lo =
+                            read_absolute_word(
+                                cursor++);
+                        const std::uint64_t hi =
+                            read_absolute_word(
+                                cursor++);
+
+                        return
+                            lo |
+                            (hi << 32u);
+                    };
+
+                return
+                    format_guest_printf(
+                        format,
+                        next32,
+                        next64);
+            };
+
+        auto format_va_list =
+            [&](const std::string& format,
+                std::uint32_t va_address) {
+
+                // ARMv7 bionic/NDK va_list is pointer-like for this ABI.
+                std::uint32_t cursor =
+                    va_address;
+
+                auto next32 =
+                    [&]() {
+                        const std::uint32_t value =
+                            mem.Read32Guest(
+                                cursor);
+                        cursor += 4u;
+                        return value;
+                    };
+
+                auto next64 =
+                    [&]() -> std::uint64_t {
+                        cursor =
+                            (cursor + 7u) &
+                            ~7u;
+
+                        const std::uint64_t value =
+                            mem.Read64Guest(
+                                cursor);
+                        cursor += 8u;
+                        return value;
+                    };
+
+                return
+                    format_guest_printf(
+                        format,
+                        next32,
+                        next64);
+            };
 
         if (swi == kJniProbeSvcGetEnv) {
             const std::uint32_t output_address = regs[1];
@@ -7436,10 +7949,20 @@ public:
             name == "__android_log_write") {
 
             const std::string tag =
-                mem.ReadCStringGuest(regs[1], 128);
+                mem.ReadCStringGuest(
+                    regs[1],
+                    128);
 
             const std::string text =
-                mem.ReadCStringGuest(regs[2], 256);
+                name == "__android_log_print"
+                    ? format_direct(
+                          mem.ReadCStringGuest(
+                              regs[2],
+                              4096),
+                          3u)
+                    : mem.ReadCStringGuest(
+                          regs[2],
+                          4096);
 
             regs[0] = 0;
             ++supported_calls;
@@ -7462,8 +7985,7 @@ public:
                 std::string::npos) {
                 RecordSweepIssue(
                     "missing-resource",
-                    text.substr(
-                        missing_resource),
+                    text,
                     text);
             }
 
@@ -8202,6 +8724,146 @@ public:
         };
 
         if (kStdio.count(name) != 0) {
+            if (name == "snprintf" ||
+                name == "sprintf" ||
+                name == "vsnprintf" ||
+                name == "vsprintf" ||
+                name == "printf" ||
+                name == "fprintf") {
+
+                std::string format;
+                std::string formatted;
+                std::uint32_t destination = 0u;
+                std::size_t capacity = 0u;
+                bool writes_buffer = false;
+
+                if (name == "snprintf") {
+                    destination = regs[0];
+                    capacity =
+                        static_cast<std::size_t>(
+                            regs[1]);
+                    format =
+                        mem.ReadCStringGuest(
+                            regs[2],
+                            1u << 16);
+                    formatted =
+                        format_direct(
+                            format,
+                            3u);
+                    writes_buffer = true;
+                } else if (name == "sprintf") {
+                    destination = regs[0];
+                    format =
+                        mem.ReadCStringGuest(
+                            regs[1],
+                            1u << 16);
+                    formatted =
+                        format_direct(
+                            format,
+                            2u);
+                    capacity =
+                        formatted.size() + 1u;
+                    writes_buffer = true;
+                } else if (name == "vsnprintf") {
+                    destination = regs[0];
+                    capacity =
+                        static_cast<std::size_t>(
+                            regs[1]);
+                    format =
+                        mem.ReadCStringGuest(
+                            regs[2],
+                            1u << 16);
+                    formatted =
+                        format_va_list(
+                            format,
+                            regs[3]);
+                    writes_buffer = true;
+                } else if (name == "vsprintf") {
+                    destination = regs[0];
+                    format =
+                        mem.ReadCStringGuest(
+                            regs[1],
+                            1u << 16);
+                    formatted =
+                        format_va_list(
+                            format,
+                            regs[2]);
+                    capacity =
+                        formatted.size() + 1u;
+                    writes_buffer = true;
+                } else if (name == "printf") {
+                    format =
+                        mem.ReadCStringGuest(
+                            regs[0],
+                            1u << 16);
+                    formatted =
+                        format_direct(
+                            format,
+                            1u);
+                } else {
+                    format =
+                        mem.ReadCStringGuest(
+                            regs[1],
+                            1u << 16);
+                    formatted =
+                        format_direct(
+                            format,
+                            2u);
+                }
+
+                if (writes_buffer &&
+                    destination != 0u &&
+                    capacity != 0u) {
+
+                    const std::size_t copy =
+                        std::min<std::size_t>(
+                            formatted.size(),
+                            capacity - 1u);
+
+                    if (auto* output =
+                            mem.Ptr(
+                                destination,
+                                capacity)) {
+
+                        if (copy != 0u) {
+                            std::memcpy(
+                                output,
+                                formatted.data(),
+                                copy);
+                        }
+
+                        output[copy] = 0u;
+                    }
+                }
+
+                if (fallback_logged.insert(
+                        "v31-format:" +
+                        name).second) {
+                    Append(
+                        "V31 FORMAT bridge active: " +
+                        name);
+                }
+
+                if (!writes_buffer &&
+                    !formatted.empty()) {
+                    Append(
+                        "V31 GUEST " +
+                        name +
+                        ": \"" +
+                        formatted +
+                        "\"");
+                }
+
+                regs[0] =
+                    static_cast<std::uint32_t>(
+                        std::min<std::size_t>(
+                            formatted.size(),
+                            0x7fffffffu));
+
+                ++supported_calls;
+                return;
+            }
+
             if (name == "fopen") {
                 const std::string guest_path =
                     mem.ReadCStringGuest(
