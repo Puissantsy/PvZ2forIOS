@@ -234,7 +234,7 @@ NSString *NSStringFromStd(
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — main.pak Worker Probe v18";
+        @"PvZ2forIOS — OBB I/O Probe v19";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -243,7 +243,7 @@ NSString *NSStringFromStd(
         NO;
 
     title.text =
-        @"PvZ2forIOS — main.pak worker probe v18";
+        @"PvZ2forIOS — OBB I/O probe v19";
 
     title.font =
         [UIFont
@@ -259,8 +259,8 @@ NSString *NSStringFromStd(
         NO;
 
     explanation.text =
-        @"v17 localized the first lifecycle stall to PvZ2's async main.pak future: the native thread spins at the verified poll loop while the request remains EINPROGRESS. "
-         @"v18 records every deferred pthread start routine, then, only after the main thread reaches that exact poll timeout, runs bounded one-shot ARM32 worker probes outside the callback context. It reports which worker changes the main.pak future, or confirms that the still-synthetic filesystem/expansion bridge is the next blocker. GLES and filesystem remain probe backends.";
+        @"v17 localized the first lifecycle stall to an async file future. v18 proved the next missing subsystem is the Android expansion/file path. "
+         @"v19 adds the first real resource bridge: select the original APK and its matching OBB together. FrameworkInfo_SysGetMainExpansionFilePath now returns the Android-style expansion path, while fopen/open/fread/read/fseek/lseek/stat/fstat/access serve the selected 1bsr OBB bytes directly inside the iOS sandbox. Deferred pthread workers are still probed at the exact EINPROGRESS stall. GLES remains probe/no-op.";
 
     explanation.numberOfLines = 0;
 
@@ -302,7 +302,7 @@ NSString *NSStringFromStd(
     self.jniButton =
         [self
             makeButton:
-                @"3. Run real\nJNI_OnLoad"
+                @"3. Run PvZ2\nAPK + OBB"
             selector:
                 @selector(selectApkForJni)];
 
@@ -437,7 +437,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 cooperative-worker probe v18 session started; PID=%d ===",
+                    @"=== PvZ2 OBB-I/O probe v19 session started; PID=%d ===",
                     getpid()]];
 
     [self
@@ -749,14 +749,14 @@ NSString *NSStringFromStd(
         self;
 
     picker.allowsMultipleSelection =
-        NO;
+        YES;
 
     picker.modalPresentationStyle =
         UIModalPresentationFormSheet;
 
     [self
         appendUI:
-            @"STEP 3: select the same original PvZ2 1.5.252752 APK. v18 will reproduce the validated startup and main.pak EINPROGRESS stall, then probe the deferred guest pthread workers one by one with bounded execution. STEP 3D will say whether a worker changes the main.pak future or whether the expansion/filesystem bridge is the next blocker."];
+            @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v19 serves the OBB through a real in-memory Android/POSIX file bridge, then probes the deferred ARM32 workers at the exact async-file stall."];
 
     [self
         presentViewController:
@@ -772,7 +772,7 @@ NSString *NSStringFromStd(
 
     [self
         appendUI:
-            @"STEP 3: APK selection cancelled."];
+            @"STEP 3: APK/OBB selection cancelled."];
 }
 
 - (void)documentPicker:
@@ -780,13 +780,33 @@ NSString *NSStringFromStd(
     didPickDocumentsAtURLs:
         (NSArray<NSURL *> *)urls {
 
-    NSURL *url =
-        urls.firstObject;
+    NSURL *apkURL = nil;
+    NSURL *obbURL = nil;
 
-    if (url == nil) {
+    for (NSURL *candidate in urls) {
+        NSString *extension =
+            candidate.pathExtension.lowercaseString;
+
+        if ([extension isEqualToString:@"apk"]) {
+            apkURL = candidate;
+        } else if ([extension isEqualToString:@"obb"]) {
+            obbURL = candidate;
+        }
+    }
+
+    if (apkURL == nil ||
+        obbURL == nil) {
+
         [self
             appendUI:
-                @"STEP 3 FAILED: document picker returned no file."];
+                @"STEP 3 FAILED: v19 needs exactly the PvZ2 APK plus its matching .obb expansion file selected together."];
+
+        [self
+            showResult:
+                @"APK + OBB required"
+            message:
+                @"Select both files in the document picker: the original PvZ2 1.5.252752 .apk and main.7.com.ea.game.pvz2_row.obb."];
+
         return;
     }
 
@@ -799,9 +819,11 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"STEP 3A: selected %@; preparing full PvZ2 startup + GameAppInitialize + lifecycle + first draw frame…",
-                    url.lastPathComponent
-                        ?: @"(unnamed file)"]];
+                    @"STEP 3A: APK=%@ | OBB=%@; preparing full startup with real in-memory expansion-file I/O…",
+                    apkURL.lastPathComponent
+                        ?: @"(APK)",
+                    obbURL.lastPathComponent
+                        ?: @"(OBB)"]];
 
     __weak ProbeViewController *weakSelf =
         self;
@@ -812,28 +834,47 @@ NSString *NSStringFromStd(
             0),
         ^{
 
-            BOOL scoped =
-                [url
-                    startAccessingSecurityScopedResource];
+            auto readScoped =
+                ^NSData *(NSURL *url,
+                           NSError **error) {
 
-            NSError *readError =
-                nil;
+                    BOOL scoped =
+                        [url
+                            startAccessingSecurityScopedResource];
 
-            NSData *data =
-                [NSData
-                    dataWithContentsOfURL:
-                        url
-                    options:
-                        NSDataReadingMappedIfSafe
-                    error:
-                        &readError];
+                    NSData *data =
+                        [NSData
+                            dataWithContentsOfURL:
+                                url
+                            options:
+                                NSDataReadingMappedIfSafe
+                            error:
+                                error];
 
-            if (scoped) {
-                [url
-                    stopAccessingSecurityScopedResource];
-            }
+                    if (scoped) {
+                        [url
+                            stopAccessingSecurityScopedResource];
+                    }
 
-            if (data == nil) {
+                    return data;
+                };
+
+            NSError *apkError = nil;
+            NSError *obbError = nil;
+
+            NSData *apkData =
+                readScoped(
+                    apkURL,
+                    &apkError);
+
+            NSData *obbData =
+                readScoped(
+                    obbURL,
+                    &obbError);
+
+            if (apkData == nil ||
+                obbData == nil) {
+
                 dispatch_async(
                     dispatch_get_main_queue(),
                     ^{
@@ -852,9 +893,15 @@ NSString *NSStringFromStd(
                             appendUI:
                                 [NSString
                                     stringWithFormat:
-                                        @"STEP 3 FAILED: could not read APK: %@",
-                                        readError.localizedDescription
-                                            ?: @"unknown read error"]];
+                                        @"STEP 3 FAILED: APK read=%@ | OBB read=%@",
+                                        apkData
+                                            ? @"OK"
+                                            : (apkError.localizedDescription
+                                                ?: @"failed"),
+                                        obbData
+                                            ? @"OK"
+                                            : (obbError.localizedDescription
+                                                ?: @"failed")]];
 
                         [selfRef refreshStatus];
                     });
@@ -865,8 +912,11 @@ NSString *NSStringFromStd(
             PvZ2JniProbeResult result =
                 RunPvZ2FullLoadProbe(
                     static_cast<const std::uint8_t*>(
-                        data.bytes),
-                    data.length,
+                        apkData.bytes),
+                    apkData.length,
+                    static_cast<const std::uint8_t*>(
+                        obbData.bytes),
+                    obbData.length,
                     [](const std::string& line) {
                         @autoreleasepool {
                             NSString *nsLine =
