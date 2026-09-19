@@ -48,6 +48,8 @@ struct PvZ2JniProbeResult {
     bool returned_game_app_initialize = false;
     bool reached_first_draw_frame = false;
     bool returned_first_draw_frame = false;
+    bool host_gles_active = false;
+    std::uint32_t draw_frames_completed = 0;
 
     std::uint32_t return_value = 0;
     std::uint32_t game_app_initialize_address = 0;
@@ -87,6 +89,7 @@ struct PvZ2JniProbeResult {
     std::string first_unsupported_import;
     std::string game_app_initialize_signature;
     std::string lifecycle_failure_name;
+    std::string host_frame_png_path;
     std::string sweep_summary;
     std::string trace;
     std::string message;
