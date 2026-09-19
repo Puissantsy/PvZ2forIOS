@@ -234,7 +234,7 @@ NSString *NSStringFromStd(
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — Lifecycle Timeout Probe v17";
+        @"PvZ2forIOS — Cooperative Worker Probe v18";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -243,7 +243,7 @@ NSString *NSStringFromStd(
         NO;
 
     title.text =
-        @"PvZ2forIOS — lifecycle timeout probe v17";
+        @"PvZ2forIOS — cooperative worker probe v18";
 
     title.font =
         [UIFont
@@ -259,8 +259,8 @@ NSString *NSStringFromStd(
         NO;
 
     explanation.text =
-        @"v16 proved the earlier __aeabi_memmove stop was not the final blocker: after zero-length copy handling, PvZ2 advances into the first lifecycle call and now spends the full execution budget there. "
-         @"v17 keeps all v16 memory diagnostics, adds phase-aware 5M-tick progress and a full timeout register dump (PC/LR/caller/SP/r0-r7), and sanitizes guest-derived trace bytes so the complete trace remains readable instead of collapsing to invalid UTF-8. The GLES layer remains probe/no-op.";
+        @"v17 localized the first lifecycle stall to PvZ2's async main.pak future: the native thread spins at the verified poll loop while the request remains EINPROGRESS. "
+         @"v18 replaces the old permanently-deferred pthread behavior during lifecycle with a cooperative guest-worker scheduler. Eligible PopCap/EA workers receive persistent ARM32 contexts and time slices between lifecycle slices, while likely Wwise/audio workers remain deferred. The exact main.pak future state and worker states are reported if startup still cannot advance. GLES and the filesystem itself remain probe backends.";
 
     explanation.numberOfLines = 0;
 
@@ -437,7 +437,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 lifecycle-timeout probe v17 session started; PID=%d ===",
+                    @"=== PvZ2 cooperative-worker probe v18 session started; PID=%d ===",
                     getpid()]];
 
     [self
@@ -756,7 +756,7 @@ NSString *NSStringFromStd(
 
     [self
         appendUI:
-            @"STEP 3: select the same original PvZ2 1.5.252752 APK. v17 will reproduce the validated startup and report lifecycle progress every 5M ticks; if the first lifecycle call stalls, STEP 3D will include the exact phase, PC/LR/caller/SP and r0-r7 while the full trace remains readable."];
+            @"STEP 3: select the same original PvZ2 1.5.252752 APK. v18 will reproduce the validated startup, then time-slice the deferred guest pthread workers alongside the lifecycle so the async main.pak request can make progress. If it still stalls, STEP 3D reports the future status plus every deferred worker state."];
 
     [self
         presentViewController:
