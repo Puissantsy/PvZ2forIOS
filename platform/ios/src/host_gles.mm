@@ -6,6 +6,11 @@
 
 #include "host_gles.hpp"
 
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
+#include <vector>
+
 namespace {
 
 EAGLContext *gContext = nil;
