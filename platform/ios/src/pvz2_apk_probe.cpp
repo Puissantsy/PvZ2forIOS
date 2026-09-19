@@ -4991,6 +4991,106 @@ public:
             };
 
         if (swi ==
+                kJniProbeSvcResourceWrapperDirectReturn ||
+            swi ==
+                kJniProbeSvcResourceWrapperExhausted) {
+
+            const bool direct_return =
+                swi ==
+                    kJniProbeSvcResourceWrapperDirectReturn;
+
+            const std::uint32_t manager =
+                regs[5];
+            const std::uint32_t group =
+                direct_return
+                    ? regs[8]
+                    : 0u;
+            const std::uint32_t id_object =
+                regs[6];
+
+            const std::string requested_id =
+                RecoverGuestResfileWord(
+                    id_object);
+
+            const bool resfile =
+                requested_id.rfind(
+                    "RESFILE_",
+                    0u) == 0u;
+
+            if (resfile &&
+                (!direct_return ||
+                 regs[0] == 0u)) {
+
+                if (direct_return) {
+                    ++resource_wrapper_direct_nulls;
+                } else {
+                    ++resource_wrapper_exhausted_nulls;
+                }
+
+                if (resource_wrapper_direct_nulls +
+                        resource_wrapper_exhausted_nulls <=
+                    48u) {
+                    Append(
+                        "V48 WRAPPER NULL #" +
+                        std::to_string(
+                            resource_wrapper_direct_nulls +
+                            resource_wrapper_exhausted_nulls) +
+                        " kind=" +
+                        (direct_return
+                            ? std::string{"direct-group"}
+                            : std::string{"all-groups-exhausted"}) +
+                        " id=\"" +
+                        requested_id +
+                        "\" manager=0x" +
+                        JniProbeHex(manager) +
+                        " group=0x" +
+                        JniProbeHex(group));
+                }
+
+                const std::uint32_t recovered =
+                    ResolveResourceRegistryNativeMiss(
+                        manager,
+                        group,
+                        id_object,
+                        direct_return
+                            ? "0x1087a708-wrapper-direct"
+                            : "0x1087a76c-wrapper-exhausted",
+                        requested_id);
+
+                if (recovered != 0u) {
+                    regs[0] = recovered;
+                    ++resource_wrapper_recoveries;
+
+                    if (resource_wrapper_recoveries <=
+                        48u) {
+                        Append(
+                            "V48 WRAPPER RESFILE HEAL #" +
+                            std::to_string(
+                                resource_wrapper_recoveries) +
+                            " id=\"" +
+                            requested_id +
+                            "\" -> ResourceInfo*=0x" +
+                            JniProbeHex(recovered));
+                    }
+                } else if (!direct_return) {
+                    regs[0] = 0u;
+                }
+            } else if (!direct_return) {
+                // Original instruction at 0x1087a76c was MOV r0,#0.
+                regs[0] = 0u;
+            }
+
+            if (direct_return) {
+                // Original instruction at 0x1087a708 was B 0x1087a770.
+                regs[15] =
+                    kGuestBase +
+                    0x0087a770u;
+            }
+
+            return;
+        }
+
+        if (swi ==
                 kJniProbeSvcResourceRegistryEntry) {
 
             // Original instruction at guest 0x1086f674 is MOV r4,r2.
