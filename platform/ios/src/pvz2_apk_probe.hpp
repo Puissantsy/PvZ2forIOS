@@ -59,6 +59,15 @@ struct PvZ2JniProbeResult {
     std::uint32_t imports_patched = 0;
     std::uint32_t supported_import_calls = 0;
 
+    bool rsb_manifest_resolved = false;
+    std::uint32_t rsb_resolved_files = 0;
+    std::uint64_t malloc_calls = 0;
+    std::uint64_t free_calls = 0;
+    std::uint64_t realloc_calls = 0;
+    std::uint32_t heap_high_water = 0;
+    std::uint32_t heap_live_bytes = 0;
+    std::uint32_t heap_live_allocations = 0;
+
     std::uint32_t init_array_slots = 0;
     std::uint32_t constructors_total = 0;
     std::uint32_t constructors_completed = 0;
