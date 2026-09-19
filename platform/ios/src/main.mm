@@ -245,7 +245,7 @@ NSString *NSStringFromStd(
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — Symbolized Logs v46";
+        @"PvZ2forIOS — Framebuffer Diagnosis v47";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -254,7 +254,7 @@ NSString *NSStringFromStd(
         NO;
 
     title.text =
-        @"PvZ2forIOS — symbolized logs v46";
+        @"PvZ2forIOS — framebuffer diagnosis v47";
 
     title.font =
         [UIFont
@@ -270,8 +270,8 @@ NSString *NSStringFromStd(
         NO;
 
     explanation.text =
-        @"v46 keeps the complete v45 runtime/resource behavior unchanged and improves the reverse-engineering workflow instead of adding another compatibility guess. libPVZ2.so contains .ARM.exidx unwind metadata even though most original function names are stripped. v46 parses that table into roughly twenty-six thousand stable function starts and combines it with surviving ELF dynamic symbols and the known memory-region layout. "
-         @"High-signal failures now emit V46 ADDRMAP lines that translate PC/LR/SP into libPVZ2.so offsets, inferred function-start+delta, known port landmarks and the nearest useful ELF symbol when available. A companion tools/pvz2_address_resolver.py can apply the same analysis to any old or new full log using the original APK, so previous captures no longer need to be retested just to identify hexadecimal addresses. The v45 global-value RESFILE bridge and 600-frame soak remain intact.";
+        @"v46 proved that the runtime itself survives the complete 600-frame soak: the EA splash reaches its richest framebuffer around frame 15, fades away, and the system framebuffer is black by the late samples even though PvZ2 keeps issuing thousands of GLES draws. v47 therefore stops guessing about RESFILEs and diagnoses the render-target topology directly. "
+         @"It keeps the complete v45 resource behavior and v46 ARM address mapping unchanged, but records every guest framebuffer creation, bind and color-texture attachment. At frames 15, 60, 75, 90, 120 and 600 it separately reads back the iOS system framebuffer and every live guest-created framebuffer using the attached texture dimensions. The next full log should tell us whether the post-EA screen is being rendered into an internal FBO that never reaches the iOS surface, or whether all render targets are genuinely black.";
 
     explanation.numberOfLines = 0;
 
@@ -574,7 +574,7 @@ NSString *NSStringFromStd(
             monospacedSystemFontOfSize:13.0
             weight:UIFontWeightRegular];
     caption.text =
-        @"v46 — v45 runtime + automatic ARM address/function mapping\nTap Close to return to the full diagnostic log.";
+        @"v47 — post-splash framebuffer diagnosis\nTap Close to return to the full diagnostic log.";
 
     UIButton *closeButton =
         [UIButton
@@ -943,7 +943,7 @@ NSString *NSStringFromStd(
 
     [self
         appendUI:
-            @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v46 executes the same v45 RESFILE global-value repair, but now builds an automatic address/function map from ELF dynamic symbols and .ARM.exidx metadata. Exceptions and execution-budget stops include V46 ADDRMAP annotations, while the normal 600-frame soak remains enabled."];
+            @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v47 keeps the v45 RESFILE bridge and v46 address mapping unchanged, then instruments GLES framebuffer creation, binding and color attachments. At selected frames it reads the system framebuffer and every live guest-created framebuffer independently, so the full log can distinguish a missing presentation/composition step from a genuinely black game scene."];
 
     [self
         presentViewController:
@@ -1004,7 +1004,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v46 probe run started; PID=%d ===",
+                    @"=== PvZ2 v47 probe run started; PID=%d ===",
                     getpid()]];
 
     self.jniRunning =
@@ -1257,7 +1257,7 @@ NSString *NSStringFromStd(
                     if (result.ok) {
                         [selfRef
                             appendUI:
-                                @"SUCCESS STEP 3: PvZ2 completed lifecycle + host GLES + v45 RESFILE recovery + v46 address mapping + 600-frame soak."];
+                                @"SUCCESS STEP 3: PvZ2 completed lifecycle + host GLES + v45 RESFILE recovery + v46 address mapping + v47 framebuffer diagnosis + 600-frame soak."];
 
                         if (!result.host_frame_png_path.empty()) {
                             [selfRef
@@ -1275,11 +1275,11 @@ NSString *NSStringFromStd(
                         } else {
                             [selfRef
                                 showResult:
-                                    @"PvZ2 v46 frame soak returned"
+                                    @"PvZ2 v47 frame soak returned"
                                 message:
                                     [NSString
                                         stringWithFormat:
-                                            @"PvZ2 completed its native startup and v46 frame soak.\n\nGameAppInitialize: %u\nLifecycle calls completed: %u\nFrames returned: %u\nHost GLES active: %@\nBest sampled frame: %u (%llu non-black pixels)\nConstructors: %u/%u\nJNI_OnLoad: 0x%08x\n\nNo PNG capture was produced, so check the V39 SURFACE GEOMETRY / GLES VIEWPORT / GLES SCISSOR / FRAME STATS plus the v40 corrected capture and V38 RESFILE / BOUNDARY WORKER lines in the full log.",
+                                            @"PvZ2 completed its native startup and v47 frame soak.\n\nGameAppInitialize: %u\nLifecycle calls completed: %u\nFrames returned: %u\nHost GLES active: %@\nBest sampled frame: %u (%llu non-black pixels)\nConstructors: %u/%u\nJNI_OnLoad: 0x%08x\n\nNo PNG capture was produced, so check the V47 GLES GEN/BIND/ATTACH and V47 FBO SNAPSHOT lines, plus V39 FRAME STATS and V38 RESFILE / BOUNDARY WORKER lines in the full log.",
                                             result.game_app_initialize_return & 0xffu,
                                             result.lifecycle_calls_completed,
                                             result.draw_frames_completed,
