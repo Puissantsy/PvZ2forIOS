@@ -711,6 +711,10 @@ constexpr std::uint32_t kJniProbeSvcReturn = 0x00f004u;
 constexpr std::uint32_t kJniProbeSvcNewGlobalRef = 0x00f005u;
 constexpr std::uint32_t kJniProbeSvcGetObjectClass = 0x00f006u;
 constexpr std::uint32_t kJniProbeSvcGetMethodID = 0x00f007u;
+// v35: inline trap replacing the two GenericResFileRes ID lookup calls.
+// It preserves exact-ID lookup semantics, then falls back to the already
+// populated global ResourceInfo path map using the physical RSB member path.
+constexpr std::uint32_t kJniProbeSvcResourceRegistryLookup = 0x00f020u;
 constexpr std::uint32_t kJniProbeSvcUnsupportedJniBase = 0x00e000u;
 constexpr std::uint32_t kJniProbeJniSlotCount = 256u;
 
@@ -1577,6 +1581,22 @@ public:
     std::unordered_set<std::string>
         recovered_missing_resource_ids;
 
+    // v35 resource-registry bridge caches. The RSB outer index already
+    // gives us a trustworthy ID -> physical path relation for RESFILE_* RTON
+    // entries. The native ResourceManager also keeps a global path ->
+    // ResourceInfo* tree even when a group-local ID lookup misses.
+    bool rsb_resource_id_index_built = false;
+    std::unordered_map<std::string, std::string>
+        rsb_resource_id_to_path;
+    std::uint32_t resource_path_index_manager = 0u;
+    std::unordered_map<std::string, std::uint32_t>
+        resource_path_index;
+    std::uint32_t resource_id_index_manager = 0u;
+    std::unordered_map<std::string, std::uint32_t>
+        resource_id_index;
+    std::unordered_set<std::string>
+        resource_registry_logged_ids;
+
     static constexpr std::uint32_t kSweepRecoveryLimit = 48u;
     std::uint32_t sweep_recoveries = 0;
     bool sweep_speculative = false;
@@ -2071,6 +2091,660 @@ public:
         }
 
         return std::nullopt;
+    }
+
+    std::string NormalizeResourceRegistryKey(
+        std::string value) const {
+
+        while (value.rfind("./", 0u) == 0u) {
+            value.erase(0u, 2u);
+        }
+
+        while (!value.empty() &&
+               value.front() == '/') {
+            value.erase(value.begin());
+        }
+
+        std::transform(
+            value.begin(),
+            value.end(),
+            value.begin(),
+            [](unsigned char ch) {
+                if (ch == '\\') {
+                    return '/';
+                }
+
+                return static_cast<char>(
+                    std::toupper(ch));
+            });
+
+        return value;
+    }
+
+    std::string ReadGuestStdStringObject(
+        std::uint32_t object) {
+
+        if (object == 0u ||
+            mem.Ptr(object, 4u) == nullptr) {
+            return {};
+        }
+
+        const std::uint32_t data =
+            mem.Read32Guest(object);
+
+        if (data == 0u ||
+            mem.Ptr(data, 1u) == nullptr) {
+            return {};
+        }
+
+        return mem.ReadCStringGuest(
+            data,
+            4096u);
+    }
+
+    void EnsureRsbResourceIdIndex() {
+        if (rsb_resource_id_index_built) {
+            return;
+        }
+
+        rsb_resource_id_index_built = true;
+        rsb_resource_id_to_path.clear();
+
+        if (obb_data == nullptr ||
+            obb_size < 0x70u) {
+            return;
+        }
+
+        struct PrefixDefault {
+            std::string name;
+            std::uint32_t end_words =
+                0xffffffffu;
+        };
+
+        std::uint32_t list_length = 0u;
+        std::uint32_t list_begin = 0u;
+
+        if (!ReadObbU32(
+                0x10u,
+                list_length) ||
+            !ReadObbU32(
+                0x14u,
+                list_begin) ||
+            static_cast<std::uint64_t>(
+                list_begin) +
+                    list_length >
+                obb_size) {
+            return;
+        }
+
+        const std::uint64_t begin =
+            list_begin;
+        const std::uint64_t end =
+            begin + list_length;
+        std::uint64_t pos = begin;
+
+        std::vector<PrefixDefault> defaults;
+        defaults.push_back(PrefixDefault{});
+
+        while (pos < end) {
+            std::string head;
+
+            for (std::size_t i = 0u;
+                 i < defaults.size();) {
+
+                if (pos <
+                    begin +
+                        static_cast<std::uint64_t>(
+                            defaults[i].end_words) *
+                        4ull) {
+
+                    head += defaults[i].name;
+                    ++i;
+                } else {
+                    defaults.erase(
+                        defaults.begin() +
+                        static_cast<std::ptrdiff_t>(
+                            i));
+                }
+            }
+
+            if (defaults.empty()) {
+                defaults.push_back(
+                    PrefixDefault{});
+            }
+
+            std::string tail;
+            std::size_t prefix_start = 0u;
+            std::uint32_t prefix_end =
+                defaults.back().end_words;
+            bool terminated = false;
+
+            while (pos + 4u <= end) {
+                const std::uint8_t ch =
+                    obb_data[pos];
+
+                std::uint32_t cover = 0u;
+                if (!ReadObbU24(
+                        pos + 1u,
+                        cover)) {
+                    return;
+                }
+
+                pos += 4u;
+
+                if (ch == 0u) {
+                    if (cover != 0u &&
+                        tail.size() != 1u &&
+                        prefix_start <
+                            tail.size()) {
+
+                        defaults.push_back(
+                            PrefixDefault{
+                                tail.substr(
+                                    prefix_start),
+                                prefix_end});
+                    }
+
+                    terminated = true;
+                    break;
+                }
+
+                tail.push_back(
+                    static_cast<char>(ch));
+
+                if (cover != 0u) {
+                    if (tail.size() != 1u &&
+                        prefix_start <
+                            tail.size() - 1u) {
+
+                        defaults.push_back(
+                            PrefixDefault{
+                                tail.substr(
+                                    prefix_start,
+                                    tail.size() -
+                                        1u -
+                                        prefix_start),
+                                prefix_end});
+                    }
+
+                    prefix_start =
+                        tail.size() - 1u;
+                    prefix_end = cover;
+                }
+            }
+
+            if (!terminated ||
+                pos + 4u > end) {
+                return;
+            }
+
+            // Group index follows every outer-name record.
+            pos += 4u;
+
+            std::string full =
+                NormalizeResourceRegistryKey(
+                    head + tail);
+
+            constexpr char kRton[] = ".RTON";
+
+            if (full.size() <=
+                    sizeof(kRton) - 1u ||
+                full.compare(
+                    full.size() -
+                        (sizeof(kRton) - 1u),
+                    sizeof(kRton) - 1u,
+                    kRton) != 0) {
+                continue;
+            }
+
+            std::string id =
+                "RESFILE_" +
+                full.substr(
+                    0u,
+                    full.size() -
+                        (sizeof(kRton) - 1u));
+
+            std::replace(
+                id.begin(),
+                id.end(),
+                '/',
+                '_');
+
+            const auto existing =
+                rsb_resource_id_to_path.find(id);
+
+            if (existing ==
+                rsb_resource_id_to_path.end()) {
+                rsb_resource_id_to_path.emplace(
+                    std::move(id),
+                    std::move(full));
+            } else if (
+                existing->second != full) {
+                // Do not guess if two physical members collapse onto one
+                // RESFILE_* spelling.
+                existing->second.clear();
+            }
+        }
+
+        Append(
+            "V35 RSB RESOURCE-ID INDEX: " +
+            std::to_string(
+                rsb_resource_id_to_path.size()) +
+            " RTON identifier(s) indexed from the outer RSB table.");
+    }
+
+    std::optional<std::string>
+    FindOuterRsbPathForResourceId(
+        const std::string& resource_id) {
+
+        EnsureRsbResourceIdIndex();
+
+        const std::string key =
+            NormalizeResourceRegistryKey(
+                resource_id);
+
+        const auto it =
+            rsb_resource_id_to_path.find(
+                key);
+
+        if (it ==
+                rsb_resource_id_to_path.end() ||
+            it->second.empty()) {
+            return std::nullopt;
+        }
+
+        return it->second;
+    }
+
+    void IndexResourceInfoTree(
+        std::uint32_t tree,
+        std::unordered_map<
+            std::string,
+            std::uint32_t>& output,
+        std::size_t max_nodes = 65536u) {
+
+        if (tree == 0u ||
+            mem.Ptr(tree, 12u) == nullptr) {
+            return;
+        }
+
+        // libstdc++ ARM32 _Rb_tree layout used by this exact binary:
+        // tree+4 is the header/end node, tree+8 is header.parent/root.
+        // Normal nodes store key std::string at +16 and ResourceInfo* at +20.
+        const std::uint32_t header =
+            tree + 4u;
+        const std::uint32_t root =
+            mem.Read32Guest(
+                tree + 8u);
+
+        if (root == 0u ||
+            root == header) {
+            return;
+        }
+
+        std::vector<std::uint32_t> stack;
+        stack.push_back(root);
+
+        std::unordered_set<std::uint32_t>
+            visited;
+        visited.reserve(1024u);
+
+        while (!stack.empty() &&
+               visited.size() < max_nodes) {
+
+            const std::uint32_t node =
+                stack.back();
+            stack.pop_back();
+
+            if (node == 0u ||
+                node == header ||
+                !visited.insert(node).second ||
+                mem.Ptr(node, 24u) == nullptr) {
+                continue;
+            }
+
+            const std::uint32_t key_data =
+                mem.Read32Guest(
+                    node + 16u);
+            const std::uint32_t value =
+                mem.Read32Guest(
+                    node + 20u);
+
+            if (key_data != 0u &&
+                value != 0u &&
+                mem.Ptr(
+                    key_data,
+                    1u) != nullptr) {
+
+                std::string key =
+                    mem.ReadCStringGuest(
+                        key_data,
+                        4096u);
+
+                if (!key.empty()) {
+                    key =
+                        NormalizeResourceRegistryKey(
+                            std::move(key));
+
+                    output.emplace(
+                        std::move(key),
+                        value);
+                }
+            }
+
+            const std::uint32_t left =
+                mem.Read32Guest(
+                    node + 8u);
+            const std::uint32_t right =
+                mem.Read32Guest(
+                    node + 12u);
+
+            if (left != 0u &&
+                left != header) {
+                stack.push_back(left);
+            }
+
+            if (right != 0u &&
+                right != header) {
+                stack.push_back(right);
+            }
+        }
+    }
+
+    std::uint32_t FindResourceInfoInTree(
+        std::uint32_t tree,
+        const std::string& wanted) {
+
+        std::unordered_map<
+            std::string,
+            std::uint32_t> indexed;
+
+        IndexResourceInfoTree(
+            tree,
+            indexed);
+
+        const auto it =
+            indexed.find(
+                NormalizeResourceRegistryKey(
+                    wanted));
+
+        return
+            it == indexed.end()
+                ? 0u
+                : it->second;
+    }
+
+    void EnsureManagerResourceIdIndex(
+        std::uint32_t manager) {
+
+        if (resource_id_index_manager ==
+            manager) {
+            return;
+        }
+
+        resource_id_index_manager =
+            manager;
+        resource_id_index.clear();
+
+        if (manager == 0u ||
+            mem.Ptr(
+                manager,
+                12u) == nullptr) {
+            return;
+        }
+
+        const std::uint32_t begin =
+            mem.Read32Guest(
+                manager + 4u);
+        const std::uint32_t end =
+            mem.Read32Guest(
+                manager + 8u);
+
+        if (begin == 0u ||
+            end < begin ||
+            ((end - begin) & 3u) != 0u ||
+            end - begin >
+                4096u * 4u ||
+            mem.Ptr(
+                begin,
+                static_cast<std::size_t>(
+                    end - begin)) == nullptr) {
+            return;
+        }
+
+        for (std::uint32_t cursor = begin;
+             cursor < end;
+             cursor += 4u) {
+
+            const std::uint32_t group =
+                mem.Read32Guest(
+                    cursor);
+
+            if (group == 0u ||
+                mem.Ptr(
+                    group,
+                    68u) == nullptr) {
+                continue;
+            }
+
+            IndexResourceInfoTree(
+                group + 56u,
+                resource_id_index);
+        }
+
+        Append(
+            "V35 RESOURCE-ID MAP SNAPSHOT: manager=0x" +
+            JniProbeHex(manager) +
+            " keys=" +
+            std::to_string(
+                resource_id_index.size()));
+    }
+
+    void EnsureManagerResourcePathIndex(
+        std::uint32_t manager) {
+
+        if (resource_path_index_manager ==
+            manager) {
+            return;
+        }
+
+        resource_path_index_manager =
+            manager;
+        resource_path_index.clear();
+
+        if (manager == 0u ||
+            mem.Ptr(
+                manager + 40u,
+                12u) == nullptr) {
+            return;
+        }
+
+        IndexResourceInfoTree(
+            manager + 40u,
+            resource_path_index);
+
+        result.resource_path_index_entries =
+            static_cast<std::uint32_t>(
+                resource_path_index.size());
+
+        Append(
+            "V35 RESOURCE-PATH MAP SNAPSHOT: manager=0x" +
+            JniProbeHex(manager) +
+            " keys=" +
+            std::to_string(
+                resource_path_index.size()));
+    }
+
+    std::uint32_t FindResourceInfoByPhysicalPath(
+        std::uint32_t manager,
+        const std::string& physical) {
+
+        EnsureManagerResourcePathIndex(
+            manager);
+
+        const std::string wanted =
+            NormalizeResourceRegistryKey(
+                physical);
+
+        if (const auto exact =
+                resource_path_index.find(
+                    wanted);
+            exact !=
+                resource_path_index.end()) {
+            return exact->second;
+        }
+
+        // Some ResourceManager builds prefix paths with a root directory.
+        // Accept a suffix only when it uniquely identifies one ResourceInfo.
+        std::uint32_t unique = 0u;
+
+        for (const auto& entry :
+             resource_path_index) {
+
+            if (entry.first.size() <
+                wanted.size()) {
+                continue;
+            }
+
+            const std::size_t offset =
+                entry.first.size() -
+                wanted.size();
+
+            if (entry.first.compare(
+                    offset,
+                    wanted.size(),
+                    wanted) != 0) {
+                continue;
+            }
+
+            if (offset != 0u &&
+                entry.first[offset - 1u] != '/') {
+                continue;
+            }
+
+            if (unique != 0u &&
+                unique != entry.second) {
+                return 0u;
+            }
+
+            unique = entry.second;
+        }
+
+        return unique;
+    }
+
+    std::uint32_t ResolveResourceRegistryLookup(
+        std::uint32_t manager,
+        std::uint32_t group,
+        std::uint32_t id_object) {
+
+        const std::string id =
+            ReadGuestStdStringObject(
+                id_object);
+
+        ++result.resource_registry_lookup_calls;
+
+        if (id.empty()) {
+            ++result.resource_registry_misses;
+            return 0u;
+        }
+
+        std::uint32_t direct = 0u;
+
+        if (group != 0u &&
+            mem.Ptr(
+                group,
+                68u) != nullptr) {
+
+            direct =
+                FindResourceInfoInTree(
+                    group + 56u,
+                    id);
+        } else {
+            EnsureManagerResourceIdIndex(
+                manager);
+
+            const auto it =
+                resource_id_index.find(
+                    NormalizeResourceRegistryKey(
+                        id));
+
+            if (it !=
+                resource_id_index.end()) {
+                direct = it->second;
+            }
+        }
+
+        if (direct != 0u) {
+            ++result.resource_registry_direct_hits;
+
+            if (result.resource_registry_direct_hits <=
+                6u) {
+                Append(
+                    "V35 RESOURCE-ID DIRECT HIT "" +
+                    id +
+                    "" -> 0x" +
+                    JniProbeHex(direct));
+            }
+
+            return direct;
+        }
+
+        const auto physical =
+            FindOuterRsbPathForResourceId(
+                id);
+
+        if (physical.has_value()) {
+            const std::uint32_t by_path =
+                FindResourceInfoByPhysicalPath(
+                    manager,
+                    *physical);
+
+            if (by_path != 0u) {
+                ++result
+                    .resource_registry_path_fallback_hits;
+
+                if (resource_registry_logged_ids
+                        .insert(id)
+                        .second) {
+                    Append(
+                        "V35 RESOURCE REGISTRY FALLBACK "" +
+                        id +
+                        "" -> "" +
+                        *physical +
+                        "" -> ResourceInfo*=0x" +
+                        JniProbeHex(by_path));
+                }
+
+                return by_path;
+            }
+
+            if (resource_registry_logged_ids
+                    .insert(id)
+                    .second) {
+                Append(
+                    "V35 RESOURCE REGISTRY PATH MISS "" +
+                    id +
+                    "" -> "" +
+                    *physical +
+                    ""; global path map contains " +
+                    std::to_string(
+                        resource_path_index.size()) +
+                    " key(s).");
+            }
+        } else if (
+            resource_registry_logged_ids
+                .insert(id)
+                .second) {
+
+            Append(
+                "V35 RESOURCE REGISTRY OUTER MISS "" +
+                id +
+                ""; no unique RTON member maps to this identifier.");
+        }
+
+        ++result.resource_registry_misses;
+        return 0u;
     }
 
     const SyntheticAsset*
@@ -3410,6 +4084,25 @@ public:
                         next32,
                         next64);
             };
+
+        if (swi ==
+            kJniProbeSvcResourceRegistryLookup) {
+
+            const std::uint32_t manager =
+                regs[0];
+            const std::uint32_t group =
+                regs[1];
+            const std::uint32_t id_object =
+                regs[2];
+
+            regs[0] =
+                ResolveResourceRegistryLookup(
+                    manager,
+                    group,
+                    id_object);
+
+            return;
+        }
 
         if (swi == kJniProbeSvcGetEnv) {
             const std::uint32_t output_address = regs[1];
@@ -11947,6 +12640,49 @@ bool JniProbePrepareRuntime(
             ++result.imports_patched;
         }
     }
+
+    // v35: GenericResFileRes performs its ID lookup through
+    // 0x86f66c at two ARM call sites inside the exact 1.5.252752 binary.
+    // Replace only those BL instructions with an inline SVC. Because SVC
+    // resumes at the following instruction, caller control flow remains
+    // byte-for-byte equivalent to a returned function call, while the host
+    // can preserve exact-ID lookups and add a physical-RSB-path fallback.
+    auto patch_resource_registry_call =
+        [&](std::uint32_t offset,
+            std::uint32_t expected) {
+
+            if (offset + 4u >
+                    memory.image.size() ||
+                Read32(
+                    memory.image.data() +
+                    offset) != expected) {
+                return false;
+            }
+
+            Write32(
+                memory.image.data() +
+                    offset,
+                0xEF000000u |
+                (kJniProbeSvcResourceRegistryLookup &
+                 0x00ffffffu));
+
+            return true;
+        };
+
+    if (!patch_resource_registry_call(
+            0x0087a704u,
+            0xebffd3d8u) ||
+        !patch_resource_registry_call(
+            0x0087a758u,
+            0xebffd3c3u)) {
+
+        error =
+            "v35 resource-registry callsite profile did not match the verified PvZ2 1.5.252752 ARM code.";
+        return false;
+    }
+
+    callbacks.Append(
+        "V35 RESOURCE REGISTRY BRIDGE: patched GenericResFileRes ID lookup callsites 0x1087a704 and 0x1087a758.");
 
     return_trampoline =
         JniProbeMakeTrampoline(
