@@ -86,4 +86,6 @@ PvZ2JniProbeResult RunPvZ2JniOnLoadProbe(
 PvZ2JniProbeResult RunPvZ2FullLoadProbe(
     const std::uint8_t* apk_data,
     std::size_t apk_size,
+    const std::uint8_t* obb_data,
+    std::size_t obb_size,
     PvZ2ProbeProgress progress = {});
