@@ -688,13 +688,13 @@ PvZ2HostGLESCapturePNGNamed(
             ? [NSString
                 stringWithUTF8String:
                     file_name]
-            : @"pvz2-v46-frame.png";
+            : @"pvz2-v47-frame.png";
 
     if (safe_name.length == 0 ||
         [safe_name containsString:@"/"] ||
         [safe_name containsString:@"\\"]) {
         safe_name =
-            @"pvz2-v46-frame.png";
+            @"pvz2-v47-frame.png";
     }
 
     NSURL *target =
@@ -720,7 +720,7 @@ extern "C" const char*
 PvZ2HostGLESCapturePNG(void) {
     return
         PvZ2HostGLESCapturePNGNamed(
-            "pvz2-v46-final-frame.png");
+            "pvz2-v47-final-frame.png");
 }
 
 extern "C" void PvZ2HostGLESEnd(void) {
