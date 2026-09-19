@@ -65,6 +65,11 @@ struct PvZ2JniProbeResult {
 
     bool rsb_manifest_resolved = false;
     std::uint32_t rsb_resolved_files = 0;
+    std::uint32_t resource_registry_lookup_calls = 0;
+    std::uint32_t resource_registry_direct_hits = 0;
+    std::uint32_t resource_registry_path_fallback_hits = 0;
+    std::uint32_t resource_registry_misses = 0;
+    std::uint32_t resource_path_index_entries = 0;
     std::uint64_t malloc_calls = 0;
     std::uint64_t free_calls = 0;
     std::uint64_t realloc_calls = 0;
