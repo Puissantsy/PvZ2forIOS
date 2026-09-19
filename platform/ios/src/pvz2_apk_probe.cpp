@@ -1360,7 +1360,12 @@ public:
         }
 
         const std::string line =
-            "[" + kind + "] " + detail;
+            std::string{
+                sweep_speculative
+                    ? "[speculative] "
+                    : "[observed] "} +
+            "[" + kind + "] " +
+            detail;
 
         sweep_issues.push_back(line);
 
@@ -2684,6 +2689,12 @@ public:
             result.message =
                 "Unknown guest SVC 0x" +
                 JniProbeHex(swi);
+
+            RecordSweepIssue(
+                "hard-svc",
+                JniProbeHex(swi),
+                result.message);
+
             jit->HaltExecution(
                 Dynarmic::HaltReason::UserDefined4);
             return;
@@ -2735,14 +2746,24 @@ public:
                     regs[2],
                     512);
 
-            Append(
-                "import __android_log_assert condition=\"" +
+            const std::string assertion =
+                "__android_log_assert condition=\"" +
                 condition +
                 "\" tag=\"" +
                 tag +
                 "\" format=\"" +
                 format +
-                "\" (suppressed during probe)");
+                "\"";
+
+            Append(
+                "import " +
+                assertion +
+                " (suppressed during probe)");
+
+            RecordSweepIssue(
+                "android-assert",
+                condition + ":" + format,
+                assertion);
 
             regs[0] = 0;
             ++supported_calls;
