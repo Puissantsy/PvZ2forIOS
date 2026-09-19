@@ -9190,8 +9190,13 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             1000000ull;
                         constexpr std::uint64_t kWorkerSliceTicks =
                             750000ull;
+                        // v26 proved that onSurfaceCreated can still be doing
+                        // real CPU/resource work after 200M main-thread ticks.
+                        // Keep a large absolute safety ceiling, but report
+                        // concrete progress instead of treating 200M as a
+                        // deadlock by itself.
                         constexpr std::uint64_t kLifecycleTotalBudget =
-                            200000000ull;
+                            2000000000ull;
                         constexpr std::uint32_t kWorkerStackSize =
                             64u * 1024u;
 
@@ -9326,34 +9331,76 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             const char* current_wait_kind =
                                 wait_kind(result.final_pc);
 
+                            const bool concrete_wait =
+                                std::strcmp(
+                                    current_wait_kind,
+                                    "timeslice") != 0;
+
                             const std::uint32_t future =
-                                wait_object_for_pc(
-                                    result.final_pc);
+                                concrete_wait
+                                    ? wait_object_for_pc(
+                                          result.final_pc)
+                                    : 0u;
 
                             std::array<std::uint8_t, 64> future_before{};
-                            for (std::size_t bi = 0;
-                                 bi < future_before.size();
-                                 ++bi) {
-                                future_before[bi] =
-                                    memory.Read8(
-                                        future +
-                                        static_cast<std::uint32_t>(bi));
+                            if (concrete_wait &&
+                                future != 0u) {
+                                for (std::size_t bi = 0;
+                                     bi < future_before.size();
+                                     ++bi) {
+                                    future_before[bi] =
+                                        memory.Read8(
+                                            future +
+                                            static_cast<std::uint32_t>(bi));
+                                }
                             }
 
-                            callbacks.Append(
-                                "V22 SCHED ROUND " +
-                                std::to_string(async_round) +
-                                ": kind=" +
-                                current_wait_kind +
-                                " main PC=0x" +
-                                JniProbeHex(
-                                    result.final_pc) +
-                                " wait_object{" +
-                                async_future_snapshot(
-                                    future) +
-                                "} workers=" +
-                                std::to_string(
-                                    callbacks.deferred_threads.size()));
+                            if (concrete_wait) {
+                                callbacks.Append(
+                                    "V27 SCHED ROUND " +
+                                    std::to_string(async_round) +
+                                    ": kind=" +
+                                    current_wait_kind +
+                                    " main PC=0x" +
+                                    JniProbeHex(
+                                        result.final_pc) +
+                                    " wait_object{" +
+                                    async_future_snapshot(
+                                        future) +
+                                    "} workers=" +
+                                    std::to_string(
+                                        callbacks.deferred_threads.size()));
+                            } else if (async_round <= 8u ||
+                                       (async_round % 50u) == 0u) {
+                                callbacks.Append(
+                                    "V27 CPU PROGRESS round=" +
+                                    std::to_string(async_round) +
+                                    " main PC=0x" +
+                                    JniProbeHex(
+                                        result.final_pc) +
+                                    " r0=0x" +
+                                    JniProbeHex(jit.Regs()[0]) +
+                                    " r4=0x" +
+                                    JniProbeHex(jit.Regs()[4]) +
+                                    " r5=0x" +
+                                    JniProbeHex(jit.Regs()[5]) +
+                                    " r6=0x" +
+                                    JniProbeHex(jit.Regs()[6]) +
+                                    " r7=0x" +
+                                    JniProbeHex(jit.Regs()[7]) +
+                                    " heapHighWater=" +
+                                    std::to_string(
+                                        memory.HeapHighWater()) +
+                                    " heapLive=" +
+                                    std::to_string(
+                                        memory.HeapLiveBytes()) +
+                                    " supportedCalls=" +
+                                    std::to_string(
+                                        callbacks.supported_calls) +
+                                    " workers=" +
+                                    std::to_string(
+                                        callbacks.deferred_threads.size()));
+                            }
 
                             const auto main_regs =
                                 jit.Regs();
@@ -9547,15 +9594,19 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                         : "NO"));
 
                                 bool object_changed = false;
-                                for (std::size_t bi = 0;
-                                     bi < future_before.size();
-                                     ++bi) {
-                                    if (memory.Read8(
-                                            future +
-                                            static_cast<std::uint32_t>(bi)) !=
-                                        future_before[bi]) {
-                                        object_changed = true;
-                                        break;
+
+                                if (concrete_wait &&
+                                    future != 0u) {
+                                    for (std::size_t bi = 0;
+                                         bi < future_before.size();
+                                         ++bi) {
+                                        if (memory.Read8(
+                                                future +
+                                                static_cast<std::uint32_t>(bi)) !=
+                                            future_before[bi]) {
+                                            object_changed = true;
+                                            break;
+                                        }
                                     }
                                 }
 
@@ -9563,7 +9614,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                     future_changed = true;
 
                                     callbacks.Append(
-                                        "V22 WAIT OBJECT PROGRESS by tid=" +
+                                        "V27 WAIT OBJECT PROGRESS by tid=" +
                                         std::to_string(
                                             worker_state.id) +
                                         ": " +
@@ -9595,26 +9646,35 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             callbacks.soft_slice_timeout = true;
 
                             if (!any_worker_ran) {
-                                callbacks.soft_slice_timeout = false;
-                                result.lifecycle_failure_name =
-                                    name;
-                                result.message =
-                                    "v22 has no runnable deferred guest worker remaining. " +
-                                    async_future_snapshot(
-                                        future);
-                                callbacks.Append(
-                                    "V22 SCHEDULER STOP: " +
-                                    result.message);
-                                result.trace =
-                                    callbacks.Trace();
-                                return false;
+                                if (concrete_wait) {
+                                    callbacks.soft_slice_timeout = false;
+                                    result.lifecycle_failure_name =
+                                        name;
+                                    result.message =
+                                        "v27 reached a concrete async wait with no runnable deferred guest worker. " +
+                                        async_future_snapshot(
+                                            future);
+                                    callbacks.Append(
+                                        "V27 SCHEDULER STOP: " +
+                                        result.message);
+                                    result.trace =
+                                        callbacks.Trace();
+                                    return false;
+                                }
+
+                                // A plain CPU timeslice is not an async wait.
+                                // If background workers have completed, the
+                                // main guest thread is still allowed to keep
+                                // executing normally.
+                                continue;
                             }
 
-                            if (!future_changed) {
+                            if (concrete_wait &&
+                                !future_changed) {
                                 callbacks.Append(
-                                    "V22 SCHED ROUND " +
+                                    "V27 SCHED ROUND " +
                                     std::to_string(async_round) +
-                                    ": future unchanged after one persistent worker slice; main thread will receive another slice before retrying.");
+                                    ": wait object unchanged after one persistent worker slice; main thread will receive another slice before retrying.");
                             }
                         }
 
@@ -9627,19 +9687,32 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                         std::ostringstream timeout;
                         timeout
                             << name
-                            << " exceeded v22 cooperative lifecycle budget at PC=0x"
+                            << " exceeded the v27 2B-tick safety ceiling at PC=0x"
                             << JniProbeHex(jit.Regs()[15])
                             << " after "
                             << lifecycle_ticks
                             << " main-thread ticks and "
                             << async_round
-                            << " async scheduling rounds.";
+                            << " scheduling rounds"
+                            << "; r4=0x"
+                            << JniProbeHex(jit.Regs()[4])
+                            << " r5=0x"
+                            << JniProbeHex(jit.Regs()[5])
+                            << " r6=0x"
+                            << JniProbeHex(jit.Regs()[6])
+                            << " heapHighWater="
+                            << memory.HeapHighWater()
+                            << " heapLive="
+                            << memory.HeapLiveBytes()
+                            << " supportedCalls="
+                            << callbacks.supported_calls
+                            << ".";
 
                         result.message =
                             timeout.str();
 
                         callbacks.Append(
-                            "V22 SCHEDULER TIMEOUT: " +
+                            "V27 SCHEDULER TIMEOUT: " +
                             result.message);
 
                         result.trace =
