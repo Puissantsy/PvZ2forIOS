@@ -234,7 +234,7 @@ NSString *NSStringFromStd(
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — OBB I/O Probe v19";
+        @"PvZ2forIOS — Async Worker Probe v20";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -243,7 +243,7 @@ NSString *NSStringFromStd(
         NO;
 
     title.text =
-        @"PvZ2forIOS — OBB I/O probe v19";
+        @"PvZ2forIOS — async worker probe v20";
 
     title.font =
         [UIFont
@@ -259,8 +259,8 @@ NSString *NSStringFromStd(
         NO;
 
     explanation.text =
-        @"v17 localized the first lifecycle stall to an async file future. v18 proved the next missing subsystem is the Android expansion/file path. "
-         @"v19 adds the first real resource bridge: select the original APK and its matching OBB together. FrameworkInfo_SysGetMainExpansionFilePath now returns the Android-style expansion path, while fopen/open/fread/read/fseek/lseek/stat/fstat/access serve the selected 1bsr OBB bytes directly inside the iOS sandbox. Deferred pthread workers are still probed at the exact EINPROGRESS stall. GLES remains probe/no-op.";
+        @"v19 proved the Android expansion bridge is now reached for real: PvZ2 successfully opens ASSET:main.pak against the selected 170 MB OBB, then stalls in the sibling async-future poll before any OBB read occurs. "
+         @"v20 expands the verified poll range, records up to 64 deferred pthread candidates, gives each a real synthetic pthread_self id, and executes bounded ARM32 worker probes to identify which background worker consumes the queued resource request. The OBB VFS remains active; GLES remains probe/no-op.";
 
     explanation.numberOfLines = 0;
 
@@ -437,7 +437,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 OBB-I/O probe v19 session started; PID=%d ===",
+                    @"=== PvZ2 async-worker probe v20 session started; PID=%d ===",
                     getpid()]];
 
     [self
@@ -756,7 +756,7 @@ NSString *NSStringFromStd(
 
     [self
         appendUI:
-            @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v19 serves the OBB through a real in-memory Android/POSIX file bridge, then probes the deferred ARM32 workers at the exact async-file stall."];
+            @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v20 reproduces the verified ASSET:main.pak open, then probes every recorded deferred ARM32 worker candidate at the async-future stall to find the background file worker."];
 
     [self
         presentViewController:
