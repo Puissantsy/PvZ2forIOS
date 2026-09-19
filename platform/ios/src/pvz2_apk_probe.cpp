@@ -15318,15 +15318,23 @@ bool JniProbePrepareRuntime(
         !patch_resource_native_miss(
             0x0086fa84u,
             0xe59a0014u,
-            kJniProbeSvcResourceRegistryGlobalValue)) {
+            kJniProbeSvcResourceRegistryGlobalValue) ||
+        !patch_resource_native_miss(
+            0x0087a708u,
+            0xea000018u,
+            kJniProbeSvcResourceWrapperDirectReturn) ||
+        !patch_resource_native_miss(
+            0x0087a76cu,
+            0xe3a00000u,
+            kJniProbeSvcResourceWrapperExhausted)) {
 
         error =
-            "v45 resource-entry/group-null/global-null/miss profile did not match the verified PvZ2 1.5.252752 ARM code.";
+            "v48 resource-entry/internal-return/wrapper-return profile did not match the verified PvZ2 1.5.252752 ARM code.";
         return false;
     }
 
     callbacks.Append(
-        "V45 RESFILE GLOBAL-VALUE BRIDGE: exact ID captured at 0x1086f674; group return 0x1086f8a0 and global found-node return 0x1086fa84 are value-aware; true global misses remain trapped at 0x1086fa78.");
+        "V48 RESFILE WRAPPER-FINAL BRIDGE: v45 internal hooks preserved; direct-group null returns are observed at 0x1087a708 and all-groups-exhausted nulls at 0x1087a76c with the exact wrapper ID still in r6.");
 
     return_trampoline =
         JniProbeMakeTrampoline(
@@ -17584,7 +17592,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                         if (non_black > best_non_black) {
                             const char* best =
                                 PvZ2HostGLESCapturePNGNamed(
-                                    "pvz2-v47-best-frame.png");
+                                    "pvz2-v48-best-frame.png");
 
                             if (best != nullptr &&
                                 *best != '\0') {
@@ -17600,7 +17608,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                     best;
 
                                 callbacks.Append(
-                                    "V47 BEST FRAME: #" +
+                                    "V48 BEST FRAME: #" +
                                     std::to_string(
                                         best_frame) +
                                     " nonBlack=" +
@@ -17621,7 +17629,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
 
                             const char* post_ea =
                                 PvZ2HostGLESCapturePNGNamed(
-                                    "pvz2-v47-post-ea-best.png");
+                                    "pvz2-v48-post-ea-best.png");
 
                             if (post_ea != nullptr &&
                                 *post_ea != '\0') {
@@ -17664,11 +17672,11 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                 if (callbacks.host_gles_ready) {
                     const char* final_capture =
                         PvZ2HostGLESCapturePNGNamed(
-                            "pvz2-v47-final-frame.png");
+                            "pvz2-v48-final-frame.png");
 
                     callbacks.Append(
                         std::string{
-                            "V47 FINAL GLES CAPTURE: "} +
+                            "V48 FINAL GLES CAPTURE: "} +
                         (final_capture != nullptr &&
                          *final_capture != '\0'
                             ? final_capture
@@ -17683,7 +17691,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                 }
 
                 callbacks.Append(
-                    "V47 BEST FRAME SUMMARY: frame=" +
+                    "V48 BEST FRAME SUMMARY: frame=" +
                     std::to_string(
                         best_frame) +
                     " nonBlack=" +
@@ -17697,7 +17705,16 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                         post_ea_best_non_black) +
                     " | boundaryWorkerSlices=" +
                     std::to_string(
-                        boundary_worker_slices));
+                        boundary_worker_slices) +
+                    " | wrapperDirectNulls=" +
+                    std::to_string(
+                        callbacks.resource_wrapper_direct_nulls) +
+                    " wrapperExhaustedNulls=" +
+                    std::to_string(
+                        callbacks.resource_wrapper_exhausted_nulls) +
+                    " wrapperRecoveries=" +
+                    std::to_string(
+                        callbacks.resource_wrapper_recoveries));
 
                 if (!post_ea_best_path.empty()) {
                     result.host_frame_png_path =
