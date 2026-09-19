@@ -21,6 +21,12 @@ proprietary-assets/
 # Apple signing / device-private material
 *.mobileprovision
 *.p12
+*.pfx
+*.p8
+*.pem
+*.key
+*.jks
+*.keystore
 *.cer
 *.pairing
 *.mobiledevicepairing
@@ -38,6 +44,7 @@ dist/
 *.app
 *.dSYM
 *.dSYM.zip
+*.xcarchive
 
 # CMake / native build output
 CMakeCache.txt
