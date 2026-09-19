@@ -1209,10 +1209,14 @@ public:
     PvZ2JniCallbacks(
         JniProbeGuestMemory& memory,
         PvZ2JniProbeResult& output,
-        PvZ2ProbeProgress progress = {})
+        PvZ2ProbeProgress progress = {},
+        const std::uint8_t* expansion_data = nullptr,
+        std::size_t expansion_size = 0)
         : mem(memory),
           result(output),
-          progress_callback(std::move(progress)) {}
+          progress_callback(std::move(progress)),
+          obb_data(expansion_data),
+          obb_size(expansion_size) {}
 
     Dynarmic::A32::Jit* jit = nullptr;
     std::unordered_map<std::uint32_t, JniProbeImportBinding>
@@ -1250,8 +1254,19 @@ public:
     std::uint32_t next_synthetic_method = 1;
     std::uint32_t next_synthetic_field = 1;
     std::uint32_t next_synthetic_object = 1;
+    struct ProbeObbHandle {
+        std::uint64_t offset = 0;
+        bool eof = false;
+    };
+
     std::uint32_t next_gl_object = 1;
     std::uint32_t guest_errno_address = 0;
+    const std::uint8_t* obb_data = nullptr;
+    std::size_t obb_size = 0;
+    std::uint32_t next_probe_fd = 0x00004000u;
+    std::uint32_t next_probe_file = 0xf1000000u;
+    std::unordered_map<std::uint32_t, ProbeObbHandle> obb_fds;
+    std::unordered_map<std::uint32_t, ProbeObbHandle> obb_files;
     std::unordered_set<std::string> fallback_logged;
     std::unordered_map<std::uint32_t, std::uint32_t> pthread_specific;
     std::unordered_map<std::uint32_t, std::string> jni_method_names;
@@ -6065,6 +6080,8 @@ PvZ2JniProbeResult RunPvZ2JniOnLoadProbe(
 PvZ2JniProbeResult RunPvZ2FullLoadProbe(
     const std::uint8_t* apk_data,
     std::size_t apk_size,
+    const std::uint8_t* obb_data,
+    std::size_t obb_size,
     PvZ2ProbeProgress progress) {
 
     PvZ2JniProbeResult result;
@@ -6113,7 +6130,9 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
         PvZ2JniCallbacks callbacks(
             memory,
             result,
-            std::move(progress));
+            std::move(progress),
+            obb_data,
+            obb_size);
 
         std::uint32_t return_trampoline = 0;
 
