@@ -1787,26 +1787,51 @@ public:
 
                         regs[0] =
                             new_string(
-                                "/main.7.com.ea.game.pvz2_row.obb");
+                                "/storage/emulated/0/Android/obb/com.ea.game.pvz2_row/main.7.com.ea.game.pvz2_row.obb");
 
                         Append(
-                            "JNI bridge: FrameworkInfo_SysGetMainExpansionFilePath -> /main.7.com.ea.game.pvz2_row.obb");
+                            "JNI bridge: FrameworkInfo_SysGetMainExpansionFilePath -> /storage/emulated/0/Android/obb/com.ea.game.pvz2_row/main.7.com.ea.game.pvz2_row.obb");
+                        return true;
+                    }
+
+                    if (family == 0 &&
+                        method_name ==
+                            "Resources_GetExternalStorageDirectory") {
+
+                        regs[0] =
+                            new_string(
+                                "/storage/emulated/0");
+                        Append(
+                            "JNI bridge: Resources_GetExternalStorageDirectory -> /storage/emulated/0");
+                        return true;
+                    }
+
+                    if (family == 0 &&
+                        (method_name == "Resources_GetResourceFolder" ||
+                         method_name == "Resources_GetUserDataFolder" ||
+                         method_name == "Resources_GetAppSupportDataFolder")) {
+
+                        regs[0] =
+                            new_string(
+                                "/data/data/com.ea.game.pvz2_row/files");
+                        Append(
+                            "JNI bridge: " +
+                            method_name +
+                            " -> /data/data/com.ea.game.pvz2_row/files");
                         return true;
                     }
 
                     if (family == 0 &&
                         (method_name == "Device_GetCachesDir" ||
-                         method_name == "Resources_GetResourceFolder" ||
-                         method_name == "Resources_GetUserDataFolder" ||
-                         method_name == "Resources_GetCacheDataFolder" ||
-                         method_name == "Resources_GetAppSupportDataFolder" ||
-                         method_name == "Resources_GetExternalStorageDirectory")) {
+                         method_name == "Resources_GetCacheDataFolder")) {
 
-                        regs[0] = new_string(".");
+                        regs[0] =
+                            new_string(
+                                "/data/data/com.ea.game.pvz2_row/cache");
                         Append(
                             "JNI bridge: " +
                             method_name +
-                            " -> .");
+                            " -> /data/data/com.ea.game.pvz2_row/cache");
                         return true;
                     }
 
@@ -5166,7 +5191,9 @@ public:
                                 std::tolower(ch));
                     });
 
-                if (base == "main.rsb") {
+                if (base == "main.rsb" ||
+                    base == "main.pak" ||
+                    base == "main.7.com.ea.game.pvz2_row.obb") {
                     return true;
                 }
 
