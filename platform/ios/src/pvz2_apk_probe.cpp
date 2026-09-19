@@ -1790,12 +1790,31 @@ public:
                 regs[0] = 0;
                 return;
 
-            case 18: // FatalError
+            case 18: { // FatalError
+                const std::string detail =
+                    "JNI FatalError reached at LR=0x" +
+                    JniProbeHex(
+                        jit ? jit->Regs()[14] : 0u);
+
+                RecordSweepIssue(
+                    "jni-fatal",
+                    JniProbeHex(
+                        jit ? jit->Regs()[14] : 0u),
+                    detail);
+
+                if (ConsumeSweepRecovery(
+                        "jni-fatal",
+                        detail)) {
+                    regs[0] = 0u;
+                    return;
+                }
+
                 result.message =
-                    "JNI FatalError reached during probe.";
+                    detail;
                 jit->HaltExecution(
                     Dynarmic::HaltReason::UserDefined2);
                 return;
+            }
 
             case 19: // PushLocalFrame
                 regs[0] = 0;
@@ -1976,6 +1995,16 @@ public:
                             return true;
                         }
                     }
+
+                    RecordSweepIssue(
+                        "jni-method-fallback",
+                        method_name + ":" +
+                            std::to_string(family),
+                        method_name +
+                            " sig=" +
+                            signature +
+                            " family=" +
+                            std::to_string(family));
 
                     // 0 Object, 1 boolean, 2 byte, 3 char, 4 short,
                     // 5 int, 6 long, 7 float, 8 double, 9 void.
@@ -2615,18 +2644,33 @@ public:
             }
 
             result.unsupported_jni_slot = slot;
-            result.message =
-                "JNIEnv slot outside v14 compatibility baseline: " +
+
+            const std::string unsupported_jni =
+                "JNIEnv slot outside compatibility baseline: " +
                 std::to_string(slot) +
                 " (table offset 0x" +
                 JniProbeHex(slot * 4u) +
+                ", LR=0x" +
+                JniProbeHex(
+                    jit ? jit->Regs()[14] : 0u) +
                 ").";
 
-            Append(
-                "UNSUPPORTED JNI: slot=" +
-                std::to_string(slot) +
-                " offset=0x" +
-                JniProbeHex(slot * 4u));
+            RecordSweepIssue(
+                "unsupported-jni",
+                std::to_string(slot),
+                unsupported_jni);
+
+            if (ConsumeSweepRecovery(
+                    "unsupported-jni",
+                    unsupported_jni)) {
+                regs[0] = 0u;
+                regs[1] = 0u;
+                ++supported_calls;
+                return;
+            }
+
+            result.message =
+                unsupported_jni;
 
             jit->HaltExecution(
                 Dynarmic::HaltReason::UserDefined2);
@@ -5228,6 +5272,20 @@ public:
                 "\" text=\"" +
                 text +
                 "\"");
+
+            const std::size_t missing_resource =
+                text.find(
+                    "resource not found:");
+
+            if (missing_resource !=
+                std::string::npos) {
+                RecordSweepIssue(
+                    "missing-resource",
+                    text.substr(
+                        missing_resource),
+                    text);
+            }
+
             return;
         }
 
@@ -5235,6 +5293,11 @@ public:
             result.first_unsupported_import = name;
             result.message =
                 "PvZ2 triggered __stack_chk_fail.";
+
+            RecordSweepIssue(
+                "hard-fault",
+                "__stack_chk_fail",
+                result.message);
 
             jit->HaltExecution(
                 Dynarmic::HaltReason::UserDefined2);
