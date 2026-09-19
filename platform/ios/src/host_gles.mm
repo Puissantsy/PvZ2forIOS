@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <string>
 #include <vector>
 
 namespace {
@@ -20,6 +21,7 @@ GLuint gDepthRenderbuffer = 0;
 std::uint32_t gWidth = 0;
 std::uint32_t gHeight = 0;
 NSString *gCapturePath = nil;
+std::string gFrameStats;
 
 void DestroySurface() {
     if (gContext != nil) {
