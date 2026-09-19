@@ -1592,6 +1592,41 @@ public:
     GLuint gles_current_program = 0u;
     std::unordered_map<std::uint64_t, std::string>
         gles_uniform_names;
+
+    // v42: the splash shaders do not use a color uniform; they multiply
+    // texture samples by the per-vertex "color" attribute. Track the real
+    // client-array state so the dark-splash factor can be observed and, only
+    // for the detected 1024x1024 startup atlas, normalized relative to the
+    // first stable tint rather than globally patching rendering.
+    struct V42AttribState {
+        GLint size = 0;
+        GLenum type = 0u;
+        GLboolean normalized = GL_FALSE;
+        GLsizei stride = 0;
+        std::uint32_t guest_pointer = 0u;
+        bool enabled = false;
+    };
+
+    struct V42TextureInfo {
+        GLsizei width = 0;
+        GLsizei height = 0;
+        GLenum format = 0u;
+        GLenum type = 0u;
+        bool has_pixels = false;
+    };
+
+    std::array<V42AttribState, 16> gles_attrib_state{};
+    std::unordered_map<std::uint64_t, std::string>
+        gles_attrib_names;
+    GLenum gles_active_texture_unit = GL_TEXTURE0;
+    std::array<GLuint, 8> gles_bound_texture_2d{};
+    std::unordered_map<GLuint, V42TextureInfo>
+        gles_texture_info;
+    GLuint gles_splash_texture_candidate = 0u;
+    std::uint32_t gles_splash_color_baseline = 0u;
+    std::uint64_t gles_vertex_color_traces = 0u;
+    std::uint64_t gles_splash_color_corrections = 0u;
+
     std::uint64_t gles_viewport_calls = 0;
     std::uint64_t gles_scissor_calls = 0;
     bool gles_viewport_seen = false;
@@ -1619,6 +1654,8 @@ public:
     std::uint32_t resource_native_miss_diagnostics = 0u;
     std::size_t resource_id_index_last_logged_entries =
         std::numeric_limits<std::size_t>::max();
+    std::uint32_t resource_live_id_recoveries = 0u;
+    std::uint32_t resource_group_key_diagnostics = 0u;
 
     static constexpr std::uint32_t kSweepRecoveryLimit = 48u;
     std::uint32_t sweep_recoveries = 0;
@@ -2661,7 +2698,152 @@ public:
             unique = entry.second;
         }
 
-        return unique;
+        if (unique != 0u) {
+            return unique;
+        }
+
+        // v42: 0x1086f66c itself proves that ResourceManager's group vector
+        // lives at +4/+8 and each group's ResourceInfo rb-tree lives at +56.
+        // If the guessed global path map is empty, search those real native
+        // group trees for the physical RSB member (exact/suffix/basename)
+        // before giving up. This still returns only PvZ2-owned ResourceInfo*.
+        EnsureManagerResourceIdIndex(
+            manager);
+
+        if (!resource_id_index.empty()) {
+            const auto exact =
+                resource_id_index.find(
+                    wanted);
+
+            if (exact !=
+                resource_id_index.end()) {
+                Append(
+                    "V42 GROUP-TREE PHYSICAL HIT exact=\"" +
+                    wanted +
+                    "\" -> 0x" +
+                    JniProbeHex(
+                        exact->second));
+                return exact->second;
+            }
+
+            const std::size_t slash =
+                wanted.find_last_of('/');
+            const std::string basename =
+                slash == std::string::npos
+                    ? wanted
+                    : wanted.substr(
+                          slash + 1u);
+
+            std::uint32_t basename_unique = 0u;
+            std::string basename_key;
+
+            for (const auto& entry :
+                 resource_id_index) {
+
+                bool matches = false;
+
+                if (entry.first.size() >=
+                    wanted.size()) {
+                    const std::size_t offset =
+                        entry.first.size() -
+                        wanted.size();
+
+                    matches =
+                        entry.first.compare(
+                            offset,
+                            wanted.size(),
+                            wanted) == 0 &&
+                        (offset == 0u ||
+                         entry.first[offset - 1u] == '/');
+                }
+
+                if (!matches &&
+                    !basename.empty() &&
+                    entry.first.size() >=
+                        basename.size()) {
+                    const std::size_t offset =
+                        entry.first.size() -
+                        basename.size();
+
+                    matches =
+                        entry.first.compare(
+                            offset,
+                            basename.size(),
+                            basename) == 0 &&
+                        (offset == 0u ||
+                         entry.first[offset - 1u] == '/' ||
+                         entry.first[offset - 1u] == '_');
+                }
+
+                if (!matches) {
+                    continue;
+                }
+
+                if (basename_unique != 0u &&
+                    basename_unique !=
+                        entry.second) {
+                    basename_unique = 0u;
+                    basename_key.clear();
+                    break;
+                }
+
+                basename_unique =
+                    entry.second;
+                basename_key =
+                    entry.first;
+            }
+
+            if (basename_unique != 0u) {
+                Append(
+                    "V42 GROUP-TREE PHYSICAL HIT key=\"" +
+                    basename_key +
+                    "\" wanted=\"" +
+                    wanted +
+                    "\" -> 0x" +
+                    JniProbeHex(
+                        basename_unique));
+                return basename_unique;
+            }
+
+            if (resource_group_key_diagnostics < 6u) {
+                ++resource_group_key_diagnostics;
+
+                std::ostringstream diagnostic;
+                diagnostic
+                    << "V42 GROUP-TREE KEYS #"
+                    << resource_group_key_diagnostics
+                    << " wanted=\""
+                    << wanted
+                    << "\" total="
+                    << resource_id_index.size()
+                    << " sample={";
+
+                std::size_t emitted = 0u;
+                for (const auto& entry :
+                     resource_id_index) {
+                    if (emitted >= 16u) {
+                        break;
+                    }
+
+                    if (emitted != 0u) {
+                        diagnostic << " | ";
+                    }
+
+                    diagnostic
+                        << entry.first
+                        << "=>0x"
+                        << JniProbeHex(
+                               entry.second);
+                    ++emitted;
+                }
+
+                diagnostic << "}";
+                Append(
+                    diagnostic.str());
+            }
+        }
+
+        return 0u;
     }
 
     std::uint32_t ResolveResourceRegistryLookup(
@@ -2782,13 +2964,24 @@ public:
         std::uint32_t manager,
         std::uint32_t group,
         std::uint32_t id_object,
-        const char* site) {
+        const char* site,
+        const std::string& recovered_id = {}) {
 
         ++result.resource_registry_lookup_calls;
 
-        const std::string id =
+        const std::string object_id =
             ReadGuestStdStringObject(
                 id_object);
+
+        std::string id =
+            object_id;
+
+        if (id.rfind(
+                "RESFILE_",
+                0u) != 0u &&
+            !recovered_id.empty()) {
+            id = recovered_id;
+        }
 
         const std::string normalized =
             NormalizeResourceRegistryKey(
@@ -2809,10 +3002,14 @@ public:
 
             std::ostringstream diagnostic;
             diagnostic
-                << "V41 RES MISS #"
+                << "V42 RES MISS #"
                 << resource_native_miss_diagnostics
                 << " id=\""
                 << normalized
+                << "\" objectID=\""
+                << object_id
+                << "\" recoveredID=\""
+                << recovered_id
                 << "\" site="
                 << (site != nullptr
                         ? site
@@ -2881,7 +3078,7 @@ public:
                             normalized);
 
                     Append(
-                        "V41 RES MAP CANDIDATE offset=+" +
+                        "V42 RES MAP CANDIDATE offset=+" +
                         std::to_string(offset) +
                         " keys=" +
                         std::to_string(
@@ -2933,7 +3130,7 @@ public:
                         "V41EXACT:" + normalized)
                     .second) {
                 Append(
-                    "V41 RESFILE EXACT FALLBACK " +
+                    "V42 RESFILE EXACT FALLBACK " +
                     normalized +
                     " -> ResourceInfo*=0x" +
                     JniProbeHex(direct) +
@@ -4408,6 +4605,129 @@ public:
                     ? regs[8] - 60u
                     : 0u;
 
+            auto readable_resfile =
+                [&](std::uint32_t address)
+                    -> std::string {
+
+                    if (address == 0u ||
+                        mem.Ptr(
+                            address,
+                            1u) == nullptr) {
+                        return {};
+                    }
+
+                    const std::string value =
+                        mem.ReadCStringGuest(
+                            address,
+                            256u);
+
+                    const std::string normalized =
+                        NormalizeResourceRegistryKey(
+                            value);
+
+                    return
+                        normalized.rfind(
+                            "RESFILE_",
+                            0u) == 0u
+                            ? normalized
+                            : std::string{};
+                };
+
+            auto recover_from_word =
+                [&](std::uint32_t word)
+                    -> std::string {
+
+                    // std::string object form.
+                    const std::string as_string =
+                        NormalizeResourceRegistryKey(
+                            ReadGuestStdStringObject(
+                                word));
+
+                    if (as_string.rfind(
+                            "RESFILE_",
+                            0u) == 0u) {
+                        return as_string;
+                    }
+
+                    // Direct C string form.
+                    if (const std::string direct =
+                            readable_resfile(
+                                word);
+                        !direct.empty()) {
+                        return direct;
+                    }
+
+                    // One level of indirection, matching the successful v33
+                    // post-failure diagnostic that found IDs in *r10/*stack.
+                    if (word != 0u &&
+                        mem.Ptr(
+                            word,
+                            4u) != nullptr) {
+                        return
+                            readable_resfile(
+                                mem.Read32Guest(
+                                    word));
+                    }
+
+                    return {};
+                };
+
+            std::string recovered_id;
+
+            // r4 is the original third argument to 0x1086f66c according to
+            // the verified ARM disassembly. Try it first, then scan the live
+            // preserved registers and stack as a robust fallback.
+            recovered_id =
+                recover_from_word(
+                    regs[4]);
+
+            if (recovered_id.empty()) {
+                for (std::uint32_t reg = 3u;
+                     reg <= 12u &&
+                     recovered_id.empty();
+                     ++reg) {
+                    recovered_id =
+                        recover_from_word(
+                            regs[reg]);
+                }
+            }
+
+            if (recovered_id.empty() &&
+                mem.Ptr(
+                    regs[13],
+                    32u * 4u) != nullptr) {
+                for (std::uint32_t slot = 0u;
+                     slot < 32u &&
+                     recovered_id.empty();
+                     ++slot) {
+                    recovered_id =
+                        recover_from_word(
+                            mem.Read32Guest(
+                                regs[13] +
+                                slot * 4u));
+                }
+            }
+
+            if (!recovered_id.empty() &&
+                resource_live_id_recoveries < 16u) {
+                ++resource_live_id_recoveries;
+
+                Append(
+                    "V42 LIVE RESFILE RECOVERY #" +
+                    std::to_string(
+                        resource_live_id_recoveries) +
+                    " site=" +
+                    (group_site
+                        ? std::string{"0x1086f8a0"}
+                        : std::string{"0x1086fa78"}) +
+                    " r4=0x" +
+                    JniProbeHex(
+                        regs[4]) +
+                    " id=\"" +
+                    recovered_id +
+                    "\"");
+            }
+
             regs[0] =
                 ResolveResourceRegistryNativeMiss(
                     manager,
@@ -4415,7 +4735,8 @@ public:
                     regs[4],
                     group_site
                         ? "0x1086f8a0"
-                        : "0x1086fa78");
+                        : "0x1086fa78",
+                    recovered_id);
 
             return;
         }
@@ -11443,12 +11764,37 @@ public:
                             guest_arg(2u),
                             4096u);
 
+                    const GLuint program =
+                        static_cast<GLuint>(
+                            guest_arg(0u));
+                    const GLuint index =
+                        static_cast<GLuint>(
+                            guest_arg(1u));
+
                     glBindAttribLocation(
-                        static_cast<GLuint>(
-                            guest_arg(0u)),
-                        static_cast<GLuint>(
-                            guest_arg(1u)),
+                        program,
+                        index,
                         attribute.c_str());
+
+                    if (index <
+                        gles_attrib_state.size()) {
+                        const std::uint64_t key =
+                            (static_cast<std::uint64_t>(
+                                 program) << 32u) |
+                            index;
+
+                        gles_attrib_names[key] =
+                            attribute;
+
+                        Append(
+                            "V42 GLES ATTRIB LOCATION program=" +
+                            std::to_string(program) +
+                            " index=" +
+                            std::to_string(index) +
+                            " name=\"" +
+                            attribute +
+                            "\"");
+                    }
 
                     regs[0] = 0u;
                 } else if (name == "glLinkProgram") {
@@ -11712,11 +12058,31 @@ public:
                         values);
                     regs[0] = 0u;
                 } else if (name == "glBindTexture") {
-                    glBindTexture(
+                    const GLenum target =
                         static_cast<GLenum>(
-                            guest_arg(0u)),
+                            guest_arg(0u));
+                    const GLuint texture =
                         static_cast<GLuint>(
-                            guest_arg(1u)));
+                            guest_arg(1u));
+
+                    if (target == GL_TEXTURE_2D &&
+                        gles_active_texture_unit >=
+                            GL_TEXTURE0) {
+                        const std::uint32_t unit =
+                            static_cast<std::uint32_t>(
+                                gles_active_texture_unit -
+                                GL_TEXTURE0);
+
+                        if (unit <
+                            gles_bound_texture_2d.size()) {
+                            gles_bound_texture_2d[unit] =
+                                texture;
+                        }
+                    }
+
+                    glBindTexture(
+                        target,
+                        texture);
                     regs[0] = 0u;
                 } else if (name == "glTexParameteri") {
                     glTexParameteri(
@@ -11873,6 +12239,133 @@ public:
                         }
 
                         Append(diagnostic.str());
+                    }
+
+                    GLuint bound_texture = 0u;
+
+                    if (gles_active_texture_unit >=
+                        GL_TEXTURE0) {
+                        const std::uint32_t unit =
+                            static_cast<std::uint32_t>(
+                                gles_active_texture_unit -
+                                GL_TEXTURE0);
+
+                        if (unit <
+                            gles_bound_texture_2d.size()) {
+                            bound_texture =
+                                gles_bound_texture_2d[unit];
+                        }
+                    }
+
+                    if (bound_texture != 0u) {
+                        gles_texture_info[
+                            bound_texture] =
+                            V42TextureInfo{
+                                width,
+                                height,
+                                format,
+                                type,
+                                pixels != nullptr};
+
+                        if (width == 1024 &&
+                            height == 1024 &&
+                            format == GL_RGBA &&
+                            type ==
+                                GL_UNSIGNED_SHORT_4_4_4_4 &&
+                            pixels != nullptr) {
+
+                            gles_splash_texture_candidate =
+                                bound_texture;
+
+                            const auto* packed =
+                                static_cast<
+                                    const std::uint16_t*>(
+                                        pixels);
+
+                            const std::size_t pixel_count =
+                                static_cast<std::size_t>(
+                                    width) *
+                                static_cast<std::size_t>(
+                                    height);
+
+                            std::uint64_t sum_r = 0u;
+                            std::uint64_t sum_g = 0u;
+                            std::uint64_t sum_b = 0u;
+                            std::uint64_t sum_a = 0u;
+                            std::uint64_t zero_a = 0u;
+                            std::uint64_t partial_a = 0u;
+                            std::uint64_t full_a = 0u;
+
+                            for (std::size_t i = 0u;
+                                 i < pixel_count;
+                                 ++i) {
+                                const std::uint16_t px =
+                                    packed[i];
+                                const std::uint8_t r =
+                                    static_cast<std::uint8_t>(
+                                        ((px >> 12u) &
+                                         0x0fu) *
+                                        17u);
+                                const std::uint8_t g =
+                                    static_cast<std::uint8_t>(
+                                        ((px >> 8u) &
+                                         0x0fu) *
+                                        17u);
+                                const std::uint8_t b =
+                                    static_cast<std::uint8_t>(
+                                        ((px >> 4u) &
+                                         0x0fu) *
+                                        17u);
+                                const std::uint8_t a =
+                                    static_cast<std::uint8_t>(
+                                        (px & 0x0fu) *
+                                        17u);
+
+                                sum_r += r;
+                                sum_g += g;
+                                sum_b += b;
+                                sum_a += a;
+
+                                if (a == 0u) {
+                                    ++zero_a;
+                                } else if (a == 255u) {
+                                    ++full_a;
+                                } else {
+                                    ++partial_a;
+                                }
+                            }
+
+                            Append(
+                                "V42 SPLASH TEXTURE CANDIDATE tex=" +
+                                std::to_string(
+                                    bound_texture) +
+                                " avgRGBA=(" +
+                                std::to_string(
+                                    sum_r /
+                                    pixel_count) +
+                                "," +
+                                std::to_string(
+                                    sum_g /
+                                    pixel_count) +
+                                "," +
+                                std::to_string(
+                                    sum_b /
+                                    pixel_count) +
+                                "," +
+                                std::to_string(
+                                    sum_a /
+                                    pixel_count) +
+                                ") alpha{0=" +
+                                std::to_string(
+                                    zero_a) +
+                                ",partial=" +
+                                std::to_string(
+                                    partial_a) +
+                                ",255=" +
+                                std::to_string(
+                                    full_a) +
+                                "}");
+                        }
                     }
 
                     glTexImage2D(
@@ -12233,24 +12726,60 @@ public:
                             guest_arg(3u)));
                     regs[0] = 0u;
                 } else if (name == "glActiveTexture") {
-                    glActiveTexture(
+                    gles_active_texture_unit =
                         static_cast<GLenum>(
-                            guest_arg(0u)));
+                            guest_arg(0u));
+
+                    glActiveTexture(
+                        gles_active_texture_unit);
                     regs[0] = 0u;
                 } else if (
                     name == "glEnableVertexAttribArray") {
-                    glEnableVertexAttribArray(
+                    const GLuint index =
                         static_cast<GLuint>(
-                            guest_arg(0u)));
+                            guest_arg(0u));
+
+                    if (index <
+                        gles_attrib_state.size()) {
+                        gles_attrib_state[index]
+                            .enabled = true;
+                    }
+
+                    glEnableVertexAttribArray(
+                        index);
                     regs[0] = 0u;
                 } else if (
                     name == "glDisableVertexAttribArray") {
-                    glDisableVertexAttribArray(
+                    const GLuint index =
                         static_cast<GLuint>(
-                            guest_arg(0u)));
+                            guest_arg(0u));
+
+                    if (index <
+                        gles_attrib_state.size()) {
+                        gles_attrib_state[index]
+                            .enabled = false;
+                    }
+
+                    glDisableVertexAttribArray(
+                        index);
                     regs[0] = 0u;
                 } else if (
                     name == "glVertexAttribPointer") {
+                    const GLuint index =
+                        static_cast<GLuint>(
+                            guest_arg(0u));
+                    const GLint size =
+                        static_cast<GLint>(
+                            guest_arg(1u));
+                    const GLenum type =
+                        static_cast<GLenum>(
+                            guest_arg(2u));
+                    const GLboolean normalized =
+                        static_cast<GLboolean>(
+                            guest_arg(3u));
+                    const GLsizei stride =
+                        static_cast<GLsizei>(
+                            guest_arg(4u));
                     const std::uint32_t pointer_address =
                         guest_arg(5u);
                     const void* pointer =
@@ -12260,28 +12789,285 @@ public:
                                   1u)
                             : nullptr;
 
+                    if (index <
+                        gles_attrib_state.size()) {
+                        auto& state =
+                            gles_attrib_state[index];
+
+                        state.size = size;
+                        state.type = type;
+                        state.normalized =
+                            normalized;
+                        state.stride = stride;
+                        state.guest_pointer =
+                            pointer_address;
+                    }
+
                     glVertexAttribPointer(
-                        static_cast<GLuint>(
-                            guest_arg(0u)),
-                        static_cast<GLint>(
-                            guest_arg(1u)),
-                        static_cast<GLenum>(
-                            guest_arg(2u)),
-                        static_cast<GLboolean>(
-                            guest_arg(3u)),
-                        static_cast<GLsizei>(
-                            guest_arg(4u)),
+                        index,
+                        size,
+                        type,
+                        normalized,
+                        stride,
                         pointer);
                     regs[0] = 0u;
                 } else if (name == "glDrawArrays") {
                     ++gles_draw_calls;
+
+                    auto splash_texture_bound =
+                        [&]() {
+                            if (gles_splash_texture_candidate ==
+                                0u) {
+                                return false;
+                            }
+
+                            for (const GLuint texture :
+                                 gles_bound_texture_2d) {
+                                if (texture ==
+                                    gles_splash_texture_candidate) {
+                                    return true;
+                                }
+                            }
+
+                            return false;
+                        };
+
+                    auto color_attrib_index =
+                        [&]() -> std::optional<GLuint> {
+                            for (GLuint index = 0u;
+                                 index <
+                                     gles_attrib_state.size();
+                                 ++index) {
+                                const std::uint64_t key =
+                                    (static_cast<std::uint64_t>(
+                                         gles_current_program)
+                                     << 32u) |
+                                    index;
+
+                                const auto found =
+                                    gles_attrib_names.find(
+                                        key);
+
+                                if (found !=
+                                        gles_attrib_names.end() &&
+                                    found->second ==
+                                        "color") {
+                                    return index;
+                                }
+                            }
+
+                            return std::nullopt;
+                        };
+
+                    const GLint first =
+                        static_cast<GLint>(
+                            guest_arg(1u));
+                    const GLsizei count =
+                        static_cast<GLsizei>(
+                            guest_arg(2u));
+
+                    std::vector<std::uint8_t>
+                        corrected_colors;
+                    std::optional<GLuint>
+                        corrected_index;
+
+                    if (splash_texture_bound() &&
+                        count > 0) {
+                        const auto color_index =
+                            color_attrib_index();
+
+                        if (color_index.has_value()) {
+                            const auto& state =
+                                gles_attrib_state[
+                                    *color_index];
+
+                            if (state.enabled &&
+                                state.size == 4 &&
+                                state.type ==
+                                    GL_UNSIGNED_BYTE &&
+                                state.normalized ==
+                                    GL_TRUE &&
+                                state.guest_pointer != 0u) {
+
+                                const std::size_t stride =
+                                    state.stride > 0
+                                        ? static_cast<std::size_t>(
+                                              state.stride)
+                                        : 4u;
+                                const std::size_t vertex_count =
+                                    static_cast<std::size_t>(
+                                        std::max<GLint>(
+                                            0,
+                                            first)) +
+                                    static_cast<std::size_t>(
+                                        count);
+                                const std::size_t bytes =
+                                    vertex_count == 0u
+                                        ? 0u
+                                        : (vertex_count - 1u) *
+                                              stride +
+                                          4u;
+
+                                const auto* base =
+                                    static_cast<
+                                        const std::uint8_t*>(
+                                            mem.Ptr(
+                                                state.guest_pointer,
+                                                bytes));
+
+                                if (base != nullptr) {
+                                    std::uint32_t peak = 0u;
+                                    const std::size_t sample =
+                                        std::min<std::size_t>(
+                                            vertex_count,
+                                            64u);
+
+                                    for (std::size_t i = 0u;
+                                         i < sample;
+                                         ++i) {
+                                        const auto* color =
+                                            base +
+                                            i * stride;
+                                        for (std::size_t c = 0u;
+                                             c < 4u;
+                                             ++c) {
+                                            peak =
+                                                std::max<
+                                                    std::uint32_t>(
+                                                    peak,
+                                                    color[c]);
+                                        }
+                                    }
+
+                                    if (gles_vertex_color_traces <
+                                        48u) {
+                                        ++gles_vertex_color_traces;
+
+                                        std::ostringstream diagnostic;
+                                        diagnostic
+                                            << "V42 SPLASH COLOR DRAW #"
+                                            << gles_vertex_color_traces
+                                            << " glDrawArrays program="
+                                            << gles_current_program
+                                            << " attrib="
+                                            << *color_index
+                                            << " first="
+                                            << first
+                                            << " count="
+                                            << count
+                                            << " stride="
+                                            << stride
+                                            << " peak="
+                                            << peak
+                                            << " firstRGBA=("
+                                            << static_cast<unsigned>(
+                                                   base[0])
+                                            << ","
+                                            << static_cast<unsigned>(
+                                                   base[1])
+                                            << ","
+                                            << static_cast<unsigned>(
+                                                   base[2])
+                                            << ","
+                                            << static_cast<unsigned>(
+                                                   base[3])
+                                            << ")";
+                                        Append(
+                                            diagnostic.str());
+                                    }
+
+                                    if (gles_splash_color_baseline ==
+                                            0u &&
+                                        peak >= 176u &&
+                                        peak <= 208u) {
+                                        gles_splash_color_baseline =
+                                            peak;
+
+                                        Append(
+                                            "V42 SPLASH COLOR BASELINE=" +
+                                            std::to_string(
+                                                peak) +
+                                            " -> normalize client color only while startup atlas texture is bound");
+                                    }
+
+                                    if (gles_splash_color_baseline !=
+                                            0u &&
+                                        peak <=
+                                            gles_splash_color_baseline) {
+
+                                        corrected_colors.resize(
+                                            vertex_count *
+                                            4u);
+
+                                        for (std::size_t i = 0u;
+                                             i < vertex_count;
+                                             ++i) {
+                                            const auto* source =
+                                                base +
+                                                i * stride;
+                                            auto* target =
+                                                corrected_colors.data() +
+                                                i * 4u;
+
+                                            for (std::size_t c = 0u;
+                                                 c < 4u;
+                                                 ++c) {
+                                                const std::uint32_t scaled =
+                                                    (static_cast<std::uint32_t>(
+                                                         source[c]) *
+                                                         255u +
+                                                     gles_splash_color_baseline /
+                                                         2u) /
+                                                    gles_splash_color_baseline;
+
+                                                target[c] =
+                                                    static_cast<std::uint8_t>(
+                                                        std::min<
+                                                            std::uint32_t>(
+                                                            255u,
+                                                            scaled));
+                                            }
+                                        }
+
+                                        glVertexAttribPointer(
+                                            *color_index,
+                                            4,
+                                            GL_UNSIGNED_BYTE,
+                                            GL_TRUE,
+                                            0,
+                                            corrected_colors.data());
+
+                                        corrected_index =
+                                            color_index;
+                                        ++gles_splash_color_corrections;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     glDrawArrays(
                         static_cast<GLenum>(
                             guest_arg(0u)),
-                        static_cast<GLint>(
-                            guest_arg(1u)),
-                        static_cast<GLsizei>(
-                            guest_arg(2u)));
+                        first,
+                        count);
+
+                    if (corrected_index.has_value()) {
+                        const auto& state =
+                            gles_attrib_state[
+                                *corrected_index];
+
+                        glVertexAttribPointer(
+                            *corrected_index,
+                            state.size,
+                            state.type,
+                            state.normalized,
+                            state.stride,
+                            mem.Ptr(
+                                state.guest_pointer,
+                                1u));
+                    }
+
                     regs[0] = 0u;
                 } else if (name == "glDrawElements") {
                     ++gles_draw_calls;
@@ -12312,12 +13098,277 @@ public:
                                       : 1u)
                             : nullptr;
 
+                    std::vector<std::uint8_t>
+                        corrected_colors;
+                    std::optional<GLuint>
+                        corrected_index;
+
+                    bool splash_bound = false;
+                    if (gles_splash_texture_candidate != 0u) {
+                        for (const GLuint texture :
+                             gles_bound_texture_2d) {
+                            if (texture ==
+                                gles_splash_texture_candidate) {
+                                splash_bound = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (splash_bound &&
+                        count > 0 &&
+                        indices != nullptr) {
+
+                        std::optional<GLuint>
+                            color_index;
+
+                        for (GLuint index = 0u;
+                             index <
+                                 gles_attrib_state.size();
+                             ++index) {
+                            const std::uint64_t key =
+                                (static_cast<std::uint64_t>(
+                                     gles_current_program)
+                                 << 32u) |
+                                index;
+
+                            const auto found =
+                                gles_attrib_names.find(
+                                    key);
+
+                            if (found !=
+                                    gles_attrib_names.end() &&
+                                found->second ==
+                                    "color") {
+                                color_index = index;
+                                break;
+                            }
+                        }
+
+                        if (color_index.has_value()) {
+                            const auto& state =
+                                gles_attrib_state[
+                                    *color_index];
+
+                            if (state.enabled &&
+                                state.size == 4 &&
+                                state.type ==
+                                    GL_UNSIGNED_BYTE &&
+                                state.normalized ==
+                                    GL_TRUE &&
+                                state.guest_pointer != 0u) {
+
+                                std::uint32_t max_index = 0u;
+
+                                for (GLsizei i = 0;
+                                     i < count;
+                                     ++i) {
+                                    std::uint32_t value = 0u;
+
+                                    if (type ==
+                                        GL_UNSIGNED_BYTE) {
+                                        value =
+                                            static_cast<
+                                                const std::uint8_t*>(
+                                                    indices)[i];
+                                    } else if (
+                                        type ==
+                                        GL_UNSIGNED_SHORT) {
+                                        value =
+                                            static_cast<
+                                                const std::uint16_t*>(
+                                                    indices)[i];
+                                    } else if (
+                                        type ==
+                                        GL_UNSIGNED_INT) {
+                                        value =
+                                            static_cast<
+                                                const std::uint32_t*>(
+                                                    indices)[i];
+                                    }
+
+                                    max_index =
+                                        std::max(
+                                            max_index,
+                                            value);
+                                }
+
+                                const std::size_t stride =
+                                    state.stride > 0
+                                        ? static_cast<std::size_t>(
+                                              state.stride)
+                                        : 4u;
+                                const std::size_t vertex_count =
+                                    static_cast<std::size_t>(
+                                        max_index) +
+                                    1u;
+                                const std::size_t bytes =
+                                    (vertex_count - 1u) *
+                                        stride +
+                                    4u;
+
+                                const auto* base =
+                                    static_cast<
+                                        const std::uint8_t*>(
+                                            mem.Ptr(
+                                                state.guest_pointer,
+                                                bytes));
+
+                                if (base != nullptr) {
+                                    std::uint32_t peak = 0u;
+                                    const std::size_t sample =
+                                        std::min<std::size_t>(
+                                            vertex_count,
+                                            64u);
+
+                                    for (std::size_t i = 0u;
+                                         i < sample;
+                                         ++i) {
+                                        const auto* color =
+                                            base +
+                                            i * stride;
+
+                                        for (std::size_t c = 0u;
+                                             c < 4u;
+                                             ++c) {
+                                            peak =
+                                                std::max<
+                                                    std::uint32_t>(
+                                                    peak,
+                                                    color[c]);
+                                        }
+                                    }
+
+                                    if (gles_vertex_color_traces <
+                                        48u) {
+                                        ++gles_vertex_color_traces;
+
+                                        std::ostringstream diagnostic;
+                                        diagnostic
+                                            << "V42 SPLASH COLOR DRAW #"
+                                            << gles_vertex_color_traces
+                                            << " glDrawElements program="
+                                            << gles_current_program
+                                            << " attrib="
+                                            << *color_index
+                                            << " count="
+                                            << count
+                                            << " maxIndex="
+                                            << max_index
+                                            << " stride="
+                                            << stride
+                                            << " peak="
+                                            << peak
+                                            << " firstRGBA=("
+                                            << static_cast<unsigned>(
+                                                   base[0])
+                                            << ","
+                                            << static_cast<unsigned>(
+                                                   base[1])
+                                            << ","
+                                            << static_cast<unsigned>(
+                                                   base[2])
+                                            << ","
+                                            << static_cast<unsigned>(
+                                                   base[3])
+                                            << ")";
+                                        Append(
+                                            diagnostic.str());
+                                    }
+
+                                    if (gles_splash_color_baseline ==
+                                            0u &&
+                                        peak >= 176u &&
+                                        peak <= 208u) {
+                                        gles_splash_color_baseline =
+                                            peak;
+
+                                        Append(
+                                            "V42 SPLASH COLOR BASELINE=" +
+                                            std::to_string(
+                                                peak) +
+                                            " -> normalize client color only while startup atlas texture is bound");
+                                    }
+
+                                    if (gles_splash_color_baseline !=
+                                            0u &&
+                                        peak <=
+                                            gles_splash_color_baseline) {
+
+                                        corrected_colors.resize(
+                                            vertex_count *
+                                            4u);
+
+                                        for (std::size_t i = 0u;
+                                             i < vertex_count;
+                                             ++i) {
+                                            const auto* source =
+                                                base +
+                                                i * stride;
+                                            auto* target =
+                                                corrected_colors.data() +
+                                                i * 4u;
+
+                                            for (std::size_t c = 0u;
+                                                 c < 4u;
+                                                 ++c) {
+                                                const std::uint32_t scaled =
+                                                    (static_cast<std::uint32_t>(
+                                                         source[c]) *
+                                                         255u +
+                                                     gles_splash_color_baseline /
+                                                         2u) /
+                                                    gles_splash_color_baseline;
+
+                                                target[c] =
+                                                    static_cast<std::uint8_t>(
+                                                        std::min<
+                                                            std::uint32_t>(
+                                                            255u,
+                                                            scaled));
+                                            }
+                                        }
+
+                                        glVertexAttribPointer(
+                                            *color_index,
+                                            4,
+                                            GL_UNSIGNED_BYTE,
+                                            GL_TRUE,
+                                            0,
+                                            corrected_colors.data());
+
+                                        corrected_index =
+                                            color_index;
+                                        ++gles_splash_color_corrections;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     glDrawElements(
                         static_cast<GLenum>(
                             guest_arg(0u)),
                         count,
                         type,
                         indices);
+
+                    if (corrected_index.has_value()) {
+                        const auto& state =
+                            gles_attrib_state[
+                                *corrected_index];
+
+                        glVertexAttribPointer(
+                            *corrected_index,
+                            state.size,
+                            state.type,
+                            state.normalized,
+                            state.stride,
+                            mem.Ptr(
+                                state.guest_pointer,
+                                1u));
+                    }
+
                     regs[0] = 0u;
                 } else if (name == "glGetIntegerv") {
                     GLint value = 0;
@@ -15490,7 +16541,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                         if (non_black > best_non_black) {
                             const char* best =
                                 PvZ2HostGLESCapturePNGNamed(
-                                    "pvz2-v41-best-frame.png");
+                                    "pvz2-v42-best-frame.png");
 
                             if (best != nullptr &&
                                 *best != '\0') {
@@ -15506,7 +16557,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                     best;
 
                                 callbacks.Append(
-                                    "V41 BEST FRAME: #" +
+                                    "V42 BEST FRAME: #" +
                                     std::to_string(
                                         best_frame) +
                                     " nonBlack=" +
@@ -15527,7 +16578,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
 
                             const char* post_ea =
                                 PvZ2HostGLESCapturePNGNamed(
-                                    "pvz2-v41-post-ea-best.png");
+                                    "pvz2-v42-post-ea-best.png");
 
                             if (post_ea != nullptr &&
                                 *post_ea != '\0') {
@@ -15570,11 +16621,11 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                 if (callbacks.host_gles_ready) {
                     const char* final_capture =
                         PvZ2HostGLESCapturePNGNamed(
-                            "pvz2-v41-final-frame.png");
+                            "pvz2-v42-final-frame.png");
 
                     callbacks.Append(
                         std::string{
-                            "V41 FINAL GLES CAPTURE: "} +
+                            "V42 FINAL GLES CAPTURE: "} +
                         (final_capture != nullptr &&
                          *final_capture != '\0'
                             ? final_capture
@@ -15589,7 +16640,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                 }
 
                 callbacks.Append(
-                    "V41 BEST FRAME SUMMARY: frame=" +
+                    "V42 BEST FRAME SUMMARY: frame=" +
                     std::to_string(
                         best_frame) +
                     " nonBlack=" +

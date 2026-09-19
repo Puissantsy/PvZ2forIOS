@@ -245,7 +245,7 @@ NSString *NSStringFromStd(
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — GLES + Resource Trace v41";
+        @"PvZ2forIOS — Splash + RESFILE Bridge v42";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -254,7 +254,7 @@ NSString *NSStringFromStd(
         NO;
 
     title.text =
-        @"PvZ2forIOS — GLES + resource trace v41";
+        @"PvZ2forIOS — splash + RESFILE bridge v42";
 
     title.font =
         [UIFont
@@ -270,8 +270,8 @@ NSString *NSStringFromStd(
         NO;
 
     explanation.text =
-        @"v40 proved that UIKit/PNG alpha was not the main cause of the dark EA splash: the corrected capture is still dark. Offline inspection of the selected OBB also confirms that ATLASES/INIT_1536_00.PTX decodes with the expected bright orange/brown/green source colors and a binary 0/255 alpha plane, so the darkness is introduced later by the live GLES draw state rather than by PTX decoding. "
-         @"v41 therefore records the real shader source, uniform color values, texture-upload alpha statistics and GL_BLEND state. In parallel it strengthens the existing narrow RESFILE_* native-miss bridge: it re-snapshots incrementally populated ResourceManager ID trees, retries exact IDs using PvZ2-owned ResourceInfo pointers, and records the first manager layouts/map candidates. This single run is intended to diagnose both the dark splash and the post-EA black screen without changing unrelated gameplay behavior.";
+        @"v41 identified the two remaining blockers more precisely. The startup fragment shader multiplies the decoded texture by the per-vertex color attribute (gl_FragColor = color * colorVarying), so the dark EA logo cannot be explained by a missing vec4 uniform. v42 now records the actual bound color attribute at the draw call. When the verified 1024x1024 startup atlas is bound and the first stable tint is about 0.75, only that atlas draw is normalized relative to the observed baseline, preserving later fade ratios instead of globally changing shaders or blending. "
+         @"v41 also showed 171 resource misses but never reached its RESFILE diagnostics, meaning the trapped lookup's assumed ID decode was not reliable. v42 recovers RESFILE_* directly from the live ARM registers/stack at 0x1086f8a0/0x1086fa78, then retries exact IDs, the physical RSB path, and all real group ResourceInfo trees. The 600-frame soak remains enabled so one run can reveal whether the post-EA black screen advances.";
 
     explanation.numberOfLines = 0;
 
@@ -574,7 +574,7 @@ NSString *NSStringFromStd(
             monospacedSystemFontOfSize:13.0
             weight:UIFontWeightRegular];
     caption.text =
-        @"v41 — source-color verified + GLES state/resource-registry diagnostics\nTap Close to return to the full diagnostic log.";
+        @"v42 — vertex-color splash correction + live RESFILE recovery\nTap Close to return to the full diagnostic log.";
 
     UIButton *closeButton =
         [UIButton
@@ -943,7 +943,7 @@ NSString *NSStringFromStd(
 
     [self
         appendUI:
-            @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v41 keeps the working v39/v40 geometry/capture path, records shader/uniform/blend/texture state for the dark EA splash, and retries RESFILE_* native misses against refreshed PvZ2 ResourceManager ID trees while logging the first manager layouts. The normal 600-frame soak remains enabled."];
+            @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v42 keeps the working v39/v40 geometry/capture path, traces and narrowly normalizes the startup atlas vertex-color factor, and recovers RESFILE_* names from live ARM register/stack state before retrying real ResourceInfo maps. The normal 600-frame soak remains enabled.""];
 
     [self
         presentViewController:
@@ -1004,7 +1004,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v41 probe run started; PID=%d ===",
+                    @"=== PvZ2 v42 probe run started; PID=%d ===",
                     getpid()]];
 
     self.jniRunning =
@@ -1257,7 +1257,7 @@ NSString *NSStringFromStd(
                     if (result.ok) {
                         [selfRef
                             appendUI:
-                                @"SUCCESS STEP 3: PvZ2 completed lifecycle + corrected v39 geometry + v40 capture normalization + v41 GLES/resource diagnostics + 600-frame soak."];
+                                @"SUCCESS STEP 3: PvZ2 completed lifecycle + corrected geometry/capture + v42 vertex-color and live RESFILE recovery + 600-frame soak."];
 
                         if (!result.host_frame_png_path.empty()) {
                             [selfRef
@@ -1275,11 +1275,11 @@ NSString *NSStringFromStd(
                         } else {
                             [selfRef
                                 showResult:
-                                    @"PvZ2 v41 frame soak returned"
+                                    @"PvZ2 v42 frame soak returned"
                                 message:
                                     [NSString
                                         stringWithFormat:
-                                            @"PvZ2 completed its native startup and v41 frame soak.\n\nGameAppInitialize: %u\nLifecycle calls completed: %u\nFrames returned: %u\nHost GLES active: %@\nBest sampled frame: %u (%llu non-black pixels)\nConstructors: %u/%u\nJNI_OnLoad: 0x%08x\n\nNo PNG capture was produced, so check the V39 SURFACE GEOMETRY / GLES VIEWPORT / GLES SCISSOR / FRAME STATS plus the v40 corrected capture and V38 RESFILE / BOUNDARY WORKER lines in the full log.",
+                                            @"PvZ2 completed its native startup and v42 frame soak.\n\nGameAppInitialize: %u\nLifecycle calls completed: %u\nFrames returned: %u\nHost GLES active: %@\nBest sampled frame: %u (%llu non-black pixels)\nConstructors: %u/%u\nJNI_OnLoad: 0x%08x\n\nNo PNG capture was produced, so check the V39 SURFACE GEOMETRY / GLES VIEWPORT / GLES SCISSOR / FRAME STATS plus the v40 corrected capture and V38 RESFILE / BOUNDARY WORKER lines in the full log.",
                                             result.game_app_initialize_return & 0xffu,
                                             result.lifecycle_calls_completed,
                                             result.draw_frames_completed,
