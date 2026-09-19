@@ -1287,6 +1287,13 @@ public:
     std::uint64_t last_obb_seek_target = 0;
     std::uint32_t null_execute_recoveries = 0;
     std::string last_android_log;
+
+    static constexpr std::uint32_t kSweepRecoveryLimit = 48u;
+    std::uint32_t sweep_recoveries = 0;
+    bool sweep_speculative = false;
+    std::unordered_set<std::string> sweep_issue_keys;
+    std::vector<std::string> sweep_issues;
+
     std::unordered_map<std::uint32_t, ProbeObbHandle> obb_fds;
     std::unordered_map<std::uint32_t, ProbeObbHandle> obb_files;
     std::unordered_set<std::string> fallback_logged;
@@ -1302,6 +1309,96 @@ public:
     std::unordered_map<std::uint32_t, std::uint64_t> jni_direct_buffer_capacity;
     std::unordered_map<std::uint32_t, z_stream> zstreams;
     std::unordered_map<std::uint32_t, bool> zstream_deflate_mode;
+
+    void RefreshSweepSummary() {
+        result.sweep_issue_count =
+            static_cast<std::uint32_t>(
+                sweep_issues.size());
+        result.sweep_recovery_count =
+            sweep_recoveries;
+        result.sweep_speculative =
+            sweep_speculative;
+
+        std::ostringstream summary;
+        summary
+            << "Bulk sweep: "
+            << sweep_issues.size()
+            << " unique issue(s), "
+            << sweep_recoveries
+            << " speculative recovery/recoveries";
+
+        if (sweep_speculative) {
+            summary
+                << ". Issues observed after the first speculative recovery are candidates, not proof of real runtime failures.";
+        }
+
+        for (std::size_t i = 0;
+             i < sweep_issues.size();
+             ++i) {
+            summary
+                << "\n"
+                << (i + 1u)
+                << ". "
+                << sweep_issues[i];
+        }
+
+        result.sweep_summary =
+            summary.str();
+    }
+
+    void RecordSweepIssue(
+        const std::string& kind,
+        const std::string& key,
+        const std::string& detail) {
+
+        const std::string unique_key =
+            kind + ":" + key;
+
+        if (!sweep_issue_keys.insert(
+                unique_key).second) {
+            return;
+        }
+
+        const std::string line =
+            "[" + kind + "] " + detail;
+
+        sweep_issues.push_back(line);
+
+        Append(
+            "V24 SWEEP ISSUE #" +
+            std::to_string(
+                sweep_issues.size()) +
+            ": " +
+            line);
+
+        RefreshSweepSummary();
+    }
+
+    bool ConsumeSweepRecovery(
+        const std::string& kind,
+        const std::string& detail) {
+
+        if (return_mode != ReturnMode::Lifecycle ||
+            sweep_recoveries >=
+                kSweepRecoveryLimit) {
+            return false;
+        }
+
+        ++sweep_recoveries;
+        sweep_speculative = true;
+
+        Append(
+            "V24 SWEEP RECOVERY #" +
+            std::to_string(
+                sweep_recoveries) +
+            " [" +
+            kind +
+            "]: " +
+            detail);
+
+        RefreshSweepSummary();
+        return true;
+    }
 
     std::optional<std::uint32_t>
     MemoryReadCode(std::uint32_t address) override {
