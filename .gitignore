@@ -1,9 +1,22 @@
 # Game files / proprietary assets
 *.apk
 *.obb
+*.xapk
+*.apks
+*.aab
 libPVZ2.so
+libPVZ2*.so
+*.pak
+*.rsb
+*.rton
+*.ptx
+*.pam
+*.bnk
+*.wem
 game/
 Game/
+extracted-game/
+proprietary-assets/
 
 # Apple signing / device-private material
 *.mobileprovision
