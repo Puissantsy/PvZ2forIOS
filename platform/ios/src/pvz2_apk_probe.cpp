@@ -3902,9 +3902,34 @@ public:
                             java_string_value(
                                 java_arg_word(0u));
 
+                        if (const SyntheticAsset* synthetic =
+                                GetOrBuildSyntheticTga(
+                                    requested)) {
+
+                            const std::uint64_t size =
+                                synthetic->bytes
+                                    ? synthetic->bytes->size()
+                                    : 0u;
+
+                            regs[0] =
+                                static_cast<std::uint32_t>(
+                                    size);
+                            regs[1] =
+                                static_cast<std::uint32_t>(
+                                    size >> 32u);
+
+                            Append(
+                                "JNI bridge: Resources_GetAssetFileSize(\"" +
+                                requested +
+                                "\") -> " +
+                                std::to_string(size) +
+                                " via v31 PTX->TGA virtual asset");
+                            return true;
+                        }
+
                         // AndroidGameApp implements this with
                         // AssetManager.openFd(). The supported APK contains
-                        // no assets/ files; IOException returns -1L.
+                        // no ordinary assets/ files; IOException returns -1L.
                         regs[0] = 0xffffffffu;
                         regs[1] = 0xffffffffu;
 
@@ -3933,6 +3958,10 @@ public:
                             jni_array_lengths.find(
                                 info_array);
 
+                        const SyntheticAsset* synthetic =
+                            GetOrBuildSyntheticTga(
+                                requested);
+
                         if (data_it !=
                                 jni_array_data.end() &&
                             length_it !=
@@ -3959,6 +3988,39 @@ public:
                                     0,
                                     bytes);
                             }
+
+                            if (synthetic != nullptr &&
+                                synthetic->bytes != nullptr &&
+                                length_it->second >= 2u) {
+
+                                mem.Write64Guest(
+                                    data_it->second + 0u,
+                                    0u);
+                                mem.Write64Guest(
+                                    data_it->second + 8u,
+                                    synthetic->bytes->size());
+                            }
+                        }
+
+                        if (synthetic != nullptr &&
+                            synthetic->bytes != nullptr) {
+
+                            // Original Android Java returns the APK resource
+                            // path plus start/length. For the cross-platform
+                            // bridge, return the same requested virtual path;
+                            // POSIX VFS below serves the generated TGA bytes
+                            // with start offset zero.
+                            regs[0] =
+                                new_string(
+                                    requested);
+
+                            Append(
+                                "JNI bridge: Resources_GetAssetFileInfo(\"" +
+                                requested +
+                                "\") -> virtual path start=0 length=" +
+                                std::to_string(
+                                    synthetic->bytes->size()));
+                            return true;
                         }
 
                         // AndroidGameApp returns null when AssetManager.openFd
