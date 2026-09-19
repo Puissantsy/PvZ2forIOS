@@ -1592,6 +1592,16 @@ public:
     std::unordered_map<std::uint32_t, std::string> jni_method_names;
     std::unordered_map<std::uint32_t, std::string> jni_method_signatures;
     std::unordered_map<std::uint32_t, std::string> jni_strings;
+    // v34: AndroidHttpTransaction is asynchronous on Android. Track the
+    // native peer passed to its Java constructor so Start() can be completed
+    // deterministically through the real registered native error callback
+    // instead of remaining pending forever.
+    std::unordered_map<std::uint32_t, std::uint32_t>
+        jni_native_http_peers;
+    std::vector<std::pair<std::uint32_t, std::uint32_t>>
+        pending_http_failures;
+    std::unordered_set<std::uint32_t>
+        queued_http_failure_peers;
     std::unordered_map<std::uint32_t, std::uint32_t> jni_array_lengths;
     std::unordered_map<std::uint32_t, std::uint32_t> jni_array_data;
     std::unordered_map<std::uint32_t, std::uint32_t> jni_array_element_sizes;
@@ -3744,10 +3754,100 @@ public:
             case 27: // AllocObject
             case 28: // NewObject
             case 29: // NewObjectV
-            case 30: // NewObjectA
-                regs[0] = new_object();
+            case 30: { // NewObjectA
+                const std::uint32_t handle =
+                    new_object();
+
+                if (slot >= 28u) {
+                    const std::uint32_t method_id =
+                        regs[2];
+
+                    const auto name_it =
+                        jni_method_names.find(
+                            method_id);
+                    const auto sig_it =
+                        jni_method_signatures.find(
+                            method_id);
+
+                    const std::string method_name =
+                        name_it !=
+                                jni_method_names.end()
+                            ? name_it->second
+                            : std::string{};
+
+                    const std::string signature =
+                        sig_it !=
+                                jni_method_signatures.end()
+                            ? sig_it->second
+                            : std::string{};
+
+                    // AndroidHttpTransaction.<init>(
+                    //   long nativePeer, String method, String url)
+                    // is reached through NewObjectV in this APK. Preserve
+                    // the low 32-bit ARM guest pointer carried by the jlong.
+                    if (method_name == "<init>" &&
+                        signature ==
+                            "(JLjava/lang/String;Ljava/lang/String;)V") {
+
+                        std::uint64_t peer64 = 0u;
+
+                        if (slot == 29u) {
+                            const std::uint32_t aligned =
+                                (regs[3] + 7u) &
+                                ~7u;
+                            peer64 =
+                                mem.Read64Guest(
+                                    aligned);
+                        } else if (slot == 30u) {
+                            // jvalue[] entries are 8 bytes.
+                            peer64 =
+                                mem.Read64Guest(
+                                    regs[3]);
+                        } else if (slot == 28u) {
+                            // Direct varargs follow r0-r3. The first jlong is
+                            // double-word aligned on the ARM32 stack.
+                            const std::uint32_t aligned =
+                                (regs[13] + 7u) &
+                                ~7u;
+                            peer64 =
+                                mem.Read64Guest(
+                                    aligned);
+                        }
+
+                        const std::uint32_t peer =
+                            static_cast<std::uint32_t>(
+                                peer64);
+
+                        if (peer != 0u &&
+                            mem.Ptr(
+                                peer,
+                                4u) != nullptr) {
+
+                            jni_native_http_peers[
+                                handle] =
+                                peer;
+
+                            Append(
+                                "V34 HTTP object: java=0x" +
+                                JniProbeHex(handle) +
+                                " nativePeer=0x" +
+                                JniProbeHex(peer) +
+                                " constructorSlot=" +
+                                std::to_string(slot));
+                        } else {
+                            Append(
+                                "V34 HTTP object: unable to recover native peer for java=0x" +
+                                JniProbeHex(handle) +
+                                " rawLow=0x" +
+                                JniProbeHex(peer));
+                        }
+                    }
+                }
+
+                regs[0] = handle;
                 log_jni_fallback("object construction");
                 return;
+            }
 
             case 32: // IsInstanceOf
                 regs[0] = 1;
@@ -4433,6 +4533,55 @@ public:
                             "JNI bridge: " +
                             method_name +
                             " -> 0");
+                        return true;
+                    }
+
+                    if (family == 9 &&
+                        method_name == "Start") {
+
+                        const std::uint32_t java_object =
+                            regs[1];
+
+                        const auto peer_it =
+                            jni_native_http_peers.find(
+                                java_object);
+
+                        if (peer_it !=
+                                jni_native_http_peers.end()) {
+
+                            const std::uint32_t peer =
+                                peer_it->second;
+
+                            if (queued_http_failure_peers
+                                    .insert(peer)
+                                    .second) {
+
+                                pending_http_failures
+                                    .emplace_back(
+                                        java_object,
+                                        peer);
+
+                                Append(
+                                    "V34 HTTP Start: queued deterministic offline error callback java=0x" +
+                                    JniProbeHex(
+                                        java_object) +
+                                    " nativePeer=0x" +
+                                    JniProbeHex(peer));
+                            } else {
+                                Append(
+                                    "V34 HTTP Start: nativePeer=0x" +
+                                    JniProbeHex(peer) +
+                                    " already queued/delivered");
+                            }
+                        } else {
+                            Append(
+                                "V34 HTTP Start: no native peer mapped for java=0x" +
+                                JniProbeHex(
+                                    java_object) +
+                                "; retaining no-op semantics");
+                        }
+
+                        regs[0] = 0u;
                         return true;
                     }
 
@@ -13262,6 +13411,79 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                         return false;
                     };
 
+                std::size_t http_delivery_cursor = 0u;
+
+                auto drain_offline_http_callbacks =
+                    [&](const char* phase) -> bool {
+
+                        constexpr std::uint32_t
+                            kHttpTransactionError =
+                                kGuestBase +
+                                0x00a03410u;
+                        constexpr std::size_t
+                            kMaxHttpCallbacks = 32u;
+
+                        std::size_t delivered = 0u;
+
+                        while (http_delivery_cursor <
+                                   callbacks
+                                       .pending_http_failures
+                                       .size() &&
+                               delivered <
+                                   kMaxHttpCallbacks) {
+
+                            const auto item =
+                                callbacks
+                                    .pending_http_failures[
+                                        http_delivery_cursor++];
+
+                            callbacks.Append(
+                                "V34 HTTP OFFLINE DELIVER phase=" +
+                                std::string{
+                                    phase != nullptr
+                                        ? phase
+                                        : "n/a"} +
+                                " java=0x" +
+                                JniProbeHex(
+                                    item.first) +
+                                " nativePeer=0x" +
+                                JniProbeHex(
+                                    item.second));
+
+                            if (!run_lifecycle(
+                                    "V34_HttpTransactionError",
+                                    kHttpTransactionError,
+                                    item.first,
+                                    item.second,
+                                    0u,
+                                    false)) {
+                                callbacks.Append(
+                                    "V34 HTTP OFFLINE DELIVER failed for nativePeer=0x" +
+                                    JniProbeHex(
+                                        item.second));
+                                return false;
+                            }
+
+                            ++delivered;
+                        }
+
+                        if (http_delivery_cursor <
+                            callbacks
+                                .pending_http_failures
+                                .size()) {
+
+                            callbacks.Append(
+                                "V34 HTTP OFFLINE DELIVER: callback batch capped; remaining=" +
+                                std::to_string(
+                                    callbacks
+                                        .pending_http_failures
+                                        .size() -
+                                    http_delivery_cursor));
+                        }
+
+                        return true;
+                    };
+
                 constexpr std::uint32_t kGameAppThis =
                     kAndroidGameApp;
                 constexpr std::uint32_t kSurfaceThis =
@@ -13380,8 +13602,19 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                     return result;
                 }
 
+                // Android's Java HTTP layer normally resolves Start()
+                // asynchronously and calls one of the registered native
+                // callbacks. The probe has no Android networking backend, so
+                // finish queued startup requests as deterministic offline
+                // errors at this lifecycle-safe boundary. This avoids leaving
+                // the native transactions permanently "in flight".
+                if (!drain_offline_http_callbacks(
+                        "pre-frame")) {
+                    return result;
+                }
+
                 constexpr std::uint32_t
-                    kV33FrameCount = 600u;
+                    kV34FrameCount = 600u;
 
                 auto should_sample_frame =
                     [](std::uint32_t frame) {
@@ -13412,7 +13645,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                 std::uint32_t best_frame = 0u;
 
                 for (std::uint32_t frame = 0u;
-                     frame < kV33FrameCount;
+                     frame < kV34FrameCount;
                      ++frame) {
 
                     const std::uint32_t frame_number =
@@ -13423,12 +13656,12 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
 
                     if (sample) {
                         callbacks.Append(
-                            "V33 FRAME SOAK: begin frame " +
+                            "V34 FRAME SOAK: begin frame " +
                             std::to_string(
                                 frame_number) +
                             "/" +
                             std::to_string(
-                                kV33FrameCount));
+                                kV34FrameCount));
                     }
 
                     if (!run_lifecycle(
@@ -13442,7 +13675,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                         if (callbacks.host_gles_ready) {
                             const char* partial =
                                 PvZ2HostGLESCapturePNGNamed(
-                                    "pvz2-v33-stopped-frame.png");
+                                    "pvz2-v34-stopped-frame.png");
 
                             if (partial != nullptr &&
                                 *partial != '\0') {
@@ -13457,6 +13690,16 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                     result.draw_frames_completed =
                         frame_number;
 
+                    // Start() can be reached while a frame is executing
+                    // (analytics/live-config/telemetry requests do this).
+                    // Deliver any newly queued terminal callbacks only after
+                    // Native_onDrawFrame has returned, never in the middle of
+                    // guest rendering/state mutation.
+                    if (!drain_offline_http_callbacks(
+                            "frame-boundary")) {
+                        return result;
+                    }
+
                     if (callbacks.host_gles_ready &&
                         sample) {
 
@@ -13466,7 +13709,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             PvZ2HostGLESLastNonBlackPixels();
 
                         callbacks.Append(
-                            "V33 FRAME STATS #" +
+                            "V34 FRAME STATS #" +
                             std::to_string(
                                 frame_number) +
                             ": " +
@@ -13487,7 +13730,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                         if (non_black > best_non_black) {
                             const char* best =
                                 PvZ2HostGLESCapturePNGNamed(
-                                    "pvz2-v33-best-frame.png");
+                                    "pvz2-v34-best-frame.png");
 
                             if (best != nullptr &&
                                 *best != '\0') {
@@ -13503,7 +13746,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                     best;
 
                                 callbacks.Append(
-                                    "V33 BEST FRAME: #" +
+                                    "V34 BEST FRAME: #" +
                                     std::to_string(
                                         best_frame) +
                                     " nonBlack=" +
@@ -13515,16 +13758,16 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                         }
 
                         callbacks.Append(
-                            "V33 FRAME SOAK: returned frame " +
+                            "V34 FRAME SOAK: returned frame " +
                             std::to_string(
                                 frame_number) +
                             "/" +
                             std::to_string(
-                                kV33FrameCount));
+                                kV34FrameCount));
                     }
 
                     if (frame_number !=
-                        kV33FrameCount) {
+                        kV34FrameCount) {
                         std::this_thread::sleep_for(
                             std::chrono::milliseconds(
                                 16));
@@ -13534,11 +13777,11 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                 if (callbacks.host_gles_ready) {
                     const char* final_capture =
                         PvZ2HostGLESCapturePNGNamed(
-                            "pvz2-v33-final-frame.png");
+                            "pvz2-v34-final-frame.png");
 
                     callbacks.Append(
                         std::string{
-                            "V33 FINAL GLES CAPTURE: "} +
+                            "V34 FINAL GLES CAPTURE: "} +
                         (final_capture != nullptr &&
                          *final_capture != '\0'
                             ? final_capture
@@ -13553,7 +13796,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                 }
 
                 callbacks.Append(
-                    "V33 BEST FRAME SUMMARY: frame=" +
+                    "V34 BEST FRAME SUMMARY: frame=" +
                     std::to_string(
                         best_frame) +
                     " nonBlack=" +
@@ -13562,7 +13805,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
 
                 result.ok = true;
                 result.message =
-                    "PvZ2 completed GameAppInitialize, lifecycle, surface setup, and a 600-frame timed host-GLES soak; the most populated sampled framebuffer was preserved for display.";
+                    "PvZ2 completed GameAppInitialize, lifecycle, surface setup, deterministic offline AndroidHttpTransaction callbacks, and a 600-frame timed host-GLES soak; the most populated sampled framebuffer was preserved for display.";
                 return result;
             }
 
