@@ -22,6 +22,7 @@
 #include <utility>
 #include <vector>
 #include <map>
+#include <memory>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -1533,6 +1534,14 @@ public:
         std::uint64_t offset = 0;
         bool eof = false;
         std::string label;
+        std::shared_ptr<std::vector<std::uint8_t>> owned;
+    };
+
+    struct SyntheticAsset {
+        std::shared_ptr<std::vector<std::uint8_t>> bytes;
+        std::string source_path;
+        std::uint32_t width = 0;
+        std::uint32_t height = 0;
     };
 
     std::uint32_t next_gl_object = 1;
@@ -1567,6 +1576,7 @@ public:
     std::unordered_set<std::string> sweep_recovery_keys;
     std::vector<std::string> sweep_issues;
 
+    std::unordered_map<std::string, SyntheticAsset> synthetic_assets;
     std::unordered_map<std::uint32_t, ProbeObbHandle> obb_fds;
     std::unordered_map<std::uint32_t, ProbeObbHandle> obb_files;
     std::unordered_set<std::string> fallback_logged;
