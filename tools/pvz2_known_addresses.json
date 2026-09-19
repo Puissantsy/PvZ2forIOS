@@ -15,5 +15,7 @@
   "0x009ec0c8": "Native_applicationDidBecomeActive",
   "0x009f1840": "Native_onSurfaceCreated",
   "0x009f18dc": "Native_onSurfaceChanged",
-  "0x009f190c": "Native_onDrawFrame"
+  "0x009f190c": "Native_onDrawFrame",
+  "0x0087a708": "GenericResFileRes.direct-group return branch / v48 null recovery",
+  "0x0087a76c": "GenericResFileRes.all-groups exhausted null / v48 final recovery"
 }
