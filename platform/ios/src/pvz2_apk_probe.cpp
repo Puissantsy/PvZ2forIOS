@@ -11630,7 +11630,7 @@ public:
                         viewport !=
                             last_gles_viewport) {
                         Append(
-                            "V38 GLES VIEWPORT #" +
+                            "V39 GLES VIEWPORT #" +
                             std::to_string(
                                 gles_viewport_calls) +
                             " guest=(" +
@@ -11678,7 +11678,7 @@ public:
                         scissor !=
                             last_gles_scissor) {
                         Append(
-                            "V38 GLES SCISSOR #" +
+                            "V39 GLES SCISSOR #" +
                             std::to_string(
                                 gles_scissor_calls) +
                             " guest=(" +
@@ -14870,16 +14870,22 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                     return result;
                 }
 
-                // iPad 10th generation logical landscape size. The first-frame
-                // probe only needs a sane positive surface size; real drawable
-                // pixel dimensions will come from the Metal/GLES presentation
-                // bridge.
+                // v39: this PvZ2 Android native entry point consumes the two
+                // dimensions in height,width order even though our first probe
+                // supplied width,height. v38 proved it unambiguously: passing
+                // 1180,820 caused the game's first/restore viewport to become
+                // 820x1180 on a 1180x820 host framebuffer. Feed 820,1180 so
+                // the native renderer establishes/restores a true landscape
+                // 1180x820 viewport.
+                callbacks.Append(
+                    "V39 SURFACE GEOMETRY: calling Native_onSurfaceChanged with native-order height=820 width=1180 for hostFBO=1180x820.");
+
                 if (!run_lifecycle(
                         "Native_onSurfaceChanged",
                         kNativeOnSurfaceChanged,
                         kSurfaceThis,
-                        1180,
                         820,
+                        1180,
                         false)) {
                     return result;
                 }
@@ -14953,7 +14959,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
 
                     if (sample) {
                         callbacks.Append(
-                            "V38 FRAME SOAK: begin frame " +
+                            "V39 FRAME SOAK: begin frame " +
                             std::to_string(
                                 frame_number) +
                             "/" +
@@ -15014,7 +15020,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             PvZ2HostGLESLastNonBlackPixels();
 
                         callbacks.Append(
-                            "V38 FRAME STATS #" +
+                            "V39 FRAME STATS #" +
                             std::to_string(
                                 frame_number) +
                             ": " +
@@ -15035,7 +15041,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                         if (non_black > best_non_black) {
                             const char* best =
                                 PvZ2HostGLESCapturePNGNamed(
-                                    "pvz2-v38-best-frame.png");
+                                    "pvz2-v39-best-frame.png");
 
                             if (best != nullptr &&
                                 *best != '\0') {
@@ -15072,7 +15078,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
 
                             const char* post_ea =
                                 PvZ2HostGLESCapturePNGNamed(
-                                    "pvz2-v38-post-ea-best.png");
+                                    "pvz2-v39-post-ea-best.png");
 
                             if (post_ea != nullptr &&
                                 *post_ea != '\0') {
@@ -15084,7 +15090,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                     post_ea;
 
                                 callbacks.Append(
-                                    "V38 POST-EA FRAME: #" +
+                                    "V39 POST-EA FRAME: #" +
                                     std::to_string(
                                         post_ea_best_frame) +
                                     " nonBlack=" +
@@ -15096,7 +15102,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                         }
 
                         callbacks.Append(
-                            "V38 FRAME SOAK: returned frame " +
+                            "V39 FRAME SOAK: returned frame " +
                             std::to_string(
                                 frame_number) +
                             "/" +
@@ -15115,11 +15121,11 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                 if (callbacks.host_gles_ready) {
                     const char* final_capture =
                         PvZ2HostGLESCapturePNGNamed(
-                            "pvz2-v38-final-frame.png");
+                            "pvz2-v39-final-frame.png");
 
                     callbacks.Append(
                         std::string{
-                            "V38 FINAL GLES CAPTURE: "} +
+                            "V39 FINAL GLES CAPTURE: "} +
                         (final_capture != nullptr &&
                          *final_capture != '\0'
                             ? final_capture
@@ -15134,7 +15140,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                 }
 
                 callbacks.Append(
-                    "V38 BEST FRAME SUMMARY: frame=" +
+                    "V39 BEST FRAME SUMMARY: frame=" +
                     std::to_string(
                         best_frame) +
                     " nonBlack=" +
