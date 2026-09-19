@@ -2681,9 +2681,9 @@ public:
             if (result.resource_registry_direct_hits <=
                 6u) {
                 Append(
-                    "V35 RESOURCE-ID DIRECT HIT "" +
+                    "V35 RESOURCE-ID DIRECT HIT \"" +
                     id +
-                    "" -> 0x" +
+                    "\" -> 0x" +
                     JniProbeHex(direct));
             }
 
@@ -2708,11 +2708,11 @@ public:
                         .insert(id)
                         .second) {
                     Append(
-                        "V35 RESOURCE REGISTRY FALLBACK "" +
+                        "V35 RESOURCE REGISTRY FALLBACK \"" +
                         id +
-                        "" -> "" +
+                        "\" -> \"" +
                         *physical +
-                        "" -> ResourceInfo*=0x" +
+                        "\" -> ResourceInfo*=0x" +
                         JniProbeHex(by_path));
                 }
 
@@ -2723,11 +2723,11 @@ public:
                     .insert(id)
                     .second) {
                 Append(
-                    "V35 RESOURCE REGISTRY PATH MISS "" +
+                    "V35 RESOURCE REGISTRY PATH MISS \"" +
                     id +
-                    "" -> "" +
+                    "\" -> \"" +
                     *physical +
-                    ""; global path map contains " +
+                    "\"; global path map contains " +
                     std::to_string(
                         resource_path_index.size()) +
                     " key(s).");
@@ -2738,9 +2738,9 @@ public:
                 .second) {
 
             Append(
-                "V35 RESOURCE REGISTRY OUTER MISS "" +
+                "V35 RESOURCE REGISTRY OUTER MISS \"" +
                 id +
-                ""; no unique RTON member maps to this identifier.");
+                "\"; no unique RTON member maps to this identifier.");
         }
 
         ++result.resource_registry_misses;
