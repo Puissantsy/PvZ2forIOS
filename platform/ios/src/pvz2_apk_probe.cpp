@@ -1248,6 +1248,7 @@ public:
     std::uint32_t current_constructor_address = 0;
     std::string current_lifecycle_name;
     std::vector<DeferredThread> deferred_threads;
+    std::uint32_t current_probe_thread_id = 0;
     std::uint32_t next_pthread_key = 1;
     std::uint32_t next_synthetic_thread = 1;
     std::uint32_t next_synthetic_class = 1;
@@ -4896,7 +4897,10 @@ public:
         }
 
         if (name == "pthread_self") {
-            regs[0] = 1;
+            regs[0] =
+                current_probe_thread_id != 0
+                    ? current_probe_thread_id
+                    : 1u;
             ++supported_calls;
             return;
         }
@@ -7225,7 +7229,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             result.final_pc >=
                                 kGuestBase + 0x009f6f24u &&
                             result.final_pc <=
-                                kGuestBase + 0x009f6f68u;
+                                kGuestBase + 0x009f7050u;
 
                         if (hit_budget &&
                             main_pak_poll &&
@@ -7306,7 +7310,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             }
 
                             callbacks.Append(
-                                "V18 MAIN.PAK POLL CONFIRMED: " +
+                                "V20 ASYNC FILE POLL CONFIRMED: " +
                                 future_snapshot() +
                                 " deferred_threads=" +
                                 std::to_string(
@@ -7336,12 +7340,31 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             constexpr std::uint32_t kWorkerStackSize =
                                 64u * 1024u;
                             constexpr std::uint64_t kWorkerProbeTicks =
-                                2000000ull;
+                                750000ull;
 
                             const std::size_t worker_limit =
                                 std::min<std::size_t>(
                                     callbacks.deferred_threads.size(),
-                                    24u);
+                                    64u);
+
+                            for (std::size_t wi = 0;
+                                 wi < worker_limit;
+                                 ++wi) {
+                                const auto& listed =
+                                    callbacks.deferred_threads[wi];
+
+                                callbacks.Append(
+                                    "V20 WORKER CANDIDATE[" +
+                                    std::to_string(wi) +
+                                    "]: tid=" +
+                                    std::to_string(listed.id) +
+                                    " start=0x" +
+                                    JniProbeHex(listed.start_routine) +
+                                    " arg=0x" +
+                                    JniProbeHex(listed.argument) +
+                                    " created_in=" +
+                                    listed.created_in);
+                            }
 
                             for (std::size_t wi = 0;
                                  wi < worker_limit;
@@ -7350,18 +7373,6 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                 const auto worker =
                                     callbacks.deferred_threads[wi];
 
-                                if ((worker.start_routine & ~1u) >=
-                                    kGuestBase + 0x00b00000u) {
-                                    callbacks.Append(
-                                        "V18 WORKER skip tid=" +
-                                        std::to_string(worker.id) +
-                                        " start=0x" +
-                                        JniProbeHex(
-                                            worker.start_routine) +
-                                        " (likely audio/high region)");
-                                    continue;
-                                }
-
                                 const std::uint32_t stack_base =
                                     memory.AllocateHeap(
                                         kWorkerStackSize,
@@ -7369,7 +7380,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
 
                                 if (!stack_base) {
                                     callbacks.Append(
-                                        "V18 WORKER probe stopped: guest heap could not allocate a 64K worker stack.");
+                                        "V20 WORKER probe stopped: guest heap could not allocate a 64K worker stack.");
                                     break;
                                 }
 
@@ -7404,8 +7415,10 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                 callbacks.return_mode =
                                     PvZ2JniCallbacks::ReturnMode::Lifecycle;
                                 callbacks.current_lifecycle_name =
-                                    "V18_worker_probe_tid_" +
+                                    "V20_worker_probe_tid_" +
                                     std::to_string(worker.id);
+                                callbacks.current_probe_thread_id =
+                                    worker.id;
                                 callbacks.control_returned = false;
                                 callbacks.ticks_left =
                                     kWorkerProbeTicks;
@@ -7416,7 +7429,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                 result.message.clear();
 
                                 callbacks.Append(
-                                    "V18 WORKER begin tid=" +
+                                    "V20 WORKER begin tid=" +
                                     std::to_string(worker.id) +
                                     " start=0x" +
                                     JniProbeHex(
@@ -7447,7 +7460,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                         Dynarmic::HaltReason::UserDefined3);
 
                                 callbacks.Append(
-                                    "V18 WORKER end tid=" +
+                                    "V20 WORKER end tid=" +
                                     std::to_string(worker.id) +
                                     " returned=" +
                                     (worker_returned ? "YES" : "NO") +
@@ -7484,7 +7497,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                     object_changed) {
                                     future_changed = true;
                                     callbacks.Append(
-                                        "V18 WORKER HIT: tid=" +
+                                        "V20 WORKER HIT: tid=" +
                                         std::to_string(worker.id) +
                                         " changed async future -> " +
                                         future_snapshot());
@@ -7513,6 +7526,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                 saved_mode;
                             callbacks.current_lifecycle_name =
                                 name;
+                            callbacks.current_probe_thread_id = 0;
                             callbacks.control_returned =
                                 saved_control;
                             callbacks.ticks_left =
@@ -7524,18 +7538,18 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
 
                             if (future_changed) {
                                 result.message =
-                                    "V18 identified a deferred pthread worker that changes the main.pak async future. " +
+                                    "V20 identified a deferred pthread worker that changes the async file future. " +
                                     future_snapshot() +
                                     " Main lifecycle was intentionally not resumed in this diagnostic build.";
                             } else {
                                 result.message =
-                                    "V18 probed deferred pthread workers but the async future remained byte-for-byte unchanged. " +
+                                    "V20 probed deferred pthread workers but the async future remained byte-for-byte unchanged. " +
                                     future_snapshot() +
                                     " The next blocker is likely the still-synthetic expansion/filesystem bridge or a worker outside the bounded candidate set.";
                             }
 
                             callbacks.Append(
-                                "V18 SUMMARY: " +
+                                "V20 SUMMARY: " +
                                 result.message);
 
                             result.trace =
