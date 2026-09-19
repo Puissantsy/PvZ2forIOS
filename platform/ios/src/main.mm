@@ -245,7 +245,7 @@ NSString *NSStringFromStd(
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — RESFILE Entry Capture v43";
+        @"PvZ2forIOS — RESFILE Null-Node Repair v44";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -254,7 +254,7 @@ NSString *NSStringFromStd(
         NO;
 
     title.text =
-        @"PvZ2forIOS — RESFILE entry capture v43";
+        @"PvZ2forIOS — RESFILE null-node repair v44";
 
     title.font =
         [UIFont
@@ -270,8 +270,8 @@ NSString *NSStringFromStd(
         NO;
 
     explanation.text =
-        @"v42 made a major resource breakthrough: 85 of the 171 native GenericResFile misses were recovered and loaded from the real RSB, raising indexed files from 36 to 121. The remaining 86 misses reveal an alternating-state problem: by the time the old miss trap runs, the original ID can already be gone. v43 therefore traps the verified MOV r4,r2 at 0x1086f674, emulates it exactly, and caches the exact third lookup argument by the current ARM stack frame. Both miss exits then reuse that entry ID before falling back to the late register/stack scan. Native successful lookups are still untouched. "
-         @"v42 also disproved the vertex-RGB brightness theory: the logo quad is drawn with white RGBA 255, while the second quad is black with a decreasing alpha (the normal fade overlay). Its alpha 176 was mistakenly treated as a brightness baseline. v43 disables that correction and keeps the draw diagnostics observational. The 600-frame soak remains enabled so this run can show whether eliminating the remaining RESFILE misses finally gets past the EA splash.";
+        @"v43 proved that capturing the exact RESFILE argument at 0x1086f674 is stable, but the final counters stayed exactly at 85 recovered / 86 missing. The important distinction is inside the native std::map lookup itself: reaching a non-end tree node does not guarantee success if that node's ResourceInfo* value at +0x14 is null. v43 returned early for every non-end node, so those null-valued entries could still fall through to the guest LDR and become a null result without ever reaching the fallback. "
+         @"v44 keeps every proven native hit untouched, but at 0x1086f8a0 it now checks the actual node value. If the key exists with a null ResourceInfo*, v44 runs the same narrow RESFILE recovery, writes the recovered real ResourceInfo* into that map node, and lets the original guest LDR consume it normally. True end-node misses still use the existing fallback. The splash color experiment remains disabled; the 600-frame soak stays enabled to reveal whether this closes the 85/86 split and moves beyond the EA splash.";
 
     explanation.numberOfLines = 0;
 
@@ -574,7 +574,7 @@ NSString *NSStringFromStd(
             monospacedSystemFontOfSize:13.0
             weight:UIFontWeightRegular];
     caption.text =
-        @"v43 — exact RESFILE entry capture + splash overlay diagnosis\nTap Close to return to the full diagnostic log.";
+        @"v44 — RESFILE null-node repair + 600-frame soak\nTap Close to return to the full diagnostic log.";
 
     UIButton *closeButton =
         [UIButton
@@ -943,7 +943,7 @@ NSString *NSStringFromStd(
 
     [self
         appendUI:
-            @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v43 captures the exact RESFILE lookup argument at native function entry, preserves the original MOV r4,r2 semantics and all native success paths, then uses that cached ID only if the real lookup reaches a miss exit. The incorrect v42 splash-color correction is disabled; the 600-frame soak remains enabled."];
+            @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v44 keeps native ResourceInfo hits untouched, but if 0x1086f8a0 is reached with a real map node whose ResourceInfo* value is null, it attempts the verified RESFILE fallback and heals that node before the original guest LDR executes. True end-node misses still use the existing recovery. The 600-frame soak remains enabled."];
 
     [self
         presentViewController:
@@ -1004,7 +1004,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v43 probe run started; PID=%d ===",
+                    @"=== PvZ2 v44 probe run started; PID=%d ===",
                     getpid()]];
 
     self.jniRunning =
@@ -1275,11 +1275,11 @@ NSString *NSStringFromStd(
                         } else {
                             [selfRef
                                 showResult:
-                                    @"PvZ2 v43 frame soak returned"
+                                    @"PvZ2 v44 frame soak returned"
                                 message:
                                     [NSString
                                         stringWithFormat:
-                                            @"PvZ2 completed its native startup and v43 frame soak.\n\nGameAppInitialize: %u\nLifecycle calls completed: %u\nFrames returned: %u\nHost GLES active: %@\nBest sampled frame: %u (%llu non-black pixels)\nConstructors: %u/%u\nJNI_OnLoad: 0x%08x\n\nNo PNG capture was produced, so check the V39 SURFACE GEOMETRY / GLES VIEWPORT / GLES SCISSOR / FRAME STATS plus the v40 corrected capture and V38 RESFILE / BOUNDARY WORKER lines in the full log.",
+                                            @"PvZ2 completed its native startup and v44 frame soak.\n\nGameAppInitialize: %u\nLifecycle calls completed: %u\nFrames returned: %u\nHost GLES active: %@\nBest sampled frame: %u (%llu non-black pixels)\nConstructors: %u/%u\nJNI_OnLoad: 0x%08x\n\nNo PNG capture was produced, so check the V39 SURFACE GEOMETRY / GLES VIEWPORT / GLES SCISSOR / FRAME STATS plus the v40 corrected capture and V38 RESFILE / BOUNDARY WORKER lines in the full log.",
                                             result.game_app_initialize_return & 0xffu,
                                             result.lifecycle_calls_completed,
                                             result.draw_frames_completed,
