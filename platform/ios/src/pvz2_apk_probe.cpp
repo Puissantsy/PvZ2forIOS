@@ -1,4 +1,8 @@
 #include "pvz2_apk_probe.hpp"
+#include "host_gles.hpp"
+
+#include <OpenGLES/ES2/gl.h>
+#include <OpenGLES/ES2/glext.h>
 
 #include <algorithm>
 #include <array>
@@ -1532,6 +1536,8 @@ public:
     };
 
     std::uint32_t next_gl_object = 1;
+    bool host_gles_ready = false;
+    std::uint32_t host_default_framebuffer = 0;
     std::uint32_t guest_errno_address = 0;
     const std::uint8_t* obb_data = nullptr;
     std::size_t obb_size = 0;
