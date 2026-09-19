@@ -12641,48 +12641,16 @@ bool JniProbePrepareRuntime(
         }
     }
 
-    // v35: GenericResFileRes performs its ID lookup through
-    // 0x86f66c at two ARM call sites inside the exact 1.5.252752 binary.
-    // Replace only those BL instructions with an inline SVC. Because SVC
-    // resumes at the following instruction, caller control flow remains
-    // byte-for-byte equivalent to a returned function call, while the host
-    // can preserve exact-ID lookups and add a physical-RSB-path fallback.
-    auto patch_resource_registry_call =
-        [&](std::uint32_t offset,
-            std::uint32_t expected) {
-
-            if (offset + 4u >
-                    memory.image.size() ||
-                Read32(
-                    memory.image.data() +
-                    offset) != expected) {
-                return false;
-            }
-
-            Write32(
-                memory.image.data() +
-                    offset,
-                0xEF000000u |
-                (kJniProbeSvcResourceRegistryLookup &
-                 0x00ffffffu));
-
-            return true;
-        };
-
-    if (!patch_resource_registry_call(
-            0x0087a704u,
-            0xebffd3d8u) ||
-        !patch_resource_registry_call(
-            0x0087a758u,
-            0xebffd3c3u)) {
-
-        error =
-            "v35 resource-registry callsite profile did not match the verified PvZ2 1.5.252752 ARM code.";
-        return false;
-    }
-
+    // v37: keep PvZ2's original 0x86f66c resource lookup intact.
+    // v36 proved that the v35 inline SVC was too broad: the two callsites
+    // also carry ImageRes identifiers, and the simplified host lookup lost
+    // native key-normalization/fallback behavior. In particular,
+    // IMAGE_LOGOS_FIRST_SPLASH_LOGO became null and Native_onDrawFrame
+    // reached a BLX through r4=0 at guest 0x105149c4. Do not patch those
+    // callsites here; retaining the original instructions gives v37 a clean
+    // scheduler-only experiment while keeping all resource semantics native.
     callbacks.Append(
-        "V35 RESOURCE REGISTRY BRIDGE: patched GenericResFileRes ID lookup callsites 0x1087a704 and 0x1087a758.");
+        "V37 NATIVE RESOURCE LOOKUP: preserved original 0x1086f66c calls at 0x1087a704/0x1087a758; v35 inline registry bridge disabled.");
 
     return_trampoline =
         JniProbeMakeTrampoline(
@@ -14235,7 +14203,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
 
                                 if (!stack_base) {
                                     callbacks.Append(
-                                        "V36 BOUNDARY WORKER: unable to allocate stack for tid=" +
+                                        "V37 BOUNDARY WORKER: unable to allocate stack for tid=" +
                                         std::to_string(
                                             worker_state.id));
                                     worker_state.runtime_failed =
@@ -14278,7 +14246,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                     true;
 
                                 callbacks.Append(
-                                    "V36 BOUNDARY WORKER START tid=" +
+                                    "V37 BOUNDARY WORKER START tid=" +
                                     std::to_string(
                                         worker_state.id) +
                                     " start=0x" +
@@ -14306,7 +14274,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             callbacks.return_mode =
                                 PvZ2JniCallbacks::ReturnMode::Lifecycle;
                             callbacks.current_lifecycle_name =
-                                "V35_boundary_worker_tid_" +
+                                "V37_boundary_worker_tid_" +
                                 std::to_string(
                                     worker_state.id);
                             callbacks.current_probe_thread_id =
@@ -14382,7 +14350,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                 worker_state.runtime_failed) {
 
                                 callbacks.Append(
-                                    "V36 BOUNDARY WORKER SLICE phase=" +
+                                    "V37 BOUNDARY WORKER SLICE phase=" +
                                     std::string{
                                         phase != nullptr
                                             ? phase
@@ -14415,7 +14383,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
 
                             if (worker_fatal) {
                                 callbacks.Append(
-                                    "V36 BOUNDARY WORKER STOP: tid=" +
+                                    "V37 BOUNDARY WORKER STOP: tid=" +
                                     std::to_string(
                                         worker_state.id) +
                                     " halted fatally; preserving main runtime and continuing other diagnostics.");
@@ -14703,7 +14671,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
 
                     if (sample) {
                         callbacks.Append(
-                            "V36 FRAME SOAK: begin frame " +
+                            "V37 FRAME SOAK: begin frame " +
                             std::to_string(
                                 frame_number) +
                             "/" +
@@ -14764,7 +14732,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             PvZ2HostGLESLastNonBlackPixels();
 
                         callbacks.Append(
-                            "V36 FRAME STATS #" +
+                            "V37 FRAME STATS #" +
                             std::to_string(
                                 frame_number) +
                             ": " +
@@ -14801,7 +14769,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                     best;
 
                                 callbacks.Append(
-                                    "V36 BEST FRAME: #" +
+                                    "V37 BEST FRAME: #" +
                                     std::to_string(
                                         best_frame) +
                                     " nonBlack=" +
@@ -14834,7 +14802,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                     post_ea;
 
                                 callbacks.Append(
-                                    "V36 POST-EA FRAME: #" +
+                                    "V37 POST-EA FRAME: #" +
                                     std::to_string(
                                         post_ea_best_frame) +
                                     " nonBlack=" +
@@ -14846,7 +14814,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                         }
 
                         callbacks.Append(
-                            "V36 FRAME SOAK: returned frame " +
+                            "V37 FRAME SOAK: returned frame " +
                             std::to_string(
                                 frame_number) +
                             "/" +
@@ -14884,7 +14852,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                 }
 
                 callbacks.Append(
-                    "V36 BEST FRAME SUMMARY: frame=" +
+                    "V37 BEST FRAME SUMMARY: frame=" +
                     std::to_string(
                         best_frame) +
                     " nonBlack=" +
