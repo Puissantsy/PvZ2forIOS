@@ -7,6 +7,9 @@ on:
       - "platform/ios/**"
       - ".github/workflows/build-ios-probe.yml"
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: macos-15
