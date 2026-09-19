@@ -2516,6 +2516,403 @@ public:
                         return true;
                     }
 
+                    // v29: the first real draw reached Android's event
+                    // pump. UI_ProcessEvents receives a DirectByteBuffer whose
+                    // first word is an event count. The old generic boolean
+                    // fallback returned false without touching that guest
+                    // memory, so stale stack bytes were interpreted as a huge
+                    // event count and eventually indexed a null dispatch-table
+                    // entry (BLX r2 with r2 == 0 at guest 0x109f0860).
+                    if (family == 1 &&
+                        method_name ==
+                            "UI_ProcessEvents") {
+
+                        const std::uint32_t buffer_handle =
+                            java_arg_word(0u);
+
+                        const auto address_it =
+                            jni_direct_buffer_address.find(
+                                buffer_handle);
+                        const auto capacity_it =
+                            jni_direct_buffer_capacity.find(
+                                buffer_handle);
+
+                        std::size_t cleared = 0u;
+
+                        if (address_it !=
+                                jni_direct_buffer_address.end() &&
+                            capacity_it !=
+                                jni_direct_buffer_capacity.end() &&
+                            address_it->second != 0u &&
+                            capacity_it->second != 0u) {
+
+                            const std::uint64_t bounded64 =
+                                std::min<std::uint64_t>(
+                                    capacity_it->second,
+                                    1u << 20);
+
+                            const std::size_t bytes =
+                                static_cast<std::size_t>(
+                                    bounded64);
+
+                            if (auto* p =
+                                    mem.Ptr(
+                                        address_it->second,
+                                        bytes)) {
+                                std::memset(
+                                    p,
+                                    0,
+                                    bytes);
+                                cleared = bytes;
+                            }
+                        }
+
+                        // No iOS touch/key events are queued by the probe yet.
+                        // A zeroed event block + false is the safe empty-pump
+                        // result expected by the native decoder.
+                        regs[0] = 0u;
+
+                        Append(
+                            "JNI bridge: UI_ProcessEvents -> false; zeroed direct buffer bytes=" +
+                            std::to_string(cleared));
+                        return true;
+                    }
+
+                    if (family == 9 &&
+                        method_name ==
+                            "Graphics_GetScreenSizeInPoints") {
+
+                        const std::uint32_t array =
+                            java_arg_word(0u);
+
+                        const auto data_it =
+                            jni_array_data.find(array);
+                        const auto length_it =
+                            jni_array_lengths.find(array);
+
+                        if (data_it !=
+                                jni_array_data.end() &&
+                            length_it !=
+                                jni_array_lengths.end() &&
+                            length_it->second >= 2u &&
+                            data_it->second != 0u) {
+
+                            // iPad 10th-generation logical landscape size:
+                            // 2360x1640 native pixels at a 2x point scale.
+                            mem.Write32Guest(
+                                data_it->second + 0u,
+                                1180u);
+                            mem.Write32Guest(
+                                data_it->second + 4u,
+                                820u);
+                        }
+
+                        regs[0] = 0u;
+                        Append(
+                            "JNI bridge: Graphics_GetScreenSizeInPoints -> 1180x820");
+                        return true;
+                    }
+
+                    if (family == 1 &&
+                        method_name ==
+                            "Graphics_CanSetGLViewScaleFactor") {
+
+                        // The probe does not expose a real Android GLSurfaceView
+                        // scaling control. Reporting false avoids asking Java
+                        // to mutate a view that does not exist on iOS.
+                        regs[0] = 0u;
+                        Append(
+                            "JNI bridge: Graphics_CanSetGLViewScaleFactor -> false");
+                        return true;
+                    }
+
+                    if (family == 5 &&
+                        method_name ==
+                            "Graphics_GetGLViewSysFBO") {
+
+                        // OpenGL ES default framebuffer.
+                        regs[0] = 0u;
+                        Append(
+                            "JNI bridge: Graphics_GetGLViewSysFBO -> 0");
+                        return true;
+                    }
+
+                    if (family == 7 &&
+                        method_name ==
+                            "Graphics_GetPointSizeInPixels") {
+
+                        regs[0] = 0x40000000u; // 2.0f
+                        Append(
+                            "JNI bridge: Graphics_GetPointSizeInPixels -> 2.0");
+                        return true;
+                    }
+
+                    if (family == 7 &&
+                        method_name ==
+                            "Graphics_GetGLViewScaleFactor") {
+
+                        regs[0] = 0x3f800000u; // 1.0f
+                        Append(
+                            "JNI bridge: Graphics_GetGLViewScaleFactor -> 1.0");
+                        return true;
+                    }
+
+                    if (family == 0 &&
+                        method_name ==
+                            "Diag_GetHardwareModel") {
+
+                        regs[0] =
+                            new_string(
+                                "iPad13,18");
+                        Append(
+                            "JNI bridge: Diag_GetHardwareModel -> iPad13,18");
+                        return true;
+                    }
+
+                    if (family == 0 &&
+                        method_name ==
+                            "Diag_GetDeviceID") {
+
+                        regs[0] =
+                            new_string(
+                                "8f76d9e4-6a52-4b6a-9f0e-152527520001");
+                        Append(
+                            "JNI bridge: Diag_GetDeviceID -> stable probe UUID");
+                        return true;
+                    }
+
+                    if (family == 0 &&
+                        method_name ==
+                            "Diag_GetOSVersion") {
+
+                        regs[0] =
+                            new_string(
+                                "iPadOS 26.6.1");
+                        Append(
+                            "JNI bridge: Diag_GetOSVersion -> iPadOS 26.6.1");
+                        return true;
+                    }
+
+                    if (family == 0 &&
+                        method_name ==
+                            "Info_SysGetIntentExtraDataString") {
+
+                        regs[0] = new_string("");
+                        Append(
+                            "JNI bridge: Info_SysGetIntentExtraDataString -> empty");
+                        return true;
+                    }
+
+                    if (family == 1 &&
+                        method_name ==
+                            "OpenSessionForRead") {
+
+                        regs[0] = 0u;
+                        Append(
+                            "JNI bridge: OpenSessionForRead -> false");
+                        return true;
+                    }
+
+                    if (family == 1 &&
+                        (method_name == "IsSessionOpen" ||
+                         method_name == "IsSessionOpening" ||
+                         method_name == "Play_IsConnected" ||
+                         method_name == "Device_IsKeyboardShowing" ||
+                         method_name == "Web_SysOpenURL")) {
+
+                        regs[0] = 0u;
+                        Append(
+                            "JNI bridge: " +
+                            method_name +
+                            " -> false");
+                        return true;
+                    }
+
+                    if (family == 1 &&
+                        method_name ==
+                            "Device_IsSupportedUIOrientation") {
+
+                        regs[0] = 1u;
+                        Append(
+                            "JNI bridge: Device_IsSupportedUIOrientation -> true");
+                        return true;
+                    }
+
+                    if (family == 0 &&
+                        method_name ==
+                            "Device_GetCachesDir") {
+
+                        regs[0] =
+                            new_string(
+                                "/data/data/com.ea.game.pvz2_row/cache");
+                        Append(
+                            "JNI bridge: Device_GetCachesDir -> synthetic Android cache path");
+                        return true;
+                    }
+
+                    if (family == 0 &&
+                        (method_name == "GetHumanReadableUrl" ||
+                         method_name == "GetStatusLine" ||
+                         method_name == "GetResponseHeader" ||
+                         method_name == "GetAccessToken" ||
+                         method_name == "GetFriendPictureURL" ||
+                         method_name == "GetFriendName" ||
+                         method_name == "Cloud_GetPcpId")) {
+
+                        regs[0] = new_string("");
+                        Append(
+                            "JNI bridge: " +
+                            method_name +
+                            " -> empty string");
+                        return true;
+                    }
+
+                    if (family == 0 &&
+                        (method_name == "getAppFriends" ||
+                         method_name == "getNonAppFriends" ||
+                         method_name ==
+                             "getScheduledLocalNotificationsData")) {
+
+                        regs[0] = new_string("[]");
+                        Append(
+                            "JNI bridge: " +
+                            method_name +
+                            " -> []");
+                        return true;
+                    }
+
+                    if (family == 0 &&
+                        method_name ==
+                            "getTimezone") {
+
+                        regs[0] = new_string("UTC");
+                        Append(
+                            "JNI bridge: getTimezone -> UTC");
+                        return true;
+                    }
+
+                    if (family == 0 &&
+                        method_name ==
+                            "GetRequestBody") {
+
+                        const std::uint32_t handle =
+                            new_object();
+
+                        jni_array_lengths[handle] = 0u;
+                        jni_array_data[handle] =
+                            mem.AllocateHeap(
+                                1u,
+                                1u);
+                        jni_array_element_sizes[handle] =
+                            1u;
+
+                        regs[0] = handle;
+                        Append(
+                            "JNI bridge: GetRequestBody -> empty byte[]");
+                        return true;
+                    }
+
+                    if (family == 5 &&
+                        (method_name == "GetStatusCode" ||
+                         method_name == "GetResponseLength")) {
+
+                        regs[0] = 0u;
+                        Append(
+                            "JNI bridge: " +
+                            method_name +
+                            " -> 0");
+                        return true;
+                    }
+
+                    if (family == 6 &&
+                        (method_name == "GetExpirationDate" ||
+                         method_name == "GetSessionState")) {
+
+                        regs[0] = 0u;
+                        regs[1] = 0u;
+                        Append(
+                            "JNI bridge: " +
+                            method_name +
+                            " -> 0");
+                        return true;
+                    }
+
+                    static const std::unordered_set<std::string>
+                        kV29VoidNoOpMethods = {
+                            // AndroidHttpTransaction.
+                            "SetTimeout",
+                            "SetRequestHeader",
+                            "SetRequestBody",
+                            "SetBasicAuth",
+                            "Start",
+                            "Release",
+
+                            // Cloud / Play / social integration. These are
+                            // optional boot-time services; the probe keeps
+                            // them offline and deterministic.
+                            "Cloud_Connect",
+                            "Cloud_initiateSync",
+                            "Cloud_attemptSilentSync",
+                            "Cloud_SetPcpId",
+                            "Play_Connect",
+                            "Play_Connect_Silent",
+                            "Play_Disconnect",
+                            "Play_ResetAchievements",
+                            "Play_QueueAchievement",
+                            "Play_QueueAchievement_Percentage",
+                            "Play_ShowAchievementView",
+                            "Play_SubmitScoreToLeaderboard",
+                            "Play_ShowLeaderboardView",
+                            "Play_ShowLeaderboardViewAll",
+                            "InitWithAppId",
+                            "CloseAndClearSession",
+                            "Dialog",
+                            "RefreshFriendsLists",
+
+                            // Analytics / telemetry bridges observed during
+                            // the v28 first-draw sweep.
+                            "Init",
+                            "sessionStart",
+                            "sessionEnd",
+                            "sendQueuedEvents",
+                            "flushToDisk",
+                            "currencyGiven",
+                            "purchase",
+                            "buyIn",
+                            "onResume",
+                            "onPause",
+                            "onDestroy",
+                            "GetUserResources",
+                            "UserUpdate",
+                            "Event",
+
+                            // iOS-hosted UI/notification operations currently
+                            // have no Android Java peer.
+                            "Device_ShowKeyboard",
+                            "Device_HideKeyboard",
+                            "Device_ExitToHome",
+                            "Graphics_SetGLViewScaleFactor",
+                            "RegisterForRemoteNotifications",
+                            "UnregisterForRemoteNotifications",
+                            "removeScheduledNotification",
+                            "removeAllScheduledNotifications",
+                            "scheduleBasicNotification",
+                            "removeScheduledNotificationsBySource",
+                            "UI_DidRecieveFocus"
+                        };
+
+                    if (family == 9 &&
+                        kV29VoidNoOpMethods.count(
+                            method_name) != 0u) {
+
+                        regs[0] = 0u;
+                        Append(
+                            "JNI bridge: " +
+                            method_name +
+                            " -> no-op");
+                        return true;
+                    }
+
                     if (family == 6 &&
                         method_name ==
                             "Resources_GetAssetFileSize") {
