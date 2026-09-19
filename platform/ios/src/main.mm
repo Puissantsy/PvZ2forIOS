@@ -234,7 +234,7 @@ NSString *NSStringFromStd(
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — Bulk Compatibility Sweep v24";
+        @"PvZ2forIOS — Semantic Batch Sweep v25";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -243,7 +243,7 @@ NSString *NSStringFromStd(
         NO;
 
     title.text =
-        @"PvZ2forIOS — bulk compatibility sweep v24";
+        @"PvZ2forIOS — semantic batch sweep v25";
 
     title.font =
         [UIFont
@@ -259,8 +259,8 @@ NSString *NSStringFromStd(
         NO;
 
     explanation.text =
-        @"v23 proved that RESFILE_PACKAGES_VERSION is physically present in the selected OBB, recovered the first null callback, and then reached a deliberate guest abort. "
-         @"v24 changes strategy: it is a bulk compatibility sweep. It records unique missing resources, generic JNI fallbacks, unsupported JNI/import calls, Android assertions, null callbacks and guest control-flow terminations in one run. Up to 48 bounded diagnostic recoveries are allowed so one test can reveal a chain of likely compatibility gaps. Findings after the first speculative recovery are explicitly marked speculative. Hard memory/control-flow corruption still stops immediately. A Copy full log button is provided for long reports.";
+        @"v24 successfully exposed 18 unique compatibility findings in one run. Fourteen were real pre-recovery JNI method fallbacks, followed by the RESFILE_PACKAGES_VERSION lookup, a null callback, std::logic_error and abort. "
+         @"v25 implements all fourteen observed JNI methods in one semantic batch (package/version/locale/device/network/orientation/screen/config/asset size+info), keeps the bulk sweep active, and changes recovery accounting so one repeating abort cannot consume all 48 slots. The sweep now spends its quota on distinct compatibility boundaries and stops cleanly if the same speculative site repeats. Copy full log remains available.";
 
     explanation.numberOfLines = 0;
 
@@ -463,7 +463,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 bulk-compatibility-sweep v24 session started; PID=%d ===",
+                    @"=== PvZ2 semantic-batch-sweep v25 session started; PID=%d ===",
                     getpid()]];
 
     [self
@@ -799,7 +799,7 @@ NSString *NSStringFromStd(
 
     [self
         appendUI:
-            @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v24 performs a bulk compatibility sweep: it keeps the persistent worker scheduler and VFS active, collects unique runtime gaps, and applies up to 48 bounded diagnostic recoveries so a single run can expose many consecutive blockers."];
+            @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v25 first supplies concrete semantics for all 14 JNI methods observed by v24, then continues the bulk sweep across distinct runtime gaps without wasting the recovery budget on one repeated abort site."];
 
     [self
         presentViewController:
