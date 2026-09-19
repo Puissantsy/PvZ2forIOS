@@ -234,7 +234,7 @@ NSString *NSStringFromStd(
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — Cooperative Worker Probe v18";
+        @"PvZ2forIOS — main.pak Worker Probe v18";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -243,7 +243,7 @@ NSString *NSStringFromStd(
         NO;
 
     title.text =
-        @"PvZ2forIOS — cooperative worker probe v18";
+        @"PvZ2forIOS — main.pak worker probe v18";
 
     title.font =
         [UIFont
@@ -260,7 +260,7 @@ NSString *NSStringFromStd(
 
     explanation.text =
         @"v17 localized the first lifecycle stall to PvZ2's async main.pak future: the native thread spins at the verified poll loop while the request remains EINPROGRESS. "
-         @"v18 replaces the old permanently-deferred pthread behavior during lifecycle with a cooperative guest-worker scheduler. Eligible PopCap/EA workers receive persistent ARM32 contexts and time slices between lifecycle slices, while likely Wwise/audio workers remain deferred. The exact main.pak future state and worker states are reported if startup still cannot advance. GLES and the filesystem itself remain probe backends.";
+         @"v18 records every deferred pthread start routine, then, only after the main thread reaches that exact poll timeout, runs bounded one-shot ARM32 worker probes outside the callback context. It reports which worker changes the main.pak future, or confirms that the still-synthetic filesystem/expansion bridge is the next blocker. GLES and filesystem remain probe backends.";
 
     explanation.numberOfLines = 0;
 
@@ -756,7 +756,7 @@ NSString *NSStringFromStd(
 
     [self
         appendUI:
-            @"STEP 3: select the same original PvZ2 1.5.252752 APK. v18 will reproduce the validated startup, then time-slice the deferred guest pthread workers alongside the lifecycle so the async main.pak request can make progress. If it still stalls, STEP 3D reports the future status plus every deferred worker state."];
+            @"STEP 3: select the same original PvZ2 1.5.252752 APK. v18 will reproduce the validated startup and main.pak EINPROGRESS stall, then probe the deferred guest pthread workers one by one with bounded execution. STEP 3D will say whether a worker changes the main.pak future or whether the expansion/filesystem bridge is the next blocker."];
 
     [self
         presentViewController:
