@@ -724,6 +724,10 @@ constexpr std::uint32_t kJniProbeSvcResourceRegistryMissGlobal = 0x00f022u;
 // lookup transforms/reuses registers. The SVC emulates the original MOV
 // r4,r2 exactly, so successful native ImageRes/RESFILE lookups stay native.
 constexpr std::uint32_t kJniProbeSvcResourceRegistryEntry = 0x00f023u;
+// v45: 0x1086fa84 is the global-tree "found node" return. The original
+// instruction is LDR r0,[r10,#0x14]. A found key can still carry a null
+// ResourceInfo* value, which is exactly the path v44 did not observe.
+constexpr std::uint32_t kJniProbeSvcResourceRegistryGlobalValue = 0x00f024u;
 constexpr std::uint32_t kJniProbeSvcUnsupportedJniBase = 0x00e000u;
 constexpr std::uint32_t kJniProbeJniSlotCount = 256u;
 
@@ -1663,6 +1667,8 @@ public:
     std::uint32_t resource_entry_id_diagnostics = 0u;
     std::uint32_t resource_null_node_diagnostics = 0u;
     std::uint32_t resource_null_node_heals = 0u;
+    std::uint32_t resource_global_null_node_diagnostics = 0u;
+    std::uint32_t resource_global_null_node_heals = 0u;
     std::unordered_map<std::uint32_t, std::string>
         resource_lookup_entry_ids;
 
@@ -2786,7 +2792,7 @@ public:
             if (exact !=
                 resource_id_index.end()) {
                 Append(
-                    "V44 GROUP-TREE PHYSICAL HIT exact=\"" +
+                    "V45 GROUP-TREE PHYSICAL HIT exact=\"" +
                     wanted +
                     "\" -> 0x" +
                     JniProbeHex(
@@ -2863,7 +2869,7 @@ public:
 
             if (basename_unique != 0u) {
                 Append(
-                    "V44 GROUP-TREE PHYSICAL HIT key=\"" +
+                    "V45 GROUP-TREE PHYSICAL HIT key=\"" +
                     basename_key +
                     "\" wanted=\"" +
                     wanted +
@@ -2878,7 +2884,7 @@ public:
 
                 std::ostringstream diagnostic;
                 diagnostic
-                    << "V44 GROUP-TREE KEYS #"
+                    << "V45 GROUP-TREE KEYS #"
                     << resource_group_key_diagnostics
                     << " wanted=\""
                     << wanted
@@ -3070,7 +3076,7 @@ public:
 
             std::ostringstream diagnostic;
             diagnostic
-                << "V44 RES MISS #"
+                << "V45 RES MISS #"
                 << resource_native_miss_diagnostics
                 << " id=\""
                 << normalized
@@ -3146,7 +3152,7 @@ public:
                             normalized);
 
                     Append(
-                        "V44 RES MAP CANDIDATE offset=+" +
+                        "V45 RES MAP CANDIDATE offset=+" +
                         std::to_string(offset) +
                         " keys=" +
                         std::to_string(
@@ -3198,7 +3204,7 @@ public:
                         "V41EXACT:" + normalized)
                     .second) {
                 Append(
-                    "V44 RESFILE EXACT FALLBACK " +
+                    "V45 RESFILE EXACT FALLBACK " +
                     normalized +
                     " -> ResourceInfo*=0x" +
                     JniProbeHex(direct) +
@@ -4666,7 +4672,7 @@ public:
                     ++resource_entry_id_diagnostics;
 
                     Append(
-                        "V44 RES ENTRY #" +
+                        "V45 RES ENTRY #" +
                         std::to_string(
                             resource_entry_id_diagnostics) +
                         " sp=0x" +
@@ -4684,6 +4690,156 @@ public:
                     regs[13]);
             }
 
+            return;
+        }
+
+        if (swi ==
+            kJniProbeSvcResourceRegistryGlobalValue) {
+
+            // Original 0x1086fa84 instruction:
+            //     LDR r0,[r10,#0x14]
+            // r10 is the node returned by the global ResourceInfo tree.
+            const std::uint32_t node =
+                regs[10];
+
+            const std::uint32_t native_value =
+                node != 0u &&
+                mem.Ptr(
+                    node + 0x14u,
+                    4u) != nullptr
+                    ? mem.Read32Guest(
+                          node + 0x14u)
+                    : 0u;
+
+            if (native_value != 0u) {
+                // Exact emulation of the original LDR for normal native hits.
+                regs[0] =
+                    native_value;
+                return;
+            }
+
+            std::string recovered_id;
+
+            // Same exact per-stack-frame ID captured at 0x1086f674.
+            if (const auto entry =
+                    resource_lookup_entry_ids.find(
+                        regs[13]);
+                entry !=
+                    resource_lookup_entry_ids.end()) {
+                recovered_id =
+                    entry->second;
+            }
+
+            if (recovered_id.empty()) {
+                recovered_id =
+                    RecoverGuestResfileWord(
+                        regs[4]);
+            }
+
+            if (recovered_id.empty()) {
+                for (std::uint32_t reg = 3u;
+                     reg <= 12u &&
+                     recovered_id.empty();
+                     ++reg) {
+                    recovered_id =
+                        RecoverGuestResfileWord(
+                            regs[reg]);
+                }
+            }
+
+            if (recovered_id.empty() &&
+                mem.Ptr(
+                    regs[13],
+                    32u * 4u) != nullptr) {
+                for (std::uint32_t slot = 0u;
+                     slot < 32u &&
+                     recovered_id.empty();
+                     ++slot) {
+                    recovered_id =
+                        RecoverGuestResfileWord(
+                            mem.Read32Guest(
+                                regs[13] +
+                                slot * 4u));
+                }
+            }
+
+            // In the global scan, r8 retains the original manager. r6 is the
+            // selected group's std::map end sentinel after ADD r6,r6,#60, so
+            // subtracting 60 recovers the group base for the narrow exact-ID
+            // fallback.
+            const std::uint32_t manager =
+                regs[8];
+
+            const std::uint32_t group =
+                regs[6] >= 60u
+                    ? regs[6] - 60u
+                    : 0u;
+
+            if (resource_global_null_node_diagnostics <
+                32u) {
+                ++resource_global_null_node_diagnostics;
+
+                Append(
+                    "V45 GLOBAL NULL RESOURCE NODE #" +
+                    std::to_string(
+                        resource_global_null_node_diagnostics) +
+                    " id=\"" +
+                    recovered_id +
+                    "\" node=0x" +
+                    JniProbeHex(
+                        node) +
+                    " manager=0x" +
+                    JniProbeHex(
+                        manager) +
+                    " group=0x" +
+                    JniProbeHex(
+                        group) +
+                    " value=0");
+            }
+
+            const std::uint32_t recovered =
+                ResolveResourceRegistryNativeMiss(
+                    manager,
+                    group,
+                    regs[4],
+                    "0x1086fa84",
+                    recovered_id);
+
+            if (recovered != 0u &&
+                node != 0u &&
+                mem.Ptr(
+                    node + 0x14u,
+                    4u) != nullptr) {
+
+                // Heal the same native node so subsequent lookups no longer
+                // need the bridge. This mirrors v44's group-node repair, but
+                // on the global-tree success path that v44 never trapped.
+                mem.Write32Guest(
+                    node + 0x14u,
+                    recovered);
+
+                ++resource_global_null_node_heals;
+
+                if (resource_global_null_node_heals <=
+                    32u) {
+                    Append(
+                        "V45 GLOBAL NULL NODE HEAL #" +
+                        std::to_string(
+                            resource_global_null_node_heals) +
+                        " id=\"" +
+                        recovered_id +
+                        "\" node=0x" +
+                        JniProbeHex(
+                            node) +
+                        " -> ResourceInfo*=0x" +
+                        JniProbeHex(
+                            recovered));
+                }
+            }
+
+            // The replaced instruction was itself the return-value load.
+            regs[0] =
+                recovered;
             return;
         }
 
@@ -4731,7 +4887,7 @@ public:
                     ++resource_null_node_diagnostics;
 
                     Append(
-                        "V44 NULL RESOURCE NODE #" +
+                        "V45 GROUP NULL RESOURCE NODE #" +
                         std::to_string(
                             resource_null_node_diagnostics) +
                         " node=0x" +
@@ -4808,7 +4964,7 @@ public:
                 ++resource_live_id_recoveries;
 
                 Append(
-                    "V44 LIVE RESFILE RECOVERY #" +
+                    "V45 LIVE RESFILE RECOVERY #" +
                     std::to_string(
                         resource_live_id_recoveries) +
                     " site=" +
@@ -4848,7 +5004,7 @@ public:
                     if (resource_null_node_heals <=
                         24u) {
                         Append(
-                            "V44 NULL NODE HEAL #" +
+                            "V45 GROUP NULL NODE HEAL #" +
                             std::to_string(
                                 resource_null_node_heals) +
                             " id=\"" +
@@ -14528,11 +14684,11 @@ bool JniProbePrepareRuntime(
         }
     }
 
-    // v44: keep 0x86f66c's native lookup logic intact, but observe its entry
-    // and its two return boundaries. At the group boundary 0x86f8a0, a
-    // non-end std::map node is only a real success if node+0x14 contains a
-    // non-null ResourceInfo*. Null-valued nodes are healed from the already
-    // proven runtime/RSB fallback before the guest executes its following LDR.
+    // v45: keep 0x86f66c's native lookup logic intact, but observe the exact
+    // entry plus all three relevant return shapes. v44 proved the group path
+    // never produced a null-valued found node. The missing alternating IDs
+    // instead bypass both old miss traps, so v45 additionally replaces the
+    // global found-node LDR at 0x86fa84 and checks node+0x14 directly.
     auto patch_resource_native_miss =
         [&](std::uint32_t offset,
             std::uint32_t expected,
@@ -14566,15 +14722,19 @@ bool JniProbePrepareRuntime(
         !patch_resource_native_miss(
             0x0086fa78u,
             0xe3a00000u,
-            kJniProbeSvcResourceRegistryMissGlobal)) {
+            kJniProbeSvcResourceRegistryMissGlobal) ||
+        !patch_resource_native_miss(
+            0x0086fa84u,
+            0xe59a0014u,
+            kJniProbeSvcResourceRegistryGlobalValue)) {
 
         error =
-            "v44 resource-entry/null-node/miss profile did not match the verified PvZ2 1.5.252752 ARM code.";
+            "v45 resource-entry/group-null/global-null/miss profile did not match the verified PvZ2 1.5.252752 ARM code.";
         return false;
     }
 
     callbacks.Append(
-        "V44 RESFILE NULL-NODE BRIDGE: exact lookup arg captured at 0x1086f674; true native ResourceInfo hits stay native; null-valued group nodes and true misses are recovered at 0x1086f8a0/0x1086fa78.");
+        "V45 RESFILE GLOBAL-VALUE BRIDGE: exact ID captured at 0x1086f674; group return 0x1086f8a0 and global found-node return 0x1086fa84 are value-aware; true global misses remain trapped at 0x1086fa78.");
 
     return_trampoline =
         JniProbeMakeTrampoline(
@@ -16683,7 +16843,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                         if (non_black > best_non_black) {
                             const char* best =
                                 PvZ2HostGLESCapturePNGNamed(
-                                    "pvz2-v44-best-frame.png");
+                                    "pvz2-v45-best-frame.png");
 
                             if (best != nullptr &&
                                 *best != '\0') {
@@ -16699,7 +16859,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                     best;
 
                                 callbacks.Append(
-                                    "V44 BEST FRAME: #" +
+                                    "V45 BEST FRAME: #" +
                                     std::to_string(
                                         best_frame) +
                                     " nonBlack=" +
@@ -16720,7 +16880,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
 
                             const char* post_ea =
                                 PvZ2HostGLESCapturePNGNamed(
-                                    "pvz2-v44-post-ea-best.png");
+                                    "pvz2-v45-post-ea-best.png");
 
                             if (post_ea != nullptr &&
                                 *post_ea != '\0') {
@@ -16763,11 +16923,11 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                 if (callbacks.host_gles_ready) {
                     const char* final_capture =
                         PvZ2HostGLESCapturePNGNamed(
-                            "pvz2-v44-final-frame.png");
+                            "pvz2-v45-final-frame.png");
 
                     callbacks.Append(
                         std::string{
-                            "V44 FINAL GLES CAPTURE: "} +
+                            "V45 FINAL GLES CAPTURE: "} +
                         (final_capture != nullptr &&
                          *final_capture != '\0'
                             ? final_capture
@@ -16782,7 +16942,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                 }
 
                 callbacks.Append(
-                    "V44 BEST FRAME SUMMARY: frame=" +
+                    "V45 BEST FRAME SUMMARY: frame=" +
                     std::to_string(
                         best_frame) +
                     " nonBlack=" +

@@ -245,7 +245,7 @@ NSString *NSStringFromStd(
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — RESFILE Null-Node Repair v44";
+        @"PvZ2forIOS — RESFILE Global-Value Repair v45";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -254,7 +254,7 @@ NSString *NSStringFromStd(
         NO;
 
     title.text =
-        @"PvZ2forIOS — RESFILE null-node repair v44";
+        @"PvZ2forIOS — RESFILE global-value repair v45";
 
     title.font =
         [UIFont
@@ -270,8 +270,8 @@ NSString *NSStringFromStd(
         NO;
 
     explanation.text =
-        @"v43 proved that capturing the exact RESFILE argument at 0x1086f674 is stable, but the final counters stayed exactly at 85 recovered / 86 missing. The important distinction is inside the native std::map lookup itself: reaching a non-end tree node does not guarantee success if that node's ResourceInfo* value at +0x14 is null. v43 returned early for every non-end node, so those null-valued entries could still fall through to the guest LDR and become a null result without ever reaching the fallback. "
-         @"v44 keeps every proven native hit untouched, but at 0x1086f8a0 it now checks the actual node value. If the key exists with a null ResourceInfo*, v44 runs the same narrow RESFILE recovery, writes the recovered real ResourceInfo* into that map node, and lets the original guest LDR consume it normally. True end-node misses still use the existing fallback. The splash color experiment remains disabled; the 600-frame soak stays enabled to reveal whether this closes the 85/86 split and moves beyond the EA splash.";
+        @"v44 gave a decisive negative result: the final counters stayed at 121 indexed files / 171 registry lookups / 85 direct recoveries / 86 misses, and not a single V44 NULL RESOURCE NODE event occurred. That rules out the group-tree null-value theory. The alternating pattern in the full log reveals the missing half returns through a different branch: the global ResourceInfo tree can find the requested key and jump to 0x1086fa84, where the original code directly executes LDR r0,[r10,#0x14]. Because v44 only trapped the true global miss at 0x1086fa78, a found global node whose ResourceInfo* value is null bypassed every recovery hook. "
+         @"v45 therefore adds an exact trap at the verified global found-node load 0x1086fa84. Non-null native values are returned unchanged. A null value reuses the exact RESFILE ID captured at 0x1086f674, reconstructs the selected group from the live ARM registers, invokes the existing narrow runtime/RSB recovery, heals node+0x14, and returns the recovered real ResourceInfo*. Existing group/native success behavior is preserved. The 600-frame soak remains enabled.";
 
     explanation.numberOfLines = 0;
 
@@ -574,7 +574,7 @@ NSString *NSStringFromStd(
             monospacedSystemFontOfSize:13.0
             weight:UIFontWeightRegular];
     caption.text =
-        @"v44 — RESFILE null-node repair + 600-frame soak\nTap Close to return to the full diagnostic log.";
+        @"v45 — RESFILE global-value repair + 600-frame soak\nTap Close to return to the full diagnostic log.";
 
     UIButton *closeButton =
         [UIButton
@@ -943,7 +943,7 @@ NSString *NSStringFromStd(
 
     [self
         appendUI:
-            @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v44 keeps native ResourceInfo hits untouched, but if 0x1086f8a0 is reached with a real map node whose ResourceInfo* value is null, it attempts the verified RESFILE fallback and heals that node before the original guest LDR executes. True end-node misses still use the existing recovery. The 600-frame soak remains enabled."];
+            @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v45 adds the missing global-tree found-node bridge at 0x1086fa84. Native non-null ResourceInfo* values pass through unchanged; only a null value triggers exact-ID RESFILE recovery and in-place node repair. Existing group and true-miss hooks remain intact, and the 600-frame soak stays enabled."];
 
     [self
         presentViewController:
@@ -1004,7 +1004,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v44 probe run started; PID=%d ===",
+                    @"=== PvZ2 v45 probe run started; PID=%d ===",
                     getpid()]];
 
     self.jniRunning =
@@ -1257,7 +1257,7 @@ NSString *NSStringFromStd(
                     if (result.ok) {
                         [selfRef
                             appendUI:
-                                @"SUCCESS STEP 3: PvZ2 completed lifecycle + corrected geometry/capture + v42 vertex-color and live RESFILE recovery + 600-frame soak."];
+                                @"SUCCESS STEP 3: PvZ2 completed lifecycle + host GLES + v45 global-value RESFILE recovery + 600-frame soak."];
 
                         if (!result.host_frame_png_path.empty()) {
                             [selfRef
@@ -1275,11 +1275,11 @@ NSString *NSStringFromStd(
                         } else {
                             [selfRef
                                 showResult:
-                                    @"PvZ2 v44 frame soak returned"
+                                    @"PvZ2 v45 frame soak returned"
                                 message:
                                     [NSString
                                         stringWithFormat:
-                                            @"PvZ2 completed its native startup and v44 frame soak.\n\nGameAppInitialize: %u\nLifecycle calls completed: %u\nFrames returned: %u\nHost GLES active: %@\nBest sampled frame: %u (%llu non-black pixels)\nConstructors: %u/%u\nJNI_OnLoad: 0x%08x\n\nNo PNG capture was produced, so check the V39 SURFACE GEOMETRY / GLES VIEWPORT / GLES SCISSOR / FRAME STATS plus the v40 corrected capture and V38 RESFILE / BOUNDARY WORKER lines in the full log.",
+                                            @"PvZ2 completed its native startup and v45 frame soak.\n\nGameAppInitialize: %u\nLifecycle calls completed: %u\nFrames returned: %u\nHost GLES active: %@\nBest sampled frame: %u (%llu non-black pixels)\nConstructors: %u/%u\nJNI_OnLoad: 0x%08x\n\nNo PNG capture was produced, so check the V39 SURFACE GEOMETRY / GLES VIEWPORT / GLES SCISSOR / FRAME STATS plus the v40 corrected capture and V38 RESFILE / BOUNDARY WORKER lines in the full log.",
                                             result.game_app_initialize_return & 0xffu,
                                             result.lifecycle_calls_completed,
                                             result.draw_frames_completed,
