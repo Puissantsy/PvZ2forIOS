@@ -14235,7 +14235,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
 
                                 if (!stack_base) {
                                     callbacks.Append(
-                                        "V35 BOUNDARY WORKER: unable to allocate stack for tid=" +
+                                        "V36 BOUNDARY WORKER: unable to allocate stack for tid=" +
                                         std::to_string(
                                             worker_state.id));
                                     worker_state.runtime_failed =
@@ -14278,7 +14278,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                     true;
 
                                 callbacks.Append(
-                                    "V35 BOUNDARY WORKER START tid=" +
+                                    "V36 BOUNDARY WORKER START tid=" +
                                     std::to_string(
                                         worker_state.id) +
                                     " start=0x" +
@@ -14382,7 +14382,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                 worker_state.runtime_failed) {
 
                                 callbacks.Append(
-                                    "V35 BOUNDARY WORKER SLICE phase=" +
+                                    "V36 BOUNDARY WORKER SLICE phase=" +
                                     std::string{
                                         phase != nullptr
                                             ? phase
@@ -14415,7 +14415,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
 
                             if (worker_fatal) {
                                 callbacks.Append(
-                                    "V35 BOUNDARY WORKER STOP: tid=" +
+                                    "V36 BOUNDARY WORKER STOP: tid=" +
                                     std::to_string(
                                         worker_state.id) +
                                     " halted fatally; preserving main runtime and continuing other diagnostics.");
@@ -14656,7 +14656,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                 }
 
                 constexpr std::uint32_t
-                    kV35FrameCount = 600u;
+                    kV36FrameCount = 600u;
 
                 auto should_sample_frame =
                     [](std::uint32_t frame) {
@@ -14692,7 +14692,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                 std::string post_ea_best_path;
 
                 for (std::uint32_t frame = 0u;
-                     frame < kV35FrameCount;
+                     frame < kV36FrameCount;
                      ++frame) {
 
                     const std::uint32_t frame_number =
@@ -14703,12 +14703,12 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
 
                     if (sample) {
                         callbacks.Append(
-                            "V35 FRAME SOAK: begin frame " +
+                            "V36 FRAME SOAK: begin frame " +
                             std::to_string(
                                 frame_number) +
                             "/" +
                             std::to_string(
-                                kV35FrameCount));
+                                kV36FrameCount));
                     }
 
                     if (!run_lifecycle(
@@ -14722,7 +14722,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                         if (callbacks.host_gles_ready) {
                             const char* partial =
                                 PvZ2HostGLESCapturePNGNamed(
-                                    "pvz2-v35-stopped-frame.png");
+                                    "pvz2-v36-stopped-frame.png");
 
                             if (partial != nullptr &&
                                 *partial != '\0') {
@@ -14764,7 +14764,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             PvZ2HostGLESLastNonBlackPixels();
 
                         callbacks.Append(
-                            "V35 FRAME STATS #" +
+                            "V36 FRAME STATS #" +
                             std::to_string(
                                 frame_number) +
                             ": " +
@@ -14785,7 +14785,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                         if (non_black > best_non_black) {
                             const char* best =
                                 PvZ2HostGLESCapturePNGNamed(
-                                    "pvz2-v35-best-frame.png");
+                                    "pvz2-v36-best-frame.png");
 
                             if (best != nullptr &&
                                 *best != '\0') {
@@ -14801,7 +14801,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                     best;
 
                                 callbacks.Append(
-                                    "V35 BEST FRAME: #" +
+                                    "V36 BEST FRAME: #" +
                                     std::to_string(
                                         best_frame) +
                                     " nonBlack=" +
@@ -14822,7 +14822,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
 
                             const char* post_ea =
                                 PvZ2HostGLESCapturePNGNamed(
-                                    "pvz2-v35-post-ea-best.png");
+                                    "pvz2-v36-post-ea-best.png");
 
                             if (post_ea != nullptr &&
                                 *post_ea != '\0') {
@@ -14834,7 +14834,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                     post_ea;
 
                                 callbacks.Append(
-                                    "V35 POST-EA FRAME: #" +
+                                    "V36 POST-EA FRAME: #" +
                                     std::to_string(
                                         post_ea_best_frame) +
                                     " nonBlack=" +
@@ -14846,16 +14846,16 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                         }
 
                         callbacks.Append(
-                            "V35 FRAME SOAK: returned frame " +
+                            "V36 FRAME SOAK: returned frame " +
                             std::to_string(
                                 frame_number) +
                             "/" +
                             std::to_string(
-                                kV35FrameCount));
+                                kV36FrameCount));
                     }
 
                     if (frame_number !=
-                        kV35FrameCount) {
+                        kV36FrameCount) {
                         std::this_thread::sleep_for(
                             std::chrono::milliseconds(
                                 16));
@@ -14865,11 +14865,11 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                 if (callbacks.host_gles_ready) {
                     const char* final_capture =
                         PvZ2HostGLESCapturePNGNamed(
-                            "pvz2-v35-final-frame.png");
+                            "pvz2-v36-final-frame.png");
 
                     callbacks.Append(
                         std::string{
-                            "V35 FINAL GLES CAPTURE: "} +
+                            "V36 FINAL GLES CAPTURE: "} +
                         (final_capture != nullptr &&
                          *final_capture != '\0'
                             ? final_capture
@@ -14884,7 +14884,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                 }
 
                 callbacks.Append(
-                    "V35 BEST FRAME SUMMARY: frame=" +
+                    "V36 BEST FRAME SUMMARY: frame=" +
                     std::to_string(
                         best_frame) +
                     " nonBlack=" +
