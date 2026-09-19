@@ -234,7 +234,7 @@ NSString *NSStringFromStd(
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — Semantic Batch Sweep v25";
+        @"PvZ2forIOS — RSB Resource VFS v26";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -243,7 +243,7 @@ NSString *NSStringFromStd(
         NO;
 
     title.text =
-        @"PvZ2forIOS — semantic batch sweep v25";
+        @"PvZ2forIOS — RSB resource VFS v26";
 
     title.font =
         [UIFont
@@ -259,8 +259,8 @@ NSString *NSStringFromStd(
         NO;
 
     explanation.text =
-        @"v24 successfully exposed 18 unique compatibility findings in one run. Fourteen were real pre-recovery JNI method fallbacks, followed by the RESFILE_PACKAGES_VERSION lookup, a null callback, std::logic_error and abort. "
-         @"v25 implements all fourteen observed JNI methods in one semantic batch (package/version/locale/device/network/orientation/screen/config/asset size+info), keeps the bulk sweep active, and changes recovery accounting so one repeating abort cannot consume all 48 slots. The sweep now spends its quota on distinct compatibility boundaries and stops cleanly if the same speculative site repeats. Copy full log remains available.";
+        @"v25 removed all fourteen observed JNI fallbacks and reduced the natural failure chain to one root: RESFILE_PACKAGES_VERSION is not registered, followed by a null virtual callback and an uncaught std::logic_error. Static OBB analysis shows why: the RSB outer index is loaded, but PROPERTIES\\RESOURCES.RTON lives inside __MANIFESTGROUP__ and had never been exposed as a file. "
+         @"v26 adds an indexed RSB subfile VFS. It decodes the outer compressed file index, resolves the owning RSGP, decodes that group's file list, and exposes uncompressed part-0 members such as PROPERTIES\\RESOURCES.RTON as bounded files backed directly by the selected OBB. APK AssetManager queries are also separated from OBB semantics. The bulk sweep remains active.";
 
     explanation.numberOfLines = 0;
 
@@ -463,7 +463,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 semantic-batch-sweep v25 session started; PID=%d ===",
+                    @"=== PvZ2 RSB-resource-VFS v26 session started; PID=%d ===",
                     getpid()]];
 
     [self
@@ -799,7 +799,7 @@ NSString *NSStringFromStd(
 
     [self
         appendUI:
-            @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v25 first supplies concrete semantics for all 14 JNI methods observed by v24, then continues the bulk sweep across distinct runtime gaps without wasting the recovery budget on one repeated abort site."];
+            @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v26 keeps the semantic JNI batch and bulk sweep, and additionally exposes internal uncompressed RSB resources such as PROPERTIES\\RESOURCES.RTON through the same POSIX VFS, so ResourceManager can register RESFILE_PACKAGES_VERSION and the other package resources."];
 
     [self
         presentViewController:
