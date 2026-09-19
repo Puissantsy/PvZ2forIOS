@@ -1,6 +1,11 @@
 # PvZ2forIOS
 
-Experimental compatibility project for running a legally owned copy of **Plants vs. Zombies 2 1.5.252752 (Android, 2013)** on modern iPadOS/iOS hardware.
+Experimental interoperability/compatibility project for running a user-supplied copy of **Plants vs. Zombies 2 1.5.252752 (Android, 2013)** on modern iPadOS/iOS hardware.
+
+> [!IMPORTANT]
+> **Unofficial project.** This repository is not affiliated with, sponsored by, or endorsed by Electronic Arts or PopCap Games. **Plants vs. Zombies** and related names, marks, game binaries, data, artwork, audio, and other game content belong to their respective owners.
+>
+> **No game files are distributed here.** The repository and its build artifacts must not contain the PvZ2 APK, OBB, `libPVZ2.so`, extracted game assets, or other proprietary game content. The compatibility app only operates on files supplied locally by the user.
 
 ## Legal / project scope
 
@@ -24,11 +29,19 @@ Plants vs. Zombies, Plants vs. Zombies 2, PopCap, Electronic Arts, and related n
 
 The intended architecture is based on the same general model as [PvZ2Native](https://github.com/OptiJuegos/PvZ2Native): Dynarmic translates the original ARM32 game code to host ARM64, while the Android/JNI/native APIs used by the game are reimplemented by the host.
 
-## Important: game files are not part of this repository
+## Repository scope and distribution rules
 
-Do **not** commit or publish the APK, OBB, `libPVZ2.so`, saves, Apple pairing files, signing certificates, provisioning profiles, or other private/device-specific material.
+This repository contains only independently written compatibility/runtime code, build scripts, diagnostics, documentation, and small interoperability facts such as function names, signatures, hashes, and offsets needed to identify the supported build.
 
-The user supplies their own legally obtained game files at build/test time.
+Do **not** commit, attach to releases, upload to Issues/PRs, or otherwise distribute through this repository:
+
+- PvZ2 APK/OBB files, `libPVZ2.so`, extracted textures/audio/data, saves, or other game assets;
+- full binary dumps, large disassembly/decompiler dumps, or reconstructed game source;
+- Apple pairing files, signing certificates, provisioning profiles, private keys, API tokens, device identifiers, or account credentials.
+
+Users must supply their own game files locally. The project does not provide download links for proprietary game files and does not bypass purchase, licensing, or access controls.
+
+This project is intended for software interoperability and technical research. Laws and software-license terms vary by jurisdiction; users and contributors are responsible for ensuring that their own use and contributions comply with applicable law and agreements.
 
 ## Current investigation
 
@@ -60,3 +73,7 @@ The current v8 loader probe lets the user choose their own APK from Files, extra
 6. Bring up touch input, audio, filesystem/save handling, and stable frame presentation.
 
 This project is independent and is not affiliated with or endorsed by Electronic Arts, PopCap Games, Apple, PvZ2Native, Dynarmic, StikDebug, or Applesauce.
+
+## Trademark / copyright notice
+
+Electronic Arts, PopCap Games, Plants vs. Zombies, and related names and marks are the property of their respective owners. References to them in this repository are descriptive and are used to identify the software with which this compatibility project interoperates.
