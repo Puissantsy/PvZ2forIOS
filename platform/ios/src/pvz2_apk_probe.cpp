@@ -5109,6 +5109,109 @@ public:
                 }
             };
 
+        auto set_guest_errno =
+            [&](std::uint32_t value) {
+                if (guest_errno_address == 0) {
+                    guest_errno_address =
+                        mem.AllocateObject(4, 4);
+                }
+
+                if (guest_errno_address) {
+                    mem.Write32Guest(
+                        guest_errno_address,
+                        value);
+                }
+            };
+
+        auto normalize_guest_path =
+            [&](std::string path) {
+                constexpr char kAssetPrefix[] =
+                    "ASSET:";
+
+                if (path.rfind(kAssetPrefix, 0) == 0) {
+                    path.erase(
+                        0,
+                        sizeof(kAssetPrefix) - 1);
+                }
+
+                for (char& ch : path) {
+                    if (ch == '\\') {
+                        ch = '/';
+                    }
+                }
+
+                return path;
+            };
+
+        auto is_expansion_path =
+            [&](const std::string& raw) {
+                std::string path =
+                    normalize_guest_path(raw);
+
+                const std::size_t slash =
+                    path.find_last_of('/');
+
+                std::string base =
+                    slash == std::string::npos
+                        ? path
+                        : path.substr(slash + 1);
+
+                std::transform(
+                    base.begin(),
+                    base.end(),
+                    base.begin(),
+                    [](unsigned char ch) {
+                        return
+                            static_cast<char>(
+                                std::tolower(ch));
+                    });
+
+                if (base == "main.rsb") {
+                    return true;
+                }
+
+                return
+                    base.size() >= 4u &&
+                    base.compare(
+                        base.size() - 4u,
+                        4u,
+                        ".obb") == 0;
+            };
+
+        auto write_armeabi_stat =
+            [&](std::uint32_t address,
+                std::uint64_t size) {
+                constexpr std::uint32_t kStatSize =
+                    104u;
+
+                if (!mem.Ptr(address, kStatSize)) {
+                    return false;
+                }
+
+                for (std::uint32_t i = 0;
+                     i < kStatSize;
+                     i += 4u) {
+                    mem.Write32Guest(
+                        address + i,
+                        0);
+                }
+
+                // armeabi-v7a bionic struct stat fields used by PvZ2.
+                mem.Write32Guest(
+                    address + 0x10u,
+                    0100644u);
+                mem.Write32Guest(
+                    address + 0x30u,
+                    static_cast<std::uint32_t>(
+                        size));
+                mem.Write32Guest(
+                    address + 0x34u,
+                    static_cast<std::uint32_t>(
+                        size >> 32));
+
+                return true;
+            };
+
         static const std::unordered_set<std::string> kStdio = {
             "fclose","fdopen","feof","ferror","fflush","fgetc","fgets",
             "fopen","fprintf","fputc","fputs","fread","fscanf","fseek",
@@ -5118,20 +5221,227 @@ public:
         };
 
         if (kStdio.count(name) != 0) {
+            if (name == "fopen") {
+                const std::string guest_path =
+                    mem.ReadCStringGuest(
+                        regs[0],
+                        2048);
+
+                if (is_expansion_path(guest_path) &&
+                    obb_data != nullptr &&
+                    obb_size != 0) {
+
+                    const std::uint32_t token =
+                        next_probe_file++;
+
+                    obb_files[token] =
+                        ProbeObbHandle{};
+
+                    regs[0] = token;
+                    ++supported_calls;
+
+                    Append(
+                        "V19 VFS fopen(\"" +
+                        guest_path +
+                        "\") -> OBB token=0x" +
+                        JniProbeHex(token) +
+                        " size=" +
+                        std::to_string(obb_size));
+                    return;
+                }
+
+                set_guest_errno(2u);
+                regs[0] = 0;
+                ++supported_calls;
+
+                Append(
+                    "V19 VFS fopen(\"" +
+                    guest_path +
+                    "\") -> null");
+                return;
+            }
+
+            if (name == "fclose") {
+                const auto erased =
+                    obb_files.erase(regs[0]);
+
+                regs[0] =
+                    erased != 0u
+                        ? 0u
+                        : 0xffffffffu;
+
+                ++supported_calls;
+                return;
+            }
+
+            if (name == "fread") {
+                const std::uint32_t dst =
+                    regs[0];
+                const std::uint32_t element_size =
+                    regs[1];
+                const std::uint32_t element_count =
+                    regs[2];
+                const std::uint32_t token =
+                    regs[3];
+
+                const auto it =
+                    obb_files.find(token);
+
+                if (it == obb_files.end() ||
+                    element_size == 0u) {
+                    regs[0] = 0;
+                    ++supported_calls;
+                    return;
+                }
+
+                const std::uint64_t requested =
+                    static_cast<std::uint64_t>(
+                        element_size) *
+                    element_count;
+
+                const std::uint64_t available =
+                    it->second.offset < obb_size
+                        ? obb_size -
+                            it->second.offset
+                        : 0u;
+
+                const std::uint64_t bytes =
+                    std::min(
+                        requested,
+                        available);
+
+                if (bytes != 0u &&
+                    !mem.Ptr(
+                        dst,
+                        static_cast<std::size_t>(
+                            bytes))) {
+
+                    set_guest_errno(14u);
+                    regs[0] = 0;
+                    ++supported_calls;
+                    return;
+                }
+
+                if (bytes != 0u) {
+                    std::memcpy(
+                        mem.Ptr(
+                            dst,
+                            static_cast<std::size_t>(
+                                bytes)),
+                        obb_data +
+                            static_cast<std::size_t>(
+                                it->second.offset),
+                        static_cast<std::size_t>(
+                            bytes));
+                }
+
+                it->second.offset += bytes;
+                it->second.eof =
+                    bytes < requested;
+
+                regs[0] =
+                    element_size == 0u
+                        ? 0u
+                        : static_cast<std::uint32_t>(
+                            bytes /
+                            element_size);
+
+                ++supported_calls;
+                return;
+            }
+
+            if (name == "fseek") {
+                const std::uint32_t token =
+                    regs[0];
+                const std::int32_t offset =
+                    static_cast<std::int32_t>(
+                        regs[1]);
+                const std::uint32_t whence =
+                    regs[2];
+
+                const auto it =
+                    obb_files.find(token);
+
+                if (it == obb_files.end()) {
+                    set_guest_errno(9u);
+                    regs[0] = 0xffffffffu;
+                    ++supported_calls;
+                    return;
+                }
+
+                std::int64_t base = 0;
+                if (whence == 1u) {
+                    base =
+                        static_cast<std::int64_t>(
+                            it->second.offset);
+                } else if (whence == 2u) {
+                    base =
+                        static_cast<std::int64_t>(
+                            obb_size);
+                }
+
+                const std::int64_t next =
+                    base + offset;
+
+                if (next < 0 ||
+                    static_cast<std::uint64_t>(
+                        next) >
+                        obb_size) {
+
+                    set_guest_errno(22u);
+                    regs[0] = 0xffffffffu;
+                } else {
+                    it->second.offset =
+                        static_cast<std::uint64_t>(
+                            next);
+                    it->second.eof = false;
+                    regs[0] = 0;
+                }
+
+                ++supported_calls;
+                return;
+            }
+
+            if (name == "ftell") {
+                const auto it =
+                    obb_files.find(regs[0]);
+
+                regs[0] =
+                    it == obb_files.end()
+                        ? 0xffffffffu
+                        : static_cast<std::uint32_t>(
+                            it->second.offset);
+
+                ++supported_calls;
+                return;
+            }
+
+            if (name == "feof") {
+                const auto it =
+                    obb_files.find(regs[0]);
+
+                regs[0] =
+                    it != obb_files.end() &&
+                    it->second.eof
+                        ? 1u
+                        : 0u;
+
+                ++supported_calls;
+                return;
+            }
+
+            if (name == "ferror") {
+                regs[0] = 0;
+                ++supported_calls;
+                return;
+            }
+
             log_fallback_once("stdio");
 
             if (name == "fwrite") {
-                // size * nmemb requested; report all elements written.
                 regs[0] = regs[2];
-            } else if (name == "fread") {
-                regs[0] = 0; // EOF for the temporary probe filesystem.
-            } else if (name == "fopen" ||
-                       name == "fdopen" ||
+            } else if (name == "fdopen" ||
                        name == "fgets") {
-                regs[0] = 0; // no host FILE* is exposed to the guest.
-            } else if (name == "feof") {
-                regs[0] = 1;
-            } else if (name == "ferror") {
                 regs[0] = 0;
             } else if (name == "fgetc" ||
                        name == "getc" ||
@@ -5139,14 +5449,12 @@ public:
                 regs[0] = 0xffffffffu;
             } else if (name == "fputc" ||
                        name == "putc") {
-                regs[0] = regs[0] & 0xffu;
+                regs[0] =
+                    regs[0] & 0xffu;
             } else if (name == "fputs" ||
                        name == "puts") {
                 regs[0] = 0;
-            } else if (name == "ftell") {
-                regs[0] = 0;
             } else if (name == "qsort") {
-                // Keep the input buffer untouched in probe mode.
                 regs[0] = 0;
             } else if (name == "lrand48") {
                 regs[0] = 0x12345678u;
@@ -5166,19 +5474,253 @@ public:
         };
 
         if (kPosixFiles.count(name) != 0) {
+            if (name == "open") {
+                const std::string guest_path =
+                    mem.ReadCStringGuest(
+                        regs[0],
+                        2048);
+
+                if (is_expansion_path(guest_path) &&
+                    obb_data != nullptr &&
+                    obb_size != 0) {
+
+                    const std::uint32_t token =
+                        next_probe_fd++;
+
+                    obb_fds[token] =
+                        ProbeObbHandle{};
+
+                    regs[0] = token;
+                    ++supported_calls;
+
+                    Append(
+                        "V19 VFS open(\"" +
+                        guest_path +
+                        "\") -> OBB fd=0x" +
+                        JniProbeHex(token) +
+                        " size=" +
+                        std::to_string(obb_size));
+                    return;
+                }
+
+                set_guest_errno(2u);
+                regs[0] = 0xffffffffu;
+                ++supported_calls;
+
+                Append(
+                    "V19 VFS open(\"" +
+                    guest_path +
+                    "\") -> -1 ENOENT");
+                return;
+            }
+
+            if (name == "close") {
+                const auto erased =
+                    obb_fds.erase(regs[0]);
+
+                regs[0] =
+                    erased != 0u
+                        ? 0u
+                        : 0xffffffffu;
+
+                ++supported_calls;
+                return;
+            }
+
+            if (name == "read") {
+                const std::uint32_t token =
+                    regs[0];
+                const std::uint32_t dst =
+                    regs[1];
+                const std::uint32_t requested =
+                    regs[2];
+
+                const auto it =
+                    obb_fds.find(token);
+
+                if (it == obb_fds.end()) {
+                    set_guest_errno(9u);
+                    regs[0] = 0xffffffffu;
+                    ++supported_calls;
+                    return;
+                }
+
+                const std::uint64_t available =
+                    it->second.offset < obb_size
+                        ? obb_size -
+                            it->second.offset
+                        : 0u;
+
+                const std::uint64_t bytes =
+                    std::min<std::uint64_t>(
+                        requested,
+                        available);
+
+                if (bytes != 0u &&
+                    !mem.Ptr(
+                        dst,
+                        static_cast<std::size_t>(
+                            bytes))) {
+
+                    set_guest_errno(14u);
+                    regs[0] = 0xffffffffu;
+                    ++supported_calls;
+                    return;
+                }
+
+                if (bytes != 0u) {
+                    std::memcpy(
+                        mem.Ptr(
+                            dst,
+                            static_cast<std::size_t>(
+                                bytes)),
+                        obb_data +
+                            static_cast<std::size_t>(
+                                it->second.offset),
+                        static_cast<std::size_t>(
+                            bytes));
+                }
+
+                it->second.offset += bytes;
+                it->second.eof =
+                    bytes < requested;
+
+                regs[0] =
+                    static_cast<std::uint32_t>(
+                        bytes);
+
+                ++supported_calls;
+
+                if (fallback_logged.insert(
+                        "v19-obb-read").second) {
+                    Append(
+                        "V19 VFS first OBB read: fd=0x" +
+                        JniProbeHex(token) +
+                        " bytes=" +
+                        std::to_string(bytes));
+                }
+
+                return;
+            }
+
+            if (name == "lseek") {
+                const std::uint32_t token =
+                    regs[0];
+                const std::int32_t offset =
+                    static_cast<std::int32_t>(
+                        regs[1]);
+                const std::uint32_t whence =
+                    regs[2];
+
+                const auto it =
+                    obb_fds.find(token);
+
+                if (it == obb_fds.end()) {
+                    set_guest_errno(9u);
+                    regs[0] = 0xffffffffu;
+                    ++supported_calls;
+                    return;
+                }
+
+                std::int64_t base = 0;
+
+                if (whence == 1u) {
+                    base =
+                        static_cast<std::int64_t>(
+                            it->second.offset);
+                } else if (whence == 2u) {
+                    base =
+                        static_cast<std::int64_t>(
+                            obb_size);
+                }
+
+                const std::int64_t next =
+                    base + offset;
+
+                if (next < 0 ||
+                    static_cast<std::uint64_t>(
+                        next) >
+                        obb_size) {
+
+                    set_guest_errno(22u);
+                    regs[0] = 0xffffffffu;
+                } else {
+                    it->second.offset =
+                        static_cast<std::uint64_t>(
+                            next);
+                    it->second.eof = false;
+
+                    regs[0] =
+                        static_cast<std::uint32_t>(
+                            next);
+                }
+
+                ++supported_calls;
+                return;
+            }
+
+            if (name == "fstat") {
+                const auto it =
+                    obb_fds.find(regs[0]);
+
+                if (it != obb_fds.end() &&
+                    write_armeabi_stat(
+                        regs[1],
+                        obb_size)) {
+                    regs[0] = 0;
+                } else {
+                    set_guest_errno(9u);
+                    regs[0] = 0xffffffffu;
+                }
+
+                ++supported_calls;
+                return;
+            }
+
+            if (name == "stat" ||
+                name == "access") {
+
+                const std::string guest_path =
+                    mem.ReadCStringGuest(
+                        regs[0],
+                        2048);
+
+                const bool exists =
+                    is_expansion_path(
+                        guest_path) &&
+                    obb_data != nullptr &&
+                    obb_size != 0;
+
+                if (name == "access") {
+                    regs[0] =
+                        exists
+                            ? 0u
+                            : 0xffffffffu;
+                } else if (exists &&
+                           write_armeabi_stat(
+                               regs[1],
+                               obb_size)) {
+                    regs[0] = 0;
+                } else {
+                    regs[0] = 0xffffffffu;
+                }
+
+                if (!exists) {
+                    set_guest_errno(2u);
+                }
+
+                ++supported_calls;
+                return;
+            }
+
             log_fallback_once("posix-fs");
 
             if (name == "write") {
                 regs[0] = regs[2];
             } else if (name == "writev") {
-                // Return a non-negative success result; exact byte accounting
-                // is deferred to the real VFS bridge.
-                regs[0] = 0;
-            } else if (name == "read") {
                 regs[0] = 0;
             } else if (name == "mkdir" ||
                        name == "fsync" ||
-                       name == "close" ||
                        name == "closedir" ||
                        name == "unlink") {
                 regs[0] = 0;
