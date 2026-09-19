@@ -245,7 +245,7 @@ NSString *NSStringFromStd(
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — Splash + RESFILE Bridge v42";
+        @"PvZ2forIOS — RESFILE Entry Capture v43";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -254,7 +254,7 @@ NSString *NSStringFromStd(
         NO;
 
     title.text =
-        @"PvZ2forIOS — splash + RESFILE bridge v42";
+        @"PvZ2forIOS — RESFILE entry capture v43";
 
     title.font =
         [UIFont
@@ -270,8 +270,8 @@ NSString *NSStringFromStd(
         NO;
 
     explanation.text =
-        @"v41 identified the two remaining blockers more precisely. The startup fragment shader multiplies the decoded texture by the per-vertex color attribute (gl_FragColor = color * colorVarying), so the dark EA logo cannot be explained by a missing vec4 uniform. v42 now records the actual bound color attribute at the draw call. When the verified 1024x1024 startup atlas is bound and the first stable tint is about 0.75, only that atlas draw is normalized relative to the observed baseline, preserving later fade ratios instead of globally changing shaders or blending. "
-         @"v41 also showed 171 resource misses but never reached its RESFILE diagnostics, meaning the trapped lookup's assumed ID decode was not reliable. v42 recovers RESFILE_* directly from the live ARM registers/stack at 0x1086f8a0/0x1086fa78, then retries exact IDs, the physical RSB path, and all real group ResourceInfo trees. The 600-frame soak remains enabled so one run can reveal whether the post-EA black screen advances.";
+        @"v42 made a major resource breakthrough: 85 of the 171 native GenericResFile misses were recovered and loaded from the real RSB, raising indexed files from 36 to 121. The remaining 86 misses reveal an alternating-state problem: by the time the old miss trap runs, the original ID can already be gone. v43 therefore traps the verified MOV r4,r2 at 0x1086f674, emulates it exactly, and caches the exact third lookup argument by the current ARM stack frame. Both miss exits then reuse that entry ID before falling back to the late register/stack scan. Native successful lookups are still untouched. "
+         @"v42 also disproved the vertex-RGB brightness theory: the logo quad is drawn with white RGBA 255, while the second quad is black with a decreasing alpha (the normal fade overlay). Its alpha 176 was mistakenly treated as a brightness baseline. v43 disables that correction and keeps the draw diagnostics observational. The 600-frame soak remains enabled so this run can show whether eliminating the remaining RESFILE misses finally gets past the EA splash.";
 
     explanation.numberOfLines = 0;
 
@@ -574,7 +574,7 @@ NSString *NSStringFromStd(
             monospacedSystemFontOfSize:13.0
             weight:UIFontWeightRegular];
     caption.text =
-        @"v42 — vertex-color splash correction + live RESFILE recovery\nTap Close to return to the full diagnostic log.";
+        @"v43 — exact RESFILE entry capture + splash overlay diagnosis\nTap Close to return to the full diagnostic log.";
 
     UIButton *closeButton =
         [UIButton
@@ -943,7 +943,7 @@ NSString *NSStringFromStd(
 
     [self
         appendUI:
-            @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v42 keeps the working v39/v40 geometry/capture path, traces and narrowly normalizes the startup atlas vertex-color factor, and recovers RESFILE_* names from live ARM register/stack state before retrying real ResourceInfo maps. The normal 600-frame soak remains enabled."];
+            @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v43 captures the exact RESFILE lookup argument at native function entry, preserves the original MOV r4,r2 semantics and all native success paths, then uses that cached ID only if the real lookup reaches a miss exit. The incorrect v42 splash-color correction is disabled; the 600-frame soak remains enabled."];
 
     [self
         presentViewController:
@@ -1004,7 +1004,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v42 probe run started; PID=%d ===",
+                    @"=== PvZ2 v43 probe run started; PID=%d ===",
                     getpid()]];
 
     self.jniRunning =
@@ -1275,11 +1275,11 @@ NSString *NSStringFromStd(
                         } else {
                             [selfRef
                                 showResult:
-                                    @"PvZ2 v42 frame soak returned"
+                                    @"PvZ2 v43 frame soak returned"
                                 message:
                                     [NSString
                                         stringWithFormat:
-                                            @"PvZ2 completed its native startup and v42 frame soak.\n\nGameAppInitialize: %u\nLifecycle calls completed: %u\nFrames returned: %u\nHost GLES active: %@\nBest sampled frame: %u (%llu non-black pixels)\nConstructors: %u/%u\nJNI_OnLoad: 0x%08x\n\nNo PNG capture was produced, so check the V39 SURFACE GEOMETRY / GLES VIEWPORT / GLES SCISSOR / FRAME STATS plus the v40 corrected capture and V38 RESFILE / BOUNDARY WORKER lines in the full log.",
+                                            @"PvZ2 completed its native startup and v43 frame soak.\n\nGameAppInitialize: %u\nLifecycle calls completed: %u\nFrames returned: %u\nHost GLES active: %@\nBest sampled frame: %u (%llu non-black pixels)\nConstructors: %u/%u\nJNI_OnLoad: 0x%08x\n\nNo PNG capture was produced, so check the V39 SURFACE GEOMETRY / GLES VIEWPORT / GLES SCISSOR / FRAME STATS plus the v40 corrected capture and V38 RESFILE / BOUNDARY WORKER lines in the full log.",
                                             result.game_app_initialize_return & 0xffu,
                                             result.lifecycle_calls_completed,
                                             result.draw_frames_completed,

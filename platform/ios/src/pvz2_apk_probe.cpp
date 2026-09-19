@@ -720,6 +720,10 @@ constexpr std::uint32_t kJniProbeSvcResourceRegistryLookup = 0x00f020u;
 // lookup has exhausted its own key transformations.
 constexpr std::uint32_t kJniProbeSvcResourceRegistryMissGroup = 0x00f021u;
 constexpr std::uint32_t kJniProbeSvcResourceRegistryMissGlobal = 0x00f022u;
+// v43: capture the exact third argument at 0x1086f674 before the native
+// lookup transforms/reuses registers. The SVC emulates the original MOV
+// r4,r2 exactly, so successful native ImageRes/RESFILE lookups stay native.
+constexpr std::uint32_t kJniProbeSvcResourceRegistryEntry = 0x00f023u;
 constexpr std::uint32_t kJniProbeSvcUnsupportedJniBase = 0x00e000u;
 constexpr std::uint32_t kJniProbeJniSlotCount = 256u;
 
@@ -1656,6 +1660,9 @@ public:
         std::numeric_limits<std::size_t>::max();
     std::uint32_t resource_live_id_recoveries = 0u;
     std::uint32_t resource_group_key_diagnostics = 0u;
+    std::uint32_t resource_entry_id_diagnostics = 0u;
+    std::unordered_map<std::uint32_t, std::string>
+        resource_lookup_entry_ids;
 
     static constexpr std::uint32_t kSweepRecoveryLimit = 48u;
     std::uint32_t sweep_recoveries = 0;
@@ -2202,6 +2209,65 @@ public:
             4096u);
     }
 
+    std::string ReadGuestResfileCString(
+        std::uint32_t address) {
+
+        if (address == 0u ||
+            mem.Ptr(address, 1u) == nullptr) {
+            return {};
+        }
+
+        const std::string normalized =
+            NormalizeResourceRegistryKey(
+                mem.ReadCStringGuest(
+                    address,
+                    256u));
+
+        return
+            normalized.rfind(
+                "RESFILE_",
+                0u) == 0u
+                ? normalized
+                : std::string{};
+    }
+
+    std::string RecoverGuestResfileWord(
+        std::uint32_t word) {
+
+        if (word == 0u) {
+            return {};
+        }
+
+        const std::string as_object =
+            NormalizeResourceRegistryKey(
+                ReadGuestStdStringObject(
+                    word));
+
+        if (as_object.rfind(
+                "RESFILE_",
+                0u) == 0u) {
+            return as_object;
+        }
+
+        if (const std::string direct =
+                ReadGuestResfileCString(
+                    word);
+            !direct.empty()) {
+            return direct;
+        }
+
+        if (mem.Ptr(
+                word,
+                4u) != nullptr) {
+            return
+                ReadGuestResfileCString(
+                    mem.Read32Guest(
+                        word));
+        }
+
+        return {};
+    }
+
     void EnsureRsbResourceIdIndex() {
         if (rsb_resource_id_index_built) {
             return;
@@ -2718,7 +2784,7 @@ public:
             if (exact !=
                 resource_id_index.end()) {
                 Append(
-                    "V42 GROUP-TREE PHYSICAL HIT exact=\"" +
+                    "V43 GROUP-TREE PHYSICAL HIT exact=\"" +
                     wanted +
                     "\" -> 0x" +
                     JniProbeHex(
@@ -2795,7 +2861,7 @@ public:
 
             if (basename_unique != 0u) {
                 Append(
-                    "V42 GROUP-TREE PHYSICAL HIT key=\"" +
+                    "V43 GROUP-TREE PHYSICAL HIT key=\"" +
                     basename_key +
                     "\" wanted=\"" +
                     wanted +
@@ -2810,7 +2876,7 @@ public:
 
                 std::ostringstream diagnostic;
                 diagnostic
-                    << "V42 GROUP-TREE KEYS #"
+                    << "V43 GROUP-TREE KEYS #"
                     << resource_group_key_diagnostics
                     << " wanted=\""
                     << wanted
@@ -3002,7 +3068,7 @@ public:
 
             std::ostringstream diagnostic;
             diagnostic
-                << "V42 RES MISS #"
+                << "V43 RES MISS #"
                 << resource_native_miss_diagnostics
                 << " id=\""
                 << normalized
@@ -3078,7 +3144,7 @@ public:
                             normalized);
 
                     Append(
-                        "V42 RES MAP CANDIDATE offset=+" +
+                        "V43 RES MAP CANDIDATE offset=+" +
                         std::to_string(offset) +
                         " keys=" +
                         std::to_string(
@@ -3130,7 +3196,7 @@ public:
                         "V41EXACT:" + normalized)
                     .second) {
                 Append(
-                    "V42 RESFILE EXACT FALLBACK " +
+                    "V43 RESFILE EXACT FALLBACK " +
                     normalized +
                     " -> ResourceInfo*=0x" +
                     JniProbeHex(direct) +
@@ -4578,6 +4644,48 @@ public:
             };
 
         if (swi ==
+                kJniProbeSvcResourceRegistryEntry) {
+
+            // Original instruction at guest 0x1086f674 is MOV r4,r2.
+            // Preserve its semantics first.
+            regs[4] = regs[2];
+
+            const std::string entry_id =
+                RecoverGuestResfileWord(
+                    regs[2]);
+
+            if (!entry_id.empty()) {
+                resource_lookup_entry_ids[
+                    regs[13]] =
+                    entry_id;
+
+                if (resource_entry_id_diagnostics <
+                    24u) {
+                    ++resource_entry_id_diagnostics;
+
+                    Append(
+                        "V43 RES ENTRY #" +
+                        std::to_string(
+                            resource_entry_id_diagnostics) +
+                        " sp=0x" +
+                        JniProbeHex(
+                            regs[13]) +
+                        " r2=0x" +
+                        JniProbeHex(
+                            regs[2]) +
+                        " id=\"" +
+                        entry_id +
+                        "\"");
+                }
+            } else {
+                resource_lookup_entry_ids.erase(
+                    regs[13]);
+            }
+
+            return;
+        }
+
+        if (swi ==
                 kJniProbeSvcResourceRegistryMissGroup ||
             swi ==
                 kJniProbeSvcResourceRegistryMissGlobal) {
@@ -4605,81 +4713,26 @@ public:
                     ? regs[8] - 60u
                     : 0u;
 
-            auto readable_resfile =
-                [&](std::uint32_t address)
-                    -> std::string {
-
-                    if (address == 0u ||
-                        mem.Ptr(
-                            address,
-                            1u) == nullptr) {
-                        return {};
-                    }
-
-                    const std::string value =
-                        mem.ReadCStringGuest(
-                            address,
-                            256u);
-
-                    const std::string normalized =
-                        NormalizeResourceRegistryKey(
-                            value);
-
-                    return
-                        normalized.rfind(
-                            "RESFILE_",
-                            0u) == 0u
-                            ? normalized
-                            : std::string{};
-                };
-
-            auto recover_from_word =
-                [&](std::uint32_t word)
-                    -> std::string {
-
-                    // std::string object form.
-                    const std::string as_string =
-                        NormalizeResourceRegistryKey(
-                            ReadGuestStdStringObject(
-                                word));
-
-                    if (as_string.rfind(
-                            "RESFILE_",
-                            0u) == 0u) {
-                        return as_string;
-                    }
-
-                    // Direct C string form.
-                    if (const std::string direct =
-                            readable_resfile(
-                                word);
-                        !direct.empty()) {
-                        return direct;
-                    }
-
-                    // One level of indirection, matching the successful v33
-                    // post-failure diagnostic that found IDs in *r10/*stack.
-                    if (word != 0u &&
-                        mem.Ptr(
-                            word,
-                            4u) != nullptr) {
-                        return
-                            readable_resfile(
-                                mem.Read32Guest(
-                                    word));
-                    }
-
-                    return {};
-                };
-
             std::string recovered_id;
 
-            // r4 is the original third argument to 0x1086f66c according to
-            // the verified ARM disassembly. Try it first, then scan the live
-            // preserved registers and stack as a robust fallback.
-            recovered_id =
-                recover_from_word(
-                    regs[4]);
+            // v43: use the exact lookup ID captured at 0x1086f674 for this
+            // ARM stack frame. The old late-state reconstruction can miss
+            // every other request after native key transformations.
+            if (const auto entry =
+                    resource_lookup_entry_ids.find(
+                        regs[13]);
+                entry !=
+                    resource_lookup_entry_ids.end()) {
+                recovered_id =
+                    entry->second;
+            }
+
+            // Preserve the v42 late-state scan as a fallback.
+            if (recovered_id.empty()) {
+                recovered_id =
+                    RecoverGuestResfileWord(
+                        regs[4]);
+            }
 
             if (recovered_id.empty()) {
                 for (std::uint32_t reg = 3u;
@@ -4687,7 +4740,7 @@ public:
                      recovered_id.empty();
                      ++reg) {
                     recovered_id =
-                        recover_from_word(
+                        RecoverGuestResfileWord(
                             regs[reg]);
                 }
             }
@@ -4701,7 +4754,7 @@ public:
                      recovered_id.empty();
                      ++slot) {
                     recovered_id =
-                        recover_from_word(
+                        RecoverGuestResfileWord(
                             mem.Read32Guest(
                                 regs[13] +
                                 slot * 4u));
@@ -4713,7 +4766,7 @@ public:
                 ++resource_live_id_recoveries;
 
                 Append(
-                    "V42 LIVE RESFILE RECOVERY #" +
+                    "V43 LIVE RESFILE RECOVERY #" +
                     std::to_string(
                         resource_live_id_recoveries) +
                     " site=" +
@@ -12336,7 +12389,7 @@ public:
                             }
 
                             Append(
-                                "V42 SPLASH TEXTURE CANDIDATE tex=" +
+                                "V43 SPLASH TEXTURE CANDIDATE tex=" +
                                 std::to_string(
                                     bound_texture) +
                                 " avgRGBA=(" +
@@ -12945,7 +12998,7 @@ public:
 
                                         std::ostringstream diagnostic;
                                         diagnostic
-                                            << "V42 SPLASH COLOR DRAW #"
+                                            << "V43 SPLASH COLOR DRAW #"
                                             << gles_vertex_color_traces
                                             << " glDrawArrays program="
                                             << gles_current_program
@@ -12976,7 +13029,8 @@ public:
                                             diagnostic.str());
                                     }
 
-                                    if (gles_splash_color_baseline ==
+                                    if (false &&
+                                        gles_splash_color_baseline ==
                                             0u &&
                                         peak >= 176u &&
                                         peak <= 208u) {
@@ -12990,7 +13044,8 @@ public:
                                             " -> normalize client color only while startup atlas texture is bound");
                                     }
 
-                                    if (gles_splash_color_baseline !=
+                                    if (false &&
+                                        gles_splash_color_baseline !=
                                             0u &&
                                         peak <=
                                             gles_splash_color_baseline) {
@@ -13245,7 +13300,7 @@ public:
 
                                         std::ostringstream diagnostic;
                                         diagnostic
-                                            << "V42 SPLASH COLOR DRAW #"
+                                            << "V43 SPLASH COLOR DRAW #"
                                             << gles_vertex_color_traces
                                             << " glDrawElements program="
                                             << gles_current_program
@@ -13276,7 +13331,8 @@ public:
                                             diagnostic.str());
                                     }
 
-                                    if (gles_splash_color_baseline ==
+                                    if (false &&
+                                        gles_splash_color_baseline ==
                                             0u &&
                                         peak >= 176u &&
                                         peak <= 208u) {
@@ -13290,7 +13346,8 @@ public:
                                             " -> normalize client color only while startup atlas texture is bound");
                                     }
 
-                                    if (gles_splash_color_baseline !=
+                                    if (false &&
+                                        gles_splash_color_baseline !=
                                             0u &&
                                         peak <=
                                             gles_splash_color_baseline) {
@@ -14418,6 +14475,10 @@ bool JniProbePrepareRuntime(
         };
 
     if (!patch_resource_native_miss(
+            0x0086f674u,
+            0xe1a04002u,
+            kJniProbeSvcResourceRegistryEntry) ||
+        !patch_resource_native_miss(
             0x0086f8a0u,
             0xe3a00000u,
             kJniProbeSvcResourceRegistryMissGroup) ||
@@ -14427,12 +14488,12 @@ bool JniProbePrepareRuntime(
             kJniProbeSvcResourceRegistryMissGlobal)) {
 
         error =
-            "v38 native resource-miss profile did not match the verified PvZ2 1.5.252752 ARM code.";
+            "v43 resource-entry/miss profile did not match the verified PvZ2 1.5.252752 ARM code.";
         return false;
     }
 
     callbacks.Append(
-        "V38 RESFILE NATIVE-MISS BRIDGE: native 0x1086f66c successes preserved; miss returns trapped at 0x1086f8a0/0x1086fa78.");
+        "V43 RESFILE ENTRY+MISS BRIDGE: exact lookup arg captured at 0x1086f674 while MOV r4,r2 semantics are preserved; native successes stay native; misses trapped at 0x1086f8a0/0x1086fa78.");
 
     return_trampoline =
         JniProbeMakeTrampoline(
@@ -16541,7 +16602,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                         if (non_black > best_non_black) {
                             const char* best =
                                 PvZ2HostGLESCapturePNGNamed(
-                                    "pvz2-v42-best-frame.png");
+                                    "pvz2-v43-best-frame.png");
 
                             if (best != nullptr &&
                                 *best != '\0') {
@@ -16557,7 +16618,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                     best;
 
                                 callbacks.Append(
-                                    "V42 BEST FRAME: #" +
+                                    "V43 BEST FRAME: #" +
                                     std::to_string(
                                         best_frame) +
                                     " nonBlack=" +
@@ -16578,7 +16639,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
 
                             const char* post_ea =
                                 PvZ2HostGLESCapturePNGNamed(
-                                    "pvz2-v42-post-ea-best.png");
+                                    "pvz2-v43-post-ea-best.png");
 
                             if (post_ea != nullptr &&
                                 *post_ea != '\0') {
@@ -16621,11 +16682,11 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                 if (callbacks.host_gles_ready) {
                     const char* final_capture =
                         PvZ2HostGLESCapturePNGNamed(
-                            "pvz2-v42-final-frame.png");
+                            "pvz2-v43-final-frame.png");
 
                     callbacks.Append(
                         std::string{
-                            "V42 FINAL GLES CAPTURE: "} +
+                            "V43 FINAL GLES CAPTURE: "} +
                         (final_capture != nullptr &&
                          *final_capture != '\0'
                             ? final_capture
@@ -16640,7 +16701,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                 }
 
                 callbacks.Append(
-                    "V42 BEST FRAME SUMMARY: frame=" +
+                    "V43 BEST FRAME SUMMARY: frame=" +
                     std::to_string(
                         best_frame) +
                     " nonBlack=" +
