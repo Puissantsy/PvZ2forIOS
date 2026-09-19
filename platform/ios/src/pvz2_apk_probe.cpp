@@ -715,6 +715,11 @@ constexpr std::uint32_t kJniProbeSvcGetMethodID = 0x00f007u;
 // It preserves exact-ID lookup semantics, then falls back to the already
 // populated global ResourceInfo path map using the physical RSB member path.
 constexpr std::uint32_t kJniProbeSvcResourceRegistryLookup = 0x00f020u;
+// v38: unlike the broad v35 callsite bridge, these traps replace only the
+// two ARM instructions that would return NULL after PvZ2's native resource
+// lookup has exhausted its own key transformations.
+constexpr std::uint32_t kJniProbeSvcResourceRegistryMissGroup = 0x00f021u;
+constexpr std::uint32_t kJniProbeSvcResourceRegistryMissGlobal = 0x00f022u;
 constexpr std::uint32_t kJniProbeSvcUnsupportedJniBase = 0x00e000u;
 constexpr std::uint32_t kJniProbeJniSlotCount = 256u;
 
@@ -1578,6 +1583,12 @@ public:
     std::uint64_t gles_draw_calls = 0;
     std::uint64_t gles_clear_calls = 0;
     std::uint64_t gles_texture_uploads = 0;
+    std::uint64_t gles_viewport_calls = 0;
+    std::uint64_t gles_scissor_calls = 0;
+    bool gles_viewport_seen = false;
+    bool gles_scissor_seen = false;
+    std::array<std::int32_t, 4> last_gles_viewport{};
+    std::array<std::int32_t, 4> last_gles_scissor{};
     std::unordered_set<std::string>
         recovered_missing_resource_ids;
 
@@ -2543,11 +2554,9 @@ public:
     void EnsureManagerResourcePathIndex(
         std::uint32_t manager) {
 
-        if (resource_path_index_manager ==
-            manager) {
-            return;
-        }
-
+        // v38: this std::map is populated incrementally while resources load.
+        // Re-snapshot it at each native miss instead of caching the first
+        // (possibly empty) view forever, which is what v35 accidentally did.
         resource_path_index_manager =
             manager;
         resource_path_index.clear();
@@ -2744,6 +2753,128 @@ public:
         }
 
         ++result.resource_registry_misses;
+        return 0u;
+    }
+
+    std::uint32_t ResolveResourceRegistryNativeMiss(
+        std::uint32_t manager,
+        std::uint32_t group,
+        std::uint32_t id_object,
+        const char* site) {
+
+        ++result.resource_registry_lookup_calls;
+
+        const std::string id =
+            ReadGuestStdStringObject(
+                id_object);
+
+        const std::string normalized =
+            NormalizeResourceRegistryKey(
+                id);
+
+        // This bridge is intentionally narrow. ImageRes and every successful
+        // native lookup stay entirely inside PvZ2. Only RESFILE_* misses may
+        // use the physical member already proven to exist in the selected RSB.
+        if (normalized.rfind(
+                "RESFILE_",
+                0u) != 0u) {
+            ++result.resource_registry_misses;
+            return 0u;
+        }
+
+        const auto physical =
+            FindOuterRsbPathForResourceId(
+                normalized);
+
+        if (!physical.has_value()) {
+            ++result.resource_registry_misses;
+
+            if (resource_registry_logged_ids
+                    .insert(
+                        "MISS:" + normalized)
+                    .second) {
+                Append(
+                    "V38 RESFILE NATIVE MISS " +
+                    normalized +
+                    " site=" +
+                    (site != nullptr
+                        ? std::string{site}
+                        : std::string{"n/a"}) +
+                    " manager=0x" +
+                    JniProbeHex(manager) +
+                    " group=0x" +
+                    JniProbeHex(group) +
+                    " -> no unique outer-RSB member");
+            }
+
+            return 0u;
+        }
+
+        const std::uint32_t by_path =
+            FindResourceInfoByPhysicalPath(
+                manager,
+                *physical);
+
+        if (by_path != 0u) {
+            ++result
+                .resource_registry_path_fallback_hits;
+
+            if (resource_registry_logged_ids
+                    .insert(
+                        "HIT:" + normalized)
+                    .second) {
+                Append(
+                    "V38 RESFILE MISS FALLBACK " +
+                    normalized +
+                    " -> " +
+                    *physical +
+                    " -> ResourceInfo*=0x" +
+                    JniProbeHex(by_path) +
+                    " site=" +
+                    (site != nullptr
+                        ? std::string{site}
+                        : std::string{"n/a"}));
+            }
+
+            return by_path;
+        }
+
+        ++result.resource_registry_misses;
+
+        if (resource_registry_logged_ids
+                .insert(
+                    "PATHMISS:" + normalized)
+                .second) {
+
+            const std::uint32_t path_root =
+                manager != 0u &&
+                mem.Ptr(
+                    manager + 48u,
+                    4u) != nullptr
+                    ? mem.Read32Guest(
+                          manager + 48u)
+                    : 0u;
+
+            Append(
+                "V38 RESFILE PATH MISS " +
+                normalized +
+                " -> " +
+                *physical +
+                " manager=0x" +
+                JniProbeHex(manager) +
+                " group=0x" +
+                JniProbeHex(group) +
+                " mapRoot=0x" +
+                JniProbeHex(path_root) +
+                " pathKeys=" +
+                std::to_string(
+                    resource_path_index.size()) +
+                " site=" +
+                (site != nullptr
+                    ? std::string{site}
+                    : std::string{"n/a"}));
+        }
+
         return 0u;
     }
 
@@ -4086,6 +4217,46 @@ public:
             };
 
         if (swi ==
+                kJniProbeSvcResourceRegistryMissGroup ||
+            swi ==
+                kJniProbeSvcResourceRegistryMissGlobal) {
+
+            const bool group_site =
+                swi ==
+                kJniProbeSvcResourceRegistryMissGroup;
+
+            if (group_site &&
+                regs[7] != regs[8]) {
+                // Original 0x86f8a0 MOV r0,#0 also executes on the native
+                // success path just before the following LDR replaces r0.
+                regs[0] = 0u;
+                return;
+            }
+
+            const std::uint32_t manager =
+                group_site
+                    ? regs[10]
+                    : regs[8];
+
+            const std::uint32_t group =
+                group_site &&
+                regs[8] >= 60u
+                    ? regs[8] - 60u
+                    : 0u;
+
+            regs[0] =
+                ResolveResourceRegistryNativeMiss(
+                    manager,
+                    group,
+                    regs[4],
+                    group_site
+                        ? "0x1086f8a0"
+                        : "0x1086fa78");
+
+            return;
+        }
+
+        if (swi ==
             kJniProbeSvcResourceRegistryLookup) {
 
             const std::uint32_t manager =
@@ -4786,11 +4957,15 @@ public:
                         method_name ==
                             "GetNetworkStatus") {
 
-                        // Connected/available. Networking itself is still a
-                        // separate compatibility surface.
-                        regs[0] = 1u;
+                        // v38: every AndroidHttpTransaction is deliberately
+                        // completed through the deterministic offline/error
+                        // callback. Advertising an online network while every
+                        // request fails leaves startup polling a contradictory
+                        // state after the splash. Report the matching offline
+                        // status instead.
+                        regs[0] = 0u;
                         Append(
-                            "JNI bridge: GetNetworkStatus -> 1");
+                            "V38 JNI bridge: GetNetworkStatus -> 0 (offline)");
                         return true;
                     }
 
@@ -11439,26 +11614,100 @@ public:
                             guest_arg(4u)));
                     regs[0] = 0u;
                 } else if (name == "glViewport") {
+                    const std::array<std::int32_t, 4> viewport{
+                        static_cast<std::int32_t>(
+                            guest_arg(0u)),
+                        static_cast<std::int32_t>(
+                            guest_arg(1u)),
+                        static_cast<std::int32_t>(
+                            guest_arg(2u)),
+                        static_cast<std::int32_t>(
+                            guest_arg(3u))};
+
+                    ++gles_viewport_calls;
+
+                    if (!gles_viewport_seen ||
+                        viewport !=
+                            last_gles_viewport) {
+                        Append(
+                            "V38 GLES VIEWPORT #" +
+                            std::to_string(
+                                gles_viewport_calls) +
+                            " guest=(" +
+                            std::to_string(viewport[0]) +
+                            "," +
+                            std::to_string(viewport[1]) +
+                            "," +
+                            std::to_string(viewport[2]) +
+                            "," +
+                            std::to_string(viewport[3]) +
+                            ") hostFBO=1180x820 phase=" +
+                            (current_lifecycle_name.empty()
+                                ? std::string{"n/a"}
+                                : current_lifecycle_name));
+
+                        last_gles_viewport =
+                            viewport;
+                        gles_viewport_seen = true;
+                    }
+
                     glViewport(
                         static_cast<GLint>(
-                            guest_arg(0u)),
+                            viewport[0]),
                         static_cast<GLint>(
-                            guest_arg(1u)),
+                            viewport[1]),
                         static_cast<GLsizei>(
-                            guest_arg(2u)),
+                            viewport[2]),
                         static_cast<GLsizei>(
-                            guest_arg(3u)));
+                            viewport[3]));
                     regs[0] = 0u;
                 } else if (name == "glScissor") {
+                    const std::array<std::int32_t, 4> scissor{
+                        static_cast<std::int32_t>(
+                            guest_arg(0u)),
+                        static_cast<std::int32_t>(
+                            guest_arg(1u)),
+                        static_cast<std::int32_t>(
+                            guest_arg(2u)),
+                        static_cast<std::int32_t>(
+                            guest_arg(3u))};
+
+                    ++gles_scissor_calls;
+
+                    if (!gles_scissor_seen ||
+                        scissor !=
+                            last_gles_scissor) {
+                        Append(
+                            "V38 GLES SCISSOR #" +
+                            std::to_string(
+                                gles_scissor_calls) +
+                            " guest=(" +
+                            std::to_string(scissor[0]) +
+                            "," +
+                            std::to_string(scissor[1]) +
+                            "," +
+                            std::to_string(scissor[2]) +
+                            "," +
+                            std::to_string(scissor[3]) +
+                            ") hostFBO=1180x820 phase=" +
+                            (current_lifecycle_name.empty()
+                                ? std::string{"n/a"}
+                                : current_lifecycle_name));
+
+                        last_gles_scissor =
+                            scissor;
+                        gles_scissor_seen = true;
+                    }
+
                     glScissor(
                         static_cast<GLint>(
-                            guest_arg(0u)),
+                            scissor[0]),
                         static_cast<GLint>(
-                            guest_arg(1u)),
+                            scissor[1]),
                         static_cast<GLsizei>(
-                            guest_arg(2u)),
+                            scissor[2]),
                         static_cast<GLsizei>(
-                            guest_arg(3u)));
+                            scissor[3]));
                     regs[0] = 0u;
                 } else if (name == "glClearColor") {
                     glClearColor(
@@ -12641,16 +12890,49 @@ bool JniProbePrepareRuntime(
         }
     }
 
-    // v37: keep PvZ2's original 0x86f66c resource lookup intact.
-    // v36 proved that the v35 inline SVC was too broad: the two callsites
-    // also carry ImageRes identifiers, and the simplified host lookup lost
-    // native key-normalization/fallback behavior. In particular,
-    // IMAGE_LOGOS_FIRST_SPLASH_LOGO became null and Native_onDrawFrame
-    // reached a BLX through r4=0 at guest 0x105149c4. Do not patch those
-    // callsites here; retaining the original instructions gives v37 a clean
-    // scheduler-only experiment while keeping all resource semantics native.
+    // v38: keep both shared callers of 0x86f66c completely native.
+    // Intercept only the two MOV r0,#0 instructions reached after the native
+    // lookup has exhausted its own transformed-key searches. This preserves
+    // ImageRes/native hits (the v35 regression) while giving RESFILE_* misses
+    // one final physical-RSB-path lookup.
+    auto patch_resource_native_miss =
+        [&](std::uint32_t offset,
+            std::uint32_t expected,
+            std::uint32_t svc) {
+
+            if (offset + 4u >
+                    memory.image.size() ||
+                Read32(
+                    memory.image.data() +
+                    offset) != expected) {
+                return false;
+            }
+
+            Write32(
+                memory.image.data() +
+                    offset,
+                0xEF000000u |
+                (svc & 0x00ffffffu));
+
+            return true;
+        };
+
+    if (!patch_resource_native_miss(
+            0x0086f8a0u,
+            0xe3a00000u,
+            kJniProbeSvcResourceRegistryMissGroup) ||
+        !patch_resource_native_miss(
+            0x0086fa78u,
+            0xe3a00000u,
+            kJniProbeSvcResourceRegistryMissGlobal)) {
+
+        error =
+            "v38 native resource-miss profile did not match the verified PvZ2 1.5.252752 ARM code.";
+        return false;
+    }
+
     callbacks.Append(
-        "V37 NATIVE RESOURCE LOOKUP: preserved original 0x1086f66c calls at 0x1087a704/0x1087a758; v35 inline registry bridge disabled.");
+        "V38 RESFILE NATIVE-MISS BRIDGE: native 0x1086f66c successes preserved; miss returns trapped at 0x1086f8a0/0x1086fa78.");
 
     return_trampoline =
         JniProbeMakeTrampoline(
@@ -14203,7 +14485,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
 
                                 if (!stack_base) {
                                     callbacks.Append(
-                                        "V37 BOUNDARY WORKER: unable to allocate stack for tid=" +
+                                        "V38 BOUNDARY WORKER: unable to allocate stack for tid=" +
                                         std::to_string(
                                             worker_state.id));
                                     worker_state.runtime_failed =
@@ -14246,7 +14528,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                     true;
 
                                 callbacks.Append(
-                                    "V37 BOUNDARY WORKER START tid=" +
+                                    "V38 BOUNDARY WORKER START tid=" +
                                     std::to_string(
                                         worker_state.id) +
                                     " start=0x" +
@@ -14274,7 +14556,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             callbacks.return_mode =
                                 PvZ2JniCallbacks::ReturnMode::Lifecycle;
                             callbacks.current_lifecycle_name =
-                                "V37_boundary_worker_tid_" +
+                                "V38_boundary_worker_tid_" +
                                 std::to_string(
                                     worker_state.id);
                             callbacks.current_probe_thread_id =
@@ -14350,7 +14632,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                 worker_state.runtime_failed) {
 
                                 callbacks.Append(
-                                    "V37 BOUNDARY WORKER SLICE phase=" +
+                                    "V38 BOUNDARY WORKER SLICE phase=" +
                                     std::string{
                                         phase != nullptr
                                             ? phase
@@ -14383,7 +14665,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
 
                             if (worker_fatal) {
                                 callbacks.Append(
-                                    "V37 BOUNDARY WORKER STOP: tid=" +
+                                    "V38 BOUNDARY WORKER STOP: tid=" +
                                     std::to_string(
                                         worker_state.id) +
                                     " halted fatally; preserving main runtime and continuing other diagnostics.");
@@ -14671,7 +14953,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
 
                     if (sample) {
                         callbacks.Append(
-                            "V37 FRAME SOAK: begin frame " +
+                            "V38 FRAME SOAK: begin frame " +
                             std::to_string(
                                 frame_number) +
                             "/" +
@@ -14732,7 +15014,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             PvZ2HostGLESLastNonBlackPixels();
 
                         callbacks.Append(
-                            "V37 FRAME STATS #" +
+                            "V38 FRAME STATS #" +
                             std::to_string(
                                 frame_number) +
                             ": " +
@@ -14753,7 +15035,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                         if (non_black > best_non_black) {
                             const char* best =
                                 PvZ2HostGLESCapturePNGNamed(
-                                    "pvz2-v36-best-frame.png");
+                                    "pvz2-v38-best-frame.png");
 
                             if (best != nullptr &&
                                 *best != '\0') {
@@ -14769,7 +15051,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                     best;
 
                                 callbacks.Append(
-                                    "V37 BEST FRAME: #" +
+                                    "V38 BEST FRAME: #" +
                                     std::to_string(
                                         best_frame) +
                                     " nonBlack=" +
@@ -14790,7 +15072,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
 
                             const char* post_ea =
                                 PvZ2HostGLESCapturePNGNamed(
-                                    "pvz2-v36-post-ea-best.png");
+                                    "pvz2-v38-post-ea-best.png");
 
                             if (post_ea != nullptr &&
                                 *post_ea != '\0') {
@@ -14802,7 +15084,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                     post_ea;
 
                                 callbacks.Append(
-                                    "V37 POST-EA FRAME: #" +
+                                    "V38 POST-EA FRAME: #" +
                                     std::to_string(
                                         post_ea_best_frame) +
                                     " nonBlack=" +
@@ -14814,7 +15096,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                         }
 
                         callbacks.Append(
-                            "V37 FRAME SOAK: returned frame " +
+                            "V38 FRAME SOAK: returned frame " +
                             std::to_string(
                                 frame_number) +
                             "/" +
@@ -14833,11 +15115,11 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                 if (callbacks.host_gles_ready) {
                     const char* final_capture =
                         PvZ2HostGLESCapturePNGNamed(
-                            "pvz2-v36-final-frame.png");
+                            "pvz2-v38-final-frame.png");
 
                     callbacks.Append(
                         std::string{
-                            "V36 FINAL GLES CAPTURE: "} +
+                            "V38 FINAL GLES CAPTURE: "} +
                         (final_capture != nullptr &&
                          *final_capture != '\0'
                             ? final_capture
@@ -14852,7 +15134,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                 }
 
                 callbacks.Append(
-                    "V37 BEST FRAME SUMMARY: frame=" +
+                    "V38 BEST FRAME SUMMARY: frame=" +
                     std::to_string(
                         best_frame) +
                     " nonBlack=" +

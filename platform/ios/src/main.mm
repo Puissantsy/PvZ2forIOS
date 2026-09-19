@@ -245,7 +245,7 @@ NSString *NSStringFromStd(
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — Native Resources + Workers v37";
+        @"PvZ2forIOS — Native-Miss + Offline v38";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -254,7 +254,7 @@ NSString *NSStringFromStd(
         NO;
 
     title.text =
-        @"PvZ2forIOS — native resources + workers v37";
+        @"PvZ2forIOS — native-miss + offline v38";
 
     title.font =
         [UIFont
@@ -270,8 +270,8 @@ NSString *NSStringFromStd(
         NO;
 
     explanation.text =
-        @"v36 validated the boundary-only worker scheduler: deferred threads created during Native_onSurfaceCreated really started at safe boundaries, including the audio worker that opened the real Init and UI_Always_Loaded soundbanks. The same run also exposed a regression in the v35 ResourceInfo patch. Those two patched lookup callsites are not GenericResFileRes-only; they also receive ImageRes IDs. The simplified bridge returned null for IMAGE_LOGOS_FIRST_SPLASH_LOGO, and Native_onDrawFrame then reached the verified BLX r4=0 call at guest 0x105149c4. "
-         @"v37 isolates the scheduler fix cleanly. It leaves PvZ2's original 0x1086f66c resource lookup untouched at 0x1087a704/0x1087a758, preserving the game's native key normalization and fallback behavior, while retaining deterministic offline HTTP, RSB/PTX virtual assets, host GLES2, safe boundary-worker scheduling and separate post-EA capture across the 600-frame soak.";
+        @"v37 proved the safe worker scheduler and native ResourceInfo lookup can run a full 600-frame soak without crashing. The EA splash now fades normally, but the framebuffer is black from about frame 90 onward while PvZ2 keeps drawing. The same run emits hundreds of GenericResFileRes misses even though the corresponding RESFILE_* RTON members physically exist in the selected OBB, and the bridge advertises an online network while every synthetic HTTP transaction is deliberately completed as an offline error. "
+         @"v38 attacks both remaining compatibility contradictions without reintroducing the v35 ImageRes regression: PvZ2's normal 0x1086f66c lookup remains native, and only its verified NULL-return instructions get a narrow RESFILE_* physical-path fallback. GetNetworkStatus now reports offline consistently with the HTTP backend. Exact guest glViewport/glScissor rectangles are logged so the slightly stretched/off-centre splash can be corrected separately once measured.";
 
     explanation.numberOfLines = 0;
 
@@ -574,7 +574,7 @@ NSString *NSStringFromStd(
             monospacedSystemFontOfSize:13.0
             weight:UIFontWeightRegular];
     caption.text =
-        @"v37 — best post-EA sampled iOS GLES2 framebuffer with native resource lookup + safe background-worker scheduling\nTap Close to return to the full diagnostic log.";
+        @"v38 — post-splash iOS GLES2 framebuffer with native-miss RESFILE fallback + offline network semantics\nTap Close to return to the full diagnostic log.";
 
     UIButton *closeButton =
         [UIButton
@@ -943,7 +943,7 @@ NSString *NSStringFromStd(
 
     [self
         appendUI:
-            @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v37 keeps deterministic offline HTTP, RSB/PTX virtual assets, the real iOS GLES2 bridge and safe frame-boundary scheduling for deferred guest workers. It deliberately restores PvZ2's original native ResourceInfo lookup instead of the v35 inline SVC that caused the v36 ImageRes null regression. The probe then runs 600 timed frames and preserves a separate post-EA framebuffer when anything new appears after the splash."];
+            @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v38 preserves every successful native resource lookup, adds a RESFILE-only fallback solely at the verified native NULL-return sites, reports the network as offline to match deterministic HTTP error callbacks, and logs exact GLES viewport/scissor geometry. Safe boundary workers, RSB/PTX virtual assets, host GLES2 and the 600-frame soak remain enabled.""];
 
     [self
         presentViewController:
@@ -1004,7 +1004,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v37 probe run started; PID=%d ===",
+                    @"=== PvZ2 v38 probe run started; PID=%d ===",
                     getpid()]];
 
     self.jniRunning =
@@ -1257,7 +1257,7 @@ NSString *NSStringFromStd(
                     if (result.ok) {
                         [selfRef
                             appendUI:
-                                @"SUCCESS STEP 3: PvZ2 completed lifecycle + surface setup + v37 native ResourceInfo lookup + safe boundary-worker scheduling + 600-frame host GLES soak."];
+                                @"SUCCESS STEP 3: PvZ2 completed lifecycle + surface setup + v38 native-miss RESFILE fallback + offline network semantics + safe workers + 600-frame host GLES soak."];
 
                         if (!result.host_frame_png_path.empty()) {
                             [selfRef
@@ -1275,11 +1275,11 @@ NSString *NSStringFromStd(
                         } else {
                             [selfRef
                                 showResult:
-                                    @"PvZ2 v37 frame soak returned"
+                                    @"PvZ2 v38 frame soak returned"
                                 message:
                                     [NSString
                                         stringWithFormat:
-                                            @"PvZ2 completed its native startup and v37 frame soak.\n\nGameAppInitialize: %u\nLifecycle calls completed: %u\nFrames returned: %u\nHost GLES active: %@\nBest sampled frame: %u (%llu non-black pixels)\nConstructors: %u/%u\nJNI_OnLoad: 0x%08x\n\nNo PNG capture was produced, so check the V37 NATIVE RESOURCE LOOKUP and V37 BOUNDARY WORKER / FRAME STATS / POST-EA lines in the full log.",
+                                            @"PvZ2 completed its native startup and v38 frame soak.\n\nGameAppInitialize: %u\nLifecycle calls completed: %u\nFrames returned: %u\nHost GLES active: %@\nBest sampled frame: %u (%llu non-black pixels)\nConstructors: %u/%u\nJNI_OnLoad: 0x%08x\n\nNo PNG capture was produced, so check the V38 RESFILE / GLES VIEWPORT / GLES SCISSOR / BOUNDARY WORKER / FRAME STATS / POST-EA lines in the full log.",
                                             result.game_app_initialize_return & 0xffu,
                                             result.lifecycle_calls_completed,
                                             result.draw_frames_completed,
