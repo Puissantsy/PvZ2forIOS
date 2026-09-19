@@ -5695,6 +5695,25 @@ public:
                     regs[0] & 0xffu;
             } else if (name == "fputs" ||
                        name == "puts") {
+                const std::string printed =
+                    mem.ReadCStringGuest(
+                        regs[0],
+                        1024);
+
+                Append(
+                    "V24 GUEST " +
+                    name +
+                    ": \"" +
+                    printed +
+                    "\"");
+
+                if (!printed.empty()) {
+                    RecordSweepIssue(
+                        "guest-diagnostic",
+                        printed,
+                        printed);
+                }
+
                 regs[0] = 0;
             } else if (name == "qsort") {
                 regs[0] = 0;
@@ -6116,14 +6135,65 @@ public:
 
         if (kMiscSafe.count(name) != 0) {
             log_fallback_once("control-flow");
+
             if (name == "abort" ||
                 name == "exit" ||
-                name == "raise" ||
-                name == "longjmp") {
-                result.message =
-                    "Guest requested control-flow termination via " +
+                name == "raise") {
+
+                const std::uint32_t lr =
+                    jit ? jit->Regs()[14] : 0u;
+
+                const std::string detail =
+                    "Guest requested " +
                     name +
-                    "; import is known and classified, not missing.";
+                    " at caller LR=0x" +
+                    JniProbeHex(lr) +
+                    (last_android_log.empty()
+                        ? std::string{}
+                        : " after log=\"" +
+                            last_android_log +
+                            "\"");
+
+                RecordSweepIssue(
+                    "control-flow",
+                    name + ":" +
+                        JniProbeHex(lr),
+                    detail);
+
+                if (ConsumeSweepRecovery(
+                        "control-flow",
+                        detail)) {
+
+                    // The import trampoline returns through BX LR after this
+                    // callback. Returning zero lets the diagnostic sweep
+                    // explore subsequent compatibility gaps. Because
+                    // abort/exit/raise are semantically non-returning, every
+                    // later issue is explicitly marked speculative.
+                    regs[0] = 0u;
+                    ++supported_calls;
+                    return;
+                }
+
+                result.message =
+                    detail;
+
+                jit->HaltExecution(
+                    Dynarmic::HaltReason::UserDefined2);
+                return;
+            }
+
+            if (name == "longjmp") {
+                const std::string detail =
+                    "Guest requested longjmp; generic recovery would corrupt control-flow state.";
+
+                RecordSweepIssue(
+                    "hard-control-flow",
+                    "longjmp",
+                    detail);
+
+                result.message =
+                    detail;
+
                 jit->HaltExecution(
                     Dynarmic::HaltReason::UserDefined2);
                 return;
@@ -6135,15 +6205,36 @@ public:
         }
 
         result.first_unsupported_import = name;
-        result.message =
-            "First unsupported Android import reached: " +
-            name;
 
-        Append(
-            "UNSUPPORTED IMPORT: " +
+        const std::uint32_t lr =
+            jit ? jit->Regs()[14] : 0u;
+
+        const std::string unsupported_import =
+            "Unsupported Android import " +
             name +
-            " via guest trampoline 0x" +
-            JniProbeHex(binding->second.trampoline));
+            " reached at LR=0x" +
+            JniProbeHex(lr) +
+            " via trampoline 0x" +
+            JniProbeHex(
+                binding->second.trampoline);
+
+        RecordSweepIssue(
+            "unsupported-import",
+            name,
+            unsupported_import);
+
+        if (ConsumeSweepRecovery(
+                "unsupported-import",
+                unsupported_import)) {
+
+            regs[0] = 0u;
+            regs[1] = 0u;
+            ++supported_calls;
+            return;
+        }
+
+        result.message =
+            unsupported_import;
 
         jit->HaltExecution(
             Dynarmic::HaltReason::UserDefined2);
@@ -6365,10 +6456,33 @@ public:
             return_mode == ReturnMode::Lifecycle &&
             return_pc != 0u &&
             mem.Ptr(return_pc, 2) != nullptr &&
-            null_execute_recoveries < 4u;
+            sweep_recoveries <
+                kSweepRecoveryLimit;
 
         if (recoverable_null_call) {
             ++null_execute_recoveries;
+
+            RecordSweepIssue(
+                "null-call",
+                JniProbeHex(return_pc),
+                "NoExecuteFault at PC=0 returned to LR=0x" +
+                    JniProbeHex(lr) +
+                    " phase=" +
+                    (current_lifecycle_name.empty()
+                        ? std::string{"n/a"}
+                        : current_lifecycle_name));
+
+            if (!ConsumeSweepRecovery(
+                    "null-call",
+                    "resume at LR=0x" +
+                        JniProbeHex(lr))) {
+
+                result.message =
+                    diagnostic;
+                jit->HaltExecution(
+                    Dynarmic::HaltReason::UserDefined3);
+                return;
+            }
 
             auto& regs =
                 jit->Regs();
