@@ -23,6 +23,7 @@ std::uint32_t gWidth = 0;
 std::uint32_t gHeight = 0;
 NSString *gCapturePath = nil;
 std::string gFrameStats;
+std::uint64_t gLastNonBlackPixels = 0u;
 
 void DestroySurface() {
     if (gContext != nil) {
@@ -305,6 +306,8 @@ PvZ2HostGLESFrameStats(void) {
 
     gFrameStats =
         out.str();
+    gLastNonBlackPixels =
+        non_black;
 
     glPixelStorei(
         GL_PACK_ALIGNMENT,
@@ -318,8 +321,14 @@ PvZ2HostGLESFrameStats(void) {
         gFrameStats.c_str();
 }
 
+extern "C" std::uint64_t
+PvZ2HostGLESLastNonBlackPixels(void) {
+    return gLastNonBlackPixels;
+}
+
 extern "C" const char*
-PvZ2HostGLESCapturePNG(void) {
+PvZ2HostGLESCapturePNGNamed(
+    const char* file_name) {
     if (gContext == nil ||
         gFramebuffer == 0 ||
         gWidth == 0 ||
@@ -327,6 +336,16 @@ PvZ2HostGLESCapturePNG(void) {
         ![EAGLContext setCurrentContext:gContext]) {
         return "";
     }
+
+    GLint previous_framebuffer = 0;
+    GLint previous_pack_alignment = 4;
+
+    glGetIntegerv(
+        GL_FRAMEBUFFER_BINDING,
+        &previous_framebuffer);
+    glGetIntegerv(
+        GL_PACK_ALIGNMENT,
+        &previous_pack_alignment);
 
     glBindFramebuffer(
         GL_FRAMEBUFFER,
@@ -356,6 +375,14 @@ PvZ2HostGLESCapturePNG(void) {
         GL_RGBA,
         GL_UNSIGNED_BYTE,
         pixels.data());
+
+    glPixelStorei(
+        GL_PACK_ALIGNMENT,
+        previous_pack_alignment);
+    glBindFramebuffer(
+        GL_FRAMEBUFFER,
+        static_cast<GLuint>(
+            previous_framebuffer));
 
     std::vector<std::uint8_t>
         flipped(total_bytes);
@@ -431,10 +458,25 @@ PvZ2HostGLESCapturePNG(void) {
     NSURL *documents =
         urls.firstObject;
 
+    NSString *safe_name =
+        file_name != nullptr &&
+        *file_name != '\0'
+            ? [NSString
+                stringWithUTF8String:
+                    file_name]
+            : @"pvz2-v33-frame.png";
+
+    if (safe_name.length == 0 ||
+        [safe_name containsString:@"/"] ||
+        [safe_name containsString:@"\\"]) {
+        safe_name =
+            @"pvz2-v33-frame.png";
+    }
+
     NSURL *target =
         [documents
             URLByAppendingPathComponent:
-                @"pvz2-v31-first-frame.png"];
+                safe_name];
 
     if (![png
             writeToURL:target
@@ -448,6 +490,13 @@ PvZ2HostGLESCapturePNG(void) {
 
     return
         gCapturePath.UTF8String ?: "";
+}
+
+extern "C" const char*
+PvZ2HostGLESCapturePNG(void) {
+    return
+        PvZ2HostGLESCapturePNGNamed(
+            "pvz2-v33-final-frame.png");
 }
 
 extern "C" void PvZ2HostGLESEnd(void) {
