@@ -7209,10 +7209,26 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
 
                             auto future_snapshot =
                                 [&]() {
+                                    const std::uint32_t vtable =
+                                        memory.Read32Guest(future);
                                     std::ostringstream out;
                                     out
                                         << "future=0x"
                                         << JniProbeHex(future)
+                                        << " vtable=0x"
+                                        << JniProbeHex(vtable)
+                                        << " vfn8=0x"
+                                        << JniProbeHex(
+                                            memory.Read32Guest(
+                                                vtable + 0x08u))
+                                        << " vfnC=0x"
+                                        << JniProbeHex(
+                                            memory.Read32Guest(
+                                                vtable + 0x0cu))
+                                        << " vfn10=0x"
+                                        << JniProbeHex(
+                                            memory.Read32Guest(
+                                                vtable + 0x10u))
                                         << " done="
                                         << static_cast<unsigned>(
                                             memory.Read8(
@@ -7221,14 +7237,46 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                         << static_cast<unsigned>(
                                             memory.Read8(
                                                 future + 0x15u))
-                                        << " status="
-                                        << memory.Read32Guest(
-                                            future + 0x2cu)
-                                        << " result="
-                                        << memory.Read32Guest(
-                                            future + 0x30u);
+                                        << " w18=0x"
+                                        << JniProbeHex(
+                                            memory.Read32Guest(
+                                                future + 0x18u))
+                                        << " w1C=0x"
+                                        << JniProbeHex(
+                                            memory.Read32Guest(
+                                                future + 0x1cu))
+                                        << " w20=0x"
+                                        << JniProbeHex(
+                                            memory.Read32Guest(
+                                                future + 0x20u))
+                                        << " w24=0x"
+                                        << JniProbeHex(
+                                            memory.Read32Guest(
+                                                future + 0x24u))
+                                        << " w28=0x"
+                                        << JniProbeHex(
+                                            memory.Read32Guest(
+                                                future + 0x28u))
+                                        << " w2C=0x"
+                                        << JniProbeHex(
+                                            memory.Read32Guest(
+                                                future + 0x2cu))
+                                        << " w30=0x"
+                                        << JniProbeHex(
+                                            memory.Read32Guest(
+                                                future + 0x30u));
                                     return out.str();
                                 };
+
+                            std::array<std::uint8_t, 64> future_before{};
+                            for (std::size_t bi = 0;
+                                 bi < future_before.size();
+                                 ++bi) {
+                                future_before[bi] =
+                                    memory.Read8(
+                                        future +
+                                        static_cast<std::uint32_t>(bi));
+                            }
 
                             callbacks.Append(
                                 "V18 MAIN.PAK POLL CONFIRMED: " +
@@ -7390,18 +7438,28 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                 const bool now_failed =
                                     memory.Read8(
                                         future + 0x15u) != 0u;
-                                const std::uint32_t now_status =
-                                    memory.Read32Guest(
-                                        future + 0x2cu);
+
+                                bool object_changed = false;
+                                for (std::size_t bi = 0;
+                                     bi < future_before.size();
+                                     ++bi) {
+                                    if (memory.Read8(
+                                            future +
+                                            static_cast<std::uint32_t>(bi)) !=
+                                        future_before[bi]) {
+                                        object_changed = true;
+                                        break;
+                                    }
+                                }
 
                                 if (now_done ||
                                     now_failed ||
-                                    now_status != 115u) {
+                                    object_changed) {
                                     future_changed = true;
                                     callbacks.Append(
                                         "V18 WORKER HIT: tid=" +
                                         std::to_string(worker.id) +
-                                        " changed main.pak future -> " +
+                                        " changed async future -> " +
                                         future_snapshot());
                                     break;
                                 }
@@ -7444,9 +7502,9 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                     " Main lifecycle was intentionally not resumed in this diagnostic build.";
                             } else {
                                 result.message =
-                                    "V18 probed deferred pthread workers but main.pak remained pending. " +
+                                    "V18 probed deferred pthread workers but the async future remained byte-for-byte unchanged. " +
                                     future_snapshot() +
-                                    " The next blocker is likely the still-synthetic filesystem/expansion-file bridge or a worker outside the bounded candidate set.";
+                                    " The next blocker is likely the still-synthetic expansion/filesystem bridge or a worker outside the bounded candidate set.";
                             }
 
                             callbacks.Append(
