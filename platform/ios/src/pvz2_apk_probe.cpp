@@ -20,6 +20,7 @@
 #include <iomanip>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 #include <map>
@@ -1569,6 +1570,7 @@ public:
     std::uint64_t realloc_calls = 0;
     std::uint64_t memset_calls = 0;
     std::uint32_t rsb_resolved_files = 0;
+    std::uint32_t missing_resource_diagnostics = 0;
 
     static constexpr std::uint32_t kSweepRecoveryLimit = 48u;
     std::uint32_t sweep_recoveries = 0;
@@ -2080,16 +2082,114 @@ public:
             return &cached->second;
         }
 
-        std::string ptx_path =
-            asset_key;
-        ptx_path.replace(
-            ptx_path.size() - 4u,
-            4u,
-            ".PTX");
+        auto ptx_from_key =
+            [](std::string key) {
+                key.replace(
+                    key.size() - 4u,
+                    4u,
+                    ".PTX");
+                return key;
+            };
 
-        const auto group_index =
+        std::string resolved_key =
+            asset_key;
+        std::string ptx_path =
+            ptx_from_key(
+                resolved_key);
+
+        auto group_index =
             FindOuterRsbGroup(
                 ptx_path);
+
+        // PvZ2 probes a few Android atlas filename variants after loading the
+        // canonical atlas, notably "_Name.tga" and "Name_.tga". They refer to
+        // the same PTX payload in this 1.5 RSB. Resolve those aliases at the
+        // virtual-asset layer instead of pretending they are separate APK
+        // assets.
+        if (!group_index.has_value()) {
+            const std::size_t slash =
+                resolved_key.find_last_of('/');
+            const std::size_t file_begin =
+                slash == std::string::npos
+                    ? 0u
+                    : slash + 1u;
+            const std::size_t extension =
+                resolved_key.size() - 4u;
+
+            std::vector<std::string>
+                aliases;
+
+            if (file_begin < extension &&
+                resolved_key[file_begin] == '_') {
+                std::string candidate =
+                    resolved_key;
+                candidate.erase(
+                    file_begin,
+                    1u);
+                aliases.push_back(
+                    std::move(candidate));
+            }
+
+            if (extension > file_begin &&
+                resolved_key[extension - 1u] == '_') {
+                std::string candidate =
+                    resolved_key;
+                candidate.erase(
+                    extension - 1u,
+                    1u);
+                aliases.push_back(
+                    std::move(candidate));
+            }
+
+            for (const auto& candidate :
+                 aliases) {
+
+                const std::string candidate_ptx =
+                    ptx_from_key(
+                        candidate);
+                const auto candidate_group =
+                    FindOuterRsbGroup(
+                        candidate_ptx);
+
+                if (!candidate_group.has_value()) {
+                    continue;
+                }
+
+                resolved_key =
+                    candidate;
+                ptx_path =
+                    candidate_ptx;
+                group_index =
+                    candidate_group;
+
+                if (const auto cached =
+                        synthetic_assets.find(
+                            resolved_key);
+                    cached !=
+                        synthetic_assets.end()) {
+
+                    SyntheticAsset alias =
+                        cached->second;
+
+                    auto inserted =
+                        synthetic_assets.emplace(
+                            asset_key,
+                            std::move(alias));
+
+                    Append(
+                        "V32 PTX alias: \"" +
+                        asset_key +
+                        "\" -> \"" +
+                        resolved_key +
+                        "\"");
+
+                    return
+                        &inserted.first->second;
+                }
+
+                break;
+            }
+        }
 
         if (!group_index.has_value()) {
             return nullptr;
@@ -7983,10 +8083,129 @@ public:
 
             if (missing_resource !=
                 std::string::npos) {
+
                 RecordSweepIssue(
                     "missing-resource",
                     text,
                     text);
+
+                if (missing_resource_diagnostics < 12u) {
+                    ++missing_resource_diagnostics;
+
+                    auto readable_candidate =
+                        [&](std::uint32_t address) {
+                            if (address == 0u ||
+                                mem.Ptr(
+                                    address,
+                                    1u) == nullptr) {
+                                return std::string{};
+                            }
+
+                            std::string value =
+                                mem.ReadCStringGuest(
+                                    address,
+                                    192u);
+
+                            if (value.size() < 2u ||
+                                value == tag ||
+                                value == text) {
+                                return std::string{};
+                            }
+
+                            std::size_t printable = 0u;
+                            for (const unsigned char ch :
+                                 value) {
+                                if (ch >= 0x20u &&
+                                    ch <= 0x7eu) {
+                                    ++printable;
+                                }
+                            }
+
+                            if (printable * 10u <
+                                value.size() * 9u) {
+                                return std::string{};
+                            }
+
+                            return value;
+                        };
+
+                    std::ostringstream diagnostic;
+                    diagnostic
+                        << "V32 MISSING RESOURCE CONTEXT #"
+                        << missing_resource_diagnostics
+                        << " LR=0x"
+                        << JniProbeHex(regs[14])
+                        << " SP=0x"
+                        << JniProbeHex(regs[13]);
+
+                    auto append_candidate =
+                        [&](const std::string& label,
+                            std::uint32_t word) {
+
+                            const std::string direct =
+                                readable_candidate(
+                                    word);
+
+                            if (!direct.empty()) {
+                                diagnostic
+                                    << " "
+                                    << label
+                                    << "=\""
+                                    << direct
+                                    << "\"";
+                            }
+
+                            if (word != 0u &&
+                                mem.Ptr(
+                                    word,
+                                    4u) != nullptr) {
+
+                                const std::uint32_t indirect =
+                                    mem.Read32Guest(
+                                        word);
+
+                                const std::string nested =
+                                    readable_candidate(
+                                        indirect);
+
+                                if (!nested.empty() &&
+                                    nested != direct) {
+                                    diagnostic
+                                        << " *"
+                                        << label
+                                        << "=\""
+                                        << nested
+                                        << "\"";
+                                }
+                            }
+                        };
+
+                    for (std::uint32_t reg = 3u;
+                         reg <= 12u;
+                         ++reg) {
+                        append_candidate(
+                            "r" +
+                                std::to_string(reg),
+                            regs[reg]);
+                    }
+
+                    for (std::uint32_t slot = 0u;
+                         slot < 16u;
+                         ++slot) {
+                        const std::uint32_t word =
+                            mem.Read32Guest(
+                                regs[13] +
+                                slot * 4u);
+
+                        append_candidate(
+                            "s" +
+                                std::to_string(slot),
+                            word);
+                    }
+
+                    Append(
+                        diagnostic.str());
+                }
             }
 
             return;
@@ -13060,17 +13279,29 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                     return result;
                 }
 
-                constexpr std::uint32_t kV31FrameCount = 3u;
+                constexpr std::uint32_t kV32FrameCount = 120u;
 
                 for (std::uint32_t frame = 0u;
-                     frame < kV31FrameCount;
+                     frame < kV32FrameCount;
                      ++frame) {
 
-                    callbacks.Append(
-                        "V31 FRAME LOOP: begin frame " +
-                        std::to_string(frame + 1u) +
-                        "/" +
-                        std::to_string(kV31FrameCount));
+                    const std::uint32_t frame_number =
+                        frame + 1u;
+
+                    if (frame_number <= 3u ||
+                        frame_number == 15u ||
+                        frame_number == 30u ||
+                        frame_number == 60u ||
+                        frame_number == 120u) {
+
+                        callbacks.Append(
+                            "V32 FRAME SOAK: begin frame " +
+                            std::to_string(
+                                frame_number) +
+                            "/" +
+                            std::to_string(
+                                kV32FrameCount));
+                    }
 
                     if (!run_lifecycle(
                             "Native_onDrawFrame",
@@ -13095,13 +13326,49 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                     }
 
                     result.draw_frames_completed =
-                        frame + 1u;
+                        frame_number;
 
-                    callbacks.Append(
-                        "V31 FRAME LOOP: returned frame " +
-                        std::to_string(frame + 1u) +
-                        "/" +
-                        std::to_string(kV31FrameCount));
+                    if (callbacks.host_gles_ready &&
+                        (frame_number <= 3u ||
+                         frame_number == 15u ||
+                         frame_number == 30u ||
+                         frame_number == 60u ||
+                         frame_number == 120u)) {
+
+                        const char* stats =
+                            PvZ2HostGLESFrameStats();
+
+                        callbacks.Append(
+                            "V32 FRAME STATS #" +
+                            std::to_string(
+                                frame_number) +
+                            ": " +
+                            (stats != nullptr
+                                ? stats
+                                : "unavailable"));
+                    }
+
+                    if (frame_number <= 3u ||
+                        frame_number == 15u ||
+                        frame_number == 30u ||
+                        frame_number == 60u ||
+                        frame_number == 120u) {
+
+                        callbacks.Append(
+                            "V32 FRAME SOAK: returned frame " +
+                            std::to_string(
+                                frame_number) +
+                            "/" +
+                            std::to_string(
+                                kV32FrameCount));
+                    }
+
+                    if (frame_number !=
+                        kV32FrameCount) {
+                        std::this_thread::sleep_for(
+                            std::chrono::milliseconds(
+                                16));
+                    }
                 }
 
                 if (callbacks.host_gles_ready) {
@@ -13114,17 +13381,17 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             capture;
 
                         callbacks.Append(
-                            "V31 HOST GLES CAPTURE: " +
+                            "V32 HOST GLES CAPTURE: " +
                             result.host_frame_png_path);
                     } else {
                         callbacks.Append(
-                            "V31 HOST GLES CAPTURE: failed");
+                            "V32 HOST GLES CAPTURE: failed");
                     }
                 }
 
                 result.ok = true;
                 result.message =
-                    "PvZ2 completed GameAppInitialize, lifecycle, surface setup, and three consecutive Native_onDrawFrame calls with the v31 host GLES bridge.";
+                    "PvZ2 completed GameAppInitialize, lifecycle, surface setup, and a 120-frame timed host-GLES soak with framebuffer statistics.";
                 return result;
             }
 
