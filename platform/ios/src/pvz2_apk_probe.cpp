@@ -7581,6 +7581,28 @@ public:
                     return std::nullopt;
                 }
 
+                if (const SyntheticAsset* synthetic =
+                        GetOrBuildSyntheticTga(
+                            raw);
+                    synthetic != nullptr &&
+                    synthetic->bytes != nullptr) {
+
+                    ProbeObbHandle handle;
+                    handle.base = 0u;
+                    handle.length =
+                        synthetic->bytes->size();
+                    handle.offset = 0u;
+                    handle.eof = false;
+                    handle.label =
+                        "virtual-tga:" +
+                        NormalizeVirtualAssetKey(
+                            raw);
+                    handle.owned =
+                        synthetic->bytes;
+
+                    return handle;
+                }
+
                 if (is_expansion_path(raw)) {
                     ProbeObbHandle handle;
                     handle.base = 0u;
@@ -8296,15 +8318,22 @@ public:
                 }
 
                 if (bytes != 0u) {
+                    const std::uint8_t* source =
+                        it->second.owned
+                            ? it->second.owned->data() +
+                                static_cast<std::size_t>(
+                                    it->second.offset)
+                            : obb_data +
+                                static_cast<std::size_t>(
+                                    it->second.base +
+                                    it->second.offset);
+
                     std::memcpy(
                         mem.Ptr(
                             dst,
                             static_cast<std::size_t>(
                                 bytes)),
-                        obb_data +
-                            static_cast<std::size_t>(
-                                it->second.base +
-                                it->second.offset),
+                        source,
                         static_cast<std::size_t>(
                             bytes));
                 }
@@ -8684,15 +8713,22 @@ public:
                 }
 
                 if (bytes != 0u) {
+                    const std::uint8_t* source =
+                        it->second.owned
+                            ? it->second.owned->data() +
+                                static_cast<std::size_t>(
+                                    it->second.offset)
+                            : obb_data +
+                                static_cast<std::size_t>(
+                                    it->second.base +
+                                    it->second.offset);
+
                     std::memcpy(
                         mem.Ptr(
                             dst,
                             static_cast<std::size_t>(
                                 bytes)),
-                        obb_data +
-                            static_cast<std::size_t>(
-                                it->second.base +
-                                it->second.offset),
+                        source,
                         static_cast<std::size_t>(
                             bytes));
                 }
