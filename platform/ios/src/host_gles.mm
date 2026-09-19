@@ -159,6 +159,166 @@ PvZ2HostGLESDefaultFramebuffer(void) {
 }
 
 extern "C" const char*
+PvZ2HostGLESFrameStats(void) {
+    if (gContext == nil ||
+        gFramebuffer == 0 ||
+        gWidth == 0 ||
+        gHeight == 0 ||
+        ![EAGLContext setCurrentContext:gContext]) {
+        gFrameStats = "unavailable";
+        return gFrameStats.c_str();
+    }
+
+    GLint previous_framebuffer = 0;
+    GLint previous_pack_alignment = 4;
+
+    glGetIntegerv(
+        GL_FRAMEBUFFER_BINDING,
+        &previous_framebuffer);
+    glGetIntegerv(
+        GL_PACK_ALIGNMENT,
+        &previous_pack_alignment);
+
+    glBindFramebuffer(
+        GL_FRAMEBUFFER,
+        gFramebuffer);
+
+    const std::size_t pixel_count =
+        static_cast<std::size_t>(
+            gWidth) *
+        static_cast<std::size_t>(
+            gHeight);
+    const std::size_t total_bytes =
+        pixel_count * 4u;
+
+    std::vector<std::uint8_t>
+        pixels(total_bytes);
+
+    glPixelStorei(
+        GL_PACK_ALIGNMENT,
+        1);
+
+    glReadPixels(
+        0,
+        0,
+        static_cast<GLsizei>(gWidth),
+        static_cast<GLsizei>(gHeight),
+        GL_RGBA,
+        GL_UNSIGNED_BYTE,
+        pixels.data());
+
+    std::uint64_t non_black = 0u;
+    std::uint64_t non_transparent = 0u;
+    std::uint64_t sum_r = 0u;
+    std::uint64_t sum_g = 0u;
+    std::uint64_t sum_b = 0u;
+    std::uint64_t fnv =
+        1469598103934665603ull;
+
+    for (std::size_t i = 0u;
+         i < pixel_count;
+         ++i) {
+
+        const std::uint8_t r =
+            pixels[i * 4u + 0u];
+        const std::uint8_t g =
+            pixels[i * 4u + 1u];
+        const std::uint8_t b =
+            pixels[i * 4u + 2u];
+        const std::uint8_t a =
+            pixels[i * 4u + 3u];
+
+        if (r > 4u ||
+            g > 4u ||
+            b > 4u) {
+            ++non_black;
+        }
+
+        if (a != 0u) {
+            ++non_transparent;
+        }
+
+        sum_r += r;
+        sum_g += g;
+        sum_b += b;
+
+        fnv ^= r;
+        fnv *= 1099511628211ull;
+        fnv ^= g;
+        fnv *= 1099511628211ull;
+        fnv ^= b;
+        fnv *= 1099511628211ull;
+        fnv ^= a;
+        fnv *= 1099511628211ull;
+    }
+
+    const std::size_t center =
+        ((static_cast<std::size_t>(
+              gHeight) /
+          2u) *
+             static_cast<std::size_t>(
+                 gWidth) +
+         (static_cast<std::size_t>(
+              gWidth) /
+          2u)) *
+        4u;
+
+    std::ostringstream out;
+    out
+        << "size="
+        << gWidth
+        << "x"
+        << gHeight
+        << " pixels="
+        << pixel_count
+        << " nonBlack="
+        << non_black
+        << " nonTransparent="
+        << non_transparent
+        << " avgRGB=("
+        << (pixel_count
+                ? sum_r / pixel_count
+                : 0u)
+        << ","
+        << (pixel_count
+                ? sum_g / pixel_count
+                : 0u)
+        << ","
+        << (pixel_count
+                ? sum_b / pixel_count
+                : 0u)
+        << ") centerRGBA=("
+        << static_cast<unsigned>(
+               pixels[center + 0u])
+        << ","
+        << static_cast<unsigned>(
+               pixels[center + 1u])
+        << ","
+        << static_cast<unsigned>(
+               pixels[center + 2u])
+        << ","
+        << static_cast<unsigned>(
+               pixels[center + 3u])
+        << ") fnv64=0x"
+        << std::hex
+        << fnv;
+
+    gFrameStats =
+        out.str();
+
+    glPixelStorei(
+        GL_PACK_ALIGNMENT,
+        previous_pack_alignment);
+    glBindFramebuffer(
+        GL_FRAMEBUFFER,
+        static_cast<GLuint>(
+            previous_framebuffer));
+
+    return
+        gFrameStats.c_str();
+}
+
+extern "C" const char*
 PvZ2HostGLESCapturePNG(void) {
     if (gContext == nil ||
         gFramebuffer == 0 ||
