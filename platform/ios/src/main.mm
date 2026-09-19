@@ -245,7 +245,7 @@ NSString *NSStringFromStd(
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — Cooperative Threads v30";
+        @"PvZ2forIOS — Host GLES Frames v31";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -254,7 +254,7 @@ NSString *NSStringFromStd(
         NO;
 
     title.text =
-        @"PvZ2forIOS — cooperative threads v30";
+        @"PvZ2forIOS — host GLES frames v31";
 
     title.font =
         [UIFont
@@ -270,8 +270,8 @@ NSString *NSStringFromStd(
         NO;
 
     explanation.text =
-        @"v29 preserved all of the bulk JNI and first-frame event fixes, but the run exposed a scheduler-level race before the first draw. After Native_onSurfaceCreated created six guest pthreads, the probe switched into those workers on an ordinary CPU timeslice even though pthread mutex/cond behavior is still synthetic. The main thread then resumed inside std::vector<unsigned char>::_M_range_insert with an impossible state: vector begin was NULL while its end/insert iterator was non-NULL, producing a gigantic __aeabi_memmove from address zero. "
-         @"v30 removes that artificial interleaving class. Background guest workers are now advanced only when the main thread is at a recognized concrete async wait (for example a future-poll); plain CPU quanta stay on the main guest thread. This preserves the cooperative single-thread safety model until real mutex/condition blocking is implemented. v29's zeroed UI_ProcessEvents DirectByteBuffer and bulk JNI bridges remain active. Memory-copy faults also carry full register/vector diagnostics if another corruption site appears.";
+        @"v30 completed the native startup path and returned cleanly from Native_onDrawFrame with zero speculative recovery; the UI_ProcessEvents buffer fix also worked. The remaining rendering limitation was explicit: every OpenGL ES import was still handled by a synthetic/no-op probe. "
+         @"v31 creates a real offscreen iOS OpenGL ES 2 context, maps guest FBO 0 onto a host framebuffer, forwards the GLES2 shader/program/texture/uniform/vertex/draw calls reached by PvZ2, runs three consecutive native frames, and captures the final framebuffer to PNG. GLES1-only calls remain isolated compatibility no-ops and are logged if a later frame reaches them.";
 
     explanation.numberOfLines = 0;
 
@@ -474,7 +474,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 directory-VFS v28 session started; PID=%d ===",
+                    @"=== PvZ2 host-GLES v31 session started; PID=%d ===",
                     getpid()]];
 
     [self
@@ -815,7 +815,7 @@ NSString *NSStringFromStd(
 
     [self
         appendUI:
-            @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v30 keeps the working RSB/directory VFS and v29 bulk JNI/event bridges, but no longer runs deferred guest workers during an ordinary main-thread CPU timeslice. Workers advance only at recognized async waits, preventing synthetic pthread interleavings from corrupting shared C++ containers before the first frame."];
+            @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v31 keeps the v30 cooperative scheduler and working RSB/JNI bridges, creates a real offscreen iOS OpenGL ES 2 context, forwards the GLES2 call surface reached by PvZ2, runs three consecutive Native_onDrawFrame calls, and captures the final framebuffer as PNG."];
 
     [self
         presentViewController:
@@ -876,7 +876,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v30 probe run started; PID=%d ===",
+                    @"=== PvZ2 v31 probe run started; PID=%d ===",
                     getpid()]];
 
     self.jniRunning =
@@ -1026,13 +1026,15 @@ NSString *NSStringFromStd(
                         appendUI:
                             [NSString
                                 stringWithFormat:
-                                    @"STEP 3C: JNI_OnLoad=%@ | GameAppInit returned=%@ result=%u | lifecycle=%u | firstDraw reached=%@ returned=%@",
+                                    @"STEP 3C: JNI_OnLoad=%@ | GameAppInit returned=%@ result=%u | lifecycle=%u | firstDraw reached=%@ returned=%@ | frames=%u | hostGLES=%@",
                                     result.returned_from_jni_onload ? @"YES" : @"NO",
                                     result.returned_game_app_initialize ? @"YES" : @"NO",
                                     result.game_app_initialize_return & 0xffu,
                                     result.lifecycle_calls_completed,
                                     result.reached_first_draw_frame ? @"YES" : @"NO",
-                                    result.returned_first_draw_frame ? @"YES" : @"NO"]];
+                                    result.returned_first_draw_frame ? @"YES" : @"NO",
+                                    result.draw_frames_completed,
+                                    result.host_gles_active ? @"YES" : @"NO"]];
 
                     [selfRef
                         appendUI:
@@ -1120,19 +1122,23 @@ NSString *NSStringFromStd(
                     if (result.ok) {
                         [selfRef
                             appendUI:
-                                @"SUCCESS STEP 3: PvZ2 completed lifecycle + surface setup + one real Native_onDrawFrame call under Dynarmic."];
+                                @"SUCCESS STEP 3: PvZ2 completed lifecycle + surface setup + v31 host GLES frame loop."];
 
                         [selfRef
                             showResult:
-                                @"First PvZ2 frame path returned"
+                                @"PvZ2 host GLES frame loop returned"
                             message:
                                 [NSString
                                     stringWithFormat:
-                                        @"PvZ2 completed its real native startup, lifecycle and first draw-frame path on the A14.\n\nGameAppInitialize: %u\nLifecycle calls completed: %u\nNative_onDrawFrame reached: %@\nNative_onDrawFrame returned: %@\nConstructors: %u/%u\nJNI_OnLoad: 0x%08x\n\nThe current GLES backend is still a probe/no-op layer, so the next milestone is a real iPad presentation bridge that turns this successful draw path into visible pixels.",
+                                        @"PvZ2 completed its native startup and v31 frame loop.\n\nGameAppInitialize: %u\nLifecycle calls completed: %u\nFrames returned: %u\nHost GLES active: %@\nCapture: %@\nConstructors: %u/%u\nJNI_OnLoad: 0x%08x\n\nIf the capture is non-empty, this is the first run where guest GLES commands were executed by a real iOS GLES2 context rather than the old no-op probe.",
                                         result.game_app_initialize_return & 0xffu,
                                         result.lifecycle_calls_completed,
-                                        result.reached_first_draw_frame ? @"YES" : @"NO",
-                                        result.returned_first_draw_frame ? @"YES" : @"NO",
+                                        result.draw_frames_completed,
+                                        result.host_gles_active ? @"YES" : @"NO",
+                                        result.host_frame_png_path.empty()
+                                            ? @"(none)"
+                                            : NSStringFromStd(
+                                                  result.host_frame_png_path),
                                         result.constructors_completed,
                                         result.constructors_total,
                                         result.return_value]];
