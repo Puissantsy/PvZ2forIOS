@@ -6352,26 +6352,35 @@ public:
                         regs[0],
                         2048);
 
-                if (is_expansion_path(guest_path) &&
-                    obb_data != nullptr &&
-                    obb_size != 0) {
+                const auto resolved =
+                    resolve_obb_virtual_file(
+                        guest_path);
+
+                if (resolved.has_value()) {
 
                     const std::uint32_t token =
                         next_probe_file++;
 
                     obb_files[token] =
-                        ProbeObbHandle{};
+                        *resolved;
 
                     regs[0] = token;
                     ++supported_calls;
 
                     Append(
-                        "V19 VFS fopen(\"" +
+                        "V26 VFS fopen(\"" +
                         guest_path +
-                        "\") -> OBB token=0x" +
+                        "\") -> " +
+                        resolved->label +
+                        " token=0x" +
                         JniProbeHex(token) +
+                        " base=0x" +
+                        JniProbeHex(
+                            static_cast<std::uint32_t>(
+                                resolved->base)) +
                         " size=" +
-                        std::to_string(obb_size));
+                        std::to_string(
+                            resolved->length));
                     return;
                 }
 
@@ -6425,11 +6434,13 @@ public:
                     element_count;
 
                 const std::uint64_t read_start =
+                    it->second.base +
                     it->second.offset;
 
                 const std::uint64_t available =
-                    it->second.offset < obb_size
-                        ? obb_size -
+                    it->second.offset <
+                            it->second.length
+                        ? it->second.length -
                             it->second.offset
                         : 0u;
 
@@ -6458,6 +6469,7 @@ public:
                                 bytes)),
                         obb_data +
                             static_cast<std::size_t>(
+                                it->second.base +
                                 it->second.offset),
                         static_cast<std::size_t>(
                             bytes));
@@ -6527,7 +6539,7 @@ public:
                 } else if (whence == 2u) {
                     base =
                         static_cast<std::int64_t>(
-                            obb_size);
+                            it->second.length);
                 }
 
                 const std::int64_t next =
@@ -6536,7 +6548,7 @@ public:
                 if (next < 0 ||
                     static_cast<std::uint64_t>(
                         next) >
-                        obb_size) {
+                        it->second.length) {
 
                     set_guest_errno(22u);
                     regs[0] = 0xffffffffu;
@@ -6653,26 +6665,35 @@ public:
                         regs[0],
                         2048);
 
-                if (is_expansion_path(guest_path) &&
-                    obb_data != nullptr &&
-                    obb_size != 0) {
+                const auto resolved =
+                    resolve_obb_virtual_file(
+                        guest_path);
+
+                if (resolved.has_value()) {
 
                     const std::uint32_t token =
                         next_probe_fd++;
 
                     obb_fds[token] =
-                        ProbeObbHandle{};
+                        *resolved;
 
                     regs[0] = token;
                     ++supported_calls;
 
                     Append(
-                        "V19 VFS open(\"" +
+                        "V26 VFS open(\"" +
                         guest_path +
-                        "\") -> OBB fd=0x" +
+                        "\") -> " +
+                        resolved->label +
+                        " fd=0x" +
                         JniProbeHex(token) +
+                        " base=0x" +
+                        JniProbeHex(
+                            static_cast<std::uint32_t>(
+                                resolved->base)) +
                         " size=" +
-                        std::to_string(obb_size));
+                        std::to_string(
+                            resolved->length));
                     return;
                 }
 
@@ -6719,11 +6740,13 @@ public:
                 }
 
                 const std::uint64_t read_start =
+                    it->second.base +
                     it->second.offset;
 
                 const std::uint64_t available =
-                    it->second.offset < obb_size
-                        ? obb_size -
+                    it->second.offset <
+                            it->second.length
+                        ? it->second.length -
                             it->second.offset
                         : 0u;
 
@@ -6752,6 +6775,7 @@ public:
                                 bytes)),
                         obb_data +
                             static_cast<std::size_t>(
+                                it->second.base +
                                 it->second.offset),
                         static_cast<std::size_t>(
                             bytes));
@@ -6786,8 +6810,14 @@ public:
                 if (fallback_logged.insert(
                         "v19-obb-read").second) {
                     Append(
-                        "V19 VFS first OBB read: fd=0x" +
+                        "V26 VFS first read: fd=0x" +
                         JniProbeHex(token) +
+                        " label=" +
+                        it->second.label +
+                        " absolute=0x" +
+                        JniProbeHex(
+                            static_cast<std::uint32_t>(
+                                read_start)) +
                         " bytes=" +
                         std::to_string(bytes));
                 }
@@ -6823,7 +6853,7 @@ public:
                 } else if (whence == 2u) {
                     base =
                         static_cast<std::int64_t>(
-                            obb_size);
+                            it->second.length);
                 }
 
                 const std::int64_t next =
@@ -6832,7 +6862,7 @@ public:
                 if (next < 0 ||
                     static_cast<std::uint64_t>(
                         next) >
-                        obb_size) {
+                        it->second.length) {
 
                     set_guest_errno(22u);
                     regs[0] = 0xffffffffu;
@@ -6862,7 +6892,7 @@ public:
                 if (it != obb_fds.end() &&
                     write_armeabi_stat(
                         regs[1],
-                        obb_size)) {
+                        it->second.length)) {
                     regs[0] = 0;
                 } else {
                     set_guest_errno(9u);
@@ -6881,11 +6911,12 @@ public:
                         regs[0],
                         2048);
 
+                const auto resolved =
+                    resolve_obb_virtual_file(
+                        guest_path);
+
                 const bool exists =
-                    is_expansion_path(
-                        guest_path) &&
-                    obb_data != nullptr &&
-                    obb_size != 0;
+                    resolved.has_value();
 
                 if (name == "access") {
                     regs[0] =
@@ -6895,7 +6926,7 @@ public:
                 } else if (exists &&
                            write_armeabi_stat(
                                regs[1],
-                               obb_size)) {
+                               resolved->length)) {
                     regs[0] = 0;
                 } else {
                     regs[0] = 0xffffffffu;
