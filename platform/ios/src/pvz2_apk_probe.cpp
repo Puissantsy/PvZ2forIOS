@@ -1675,9 +1675,18 @@ public:
     bool gles_blend_enabled = false;
     GLenum gles_blend_src = GL_ONE;
     GLenum gles_blend_dst = GL_ZERO;
+    bool gles_scissor_enabled = false;
+    std::array<GLboolean, 4> gles_color_mask{
+        GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE};
+    std::array<GLfloat, 4> gles_clear_color{
+        0.0f, 0.0f, 0.0f, 0.0f};
     GLuint gles_current_program = 0u;
     std::unordered_map<std::uint64_t, std::string>
         gles_uniform_names;
+    std::unordered_map<std::uint64_t, GLint>
+        gles_uniform1i_values;
+    std::uint64_t gles_transition_draw_traces = 0u;
+    std::uint64_t gles_transition_clear_traces = 0u;
 
     // v42: the splash shaders do not use a color uniform; they multiply
     // texture samples by the per-vertex "color" attribute. Track the real
@@ -1767,6 +1776,266 @@ public:
     std::uint32_t resource_wrapper_recoveries = 0u;
     std::unordered_map<std::uint32_t, std::string>
         resource_lookup_entry_ids;
+
+    bool V48TraceTransitionFrame() const {
+        return
+            current_frame_number >= 55u &&
+            current_frame_number <= 90u;
+    }
+
+    void V48TraceDrawState(
+        const char* draw_kind,
+        GLenum mode,
+        GLsizei count) {
+
+        if (!V48TraceTransitionFrame() ||
+            gles_transition_draw_traces >= 256u) {
+            return;
+        }
+
+        ++gles_transition_draw_traces;
+
+        std::ostringstream diagnostic;
+        diagnostic
+            << "V48 TRANSITION DRAW #"
+            << gles_transition_draw_traces
+            << " frame="
+            << current_frame_number
+            << " kind="
+            << (draw_kind != nullptr
+                    ? draw_kind
+                    : "?")
+            << " mode=0x"
+            << JniProbeHex(
+                   static_cast<std::uint32_t>(
+                       mode))
+            << " count="
+            << count
+            << " guestFBO="
+            << gles_bound_guest_framebuffer
+            << " hostFBO="
+            << gles_bound_host_framebuffer
+            << " program="
+            << gles_current_program
+            << " blend="
+            << (gles_blend_enabled
+                    ? "ON"
+                    : "OFF")
+            << "(0x"
+            << JniProbeHex(
+                   static_cast<std::uint32_t>(
+                       gles_blend_src))
+            << ",0x"
+            << JniProbeHex(
+                   static_cast<std::uint32_t>(
+                       gles_blend_dst))
+            << ") scissor="
+            << (gles_scissor_enabled
+                    ? "ON"
+                    : "OFF")
+            << " viewport=("
+            << last_gles_viewport[0]
+            << ","
+            << last_gles_viewport[1]
+            << ","
+            << last_gles_viewport[2]
+            << ","
+            << last_gles_viewport[3]
+            << ") colorMask=("
+            << static_cast<unsigned>(
+                   gles_color_mask[0])
+            << ","
+            << static_cast<unsigned>(
+                   gles_color_mask[1])
+            << ","
+            << static_cast<unsigned>(
+                   gles_color_mask[2])
+            << ","
+            << static_cast<unsigned>(
+                   gles_color_mask[3])
+            << ") clearRGBA=("
+            << gles_clear_color[0]
+            << ","
+            << gles_clear_color[1]
+            << ","
+            << gles_clear_color[2]
+            << ","
+            << gles_clear_color[3]
+            << ") tex2D=[";
+
+        for (std::size_t unit = 0u;
+             unit < gles_bound_texture_2d.size();
+             ++unit) {
+            if (unit != 0u) {
+                diagnostic << ",";
+            }
+
+            const GLuint texture =
+                gles_bound_texture_2d[unit];
+
+            diagnostic
+                << unit
+                << ":"
+                << texture;
+
+            const auto info =
+                gles_texture_info.find(
+                    texture);
+
+            if (texture != 0u &&
+                info != gles_texture_info.end()) {
+                diagnostic
+                    << "("
+                    << info->second.width
+                    << "x"
+                    << info->second.height
+                    << ")";
+            }
+        }
+
+        diagnostic << "] samplers={";
+        bool first_uniform = true;
+
+        for (const auto& entry :
+             gles_uniform1i_values) {
+            const GLuint program =
+                static_cast<GLuint>(
+                    entry.first >> 32u);
+
+            if (program !=
+                gles_current_program) {
+                continue;
+            }
+
+            if (!first_uniform) {
+                diagnostic << ",";
+            }
+            first_uniform = false;
+
+            const GLint location =
+                static_cast<GLint>(
+                    static_cast<std::uint32_t>(
+                        entry.first));
+
+            const auto name =
+                gles_uniform_names.find(
+                    entry.first);
+
+            diagnostic
+                << (name !=
+                            gles_uniform_names.end()
+                        ? name->second
+                        : std::string{"loc"} +
+                              std::to_string(
+                                  location))
+                << "="
+                << entry.second;
+        }
+
+        diagnostic << "} attribs={";
+        bool first_attrib = true;
+
+        for (GLuint index = 0u;
+             index <
+                 gles_attrib_state.size();
+             ++index) {
+            const auto& state =
+                gles_attrib_state[index];
+
+            if (!state.enabled) {
+                continue;
+            }
+
+            if (!first_attrib) {
+                diagnostic << ",";
+            }
+            first_attrib = false;
+
+            const std::uint64_t key =
+                (static_cast<std::uint64_t>(
+                     gles_current_program)
+                 << 32u) |
+                index;
+
+            const auto name =
+                gles_attrib_names.find(
+                    key);
+
+            diagnostic
+                << index
+                << ":"
+                << (name !=
+                            gles_attrib_names.end()
+                        ? name->second
+                        : "?")
+                << "[size="
+                << state.size
+                << ",type=0x"
+                << JniProbeHex(
+                       static_cast<std::uint32_t>(
+                           state.type))
+                << ",norm="
+                << static_cast<unsigned>(
+                       state.normalized)
+                << ",stride="
+                << state.stride
+                << ",ptr=0x"
+                << JniProbeHex(
+                       state.guest_pointer)
+                << "]";
+        }
+
+        diagnostic << "}";
+        Append(diagnostic.str());
+    }
+
+    void V48TraceClearState(
+        GLbitfield mask) {
+
+        if (!V48TraceTransitionFrame() ||
+            gles_transition_clear_traces >= 128u) {
+            return;
+        }
+
+        ++gles_transition_clear_traces;
+
+        std::ostringstream diagnostic;
+        diagnostic
+            << "V48 TRANSITION CLEAR #"
+            << gles_transition_clear_traces
+            << " frame="
+            << current_frame_number
+            << " guestFBO="
+            << gles_bound_guest_framebuffer
+            << " hostFBO="
+            << gles_bound_host_framebuffer
+            << " mask=0x"
+            << JniProbeHex(
+                   static_cast<std::uint32_t>(
+                       mask))
+            << " rgba=("
+            << gles_clear_color[0]
+            << ","
+            << gles_clear_color[1]
+            << ","
+            << gles_clear_color[2]
+            << ","
+            << gles_clear_color[3]
+            << ") colorMask=("
+            << static_cast<unsigned>(
+                   gles_color_mask[0])
+            << ","
+            << static_cast<unsigned>(
+                   gles_color_mask[1])
+            << ","
+            << static_cast<unsigned>(
+                   gles_color_mask[2])
+            << ","
+            << static_cast<unsigned>(
+                   gles_color_mask[3])
+            << ")";
+        Append(diagnostic.str());
+    }
 
     static constexpr std::uint32_t kSweepRecoveryLimit = 48u;
     std::uint32_t sweep_recoveries = 0;
@@ -12703,11 +12972,26 @@ public:
                         gles_current_program);
                     regs[0] = 0u;
                 } else if (name == "glUniform1i") {
+                    const GLint location =
+                        static_cast<GLint>(
+                            guest_arg(0u));
+                    const GLint value =
+                        static_cast<GLint>(
+                            guest_arg(1u));
+
                     glUniform1i(
-                        static_cast<GLint>(
-                            guest_arg(0u)),
-                        static_cast<GLint>(
-                            guest_arg(1u)));
+                        location,
+                        value);
+
+                    const std::uint64_t key =
+                        (static_cast<std::uint64_t>(
+                             gles_current_program)
+                         << 32u) |
+                        static_cast<std::uint32_t>(
+                            location);
+                    gles_uniform1i_values[key] =
+                        value;
+
                     regs[0] = 0u;
                 } else if (name == "glUniform4fv") {
                     const GLsizei count =
@@ -13450,17 +13734,27 @@ public:
                             scissor[3]));
                     regs[0] = 0u;
                 } else if (name == "glClearColor") {
-                    glClearColor(
+                    gles_clear_color = {
                         guest_f32(0u),
                         guest_f32(1u),
                         guest_f32(2u),
-                        guest_f32(3u));
+                        guest_f32(3u)};
+
+                    glClearColor(
+                        gles_clear_color[0],
+                        gles_clear_color[1],
+                        gles_clear_color[2],
+                        gles_clear_color[3]);
                     regs[0] = 0u;
                 } else if (name == "glClear") {
                     ++gles_clear_calls;
-                    glClear(
+
+                    const GLbitfield mask =
                         static_cast<GLbitfield>(
-                            guest_arg(0u)));
+                            guest_arg(0u));
+
+                    V48TraceClearState(mask);
+                    glClear(mask);
                     regs[0] = 0u;
                 } else if (name == "glClearDepthf") {
                     glClearDepthf(
@@ -13499,6 +13793,12 @@ public:
                                 gles_blend_state_changes));
                     }
 
+                    if (capability ==
+                        GL_SCISSOR_TEST) {
+                        gles_scissor_enabled =
+                            true;
+                    }
+
                     regs[0] = 0u;
                 } else if (name == "glDisable") {
                     const GLenum capability =
@@ -13516,6 +13816,12 @@ public:
                             "V41 GLES BLEND disabled change#" +
                             std::to_string(
                                 gles_blend_state_changes));
+                    }
+
+                    if (capability ==
+                        GL_SCISSOR_TEST) {
+                        gles_scissor_enabled =
+                            false;
                     }
 
                     regs[0] = 0u;
@@ -13567,7 +13873,7 @@ public:
                         guest_f32(0u));
                     regs[0] = 0u;
                 } else if (name == "glColorMask") {
-                    glColorMask(
+                    gles_color_mask = {
                         static_cast<GLboolean>(
                             guest_arg(0u)),
                         static_cast<GLboolean>(
@@ -13575,7 +13881,13 @@ public:
                         static_cast<GLboolean>(
                             guest_arg(2u)),
                         static_cast<GLboolean>(
-                            guest_arg(3u)));
+                            guest_arg(3u))};
+
+                    glColorMask(
+                        gles_color_mask[0],
+                        gles_color_mask[1],
+                        gles_color_mask[2],
+                        gles_color_mask[3]);
                     regs[0] = 0u;
                 } else if (name == "glActiveTexture") {
                     gles_active_texture_unit =
@@ -13902,9 +14214,17 @@ public:
                         }
                     }
 
-                    glDrawArrays(
+                    const GLenum draw_mode =
                         static_cast<GLenum>(
-                            guest_arg(0u)),
+                            guest_arg(0u));
+
+                    V48TraceDrawState(
+                        "arrays",
+                        draw_mode,
+                        count);
+
+                    glDrawArrays(
+                        draw_mode,
                         first,
                         count);
 
@@ -14206,9 +14526,17 @@ public:
                         }
                     }
 
-                    glDrawElements(
+                    const GLenum draw_mode =
                         static_cast<GLenum>(
-                            guest_arg(0u)),
+                            guest_arg(0u));
+
+                    V48TraceDrawState(
+                        "elements",
+                        draw_mode,
+                        count);
+
+                    glDrawElements(
+                        draw_mode,
                         count,
                         type,
                         indices);
@@ -17331,9 +17659,8 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             frame == 20u ||
                             frame == 30u ||
                             frame == 45u ||
-                            frame == 60u ||
-                            frame == 75u ||
-                            frame == 90u ||
+                            (frame >= 55u &&
+                             frame <= 90u) ||
                             frame == 120u ||
                             frame == 150u ||
                             frame == 180u ||
@@ -17353,7 +17680,11 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                         return
                             frame == 15u ||
                             frame == 60u ||
+                            frame == 70u ||
+                            frame == 74u ||
                             frame == 75u ||
+                            frame == 76u ||
+                            frame == 80u ||
                             frame == 90u ||
                             frame == 120u ||
                             frame == 600u;
