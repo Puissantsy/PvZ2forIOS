@@ -401,6 +401,53 @@ PvZ2HostGLESCapturePNGNamed(
             row_bytes);
     }
 
+    // v40: the offscreen framebuffer is already the final composited RGB
+    // result we want to inspect. Its alpha channel is still meaningful to
+    // PvZ2 during its splash/fade path, but feeding those bytes to UIKit as
+    // premultiplied alpha makes the diagnostic image get darkened again
+    // against the black UIImageView background.
+    //
+    // Normalize the diagnostic capture only:
+    //   1. undo premultiplication for partially transparent pixels;
+    //   2. force the exported image opaque so UIKit cannot composite it a
+    //      second time.
+    //
+    // This does NOT modify the GLES framebuffer or any pixels seen by PvZ2.
+    for (std::size_t i = 0u;
+         i < total_bytes;
+         i += 4u) {
+
+        const std::uint32_t alpha =
+            flipped[i + 3u];
+
+        if (alpha == 0u) {
+            flipped[i + 0u] = 0u;
+            flipped[i + 1u] = 0u;
+            flipped[i + 2u] = 0u;
+        } else if (alpha < 255u) {
+            for (std::size_t channel = 0u;
+                 channel < 3u;
+                 ++channel) {
+
+                const std::uint32_t value =
+                    flipped[i + channel];
+
+                const std::uint32_t straight =
+                    (value * 255u +
+                     alpha / 2u) /
+                    alpha;
+
+                flipped[i + channel] =
+                    static_cast<std::uint8_t>(
+                        std::min<std::uint32_t>(
+                            255u,
+                            straight));
+            }
+        }
+
+        flipped[i + 3u] = 255u;
+    }
+
     CGColorSpaceRef color_space =
         CGColorSpaceCreateDeviceRGB();
 
@@ -424,7 +471,7 @@ PvZ2HostGLESCapturePNGNamed(
             row_bytes,
             color_space,
             kCGBitmapByteOrder32Big |
-                kCGImageAlphaPremultipliedLast,
+                kCGImageAlphaLast,
             provider,
             nullptr,
             false,
@@ -464,13 +511,13 @@ PvZ2HostGLESCapturePNGNamed(
             ? [NSString
                 stringWithUTF8String:
                     file_name]
-            : @"pvz2-v33-frame.png";
+            : @"pvz2-v40-frame.png";
 
     if (safe_name.length == 0 ||
         [safe_name containsString:@"/"] ||
         [safe_name containsString:@"\\"]) {
         safe_name =
-            @"pvz2-v33-frame.png";
+            @"pvz2-v40-frame.png";
     }
 
     NSURL *target =
@@ -496,7 +543,7 @@ extern "C" const char*
 PvZ2HostGLESCapturePNG(void) {
     return
         PvZ2HostGLESCapturePNGNamed(
-            "pvz2-v33-final-frame.png");
+            "pvz2-v40-final-frame.png");
 }
 
 extern "C" void PvZ2HostGLESEnd(void) {
