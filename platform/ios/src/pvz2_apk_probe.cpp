@@ -1276,6 +1276,17 @@ public:
     std::size_t obb_size = 0;
     std::uint32_t next_probe_fd = 0x00004000u;
     std::uint32_t next_probe_file = 0xf1000000u;
+    std::uint64_t obb_read_calls = 0;
+    std::uint64_t obb_nonzero_read_calls = 0;
+    std::uint64_t obb_bytes_returned = 0;
+    std::uint64_t obb_max_read_end = 0;
+    std::uint64_t obb_seek_calls = 0;
+    std::uint64_t last_obb_read_offset = 0;
+    std::uint32_t last_obb_read_requested = 0;
+    std::uint32_t last_obb_read_returned = 0;
+    std::uint64_t last_obb_seek_target = 0;
+    std::uint32_t null_execute_recoveries = 0;
+    std::string last_android_log;
     std::unordered_map<std::uint32_t, ProbeObbHandle> obb_fds;
     std::unordered_map<std::uint32_t, ProbeObbHandle> obb_files;
     std::unordered_set<std::string> fallback_logged;
@@ -5110,6 +5121,7 @@ public:
 
             regs[0] = 0;
             ++supported_calls;
+            last_android_log = text;
 
             Append(
                 "import " +
@@ -5340,6 +5352,9 @@ public:
                         element_size) *
                     element_count;
 
+                const std::uint64_t read_start =
+                    it->second.offset;
+
                 const std::uint64_t available =
                     it->second.offset < obb_size
                         ? obb_size -
@@ -5379,6 +5394,28 @@ public:
                 it->second.offset += bytes;
                 it->second.eof =
                     bytes < requested;
+
+                ++obb_read_calls;
+                if (bytes != 0u) {
+                    ++obb_nonzero_read_calls;
+                }
+                obb_bytes_returned += bytes;
+                obb_max_read_end =
+                    std::max<std::uint64_t>(
+                        obb_max_read_end,
+                        read_start + bytes);
+                last_obb_read_offset =
+                    read_start;
+                last_obb_read_requested =
+                    static_cast<std::uint32_t>(
+                        std::min<std::uint64_t>(
+                            requested,
+                            0xffffffffull));
+                last_obb_read_returned =
+                    static_cast<std::uint32_t>(
+                        std::min<std::uint64_t>(
+                            bytes,
+                            0xffffffffull));
 
                 regs[0] =
                     element_size == 0u
@@ -5436,6 +5473,10 @@ public:
                         static_cast<std::uint64_t>(
                             next);
                     it->second.eof = false;
+                    ++obb_seek_calls;
+                    last_obb_seek_target =
+                        static_cast<std::uint64_t>(
+                            next);
                     regs[0] = 0;
                 }
 
@@ -5586,6 +5627,9 @@ public:
                     return;
                 }
 
+                const std::uint64_t read_start =
+                    it->second.offset;
+
                 const std::uint64_t available =
                     it->second.offset < obb_size
                         ? obb_size -
@@ -5625,6 +5669,22 @@ public:
                 it->second.offset += bytes;
                 it->second.eof =
                     bytes < requested;
+
+                ++obb_read_calls;
+                if (bytes != 0u) {
+                    ++obb_nonzero_read_calls;
+                }
+                obb_bytes_returned += bytes;
+                obb_max_read_end =
+                    std::max<std::uint64_t>(
+                        obb_max_read_end,
+                        read_start + bytes);
+                last_obb_read_offset =
+                    read_start;
+                last_obb_read_requested =
+                    requested;
+                last_obb_read_returned =
+                    static_cast<std::uint32_t>(bytes);
 
                 regs[0] =
                     static_cast<std::uint32_t>(
@@ -5690,6 +5750,10 @@ public:
                         static_cast<std::uint64_t>(
                             next);
                     it->second.eof = false;
+                    ++obb_seek_calls;
+                    last_obb_seek_target =
+                        static_cast<std::uint64_t>(
+                            next);
 
                     regs[0] =
                         static_cast<std::uint32_t>(
@@ -5929,15 +5993,258 @@ public:
         std::uint32_t pc,
         Dynarmic::A32::Exception exception) override {
 
+        auto exception_name =
+            [&]() -> const char* {
+                switch (exception) {
+                case Dynarmic::A32::Exception::UndefinedInstruction:
+                    return "UndefinedInstruction";
+                case Dynarmic::A32::Exception::UnpredictableInstruction:
+                    return "UnpredictableInstruction";
+                case Dynarmic::A32::Exception::DecodeError:
+                    return "DecodeError";
+                case Dynarmic::A32::Exception::SendEvent:
+                    return "SendEvent";
+                case Dynarmic::A32::Exception::SendEventLocal:
+                    return "SendEventLocal";
+                case Dynarmic::A32::Exception::WaitForInterrupt:
+                    return "WaitForInterrupt";
+                case Dynarmic::A32::Exception::WaitForEvent:
+                    return "WaitForEvent";
+                case Dynarmic::A32::Exception::Yield:
+                    return "Yield";
+                case Dynarmic::A32::Exception::Breakpoint:
+                    return "Breakpoint";
+                case Dynarmic::A32::Exception::PreloadData:
+                    return "PreloadData";
+                case Dynarmic::A32::Exception::PreloadDataWithIntentToWrite:
+                    return "PreloadDataWithIntentToWrite";
+                case Dynarmic::A32::Exception::PreloadInstruction:
+                    return "PreloadInstruction";
+                case Dynarmic::A32::Exception::NoExecuteFault:
+                    return "NoExecuteFault";
+                default:
+                    return "Unknown";
+                }
+            };
+
+        const std::uint32_t lr =
+            jit ? jit->Regs()[14] : 0u;
+        const std::uint32_t sp =
+            jit ? jit->Regs()[13] : 0u;
+        const std::uint32_t return_pc =
+            lr & ~1u;
+
         std::ostringstream out;
         out
-            << "Dynarmic exception at PC=0x"
-            << std::hex << pc
+            << "Dynarmic exception "
+            << exception_name()
             << " type="
-            << std::dec
-            << static_cast<unsigned>(exception);
+            << static_cast<unsigned>(exception)
+            << " PC=0x"
+            << JniProbeHex(pc)
+            << " LR=0x"
+            << JniProbeHex(lr)
+            << " returnPC=0x"
+            << JniProbeHex(return_pc)
+            << " SP=0x"
+            << JniProbeHex(sp)
+            << " phase="
+            << (current_lifecycle_name.empty()
+                    ? "n/a"
+                    : current_lifecycle_name)
+            << " pthread="
+            << current_probe_thread_id
+            << " nullRecoveries="
+            << null_execute_recoveries;
 
-        result.message = out.str();
+        if (jit) {
+            out
+                << " CPSR=0x"
+                << JniProbeHex(jit->Cpsr());
+
+            for (std::size_t reg = 0;
+                 reg < 13;
+                 ++reg) {
+                out
+                    << " r"
+                    << reg
+                    << "=0x"
+                    << JniProbeHex(
+                        jit->Regs()[reg]);
+            }
+
+            out
+                << " stack={";
+
+            for (std::uint32_t off = 0;
+                 off < 32u;
+                 off += 4u) {
+                if (off != 0u) {
+                    out << ",";
+                }
+                out
+                    << "0x"
+                    << JniProbeHex(
+                        mem.Read32Guest(
+                            sp + off));
+            }
+
+            out << "}";
+
+            if (return_pc >= 8u) {
+                out
+                    << " codeAroundLR={0x"
+                    << JniProbeHex(
+                        mem.Read32Guest(
+                            return_pc - 8u))
+                    << ",0x"
+                    << JniProbeHex(
+                        mem.Read32Guest(
+                            return_pc - 4u))
+                    << ",0x"
+                    << JniProbeHex(
+                        mem.Read32Guest(
+                            return_pc))
+                    << ",0x"
+                    << JniProbeHex(
+                        mem.Read32Guest(
+                            return_pc + 4u))
+                    << "}";
+            }
+        }
+
+        out
+            << " VFS{reads="
+            << obb_read_calls
+            << ",nonzero="
+            << obb_nonzero_read_calls
+            << ",bytes="
+            << obb_bytes_returned
+            << ",maxEnd=0x"
+            << JniProbeHex(
+                static_cast<std::uint32_t>(
+                    std::min<std::uint64_t>(
+                        obb_max_read_end,
+                        0xffffffffull)))
+            << ",seeks="
+            << obb_seek_calls
+            << ",lastReadOff=0x"
+            << JniProbeHex(
+                static_cast<std::uint32_t>(
+                    std::min<std::uint64_t>(
+                        last_obb_read_offset,
+                        0xffffffffull)))
+            << ",lastReq="
+            << last_obb_read_requested
+            << ",lastRet="
+            << last_obb_read_returned
+            << ",lastSeek=0x"
+            << JniProbeHex(
+                static_cast<std::uint32_t>(
+                    std::min<std::uint64_t>(
+                        last_obb_seek_target,
+                        0xffffffffull)))
+            << "}";
+
+        if (!last_android_log.empty()) {
+            out
+                << " lastLog=\""
+                << last_android_log
+                << "\"";
+        }
+
+        const char packages_version[] =
+            "RESFILE_PACKAGES_VERSION";
+
+        if (obb_data &&
+            obb_size >=
+                sizeof(packages_version) - 1u) {
+
+            const auto* begin =
+                obb_data;
+            const auto* end =
+                obb_data + obb_size;
+            const auto* hit =
+                std::search(
+                    begin,
+                    end,
+                    packages_version,
+                    packages_version +
+                        sizeof(packages_version) - 1u);
+
+            if (hit != end) {
+                out
+                    << " packagesVersionInOBB=0x"
+                    << JniProbeHex(
+                        static_cast<std::uint32_t>(
+                            hit - begin));
+            } else {
+                out
+                    << " packagesVersionInOBB=NOT_FOUND";
+            }
+        }
+
+        const std::string diagnostic =
+            out.str();
+
+        Append(
+            "V23 EXCEPTION: " +
+            diagnostic);
+
+        // A direct branch/call through address 0 is a common artifact of an
+        // optional Android callback/resource hook that is absent from the
+        // probe environment. For lifecycle/worker execution, recover a small
+        // bounded number of such calls exactly like a null callback returning
+        // 0. We still log the complete callsite first so the recovery is
+        // auditable and can be replaced by a real bridge later.
+        const bool recoverable_null_call =
+            exception ==
+                Dynarmic::A32::Exception::NoExecuteFault &&
+            pc == 0u &&
+            jit != nullptr &&
+            return_mode == ReturnMode::Lifecycle &&
+            return_pc != 0u &&
+            mem.Ptr(return_pc, 2) != nullptr &&
+            null_execute_recoveries < 4u;
+
+        if (recoverable_null_call) {
+            ++null_execute_recoveries;
+
+            auto& regs =
+                jit->Regs();
+
+            regs[0] = 0u;
+            regs[15] =
+                return_pc;
+
+            std::uint32_t cpsr =
+                jit->Cpsr();
+
+            if ((lr & 1u) != 0u) {
+                cpsr |= 0x20u;
+            } else {
+                cpsr &= ~0x20u;
+            }
+
+            jit->SetCpsr(cpsr);
+            jit->ClearExclusiveState();
+
+            Append(
+                "V23 NULL-CALL RECOVERY #" +
+                std::to_string(
+                    null_execute_recoveries) +
+                ": synthesized r0=0 and resumed at LR=0x" +
+                JniProbeHex(lr));
+
+            result.message.clear();
+
+            jit->HaltExecution(
+                Dynarmic::HaltReason::UserDefined4);
+            return;
+        }
+
+        result.message =
+            diagnostic;
 
         if (jit) {
             jit->HaltExecution(
