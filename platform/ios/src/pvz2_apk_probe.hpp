@@ -40,6 +40,12 @@ PvZ2ApkProbeResult InspectAndMapPvZ2Apk(const std::uint8_t* apk_data, std::size_
 
 using PvZ2ProbeProgress = std::function<void(const std::string&)>;
 
+enum class PvZ2DiagnosticMode : std::uint32_t {
+    PassiveRegistry = 0u,
+    GateAScout = 1u,
+    FullMatrix = 2u,
+};
+
 struct PvZ2JniProbeResult {
     bool ok = false;
     bool reached_jni_onload = false;
@@ -70,6 +76,12 @@ struct PvZ2JniProbeResult {
 
     // v55: passive Gate-A resource-group vector / lookup / progress summary.
     std::string startup_resource_group_summary;
+
+    // v56: multi-mode ResourceManager registry pipeline / scout summary.
+    std::string diagnostic_matrix_summary;
+    PvZ2DiagnosticMode diagnostic_mode =
+        PvZ2DiagnosticMode::PassiveRegistry;
+    bool gate_a_scout_activated = false;
 
     std::uint32_t return_value = 0;
     std::uint32_t game_app_initialize_address = 0;
@@ -137,4 +149,6 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
     std::size_t apk_size,
     const std::uint8_t* obb_data,
     std::size_t obb_size,
-    PvZ2ProbeProgress progress = {});
+    PvZ2ProbeProgress progress = {},
+    PvZ2DiagnosticMode diagnostic_mode =
+        PvZ2DiagnosticMode::PassiveRegistry);
