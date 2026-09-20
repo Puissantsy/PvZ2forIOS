@@ -763,6 +763,16 @@ constexpr std::uint32_t kJniProbeSvcStartupProgressResult = 0x00f04eu;
 constexpr std::uint32_t kJniProbeSvcStartupFindResult = 0x00f04fu;
 constexpr std::uint32_t kJniProbeSvcStartupLateResult = 0x00f050u;
 constexpr std::uint32_t kJniProbeSvcStartupMainMenuMarker = 0x00f051u;
+
+// v55: passive diagnosis inside Gate A's resource-group progress helper.
+// The constructor trap snapshots the global vector after its four std::string
+// entries are built. The other traps observe the native group lookup and the
+// two per-group values accumulated into completed/total. Nothing is forced.
+constexpr std::uint32_t kJniProbeSvcStartupGroupsCtorSnapshot = 0x00f060u;
+constexpr std::uint32_t kJniProbeSvcStartupGroupsLookupResult = 0x00f061u;
+constexpr std::uint32_t kJniProbeSvcStartupGroupsContribution = 0x00f062u;
+constexpr std::uint32_t kV55StartupGroupsVectorGuest = 0x10d54698u;
+
 constexpr std::uint32_t kJniProbeSvcUnsupportedJniBase = 0x00e000u;
 constexpr std::uint32_t kJniProbeJniSlotCount = 256u;
 
@@ -2385,6 +2395,25 @@ public:
     std::uint32_t v54_find_value = 0u;
     std::uint32_t v54_late_value = 0u;
 
+    // v55: exact Gate-A resource-group observations.
+    struct V55StartupGroupStat {
+        std::uint64_t lookup_hits = 0u;
+        std::uint64_t lookup_misses = 0u;
+        std::uint64_t contribution_hits = 0u;
+        std::uint32_t last_lookup = 0xffffffffu;
+        std::uint32_t last_completed = 0u;
+        std::uint32_t last_total = 0u;
+    };
+
+    std::array<V55StartupGroupStat, 4> v55_group_stats{};
+    std::uint64_t v55_ctor_snapshot_hits = 0u;
+    std::uint64_t v55_lookup_total = 0u;
+    std::uint64_t v55_lookup_unknown = 0u;
+    std::uint64_t v55_contribution_total = 0u;
+    std::uint32_t v55_last_vector_count = 0xffffffffu;
+    std::string v55_ctor_vector_snapshot;
+    std::string v55_gate_vector_snapshot;
+
     std::unordered_map<std::uint32_t, z_stream> zstreams;
     std::unordered_map<std::uint32_t, bool> zstream_deflate_mode;
 
@@ -2414,10 +2443,22 @@ public:
             return "StartupLogo.main-flow-marker";
         case 0x00276d70u:
             return "StartupLogo.MainMenu-request-marker";
+        case 0x000f66e4u:
+            return "StartupGroups.global-constructor-final";
         case 0x002c84d0u:
             return "StartupLogo.GateA.resource-load";
+        case 0x002c85ccu:
+            return "StartupLogo.GateA.group-lookup-result";
+        case 0x002c85f4u:
+            return "StartupLogo.GateA.group-contribution";
         case 0x002c8620u:
             return "StartupLogo.GateA.completed-total";
+        case 0x00867f54u:
+            return "ResourceManager.group-name-to-index";
+        case 0x0086b50cu:
+            return "ResourceManager.group-completed-count";
+        case 0x0086b630u:
+            return "ResourceManager.group-total-count";
         case 0x002b9900u:
             return "StartupLogo.GateC.helper";
         case 0x005143a4u:
@@ -2914,6 +2955,235 @@ public:
             << "/" << v54_late_value
             << " patchReqMarker=" << v54_patch_marker_hits
             << " mainMenuReqMarker=" << v54_mainmenu_marker_hits;
+
+        return out.str();
+    }
+
+    int V55StartupGroupSlot(
+        const std::string& name) const {
+
+        static constexpr std::array<const char*, 4>
+            kNames = {
+                "AlwaysLoaded",
+                "DelayLoad_Dialog",
+                "UIImages",
+                "RenderEffects"};
+
+        for (std::size_t i = 0u;
+             i < kNames.size();
+             ++i) {
+            if (name == kNames[i]) {
+                return static_cast<int>(i);
+            }
+        }
+
+        return -1;
+    }
+
+    std::string V55StartupGroupVectorState() {
+        std::ostringstream out;
+
+        if (mem.Ptr(
+                kV55StartupGroupsVectorGuest,
+                12u) == nullptr) {
+            v55_last_vector_count =
+                0xffffffffu;
+            return "vector-unmapped";
+        }
+
+        const std::uint32_t begin =
+            mem.Read32Guest(
+                kV55StartupGroupsVectorGuest);
+        const std::uint32_t end =
+            mem.Read32Guest(
+                kV55StartupGroupsVectorGuest +
+                4u);
+        const std::uint32_t capacity =
+            mem.Read32Guest(
+                kV55StartupGroupsVectorGuest +
+                8u);
+
+        out
+            << "vector@0x"
+            << JniProbeHex(
+                   kV55StartupGroupsVectorGuest)
+            << "{begin=0x"
+            << JniProbeHex(begin)
+            << ",end=0x"
+            << JniProbeHex(end)
+            << ",cap=0x"
+            << JniProbeHex(capacity);
+
+        if (end < begin ||
+            capacity < end ||
+            ((end - begin) & 3u) != 0u) {
+            v55_last_vector_count =
+                0xffffffffu;
+            out << ",INVALID}";
+            return out.str();
+        }
+
+        const std::uint32_t count =
+            (end - begin) / 4u;
+        const std::uint32_t capacity_count =
+            (capacity - begin) / 4u;
+
+        v55_last_vector_count = count;
+
+        out
+            << ",count=" << count
+            << ",capacityCount="
+            << capacity_count
+            << ",entries=[";
+
+        const std::uint32_t inspect_count =
+            std::min<std::uint32_t>(
+                count,
+                16u);
+
+        for (std::uint32_t i = 0u;
+             i < inspect_count;
+             ++i) {
+            if (i != 0u) {
+                out << ",";
+            }
+
+            const std::uint32_t object =
+                begin + i * 4u;
+            const std::uint32_t chars =
+                mem.Ptr(object, 4u) != nullptr
+                    ? mem.Read32Guest(object)
+                    : 0u;
+
+            out
+                << i
+                << ":\""
+                << ReadGuestStdStringObject(
+                       object)
+                << "\"@0x"
+                << JniProbeHex(chars);
+        }
+
+        if (count > inspect_count) {
+            out << ",...";
+        }
+
+        out << "]}";
+        return out.str();
+    }
+
+    std::string V55CurrentGateAGroup(
+        std::uint32_t vector_object,
+        std::uint32_t byte_offset) {
+
+        if (mem.Ptr(
+                vector_object,
+                8u) == nullptr) {
+            return "<vector-unmapped>";
+        }
+
+        const std::uint32_t begin =
+            mem.Read32Guest(
+                vector_object);
+        const std::uint32_t end =
+            mem.Read32Guest(
+                vector_object + 4u);
+
+        if (end < begin ||
+            (byte_offset & 3u) != 0u ||
+            byte_offset >= end - begin) {
+            return "<group-out-of-range>";
+        }
+
+        return ReadGuestStdStringObject(
+            begin + byte_offset);
+    }
+
+    std::string V55StartupResourceGroupSummary() {
+        static constexpr std::array<const char*, 4>
+            kNames = {
+                "AlwaysLoaded",
+                "DelayLoad_Dialog",
+                "UIImages",
+                "RenderEffects"};
+
+        std::ostringstream out;
+        out
+            << "V55 StartupGroups"
+            << " ctor={"
+            << (v55_ctor_vector_snapshot.empty()
+                    ? std::string{"NONE"}
+                    : v55_ctor_vector_snapshot)
+            << "}"
+            << " gate={"
+            << (v55_gate_vector_snapshot.empty()
+                    ? std::string{"NONE"}
+                    : v55_gate_vector_snapshot)
+            << "}"
+            << " lookups="
+            << v55_lookup_total
+            << " unknown="
+            << v55_lookup_unknown
+            << " contributions="
+            << v55_contribution_total;
+
+        bool all_four_seen = true;
+        bool all_four_miss = true;
+        bool any_contribution = false;
+
+        for (std::size_t i = 0u;
+             i < kNames.size();
+             ++i) {
+            const auto& stat =
+                v55_group_stats[i];
+
+            all_four_seen &=
+                stat.lookup_hits != 0u;
+            all_four_miss &=
+                stat.lookup_hits != 0u &&
+                stat.lookup_misses ==
+                    stat.lookup_hits;
+            any_contribution |=
+                stat.contribution_hits != 0u;
+
+            out
+                << " | "
+                << kNames[i]
+                << "{lookups="
+                << stat.lookup_hits
+                << ",misses="
+                << stat.lookup_misses
+                << ",lastIndex=0x"
+                << JniProbeHex(
+                       stat.last_lookup)
+                << ",samples="
+                << stat.contribution_hits
+                << ",completed="
+                << stat.last_completed
+                << ",total="
+                << stat.last_total
+                << "}";
+        }
+
+        out << " | diagnosis=";
+
+        if (v55_lookup_total == 0u &&
+            v54_gate_a_resource_hits != 0u) {
+            out
+                << "NO_GROUP_LOOKUPS"
+                << "(vector-empty-or-loop-not-entered)";
+        } else if (all_four_seen &&
+                   all_four_miss) {
+            out
+                << "ALL_4_GROUPS_MISS_RESOURCE_MANAGER";
+        } else if (any_contribution) {
+            out
+                << "GROUP_LOOKUP_SUCCEEDS"
+                << "(inspect-per-group-progress)";
+        } else {
+            out
+                << "MIXED_OR_UNKNOWN";
+        }
 
         return out.str();
     }
