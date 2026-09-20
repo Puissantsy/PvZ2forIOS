@@ -91,11 +91,11 @@ NSArray<NSURL *> *ExistingReportURLs() {
     [super viewDidLoad];
 
     self.view.backgroundColor = UIColor.systemBackgroundColor;
-    self.title = @"PvZ2 Inspector Lab v1";
+    self.title = @"PvZ2 Inspector Lab v1.1";
 
     UILabel *title = [[UILabel alloc] init];
     title.translatesAutoresizingMaskIntoConstraints = NO;
-    title.text = @"PvZ2 Inspector Lab v1";
+    title.text = @"PvZ2 Inspector Lab v1.1";
     title.font = [UIFont boldSystemFontOfSize:27.0];
     title.numberOfLines = 0;
 
@@ -107,6 +107,7 @@ NSArray<NSURL *> *ExistingReportURLs() {
         @"This auxiliary app does NOT launch PvZ2. It statically inspects the "
          "original ARMv7 libPVZ2.so inside the APK, parses its ELF layout, "
          "dynamic imports, relocations and .ARM.exidx function boundaries, "
+         "validates the exact GameStateMgr profile used by the v53 probe, "
          "then resolves raw guest hex addresses from a full probe log. "
          "No JIT or StikDebug is required.";
 
