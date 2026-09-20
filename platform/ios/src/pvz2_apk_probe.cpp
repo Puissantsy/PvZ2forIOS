@@ -6889,13 +6889,26 @@ public:
                     regs[1] == regs[2]
                         ? 1u
                         : 0u;
-                Append(
-                    "JNIEnv.IsSameObject(0x" +
-                    JniProbeHex(regs[1]) +
-                    ", 0x" +
-                    JniProbeHex(regs[2]) +
-                    ") -> " +
-                    std::to_string(regs[0]));
+
+                ++v52_is_same_object_calls;
+
+                // v52: this is one of the noisiest harmless JNI calls. Keep
+                // enough samples to diagnose semantics without paying for a
+                // persistent log write on every invocation.
+                if (v52_is_same_object_calls <= 8u ||
+                    (v52_is_same_object_calls % 1000u) == 0u) {
+                    Append(
+                        "V52 JNI IsSameObject call#" +
+                        std::to_string(
+                            v52_is_same_object_calls) +
+                        "(0x" +
+                        JniProbeHex(regs[1]) +
+                        ",0x" +
+                        JniProbeHex(regs[2]) +
+                        ") -> " +
+                        std::to_string(
+                            regs[0]));
+                }
                 return;
 
             case 25: // NewLocalRef
