@@ -19562,10 +19562,51 @@ bool JniProbePrepareRuntime(
         !patch_resource_native_miss(
             0x00276d70u,
             0xe1a00004u,
-            kJniProbeSvcStartupMainMenuMarker)) {
+            kJniProbeSvcStartupMainMenuMarker) ||
+        !patch_resource_native_miss(
+            0x00867710u,
+            0xe1a08000u,
+            kJniProbeSvcV56RegistryPipelineEntry) ||
+        !patch_resource_native_miss(
+            0x00867860u,
+            0xe2880028u,
+            kJniProbeSvcV56RegistrySource28) ||
+        !patch_resource_native_miss(
+            0x00867868u,
+            0xe5990048u,
+            kJniProbeSvcV56RegistryPost28) ||
+        !patch_resource_native_miss(
+            0x00867b24u,
+            0xe2880030u,
+            kJniProbeSvcV56RegistrySource30) ||
+        !patch_resource_native_miss(
+            0x00867b2cu,
+            0xe2880070u,
+            kJniProbeSvcV56RegistryPost30) ||
+        !patch_resource_native_miss(
+            0x00867b68u,
+            0xe1a00006u,
+            kJniProbeSvcV56RegistryPipelineReturn) ||
+        (callbacks.V56FullMatrixEnabled() &&
+         (!patch_resource_native_miss(
+              0x00a83ab4u,
+              0xe5902004u,
+              kJniProbeSvcV56TrieEntry) ||
+          !patch_resource_native_miss(
+              0x00a83b24u,
+              0xea000005u,
+              kJniProbeSvcV56TrieMissBranch) ||
+          !patch_resource_native_miss(
+              0x00a83b38u,
+              0xe1a00002u,
+              kJniProbeSvcV56TrieFound) ||
+          !patch_resource_native_miss(
+              0x00a83b44u,
+              0xe3a00000u,
+              kJniProbeSvcV56TrieMissZero)))) {
 
         error =
-            "v55 passive resource/state/StartupLogo/group instrumentation profile did not match the verified PvZ2 1.5.252752 ARM code.";
+            "v56 diagnostic-matrix resource/state/StartupLogo/registry instrumentation profile did not match the verified PvZ2 1.5.252752 ARM code.";
         return false;
     }
 
@@ -19577,6 +19618,10 @@ bool JniProbePrepareRuntime(
         "V54 PASSIVE STARTUPLOGO TRAPS installed: GateA resource/totals/result, GateC state==4, GateD counter>=3, post-A-D depth, patch/main late decisions, and Patch/MainMenu request-path markers. Every replaced ARM instruction is emulated exactly; no gate or transition is forced.");
     callbacks.Append(
         "V55 PASSIVE STARTUP GROUP TRAPS installed: global four-group vector constructor snapshot@0x100f66e4, GateA native group lookup result@0x102c85cc, and per-group completed/total contribution@0x102c85f4. No resource-group index, progress value, vector entry, branch, or GameState is modified.");
+    callbacks.Append(
+        std::string{"V56 DIAGNOSTIC MATRIX installed mode="} +
+        callbacks.V56ModeName() +
+        ": ResourceManager registry builder@0x10867708 is traced at entry/source28/post28/source30/post30/return; writes to manager+0x28..+0x37 are watched. Scout modes preserve the first native Gate-A cycle and only then may set comparison S2=1.0 after 4/4 MISS proof. Full Matrix additionally traces selected keys through compact-trie lookup@0x10a83ab0.");
 
     return_trampoline =
         JniProbeMakeTrampoline(
