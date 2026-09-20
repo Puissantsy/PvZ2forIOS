@@ -788,6 +788,14 @@ constexpr std::uint32_t kJniProbeSvcV56TrieMissBranch = 0x00f077u;
 constexpr std::uint32_t kJniProbeSvcV56TrieFound = 0x00f078u;
 constexpr std::uint32_t kJniProbeSvcV56TrieMissZero = 0x00f079u;
 
+// v57: character-by-character compact-trie trace. This replaces only
+// UXTB r0,r5 and emulates it exactly after observing the current key/node.
+constexpr std::uint32_t kJniProbeSvcV57TrieCompare = 0x00f080u;
+
+constexpr std::uint32_t kV57TolowerGotGuest = 0x10d010d8u;
+constexpr std::uint32_t kV57ToupperGotGuest = 0x10d010dcu;
+constexpr std::uint32_t kV57CtypeGotGuest = 0x10d01280u;
+
 constexpr std::uint32_t kJniProbeSvcUnsupportedJniBase = 0x00e000u;
 constexpr std::uint32_t kJniProbeJniSlotCount = 256u;
 
@@ -2458,11 +2466,36 @@ public:
     struct V56TrieContext {
         std::uint32_t table = 0u;
         std::uint32_t caller_lr = 0u;
+        std::uint32_t key_start = 0u;
         std::string key;
         bool relevant = false;
+        bool trace_path = false;
+        std::uint32_t trace_steps = 0u;
     };
     std::unordered_map<std::uint32_t, V56TrieContext>
         v56_trie_contexts;
+
+    // v57 Bionic ctype compatibility / deep Scout state.
+    std::uint32_t v57_toupper_variable = 0u;
+    std::uint32_t v57_toupper_backing = 0u;
+    std::uint32_t v57_tolower_variable = 0u;
+    std::uint32_t v57_tolower_backing = 0u;
+    std::uint32_t v57_ctype_variable = 0u;
+    std::uint32_t v57_ctype_backing = 0u;
+    bool v57_ctype_self_check_passed = false;
+    bool v57_ctype_self_check_logged = false;
+
+    std::unordered_set<std::string>
+        v57_trie_traced_key_tables;
+
+    std::uint64_t v57_gate_c_native_hits = 0u;
+    std::uint64_t v57_gate_c_write_events = 0u;
+    std::uint64_t v57_gate_c_forced_hits = 0u;
+    std::uint32_t v57_gate_c_first_frame = 0xffffffffu;
+    std::uint32_t v57_gate_c_last_native_state = 0xffffffffu;
+    std::uint32_t v57_gate_c_last_object = 0u;
+    bool v57_gate_c_scout_activated = false;
+    std::uint32_t v57_gate_c_activation_frame = 0u;
 
     struct V56TargetLookupStat {
         std::uint64_t calls = 0u;
@@ -2519,6 +2552,8 @@ public:
             return "ResourceManager.group-completed-count";
         case 0x0086b630u:
             return "ResourceManager.group-total-count";
+        case 0x00a83af8u:
+            return "CompactTrie.node-byte-compare";
         case 0x002b9900u:
             return "StartupLogo.GateC.helper";
         case 0x005143a4u:
@@ -3255,10 +3290,28 @@ public:
         case PvZ2DiagnosticMode::GateAScout:
             return "GATE_A_SCOUT";
         case PvZ2DiagnosticMode::FullMatrix:
-            return "FULL_MATRIX";
+            return "V56_BASELINE";
+        case PvZ2DiagnosticMode::CtypeCompatNativePath:
+            return "CTYPE_COMPAT_NATIVE_PATH";
+        case PvZ2DiagnosticMode::CtypeCompatDeepScout:
+            return "CTYPE_COMPAT_DEEP_SCOUT";
         }
 
         return "UNKNOWN";
+    }
+
+    bool V57CtypeEnabled() const {
+        return
+            diagnostic_mode ==
+                PvZ2DiagnosticMode::CtypeCompatNativePath ||
+            diagnostic_mode ==
+                PvZ2DiagnosticMode::CtypeCompatDeepScout;
+    }
+
+    bool V57DeepScoutEnabled() const {
+        return
+            diagnostic_mode ==
+                PvZ2DiagnosticMode::CtypeCompatDeepScout;
     }
 
     bool V56ScoutEnabled() const {
@@ -3266,13 +3319,19 @@ public:
             diagnostic_mode ==
                 PvZ2DiagnosticMode::GateAScout ||
             diagnostic_mode ==
-                PvZ2DiagnosticMode::FullMatrix;
+                PvZ2DiagnosticMode::FullMatrix ||
+            diagnostic_mode ==
+                PvZ2DiagnosticMode::CtypeCompatDeepScout;
     }
 
     bool V56FullMatrixEnabled() const {
         return
             diagnostic_mode ==
-                PvZ2DiagnosticMode::FullMatrix;
+                PvZ2DiagnosticMode::FullMatrix ||
+            diagnostic_mode ==
+                PvZ2DiagnosticMode::CtypeCompatNativePath ||
+            diagnostic_mode ==
+                PvZ2DiagnosticMode::CtypeCompatDeepScout;
     }
 
     bool V56IsTargetLookupKey(
