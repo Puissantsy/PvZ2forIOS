@@ -40,7 +40,10 @@ NSArray<NSURL *> *ExistingReportURLs() {
         @"annotated-log.txt",
         @"startup-diagnosis.txt",
         @"matrix-diagnosis.txt",
-        @"v57-plan.txt"
+        @"v57-plan.txt",
+        @"v61-crash-diagnosis.txt",
+        @"next-probe-plan.txt",
+        @"critical-log-excerpt.txt"
     ];
 
     NSMutableArray<NSURL *> *urls = [NSMutableArray array];
@@ -67,7 +70,7 @@ NSArray<NSURL *> *ExistingReportURLs() {
 
 @property(nonatomic, strong) NSData *apkData;
 @property(nonatomic, copy) NSString *apkName;
-@property(nonatomic, copy) NSString *logText;
+@property(nonatomic, strong) NSData *logData;
 @property(nonatomic, copy) NSString *logName;
 
 @property(nonatomic, assign) NSInteger pickerMode;
@@ -94,11 +97,11 @@ NSArray<NSURL *> *ExistingReportURLs() {
     [super viewDidLoad];
 
     self.view.backgroundColor = UIColor.systemBackgroundColor;
-    self.title = @"PvZ2 Inspector Lab v1.3";
+    self.title = @"PvZ2 Inspector Lab v1.4";
 
     UILabel *title = [[UILabel alloc] init];
     title.translatesAutoresizingMaskIntoConstraints = NO;
-    title.text = @"PvZ2 Inspector Lab v1.3";
+    title.text = @"PvZ2 Inspector Lab v1.4";
     title.font = [UIFont boldSystemFontOfSize:27.0];
     title.numberOfLines = 0;
 
@@ -110,9 +113,10 @@ NSArray<NSURL *> *ExistingReportURLs() {
         @"This auxiliary app does NOT launch PvZ2. It statically inspects the "
          "original ARMv7 libPVZ2.so inside the APK, parses its ELF layout, "
          "dynamic imports, relocations and .ARM.exidx function boundaries, "
-         "validates the v53-v56 state/registry/trie profiles, classifies module "
-         "addresses by ELF section, audits imported ctype data used by the "
-         "ResourceManager compact trie, and turns v55/v56 logs into a v57 test plan. "
+         "validates the v53-v61 state/registry/trie/resource-pump profiles, "
+         "classifies module addresses by ELF section, diagnoses worker virtual "
+         "dispatch faults, and uses a memory-safe large-log path for huge partial "
+         "runs. v61 logs get a dedicated TaskResource crash/provenance plan. "
          "No JIT or StikDebug is required.";
 
     UIButton *apkButton =
@@ -202,7 +206,7 @@ NSArray<NSURL *> *ExistingReportURLs() {
         [utilityButtons.heightAnchor constraintEqualToConstant:48.0]
     ]];
 
-    self.logText = @"";
+    self.logData = nil;
     [self refreshStatus];
 }
 
@@ -215,10 +219,10 @@ NSArray<NSURL *> *ExistingReportURLs() {
             : @"not selected";
 
     NSString *log =
-        self.logText.length > 0
-            ? [NSString stringWithFormat:@"%@ (%lu chars)",
+        self.logData.length > 0
+            ? [NSString stringWithFormat:@"%@ (%llu bytes)",
                 self.logName ?: @"log",
-                (unsigned long)self.logText.length]
+                (unsigned long long)self.logData.length]
             : @"not selected — static analysis only";
 
     NSString *reports =
@@ -300,32 +304,23 @@ didPickDocumentsAtURLs:
                     self.apkName];
         }
     } else {
-        NSString *text =
-            [NSString stringWithContentsOfURL:url
-                                     encoding:NSUTF8StringEncoding
-                                        error:&error];
+        NSData *data =
+            [NSData dataWithContentsOfURL:url
+                                  options:NSDataReadingMappedIfSafe
+                                    error:&error];
 
-        if (text == nil) {
-            NSData *data = [NSData dataWithContentsOfURL:url];
-            if (data != nil) {
-                text =
-                    [[NSString alloc]
-                        initWithData:data
-                           encoding:NSUTF8StringEncoding];
-            }
-        }
-
-        if (text != nil) {
-            self.logText = text;
+        if (data != nil) {
+            self.logData = data;
             self.logName = url.lastPathComponent;
             self.outputView.text =
                 [NSString stringWithFormat:
-                    @"Selected log: %@\n%lu characters.\n\n"
-                     "The inspector will classify every 7-8 digit hex address, "
-                     "rank PC/LR/caller addresses and add neutral .ARM.exidx "
-                     "function boundaries where stripped symbols are unavailable.",
+                    @"Selected log: %@\n%llu bytes.\n\n"
+                     "Large logs are scanned completely for v61 worker/pump/crash "
+                     "events. Generic address ranking is sampled above 24 MiB and "
+                     "the full annotated-log copy is skipped to avoid duplicating "
+                     "a 75 MiB scheduling loop in memory and on disk.",
                     self.logName,
-                    (unsigned long)self.logText.length];
+                    (unsigned long long)self.logData.length];
         }
     }
 
@@ -357,7 +352,7 @@ didPickDocumentsAtURLs:
          "cross-referencing the runtime log.";
 
     NSData *apk = self.apkData;
-    NSString *log = self.logText ?: @"";
+    NSData *logData = self.logData;
 
     dispatch_async(
         dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0),
@@ -365,10 +360,12 @@ didPickDocumentsAtURLs:
             const auto *bytes =
                 static_cast<const std::uint8_t *>(apk.bytes);
 
-            std::string logStd =
-                log.length > 0
-                    ? std::string(log.UTF8String ?: "")
-                    : std::string();
+            std::string logStd;
+            if (logData.length > 0) {
+                logStd.assign(
+                    static_cast<const char *>(logData.bytes),
+                    static_cast<std::size_t>(logData.length));
+            }
 
             PvZ2InspectorResult result =
                 InspectPvZ2ApkAndLog(
@@ -421,6 +418,24 @@ didPickDocumentsAtURLs:
                         [root stringByAppendingPathComponent:@"v57-plan.txt"],
                         result.v57_plan);
                 }
+
+                if (!result.v61_crash_diagnosis.empty()) {
+                    WriteUtf8(
+                        [root stringByAppendingPathComponent:@"v61-crash-diagnosis.txt"],
+                        result.v61_crash_diagnosis);
+                }
+
+                if (!result.next_probe_plan.empty()) {
+                    WriteUtf8(
+                        [root stringByAppendingPathComponent:@"next-probe-plan.txt"],
+                        result.next_probe_plan);
+                }
+
+                if (!result.critical_log_excerpt.empty()) {
+                    WriteUtf8(
+                        [root stringByAppendingPathComponent:@"critical-log-excerpt.txt"],
+                        result.critical_log_excerpt);
+                }
             }
 
             dispatch_async(dispatch_get_main_queue(), ^{
@@ -438,6 +453,9 @@ didPickDocumentsAtURLs:
                              "%@"
                              "%@"
                              "%@"
+                             "%@"
+                             "%@"
+                             "%@"
                              "%@",
                             NSStringFromStd(result.summary),
                             root,
@@ -452,7 +470,16 @@ didPickDocumentsAtURLs:
                                 : @"• matrix-diagnosis.txt — v55/v56 registry, trie, Gate-C and ctype ABI diagnosis\n",
                             result.v57_plan.empty()
                                 ? @""
-                                : @"• v57-plan.txt — high-information multi-mode test plan generated from the evidence\n"];
+                                : @"• v57-plan.txt — historical v57 plan retained for compatibility\n",
+                            result.v61_crash_diagnosis.empty()
+                                ? @""
+                                : @"• v61-crash-diagnosis.txt — worker/pump/virtual-dispatch diagnosis\n",
+                            result.next_probe_plan.empty()
+                                ? @""
+                                : @"• next-probe-plan.txt — batched TaskResource provenance + bounded scheduler plan\n",
+                            result.critical_log_excerpt.empty()
+                                ? @""
+                                : @"• critical-log-excerpt.txt — compact worker-7/crash/tail evidence from huge logs\n"];
                 } else {
                     self.outputView.text =
                         [NSString stringWithFormat:
