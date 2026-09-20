@@ -14,6 +14,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -43,6 +44,10 @@ constexpr std::uint32_t kShfExecInstr = 0x4u;
 constexpr std::uint32_t kRArmGlobDat = 21u;
 constexpr std::uint32_t kRArmJumpSlot = 22u;
 constexpr std::uint32_t kRArmRelative = 23u;
+
+constexpr std::size_t kLargeLogThreshold = 24u * 1024u * 1024u;
+constexpr std::size_t kLargeLogHeadBytes = 12u * 1024u * 1024u;
+constexpr std::size_t kLargeLogTailBytes = 4u * 1024u * 1024u;
 
 std::uint16_t U16(const std::uint8_t* p) {
     return static_cast<std::uint16_t>(p[0]) |
@@ -628,6 +633,22 @@ const std::map<std::uint32_t, std::string>& KnownLabels() {
         {0x00867b2cu, "ResourceManager post-table30 trap"},
         {0x00867b68u, "ResourceManager registry builder return trap"},
         {0x00867f54u, "ResourceManager group-name-to-index"},
+        {0x00868b7cu, "IResStreamsDriver resource-stream task pump"},
+        {0x00868b98u, "resource-stream pump manager+0x68 mutex"},
+        {0x00868ba0u, "resource-stream pump pthread_mutex_trylock call"},
+        {0x00868c8cu, "resource-stream pump TaskResource vector begin (+0x50)"},
+        {0x00868c94u, "resource-stream pump TaskResource vector end (+0x54)"},
+        {0x00868ca8u, "resource-stream pump current TaskResource load"},
+        {0x00868cacu, "resource-stream pump TaskResource vtable load"},
+        {0x00868cb0u, "resource-stream pump vtable+0x14 target load"},
+        {0x00868cb8u, "resource-stream pump virtual dispatch +0x14"},
+        {0x00868cbcu, "resource-stream pump virtual dispatch return"},
+        {0x00868cd0u, "resource-stream pump vtable+0x3c target load"},
+        {0x00868cd8u, "resource-stream pump virtual dispatch +0x3c"},
+        {0x00868d14u, "resource-stream pump vtable+0x18 target load"},
+        {0x00868d1cu, "resource-stream pump virtual dispatch +0x18"},
+        {0x00868f6cu, "resource-stream pump pthread_mutex_unlock call"},
+        {0x00868f70u, "resource-stream pump verified cooperative boundary"},
         {0x0086b50cu, "ResourceManager group completed-count helper"},
         {0x0086b630u, "ResourceManager group total-count helper"},
         {0x0086f66cu, "ResourceRegistryLookup.function_start"},
@@ -646,6 +667,7 @@ const std::map<std::uint32_t, std::string>& KnownLabels() {
         {0x009ec0c8u, "Native_applicationDidBecomeActive"},
         {0x009f1840u, "Native_onSurfaceCreated"},
         {0x009f18dcu, "Native_onSurfaceChanged"},
+        {0x009cb6d0u, "generic pthread wrapper ([arg], [arg+4])"},
         {0x009f190cu, "Native_onDrawFrame"},
         {0x00a83ab0u, "ResourceManager compact-trie string lookup"},
         {0x00a83ab4u, "compact-trie root/count load trap"},
@@ -659,6 +681,16 @@ const std::map<std::uint32_t, std::string>& KnownLabels() {
         {0x00a83b44u, "compact-trie null return"},
         {0x00d010d8u, "GOT R_ARM_GLOB_DAT _tolower_tab_"},
         {0x00d010dcu, "GOT R_ARM_GLOB_DAT _toupper_tab_"},
+        {0x00abd650u, "TaskResource constructor path A vptr store"},
+        {0x00abd68cu, "TaskResource producer fast-path insert A"},
+        {0x00abd700u, "TaskResource constructor path B vptr store"},
+        {0x00abd73cu, "TaskResource producer fast-path insert B"},
+        {0x00abd894u, "resource-stream deferred worker entry"},
+        {0x00abd8f4u, "resource-stream worker -> task pump call"},
+        {0x00abdf24u, "TaskResource producer virtual factory call"},
+        {0x00abdf44u, "TaskResource producer fast-path insert C"},
+        {0x00abe654u, "vector<IResStreamsDriver::TaskResource*>::emplace_back_aux"},
+        {0x00cd0d88u, "TaskResource vtable assigned by direct producer paths"},
         {0x00d01280u, "GOT R_ARM_GLOB_DAT _ctype_"},
     };
     return labels;
@@ -999,6 +1031,182 @@ V56ProfileValidation ValidateV56Profile(
     }
 
     return v;
+}
+
+
+struct V61ProfileValidation {
+    std::vector<StartupLogoProfileCheck> checks;
+
+    bool exact_profile() const {
+        return
+            !checks.empty() &&
+            std::all_of(
+                checks.begin(),
+                checks.end(),
+                [](const auto& c) { return c.match; });
+    }
+
+    std::size_t matched() const {
+        return static_cast<std::size_t>(
+            std::count_if(
+                checks.begin(),
+                checks.end(),
+                [](const auto& c) { return c.match; }));
+    }
+};
+
+V61ProfileValidation ValidateV61Profile(
+    const Elf32Arm& elf) {
+
+    V61ProfileValidation v;
+
+    const std::array<
+        std::tuple<const char*, std::uint32_t, std::uint32_t>,
+        28> expected = {{
+        {"Pump function start",         0x00868b7cu, 0xe92d4ff0u},
+        {"Pump mutex address",          0x00868b98u, 0xe2840068u},
+        {"Pump trylock call",           0x00868ba0u, 0xebe1ffcfu},
+        {"Task vector begin",           0x00868c8cu, 0xe5945050u},
+        {"Task vector end",             0x00868c94u, 0xe5940054u},
+        {"Current task pointer",        0x00868ca8u, 0xe5967000u},
+        {"Task vtable load",            0x00868cacu, 0xe5970000u},
+        {"Task vfn +0x14 load",         0x00868cb0u, 0xe5901014u},
+        {"Task this -> r0",             0x00868cb4u, 0xe1a00007u},
+        {"Task vfn +0x14 BLX",          0x00868cb8u, 0xe12fff31u},
+        {"Task vfn +0x14 result cmp",   0x00868cbcu, 0xe3500001u},
+        {"Task vtable reload +0x3c",    0x00868cccu, 0xe5970000u},
+        {"Task vfn +0x3c load",         0x00868cd0u, 0xe590103cu},
+        {"Task vfn +0x3c BLX",          0x00868cd8u, 0xe12fff31u},
+        {"Task vtable reload +0x18",    0x00868d10u, 0xe5970000u},
+        {"Task vfn +0x18 load",         0x00868d14u, 0xe5901018u},
+        {"Task vfn +0x18 BLX",          0x00868d1cu, 0xe12fff31u},
+        {"Pump unlock call",            0x00868f6cu, 0xebe1fe55u},
+        {"Pump yield epilogue",         0x00868f70u, 0xe28dd024u},
+        {"Pump return",                 0x00868f74u, 0xe8bd8ff0u},
+        {"pthread wrapper start",       0x009cb6d0u, 0xe92d4010u},
+        {"pthread wrapper entry load",  0x009cb6d8u, 0xe5941000u},
+        {"pthread wrapper this load",   0x009cb6dcu, 0xe5940004u},
+        {"pthread wrapper BLX",         0x009cb6e0u, 0xe12fff31u},
+        {"resource worker start",       0x00abd894u, 0xe92d48f0u},
+        {"resource worker global load", 0x00abd8ecu, 0xe5970000u},
+        {"resource worker +0x64c",      0x00abd8f0u, 0xe590064cu},
+        {"resource worker pump call",   0x00abd8f4u, 0xebf6aca0u},
+    }};
+
+    for (const auto& [name, offset, opcode] : expected) {
+        v.checks.push_back(
+            StartupLogoProfileCheck{
+                name,
+                offset,
+                opcode,
+                HasWordAt(elf, offset, opcode)});
+    }
+
+    return v;
+}
+
+struct TaskResourceStaticAudit {
+    bool template_symbol_present = false;
+    bool producer_profile_match = false;
+    bool vtable_profile_match = false;
+    std::uint32_t vtable_offset = 0x00cd0d88u;
+    std::uint32_t vfn14_raw = 0u;
+    std::uint32_t vfn18_raw = 0u;
+    std::uint32_t vfn3c_raw = 0u;
+    std::string text;
+};
+
+TaskResourceStaticAudit AuditTaskResourceStatic(
+    const Elf32Arm& elf) {
+
+    TaskResourceStaticAudit a;
+
+    static const std::string kTemplateSymbol =
+        "_ZNSt6vectorIPN4Sexy17IResStreamsDriver12TaskResourceESaIS3_EE19_M_emplace_back_auxIJS3_EEEvDpOT_";
+
+    for (const auto& sym : elf.symbols()) {
+        if (sym.name == kTemplateSymbol &&
+            (sym.value & ~1u) == 0x00abe654u) {
+            a.template_symbol_present = true;
+            break;
+        }
+    }
+
+    // Two direct producer paths allocate 24-byte TaskResource objects and
+    // compute the same vtable address before storing it into object+0.
+    a.producer_profile_match =
+        HasWordAt(elf, 0x00abd5f8u, 0xe59f01ecu) &&
+        HasWordAt(elf, 0x00abd604u, 0xe08f0000u) &&
+        HasWordAt(elf, 0x00abd61cu, 0xe280b008u) &&
+        HasWordAt(elf, 0x00abd650u, 0xe587b000u) &&
+        HasWordAt(elf, 0x00abd6acu, 0xe59f0144u) &&
+        HasWordAt(elf, 0x00abd6bcu, 0xe08f0000u) &&
+        HasWordAt(elf, 0x00abd6d4u, 0xe280a008u) &&
+        HasWordAt(elf, 0x00abd700u, 0xe587a000u) &&
+        HasWordAt(elf, 0x00abd7ecu, 0x002444f8u) &&
+        HasWordAt(elf, 0x00abd7f4u, 0xfffcf27cu) &&
+        HasWordAt(elf, 0x00abd7f8u, 0x00244440u);
+
+    const auto slot14 =
+        elf.Read(a.vtable_offset + 0x14u, 4u);
+    const auto slot18 =
+        elf.Read(a.vtable_offset + 0x18u, 4u);
+    const auto slot3c =
+        elf.Read(a.vtable_offset + 0x3cu, 4u);
+
+    if (slot14.size() == 4u) {
+        a.vfn14_raw = U32(slot14.data());
+    }
+    if (slot18.size() == 4u) {
+        a.vfn18_raw = U32(slot18.data());
+    }
+    if (slot3c.size() == 4u) {
+        a.vfn3c_raw = U32(slot3c.data());
+    }
+
+    a.vtable_profile_match =
+        a.vfn14_raw == 0x00abede0u &&
+        a.vfn18_raw == 0x00abf23cu &&
+        a.vfn3c_raw == 0x00ac0984u;
+
+    std::ostringstream out;
+    out
+        << "PvZ2 Inspector Lab v1.4 - TaskResource static audit\n"
+        << "====================================================\n"
+        << "vector<TaskResource*> template symbol: "
+        << (a.template_symbol_present ? "MATCH" : "NOT FOUND")
+        << " @ "
+        << Hex(kGuestBase + 0x00abe654u)
+        << "\n"
+        << "direct producer/vptr construction profile: "
+        << (a.producer_profile_match ? "MATCH" : "MISMATCH")
+        << "\n"
+        << "assigned TaskResource vtable: "
+        << Hex(kGuestBase + a.vtable_offset)
+        << " section="
+        << elf.SectionName(a.vtable_offset)
+        << "\n"
+        << "expected relocated virtual slots:\n"
+        << "  +0x14 -> "
+        << Hex(kGuestBase + a.vfn14_raw)
+        << "\n"
+        << "  +0x18 -> "
+        << Hex(kGuestBase + a.vfn18_raw)
+        << "\n"
+        << "  +0x3c -> "
+        << Hex(kGuestBase + a.vfn3c_raw)
+        << "\n"
+        << "vtable slot profile: "
+        << (a.vtable_profile_match ? "MATCH" : "MISMATCH")
+        << "\n\n"
+        << "The resource-stream pump consumes pointers from manager+0x50/"
+        << "+0x54 as IResStreamsDriver::TaskResource*. The v61 crash log "
+        << "does not contain [r7], so the runtime object's actual vtable "
+        << "pointer is still unknown. The next probe should capture it before "
+        << "the BLX rather than guessing corruption.\n";
+
+    a.text = out.str();
+    return a;
 }
 
 struct CtypeImportAudit {
