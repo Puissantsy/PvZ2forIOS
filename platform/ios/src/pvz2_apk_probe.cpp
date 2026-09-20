@@ -19855,7 +19855,8 @@ std::uint32_t JniProbeMakePthreadExitShim(
 
 std::uint32_t JniProbeAllocateImportedObject(
     JniProbeGuestMemory& memory,
-    const std::string& name) {
+    const std::string& name,
+    PvZ2JniCallbacks& callbacks) {
 
     if (name == "__stack_chk_guard") {
         const std::uint32_t address =
@@ -19870,6 +19871,191 @@ std::uint32_t JniProbeAllocateImportedObject(
         return address;
     }
 
+    if (callbacks.V57CtypeEnabled() &&
+        (name == "_toupper_tab_" ||
+         name == "_tolower_tab_" ||
+         name == "_ctype_")) {
+
+        const std::uint32_t variable =
+            memory.AllocateObject(
+                4u,
+                4u);
+
+        if (variable == 0u) {
+            return 0u;
+        }
+
+        std::uint32_t backing = 0u;
+
+        if (name == "_toupper_tab_" ||
+            name == "_tolower_tab_") {
+
+            backing =
+                memory.AllocateObject(
+                    257u * 2u,
+                    2u);
+
+            if (backing == 0u) {
+                return 0u;
+            }
+
+            // Bionic ABI: entry 0 represents EOF (-1); guest byte c is
+            // read at entry c+1. Values are 16-bit signed shorts.
+            memory.Write16Guest(
+                backing,
+                0xffffu);
+
+            for (std::uint32_t c = 0u;
+                 c <= 255u;
+                 ++c) {
+                std::uint32_t mapped = c;
+
+                if (name ==
+                        "_toupper_tab_" &&
+                    c >=
+                        static_cast<std::uint32_t>('a') &&
+                    c <=
+                        static_cast<std::uint32_t>('z')) {
+                    mapped =
+                        c -
+                        static_cast<std::uint32_t>('a') +
+                        static_cast<std::uint32_t>('A');
+                } else if (
+                    name ==
+                        "_tolower_tab_" &&
+                    c >=
+                        static_cast<std::uint32_t>('A') &&
+                    c <=
+                        static_cast<std::uint32_t>('Z')) {
+                    mapped =
+                        c -
+                        static_cast<std::uint32_t>('A') +
+                        static_cast<std::uint32_t>('a');
+                }
+
+                memory.Write16Guest(
+                    backing +
+                        (c + 1u) * 2u,
+                    static_cast<std::uint16_t>(
+                        mapped));
+            }
+        } else {
+            backing =
+                memory.AllocateObject(
+                    257u,
+                    1u);
+
+            if (backing == 0u) {
+                return 0u;
+            }
+
+            constexpr std::uint8_t kUpper = 0x01u;
+            constexpr std::uint8_t kLower = 0x02u;
+            constexpr std::uint8_t kNumber = 0x04u;
+            constexpr std::uint8_t kSpace = 0x08u;
+            constexpr std::uint8_t kPunct = 0x10u;
+            constexpr std::uint8_t kControl = 0x20u;
+            constexpr std::uint8_t kHex = 0x40u;
+            constexpr std::uint8_t kBlank = 0x80u;
+
+            memory.Write8Guest(
+                backing,
+                0u);
+
+            for (std::uint32_t c = 0u;
+                 c <= 255u;
+                 ++c) {
+                std::uint8_t flags = 0u;
+
+                if (c <= 0x1fu ||
+                    c == 0x7fu) {
+                    flags |= kControl;
+                }
+
+                if (c == 0x09u ||
+                    c == 0x0au ||
+                    c == 0x0bu ||
+                    c == 0x0cu ||
+                    c == 0x0du ||
+                    c == 0x20u) {
+                    flags |= kSpace;
+                }
+
+                if (c == 0x09u ||
+                    c == 0x20u) {
+                    flags |= kBlank;
+                }
+
+                if (c >=
+                        static_cast<std::uint32_t>('A') &&
+                    c <=
+                        static_cast<std::uint32_t>('Z')) {
+                    flags |= kUpper;
+
+                    if (c <=
+                        static_cast<std::uint32_t>('F')) {
+                        flags |= kHex;
+                    }
+                } else if (
+                    c >=
+                        static_cast<std::uint32_t>('a') &&
+                    c <=
+                        static_cast<std::uint32_t>('z')) {
+                    flags |= kLower;
+
+                    if (c <=
+                        static_cast<std::uint32_t>('f')) {
+                        flags |= kHex;
+                    }
+                } else if (
+                    c >=
+                        static_cast<std::uint32_t>('0') &&
+                    c <=
+                        static_cast<std::uint32_t>('9')) {
+                    flags |=
+                        kNumber |
+                        kHex;
+                } else if (
+                    c >= 0x21u &&
+                    c <= 0x7eu) {
+                    flags |= kPunct;
+                }
+
+                memory.Write8Guest(
+                    backing +
+                        c +
+                        1u,
+                    flags);
+            }
+        }
+
+        memory.Write32Guest(
+            variable,
+            backing);
+
+        if (name == "_toupper_tab_") {
+            callbacks.v57_toupper_variable =
+                variable;
+            callbacks.v57_toupper_backing =
+                backing;
+        } else if (
+            name == "_tolower_tab_") {
+            callbacks.v57_tolower_variable =
+                variable;
+            callbacks.v57_tolower_backing =
+                backing;
+        } else {
+            callbacks.v57_ctype_variable =
+                variable;
+            callbacks.v57_ctype_backing =
+                backing;
+        }
+
+        return variable;
+    }
+
+    // Deliberately preserve the v56 generic placeholder for all other
+    // imported objects and for the V56_BASELINE control mode.
     return memory.AllocateObject(64, 8);
 }
 
@@ -20018,7 +20204,8 @@ bool JniProbePrepareRuntime(
             const std::uint32_t object =
                 JniProbeAllocateImportedObject(
                     memory,
-                    name);
+                    name,
+                    callbacks);
 
             if (!object) {
                 error =
@@ -20030,6 +20217,26 @@ bool JniProbePrepareRuntime(
                 memory.image.data() +
                 rel.offset,
                 object);
+
+            if (callbacks.V57CtypeEnabled() &&
+                (name == "_toupper_tab_" ||
+                 name == "_tolower_tab_" ||
+                 name == "_ctype_")) {
+
+                callbacks.Append(
+                    "V57 CTYPE IMPORT symbol=" +
+                    name +
+                    " GOT=0x" +
+                    JniProbeHex(
+                        kGuestBase +
+                        rel.offset) +
+                    " variable=0x" +
+                    JniProbeHex(object) +
+                    " backing=0x" +
+                    JniProbeHex(
+                        memory.Read32Guest(
+                            object)));
+            }
 
             ++result.imports_patched;
         }
