@@ -38,7 +38,9 @@ NSArray<NSURL *> *ExistingReportURLs() {
         @"report.txt",
         @"addresses.csv",
         @"annotated-log.txt",
-        @"startup-diagnosis.txt"
+        @"startup-diagnosis.txt",
+        @"matrix-diagnosis.txt",
+        @"v57-plan.txt"
     ];
 
     NSMutableArray<NSURL *> *urls = [NSMutableArray array];
@@ -92,11 +94,11 @@ NSArray<NSURL *> *ExistingReportURLs() {
     [super viewDidLoad];
 
     self.view.backgroundColor = UIColor.systemBackgroundColor;
-    self.title = @"PvZ2 Inspector Lab v1.2";
+    self.title = @"PvZ2 Inspector Lab v1.3";
 
     UILabel *title = [[UILabel alloc] init];
     title.translatesAutoresizingMaskIntoConstraints = NO;
-    title.text = @"PvZ2 Inspector Lab v1.2";
+    title.text = @"PvZ2 Inspector Lab v1.3";
     title.font = [UIFont boldSystemFontOfSize:27.0];
     title.numberOfLines = 0;
 
@@ -108,9 +110,9 @@ NSArray<NSURL *> *ExistingReportURLs() {
         @"This auxiliary app does NOT launch PvZ2. It statically inspects the "
          "original ARMv7 libPVZ2.so inside the APK, parses its ELF layout, "
          "dynamic imports, relocations and .ARM.exidx function boundaries, "
-         "validates the exact GameStateMgr v53 and StartupLogo v54 profiles, "
-         "classifies module addresses by ELF section, and turns v54 gate logs "
-         "into an automatic first-blocker diagnosis. "
+         "validates the v53-v56 state/registry/trie profiles, classifies module "
+         "addresses by ELF section, audits imported ctype data used by the "
+         "ResourceManager compact trie, and turns v55/v56 logs into a v57 test plan. "
          "No JIT or StikDebug is required.";
 
     UIButton *apkButton =
@@ -407,6 +409,18 @@ didPickDocumentsAtURLs:
                         [root stringByAppendingPathComponent:@"startup-diagnosis.txt"],
                         result.startup_diagnosis);
                 }
+
+                if (!result.matrix_diagnosis.empty()) {
+                    WriteUtf8(
+                        [root stringByAppendingPathComponent:@"matrix-diagnosis.txt"],
+                        result.matrix_diagnosis);
+                }
+
+                if (!result.v57_plan.empty()) {
+                    WriteUtf8(
+                        [root stringByAppendingPathComponent:@"v57-plan.txt"],
+                        result.v57_plan);
+                }
             }
 
             dispatch_async(dispatch_get_main_queue(), ^{
@@ -422,6 +436,8 @@ didPickDocumentsAtURLs:
                              "• addresses.csv — every hex address from the log, ranked and classified\n"
                              "• summary.json — machine-readable summary\n"
                              "%@"
+                             "%@"
+                             "%@"
                              "%@",
                             NSStringFromStd(result.summary),
                             root,
@@ -430,7 +446,13 @@ didPickDocumentsAtURLs:
                                 : @"• annotated-log.txt — original log with resolved control-flow addresses\n",
                             result.startup_diagnosis.empty()
                                 ? @""
-                                : @"• startup-diagnosis.txt — automatic v54 gate/NaN/object-correlation diagnosis\n"];
+                                : @"• startup-diagnosis.txt — automatic v54 gate/NaN/object-correlation diagnosis\n",
+                            result.matrix_diagnosis.empty()
+                                ? @""
+                                : @"• matrix-diagnosis.txt — v55/v56 registry, trie, Gate-C and ctype ABI diagnosis\n",
+                            result.v57_plan.empty()
+                                ? @""
+                                : @"• v57-plan.txt — high-information multi-mode test plan generated from the evidence\n"];
                 } else {
                     self.outputView.text =
                         [NSString stringWithFormat:
