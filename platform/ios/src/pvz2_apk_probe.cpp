@@ -7180,6 +7180,248 @@ public:
                         next64);
             };
 
+        if (swi >= kJniProbeSvcV56RegistryPipelineEntry &&
+            swi <= kJniProbeSvcV56TrieMissZero) {
+
+            switch (swi) {
+            case kJniProbeSvcV56RegistryPipelineEntry: {
+                // Original @ 0x10867710: MOV r8,r0.
+                regs[8] = regs[0];
+                v56_resource_manager =
+                    regs[0];
+                ++v56_registry_pipeline_calls;
+
+                Append(
+                    "V56 REGISTRY DIAGNOSIS pipeline-entry #" +
+                    std::to_string(
+                        v56_registry_pipeline_calls) +
+                    " manager=" +
+                    V46DescribeGuestAddress(
+                        v56_resource_manager) +
+                    " caller=" +
+                    V46DescribeGuestAddress(
+                        regs[14]));
+
+                V56AppendRegistrySnapshot(
+                    "pipeline-entry");
+                return;
+            }
+
+            case kJniProbeSvcV56RegistrySource28: {
+                // Original @ 0x10867860: ADD r0,r8,#0x28.
+                v56_source28_ptr =
+                    regs[1];
+                v56_source28_bytes =
+                    regs[2];
+                regs[0] =
+                    regs[8] +
+                    0x28u;
+
+                Append(
+                    "V56 REGISTRY DIAGNOSIS source28 ptr=" +
+                    V46DescribeGuestAddress(
+                        v56_source28_ptr) +
+                    " bytes=" +
+                    std::to_string(
+                        v56_source28_bytes) +
+                    " expectedCount=" +
+                    std::to_string(
+                        v56_source28_bytes /
+                        4u));
+                return;
+            }
+
+            case kJniProbeSvcV56RegistryPost28:
+                // Original @ 0x10867868: LDR r0,[r9,#0x48].
+                regs[0] =
+                    mem.Read32Guest(
+                        regs[9] +
+                        0x48u);
+                V56AppendRegistrySnapshot(
+                    "post-table28-copy");
+                return;
+
+            case kJniProbeSvcV56RegistrySource30:
+                // Original @ 0x10867b24: ADD r0,r8,#0x30.
+                v56_source30_ptr =
+                    regs[1];
+                v56_source30_bytes =
+                    regs[2];
+                regs[0] =
+                    regs[8] +
+                    0x30u;
+
+                Append(
+                    "V56 REGISTRY DIAGNOSIS source30 ptr=" +
+                    V46DescribeGuestAddress(
+                        v56_source30_ptr) +
+                    " bytes=" +
+                    std::to_string(
+                        v56_source30_bytes) +
+                    " expectedCount=" +
+                    std::to_string(
+                        v56_source30_bytes /
+                        4u));
+                return;
+
+            case kJniProbeSvcV56RegistryPost30:
+                // Original @ 0x10867b2c: ADD r0,r8,#0x70.
+                regs[0] =
+                    regs[8] +
+                    0x70u;
+                V56AppendRegistrySnapshot(
+                    "post-table30-copy");
+                return;
+
+            case kJniProbeSvcV56RegistryPipelineReturn:
+                // Original @ 0x10867b68: MOV r0,r6.
+                regs[0] = regs[6];
+                ++v56_registry_pipeline_returns;
+                v56_pipeline_last_result =
+                    regs[0];
+
+                Append(
+                    "V56 REGISTRY DIAGNOSIS pipeline-return #" +
+                    std::to_string(
+                        v56_registry_pipeline_returns) +
+                    " result=" +
+                    std::to_string(
+                        v56_pipeline_last_result));
+
+                V56AppendRegistrySnapshot(
+                    "pipeline-return");
+                return;
+
+            case kJniProbeSvcV56TrieEntry: {
+                // Original @ 0x10a83ab4: LDR r2,[r0,#4].
+                const std::uint32_t table =
+                    regs[0];
+                const std::uint32_t key_ptr =
+                    regs[1];
+
+                regs[2] =
+                    mem.Read32Guest(
+                        table + 4u);
+
+                if (!V56FullMatrixEnabled()) {
+                    return;
+                }
+
+                std::string key;
+                if (key_ptr != 0u &&
+                    mem.Ptr(
+                        key_ptr,
+                        1u) != nullptr) {
+                    key =
+                        mem.ReadCStringGuest(
+                            key_ptr,
+                            256u);
+                }
+
+                const bool manager_table =
+                    v56_resource_manager != 0u &&
+                    (table ==
+                         v56_resource_manager +
+                             0x28u ||
+                     table ==
+                         v56_resource_manager +
+                             0x30u);
+
+                const bool target =
+                    V56IsTargetLookupKey(
+                        key);
+
+                if (manager_table ||
+                    target) {
+                    V56TrieContext context;
+                    context.table =
+                        table;
+                    context.caller_lr =
+                        regs[14];
+                    context.key =
+                        key;
+                    context.relevant = true;
+
+                    v56_trie_contexts[
+                        regs[13]] =
+                        std::move(context);
+                }
+
+                return;
+            }
+
+            case kJniProbeSvcV56TrieMissBranch: {
+                // Original @ 0x10a83b24: B 0x10a83b40.
+                const auto found =
+                    v56_trie_contexts.find(
+                        regs[13]);
+
+                if (found !=
+                    v56_trie_contexts.end()) {
+                    V56RecordTrieResult(
+                        found->second,
+                        false,
+                        0u);
+                    v56_trie_contexts.erase(
+                        found);
+                }
+
+                regs[15] =
+                    kGuestBase +
+                    0x00a83b40u;
+                return;
+            }
+
+            case kJniProbeSvcV56TrieFound: {
+                // Original @ 0x10a83b38: MOV r0,r2.
+                const std::uint32_t result_pointer =
+                    regs[2];
+                regs[0] =
+                    result_pointer;
+
+                const auto found =
+                    v56_trie_contexts.find(
+                        regs[13]);
+
+                if (found !=
+                    v56_trie_contexts.end()) {
+                    V56RecordTrieResult(
+                        found->second,
+                        true,
+                        result_pointer);
+                    v56_trie_contexts.erase(
+                        found);
+                }
+
+                return;
+            }
+
+            case kJniProbeSvcV56TrieMissZero: {
+                // Original @ 0x10a83b44: MOV r0,#0.
+                regs[0] = 0u;
+
+                const auto found =
+                    v56_trie_contexts.find(
+                        regs[13]);
+
+                if (found !=
+                    v56_trie_contexts.end()) {
+                    V56RecordTrieResult(
+                        found->second,
+                        false,
+                        0u);
+                    v56_trie_contexts.erase(
+                        found);
+                }
+
+                return;
+            }
+
+            default:
+                break;
+            }
+        }
+
         if (swi == kJniProbeSvcStartupGroupsCtorSnapshot ||
             swi == kJniProbeSvcStartupGroupsLookupResult ||
             swi == kJniProbeSvcStartupGroupsContribution) {
