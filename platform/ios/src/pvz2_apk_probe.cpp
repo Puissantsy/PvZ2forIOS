@@ -1777,6 +1777,155 @@ public:
     std::unordered_map<std::uint32_t, std::string>
         resource_lookup_entry_ids;
 
+    void V50ObserveResourceId(
+        const std::string& id) {
+
+        std::string key = id;
+        std::transform(
+            key.begin(),
+            key.end(),
+            key.begin(),
+            [](unsigned char ch) {
+                return static_cast<char>(
+                    std::toupper(ch));
+            });
+
+        const bool is_android =
+            key == "RESFILE_PACKAGES_UI_ANDROID";
+        const bool is_ipad =
+            key == "RESFILE_PACKAGES_UI_IPAD";
+
+        if (!is_android && !is_ipad) {
+            return;
+        }
+
+        if (is_android) {
+            v50_ui_android_seen = true;
+        }
+        if (is_ipad) {
+            v50_ui_ipad_seen = true;
+        }
+
+        if (v50_resource_milestone_keys
+                .insert("id:" + key)
+                .second) {
+            Append(
+                "V50 RESOURCE MILESTONE frame=" +
+                std::to_string(
+                    current_frame_number) +
+                " id="" +
+                id +
+                """);
+        }
+    }
+
+    void V50ObservePath(
+        const std::string& raw,
+        const char* source) {
+
+        std::string key = raw;
+
+        for (char& ch : key) {
+            if (ch == '\\') {
+                ch = '/';
+            } else {
+                ch = static_cast<char>(
+                    std::toupper(
+                        static_cast<unsigned char>(
+                            ch)));
+            }
+        }
+
+        const bool ui_android =
+            key.find("PACKAGES/UI_ANDROID.RTON") !=
+            std::string::npos;
+        const bool ui_ipad =
+            key.find("PACKAGES/UI_IPAD.RTON") !=
+            std::string::npos;
+        const bool mainmenu_background =
+            key.find("MAINMENU_BACKGROUND") !=
+            std::string::npos;
+        const bool ui_mainmenu =
+            key.find("UI_MAINMENU") !=
+            std::string::npos;
+        const bool init_atlas =
+            key.find("ATLASES/INIT_") !=
+                std::string::npos ||
+            key.find("ATLASES/_INIT_") !=
+                std::string::npos;
+
+        if (ui_android) {
+            v50_ui_android_seen = true;
+        }
+        if (ui_ipad) {
+            v50_ui_ipad_seen = true;
+        }
+        if (mainmenu_background) {
+            v50_mainmenu_background_seen = true;
+            if (v50_mainmenu_background_first_frame ==
+                0u) {
+                v50_mainmenu_background_first_frame =
+                    current_frame_number;
+            }
+        }
+        if (ui_mainmenu) {
+            v50_ui_mainmenu_seen = true;
+            if (v50_ui_mainmenu_first_frame == 0u) {
+                v50_ui_mainmenu_first_frame =
+                    current_frame_number;
+            }
+        }
+        if (init_atlas) {
+            v50_init_atlas_seen = true;
+        }
+
+        if (!ui_android &&
+            !ui_ipad &&
+            !mainmenu_background &&
+            !ui_mainmenu &&
+            !init_atlas) {
+            return;
+        }
+
+        std::string category;
+        if (ui_android) {
+            category = "UI_ANDROID";
+        } else if (ui_ipad) {
+            category = "UI_IPAD";
+        } else if (mainmenu_background) {
+            category = "MAINMENU_BACKGROUND";
+        } else if (ui_mainmenu) {
+            category = "UI_MAINMENU";
+        } else {
+            category = "INIT_ATLAS";
+        }
+
+        const std::string dedupe =
+            "path:" +
+            category +
+            ":" +
+            key;
+
+        if (v50_resource_milestone_keys
+                .insert(dedupe)
+                .second) {
+            Append(
+                "V50 ASSET MILESTONE frame=" +
+                std::to_string(
+                    current_frame_number) +
+                " source=" +
+                std::string{
+                    source != nullptr
+                        ? source
+                        : "?"} +
+                " category=" +
+                category +
+                " path="" +
+                raw +
+                """);
+        }
+    }
+
     bool V48TraceTransitionFrame() const {
         return
             current_frame_number >= 55u &&
@@ -2069,6 +2218,27 @@ public:
     std::uint32_t native_cloud_state_loaded_address = 0u;
     bool pending_cloud_state_loaded = false;
     bool cloud_state_loaded_delivered = false;
+
+    // v50: the APK's real AndroidHttpProxy.GetNetworkStatus implementation
+    // returns 0=no active connection, 1=mobile/WiMAX, 2=Wi-Fi and 3=other
+    // connected transport. v38 hard-coded 0; the binary also contains the
+    // startup state GAME_WaitForNetworkLoad, so v50 deliberately exercises
+    // the faithful connected/Wi-Fi branch while keeping HTTP requests
+    // deterministic through the existing native error callbacks.
+    std::uint64_t v50_network_status_calls = 0u;
+
+    // v50 resource milestones derived from the extracted RSB metadata.
+    // These do not force-load or remap anything; they only tell us exactly
+    // whether startup ever asks for the UI package and the first real menu
+    // atlases after the EA/Init splash.
+    bool v50_ui_android_seen = false;
+    bool v50_ui_ipad_seen = false;
+    bool v50_mainmenu_background_seen = false;
+    bool v50_ui_mainmenu_seen = false;
+    bool v50_init_atlas_seen = false;
+    std::uint32_t v50_mainmenu_background_first_frame = 0u;
+    std::uint32_t v50_ui_mainmenu_first_frame = 0u;
+    std::unordered_set<std::string> v50_resource_milestone_keys;
     std::unordered_map<std::uint32_t, std::uint32_t> jni_array_lengths;
     std::unordered_map<std::uint32_t, std::uint32_t> jni_array_data;
     std::unordered_map<std::uint32_t, std::uint32_t> jni_array_element_sizes;
@@ -5382,6 +5552,9 @@ public:
                     regs[13]] =
                     entry_id;
 
+                V50ObserveResourceId(
+                    entry_id);
+
                 if (resource_entry_id_diagnostics <
                     24u) {
                     ++resource_entry_id_diagnostics;
@@ -6457,15 +6630,33 @@ public:
                         method_name ==
                             "GetNetworkStatus") {
 
-                        // v38: every AndroidHttpTransaction is deliberately
-                        // completed through the deterministic offline/error
-                        // callback. Advertising an online network while every
-                        // request fails leaves startup polling a contradictory
-                        // state after the splash. Report the matching offline
-                        // status instead.
-                        regs[0] = 0u;
-                        Append(
-                            "V38 JNI bridge: GetNetworkStatus -> 0 (offline)");
+                        ++v50_network_status_calls;
+
+                        // Verified directly from this APK's Java
+                        // AndroidHttpProxy.GetNetworkStatus bytecode:
+                        //   0 = no active network
+                        //   1 = mobile/WiMAX
+                        //   2 = Wi-Fi
+                        //   3 = another connected transport
+                        //
+                        // v38 returned 0. v50 exercises the real connected
+                        // Wi-Fi path because libPVZ2 contains
+                        // GAME_WaitForNetworkLoad and v49 proved the cloud
+                        // completion itself is not the post-EA blocker.
+                        regs[0] = 2u;
+
+                        if (v50_network_status_calls <=
+                                12u ||
+                            (v50_network_status_calls %
+                             500u) == 0u) {
+                            Append(
+                                "V50 JNI bridge: GetNetworkStatus -> 2 (Wi-Fi) call#" +
+                                std::to_string(
+                                    v50_network_status_calls) +
+                                " frame=" +
+                                std::to_string(
+                                    current_frame_number));
+                        }
                         return true;
                     }
 
@@ -10946,6 +11137,10 @@ public:
         auto resolve_obb_virtual_file =
             [&](const std::string& raw)
                 -> std::optional<ProbeObbHandle> {
+
+                V50ObservePath(
+                    raw,
+                    "VFS");
 
                 if (obb_data == nullptr ||
                     obb_size < 0x70u) {
@@ -18147,6 +18342,35 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                         : std::string{"NO"}) +
                     " cloudDelivered=" +
                     (callbacks.cloud_state_loaded_delivered
+                        ? std::string{"YES"}
+                        : std::string{"NO"}) +
+                    " | networkStatusCalls=" +
+                    std::to_string(
+                        callbacks.v50_network_status_calls) +
+                    " uiAndroid=" +
+                    (callbacks.v50_ui_android_seen
+                        ? std::string{"YES"}
+                        : std::string{"NO"}) +
+                    " uiIPad=" +
+                    (callbacks.v50_ui_ipad_seen
+                        ? std::string{"YES"}
+                        : std::string{"NO"}) +
+                    " mainMenuBg=" +
+                    (callbacks.v50_mainmenu_background_seen
+                        ? std::string{"YES@"} +
+                              std::to_string(
+                                  callbacks
+                                      .v50_mainmenu_background_first_frame)
+                        : std::string{"NO"}) +
+                    " uiMainMenu=" +
+                    (callbacks.v50_ui_mainmenu_seen
+                        ? std::string{"YES@"} +
+                              std::to_string(
+                                  callbacks
+                                      .v50_ui_mainmenu_first_frame)
+                        : std::string{"NO"}) +
+                    " initAtlas=" +
+                    (callbacks.v50_init_atlas_seen
                         ? std::string{"YES"}
                         : std::string{"NO"}));
 
