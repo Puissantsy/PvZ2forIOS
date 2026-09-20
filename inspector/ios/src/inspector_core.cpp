@@ -3682,14 +3682,42 @@ PvZ2InspectorResult InspectPvZ2ApkAndLog(
         result.undefined_symbols =
             static_cast<std::uint32_t>(imports.size());
 
+        const bool large_log =
+            log_text.size() >
+            kLargeLogThreshold;
+
+        std::string generic_log_storage;
+        const std::string* generic_log =
+            &log_text;
+
+        if (large_log) {
+            generic_log_storage =
+                BuildLargeLogAddressSample(
+                    log_text);
+            generic_log =
+                &generic_log_storage;
+        }
+
+        result.source_log_bytes =
+            log_text.size();
+        result.log_address_analysis_sampled =
+            large_log;
+        result.generic_log_bytes =
+            generic_log->size();
+
         std::uint32_t occurrences = 0;
         const auto addresses =
-            CollectHexAddresses(log_text, occurrences);
+            CollectHexAddresses(
+                *generic_log,
+                occurrences);
         result.log_hex_occurrences = occurrences;
         result.log_unique_addresses =
-            static_cast<std::uint32_t>(addresses.size());
+            static_cast<std::uint32_t>(
+                addresses.size());
 
-        const auto controls = CollectControlAddresses(log_text);
+        const auto controls =
+            CollectControlAddresses(
+                *generic_log);
 
         const auto game_state_profile =
             ValidateGameStateProfile(elf);
@@ -3697,6 +3725,10 @@ PvZ2InspectorResult InspectPvZ2ApkAndLog(
             ValidateStartupLogoProfile(elf);
         const auto v56_profile =
             ValidateV56Profile(elf);
+        const auto v61_profile =
+            ValidateV61Profile(elf);
+        const auto task_resource_audit =
+            AuditTaskResourceStatic(elf);
         const auto ctype_audit =
             AuditCtypeImports(
                 elf,
@@ -3716,6 +3748,17 @@ PvZ2InspectorResult InspectPvZ2ApkAndLog(
                 startup_runtime,
                 v56_profile,
                 ctype_audit);
+        const auto v61_runtime =
+            DiagnoseV61Runtime(
+                log_text,
+                elf,
+                v61_profile,
+                task_resource_audit);
+        const std::string next_probe_plan =
+            BuildNextProbePlan(
+                v61_runtime,
+                v61_profile,
+                task_resource_audit);
         const std::string v57_plan =
             BuildV57Plan(
                 v55_runtime,
@@ -3726,7 +3769,7 @@ PvZ2InspectorResult InspectPvZ2ApkAndLog(
 
         std::ostringstream summary;
         summary
-            << "PvZ2 Inspector Lab v1.3\n"
+            << "PvZ2 Inspector Lab v1.4\n"
             << "APK bytes: " << apk_size << "\n"
             << "libPVZ2.so bytes: " << result.elf_size << "\n"
             << "mapped image span: " << Hex(result.image_size) << "\n"
@@ -3740,9 +3783,28 @@ PvZ2InspectorResult InspectPvZ2ApkAndLog(
 
         if (!log_text.empty()) {
             summary
-                << "log hex occurrences: "
+                << "source log bytes: "
+                << result.source_log_bytes
+                << "\n"
+                << "generic address-analysis bytes: "
+                << result.generic_log_bytes
+                << "\n"
+                << "generic address analysis sampled: "
+                << (result.log_address_analysis_sampled
+                        ? "YES"
+                        : "NO")
+                << "\n"
+                << "log hex occurrences"
+                << (result.log_address_analysis_sampled
+                        ? " (sample)"
+                        : "")
+                << ": "
                 << result.log_hex_occurrences << "\n"
-                << "unique log addresses: "
+                << "unique log addresses"
+                << (result.log_address_analysis_sampled
+                        ? " (sample)"
+                        : "")
+                << ": "
                 << result.log_unique_addresses << "\n";
         } else {
             summary << "log: not supplied (static ELF analysis only)\n";
@@ -3776,6 +3838,22 @@ PvZ2InspectorResult InspectPvZ2ApkAndLog(
             << (ctype_audit.high_priority_candidate
                     ? "HIGH-PRIORITY v57 CANDIDATE"
                     : "PROFILE INCOMPLETE")
+            << "\n"
+            << "v61 resource-pump/worker static profile: "
+            << (v61_profile.exact_profile()
+                    ? "MATCH"
+                    : "PARTIAL/MISMATCH")
+            << " ("
+            << v61_profile.matched()
+            << "/"
+            << v61_profile.checks.size()
+            << ")\n"
+            << "TaskResource static producer/vtable audit: "
+            << ((task_resource_audit.template_symbol_present &&
+                 task_resource_audit.producer_profile_match &&
+                 task_resource_audit.vtable_profile_match)
+                    ? "MATCH"
+                    : "PARTIAL/MISMATCH")
             << "\n";
 
         if (startup_runtime.present) {
@@ -3821,6 +3899,35 @@ PvZ2InspectorResult InspectPvZ2ApkAndLog(
                 << startup_runtime.gate_c_state
                 << " expected=4 hits="
                 << startup_runtime.gate_c_hits
+                << "\n";
+        }
+
+        if (v61_runtime.present) {
+            summary
+                << "v61 pump boundaries: "
+                << v61_runtime.pump_boundaries
+                << " afterFault="
+                << v61_runtime.pump_boundaries_after_fault
+                << " successStep="
+                << (v61_runtime.success_step_present
+                        ? "YES"
+                        : "NO")
+                << "\n"
+                << "v61 first NoExecuteFault: "
+                << (v61_runtime.crash.present
+                        ? Hex(v61_runtime.crash.pc)
+                        : std::string{"none"})
+                << " pthread="
+                << v61_runtime.crash.pthread_id
+                << " virtualDispatchChain="
+                << (v61_runtime.dispatch_chain_consistent
+                        ? "CONFIRMED"
+                        : "NOT CONFIRMED")
+                << "\n"
+                << "v61 runaway scheduling after worker fault: "
+                << (v61_runtime.runaway_after_fault
+                        ? "YES"
+                        : "NO")
                 << "\n";
         }
 
