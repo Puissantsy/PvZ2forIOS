@@ -960,7 +960,7 @@ V56ProfileValidation ValidateV56Profile(
 
     const std::array<
         std::tuple<const char*, std::uint32_t, std::uint32_t>,
-        21> expected = {{
+        26> expected = {{
         {"Registry builder entry",   0x00867710u, 0xe1a08000u},
         {"Registry source28",        0x00867860u, 0xe2880028u},
         {"Registry post28",          0x00867868u, 0xe5990048u},
@@ -972,6 +972,11 @@ V56ProfileValidation ValidateV56Profile(
         {"Group lookup table28",     0x00867f80u, 0xe2840028u},
         {"Group lookup trie call28", 0x00867f84u, 0xeb086ec9u},
         {"Compact trie count/root",  0x00a83ab4u, 0xe5902004u},
+        {"Compact trie GOT lit A",   0x00a83ac0u, 0xe59f2084u},
+        {"Compact trie GOT lit B",   0x00a83ac4u, 0xe59f3084u},
+        {"Compact trie GOT add",     0x00a83ac8u, 0xe08f2002u},
+        {"Compact trie GOT load",    0x00a83accu, 0xe7932002u},
+        {"Compact trie import deref",0x00a83ad4u, 0xe592c000u},
         {"Compact trie key byte",    0x00a83ae4u, 0xe5d10000u},
         {"Compact trie table index", 0x00a83ae8u, 0xe08c0080u},
         {"Compact trie norm load",   0x00a83aecu, 0xe1d0e0b2u},
