@@ -2866,6 +2866,58 @@ public:
         Append(out.str());
     }
 
+    std::string V54StartupLogoSummary() const {
+        float gate_a_ratio = 0.0f;
+        std::memcpy(
+            &gate_a_ratio,
+            &v54_gate_a_result_bits,
+            sizeof(gate_a_ratio));
+
+        std::ostringstream out;
+        out
+            << "V54 StartupLogo"
+            << " A{resourceHits=" << v54_gate_a_resource_hits
+            << ",resource=0x" << JniProbeHex(v54_gate_a_resource)
+            << ",totalsHits=" << v54_gate_a_totals_hits
+            << ",completed=" << v54_gate_a_completed
+            << ",total=" << v54_gate_a_total
+            << ",resultHits=" << v54_gate_a_result_hits
+            << ",ratio=" << gate_a_ratio
+            << ",pass=" << (gate_a_ratio >= 1.0f ? "YES" : "NO")
+            << "}"
+            << " B{staticReturn=1,pass=YES}"
+            << " C{hits=" << v54_gate_c_hits
+            << ",object=0x" << JniProbeHex(v54_gate_c_object)
+            << ",state=" << v54_gate_c_state
+            << ",pass=" << (v54_gate_c_state == 4u ? "YES" : "NO")
+            << "}"
+            << " D{hits=" << v54_gate_d_hits
+            << ",counter=" << v54_gate_d_counter
+            << ",pass=" << (v54_gate_d_counter >= 3u ? "YES" : "NO")
+            << "}"
+            << " afterD=" << v54_after_d_hits
+            << " E{hits=" << v54_gate_e_hits
+            << ",b7a=" << v54_gate_e_value << "}"
+            << " F=" << v54_gate_f_hits << "/" << v54_gate_f_value
+            << " G=" << v54_gate_g_hits << "/" << v54_gate_g_value
+            << " H=" << v54_gate_h_hits << "/" << v54_gate_h_value
+            << " I=" << v54_gate_i_hits << "/" << v54_gate_i_value
+            << " J{hits=" << v54_gate_j_hits
+            << ",byte20=" << v54_gate_j_byte20
+            << ",byte02=" << v54_gate_j_byte02 << "}"
+            << " mainFlow=" << v54_main_flow_hits
+            << " progress=" << v54_progress_result_hits
+            << "/" << v54_progress_value
+            << " find=" << v54_find_result_hits
+            << "/" << v54_find_value
+            << " late=" << v54_late_result_hits
+            << "/" << v54_late_value
+            << " patchReqMarker=" << v54_patch_marker_hits
+            << " mainMenuReqMarker=" << v54_mainmenu_marker_hits;
+
+        return out.str();
+    }
+
     void V52ObserveJniCallsite(
         const std::string& method_name) {
 
@@ -6358,6 +6410,406 @@ public:
                         next32,
                         next64);
             };
+
+        if (swi >= kJniProbeSvcStartupGateAResource &&
+            swi <= kJniProbeSvcStartupMainMenuMarker) {
+
+            const bool logo_state =
+                V53CurrentGameState() == 2;
+
+            auto append_gate =
+                [&](const std::string& text) {
+                    if (logo_state) {
+                        Append(
+                            "V54 STARTUPLOGO " +
+                            text);
+                    }
+                };
+
+            switch (swi) {
+            case kJniProbeSvcStartupGateAResource: {
+                // Original: LDR r0,[r5,#0x64c].
+                const std::uint32_t base =
+                    regs[5];
+                regs[0] =
+                    mem.Read32Guest(
+                        base + 0x64cu);
+                ++v54_gate_a_resource_hits;
+                v54_gate_a_resource = regs[0];
+
+                append_gate(
+                    "GateA.resource hit=" +
+                    std::to_string(
+                        v54_gate_a_resource_hits) +
+                    " owner=" +
+                    V46DescribeGuestAddress(base) +
+                    " resource=0x" +
+                    JniProbeHex(regs[0]) +
+                    (regs[0] == 0u
+                        ? " BLOCK(resource-null)"
+                        : " present"));
+                return;
+            }
+
+            case kJniProbeSvcStartupGateATotals: {
+                // Original: VMOV s0,r11. At this exact point r10/r11 are
+                // the accumulated completed/total counters used by VDIV.
+                if (jit != nullptr) {
+                    jit->ExtRegs()[0] =
+                        regs[11];
+                }
+
+                ++v54_gate_a_totals_hits;
+                v54_gate_a_completed =
+                    regs[10];
+                v54_gate_a_total =
+                    regs[11];
+
+                std::ostringstream line;
+                line
+                    << "GateA.totals hit="
+                    << v54_gate_a_totals_hits
+                    << " completed="
+                    << v54_gate_a_completed
+                    << " total="
+                    << v54_gate_a_total;
+
+                if (v54_gate_a_total != 0u) {
+                    line
+                        << " ratio="
+                        << (static_cast<double>(
+                                v54_gate_a_completed) /
+                            static_cast<double>(
+                                v54_gate_a_total));
+                } else {
+                    line << " ratio=DIV0";
+                }
+
+                append_gate(line.str());
+                return;
+            }
+
+            case kJniProbeSvcStartupGateAResult: {
+                // Original: VMOV s2,r0.
+                if (jit != nullptr) {
+                    jit->ExtRegs()[2] =
+                        regs[0];
+                }
+
+                ++v54_gate_a_result_hits;
+                v54_gate_a_result_bits =
+                    regs[0];
+
+                float value = 0.0f;
+                std::memcpy(
+                    &value,
+                    &v54_gate_a_result_bits,
+                    sizeof(value));
+
+                std::ostringstream line;
+                line
+                    << "GateA.result hit="
+                    << v54_gate_a_result_hits
+                    << " bits=0x"
+                    << JniProbeHex(
+                           v54_gate_a_result_bits)
+                    << " float="
+                    << value
+                    << " => "
+                    << (value >= 1.0f
+                        ? "PASS"
+                        : "BLOCK(<1.0)");
+
+                append_gate(line.str());
+                return;
+            }
+
+            case kJniProbeSvcStartupGateCState: {
+                // Original: LDR r1,[r0,#0x98].
+                const std::uint32_t object =
+                    regs[0];
+                regs[1] =
+                    mem.Read32Guest(
+                        object + 0x98u);
+
+                if (logo_state) {
+                    ++v54_gate_c_hits;
+                    v54_gate_c_object =
+                        object;
+                    v54_gate_c_state =
+                        regs[1];
+                }
+
+                append_gate(
+                    "GateC hit=" +
+                    std::to_string(
+                        v54_gate_c_hits) +
+                    " object=" +
+                    V46DescribeGuestAddress(object) +
+                    " state98=" +
+                    std::to_string(regs[1]) +
+                    (regs[1] == 4u
+                        ? " => PASS"
+                        : " => BLOCK(!=4)"));
+                return;
+            }
+
+            case kJniProbeSvcStartupGateDCounter: {
+                // Original: LDR r0,[r4,#0x430].
+                const std::uint32_t manager =
+                    regs[4];
+                regs[0] =
+                    mem.Read32Guest(
+                        manager + 0x430u);
+
+                if (logo_state) {
+                    ++v54_gate_d_hits;
+                    v54_gate_d_counter =
+                        regs[0];
+                }
+
+                append_gate(
+                    "GateD hit=" +
+                    std::to_string(
+                        v54_gate_d_hits) +
+                    " counter430=" +
+                    std::to_string(regs[0]) +
+                    (regs[0] >= 3u
+                        ? " => PASS"
+                        : " => BLOCK(<3)"));
+                return;
+            }
+
+            case kJniProbeSvcStartupAfterD:
+                // Original: LDR r0,[pc,#0x3c8], literal @ +0x276e0c.
+                regs[0] =
+                    mem.Read32Guest(
+                        kGuestBase +
+                        0x00276e0cu);
+                if (logo_state) {
+                    ++v54_after_d_hits;
+                }
+                append_gate(
+                    "after-A-D reached #" +
+                    std::to_string(
+                        v54_after_d_hits));
+                return;
+
+            case kJniProbeSvcStartupGateEByte: {
+                // Original: LDRB r0,[r0,#0xb7a].
+                const std::uint32_t object =
+                    regs[0];
+                regs[0] =
+                    mem.Read8(
+                        object + 0xb7au);
+                if (logo_state) {
+                    ++v54_gate_e_hits;
+                    v54_gate_e_value =
+                        regs[0];
+                }
+                append_gate(
+                    "GateE hit=" +
+                    std::to_string(
+                        v54_gate_e_hits) +
+                    " app.b7a=" +
+                    std::to_string(regs[0]) +
+                    (regs[0] != 0u
+                        ? " => alternate-main-flow"
+                        : " => patch-decision-flow"));
+                return;
+            }
+
+            case kJniProbeSvcStartupGateFResult:
+                // Original helper epilogue: MOV r0,r4.
+                regs[0] = regs[4];
+                if (logo_state) {
+                    ++v54_gate_f_hits;
+                    v54_gate_f_value =
+                        regs[0];
+                }
+                append_gate(
+                    "GateF.result=" +
+                    std::to_string(regs[0]) +
+                    " hits=" +
+                    std::to_string(
+                        v54_gate_f_hits));
+                return;
+
+            case kJniProbeSvcStartupGateGResult:
+                // Original helper epilogue: MOV r0,r4.
+                regs[0] = regs[4];
+                if (logo_state) {
+                    ++v54_gate_g_hits;
+                    v54_gate_g_value =
+                        regs[0];
+                }
+                append_gate(
+                    "GateG.result=" +
+                    std::to_string(regs[0]) +
+                    " hits=" +
+                    std::to_string(
+                        v54_gate_g_hits));
+                return;
+
+            case kJniProbeSvcStartupGateHResult:
+                // Original helper epilogue: MOV r0,r4.
+                regs[0] = regs[4];
+                if (logo_state) {
+                    ++v54_gate_h_hits;
+                    v54_gate_h_value =
+                        regs[0];
+                }
+                append_gate(
+                    "GateH.result=" +
+                    std::to_string(regs[0]) +
+                    " hits=" +
+                    std::to_string(
+                        v54_gate_h_hits));
+                return;
+
+            case kJniProbeSvcStartupGateIResult:
+                // Original helper epilogue: MOV r0,r5.
+                regs[0] = regs[5];
+                if (logo_state) {
+                    ++v54_gate_i_hits;
+                    v54_gate_i_value =
+                        regs[0];
+                }
+                append_gate(
+                    "GateI.result=" +
+                    std::to_string(regs[0]) +
+                    " hits=" +
+                    std::to_string(
+                        v54_gate_i_hits));
+                return;
+
+            case kJniProbeSvcStartupGateJObject: {
+                // Original helper entry: MOV r1,r0. The helper returns true
+                // iff byte+0x20 != 0 and byte+0x02 == 0.
+                const std::uint32_t object =
+                    regs[0];
+                regs[1] = regs[0];
+
+                const std::uint32_t byte20 =
+                    mem.Read8(
+                        object + 0x20u);
+                const std::uint32_t byte02 =
+                    mem.Read8(
+                        object + 0x02u);
+
+                if (logo_state) {
+                    ++v54_gate_j_hits;
+                    v54_gate_j_byte20 =
+                        byte20;
+                    v54_gate_j_byte02 =
+                        byte02;
+                }
+
+                append_gate(
+                    "GateJ object=" +
+                    V46DescribeGuestAddress(object) +
+                    " byte20=" +
+                    std::to_string(byte20) +
+                    " byte02=" +
+                    std::to_string(byte02) +
+                    " predictedResult=" +
+                    ((byte20 != 0u &&
+                      byte02 == 0u)
+                        ? "1"
+                        : "0"));
+                return;
+            }
+
+            case kJniProbeSvcStartupPatchMarker:
+                // Original: MOV r0,r4 immediately before target=3.
+                regs[0] = regs[4];
+                if (logo_state) {
+                    ++v54_patch_marker_hits;
+                }
+                append_gate(
+                    "PATCH REQUEST PATH reached #" +
+                    std::to_string(
+                        v54_patch_marker_hits));
+                return;
+
+            case kJniProbeSvcStartupMainFlow:
+                // Original: MOV r5,r0.
+                regs[5] = regs[0];
+                if (logo_state) {
+                    ++v54_main_flow_hits;
+                }
+                append_gate(
+                    "late/main flow entered #" +
+                    std::to_string(
+                        v54_main_flow_hits) +
+                    " object=0x" +
+                    JniProbeHex(regs[5]));
+                return;
+
+            case kJniProbeSvcStartupProgressResult:
+                // Original helper epilogue: MOV r0,r4.
+                regs[0] = regs[4];
+                if (logo_state) {
+                    ++v54_progress_result_hits;
+                    v54_progress_value =
+                        regs[0];
+                }
+                append_gate(
+                    "late.progressResult=" +
+                    std::to_string(regs[0]) +
+                    " hits=" +
+                    std::to_string(
+                        v54_progress_result_hits));
+                return;
+
+            case kJniProbeSvcStartupFindResult:
+                // Original helper epilogue: MOV r0,r4.
+                regs[0] = regs[4];
+                if (logo_state) {
+                    ++v54_find_result_hits;
+                    v54_find_value =
+                        regs[0];
+                }
+                append_gate(
+                    "late.findResult=" +
+                    std::to_string(regs[0]) +
+                    " hits=" +
+                    std::to_string(
+                        v54_find_result_hits));
+                return;
+
+            case kJniProbeSvcStartupLateResult:
+                // Original helper epilogue: MOV r0,r4.
+                regs[0] = regs[4];
+                if (logo_state) {
+                    ++v54_late_result_hits;
+                    v54_late_value =
+                        regs[0];
+                }
+                append_gate(
+                    "late.booleanResult=" +
+                    std::to_string(regs[0]) +
+                    " hits=" +
+                    std::to_string(
+                        v54_late_result_hits));
+                return;
+
+            case kJniProbeSvcStartupMainMenuMarker:
+                // Original: MOV r0,r4 immediately before target=4.
+                regs[0] = regs[4];
+                if (logo_state) {
+                    ++v54_mainmenu_marker_hits;
+                }
+                append_gate(
+                    "MAINMENU REQUEST PATH reached #" +
+                    std::to_string(
+                        v54_mainmenu_marker_hits));
+                return;
+
+            default:
+                break;
+            }
+        }
 
         if (swi ==
                 kJniProbeSvcGameStateApply ||
