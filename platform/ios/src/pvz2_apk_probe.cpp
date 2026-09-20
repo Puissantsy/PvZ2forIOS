@@ -2062,6 +2062,13 @@ public:
         pending_http_failures;
     std::unordered_set<std::uint32_t>
         queued_http_failure_peers;
+
+    // v49: Android Cloud_attemptSilentSync is asynchronous. The Java Cloud
+    // object normally calls Native_CloudStateLoaded later. Capture that
+    // callback and complete the handshake once at a lifecycle-safe boundary.
+    std::uint32_t native_cloud_state_loaded_address = 0u;
+    bool pending_cloud_state_loaded = false;
+    bool cloud_state_loaded_delivered = false;
     std::unordered_map<std::uint32_t, std::uint32_t> jni_array_lengths;
     std::unordered_map<std::uint32_t, std::uint32_t> jni_array_data;
     std::unordered_map<std::uint32_t, std::uint32_t> jni_array_element_sizes;
@@ -5890,6 +5897,16 @@ public:
                         function_ptr;
                     result.game_app_initialize_signature =
                         native_signature;
+                } else if (
+                    native_name ==
+                    "Native_CloudStateLoaded") {
+                    native_cloud_state_loaded_address =
+                        function_ptr;
+                    Append(
+                        "V49 CLOUD CALLBACK captured Native_CloudStateLoaded at 0x" +
+                        JniProbeHex(function_ptr) +
+                        " signature=" +
+                        native_signature);
                 }
 
                 Append(
@@ -6936,6 +6953,25 @@ public:
                         return true;
                     }
 
+                    if (family == 9 &&
+                        method_name ==
+                            "Cloud_attemptSilentSync") {
+
+                        if (!cloud_state_loaded_delivered) {
+                            pending_cloud_state_loaded =
+                                true;
+                        }
+
+                        regs[0] = 0u;
+                        Append(
+                            "V49 CLOUD HANDSHAKE: Cloud_attemptSilentSync -> Java no-op; queued Native_CloudStateLoaded completion=" +
+                            std::string{
+                                pending_cloud_state_loaded
+                                    ? "YES"
+                                    : "NO"});
+                        return true;
+                    }
+
                     static const std::unordered_set<std::string>
                         kV29VoidNoOpMethods = {
                             // AndroidHttpTransaction.
@@ -6951,7 +6987,6 @@ public:
                             // them offline and deterministic.
                             "Cloud_Connect",
                             "Cloud_initiateSync",
-                            "Cloud_attemptSilentSync",
                             "Cloud_SetPcpId",
                             "Play_Connect",
                             "Play_Connect_Silent",
@@ -17423,6 +17458,58 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                         return true;
                     };
 
+                auto drain_cloud_state_callback =
+                    [&](const char* phase) -> bool {
+
+                        if (!callbacks.pending_cloud_state_loaded ||
+                            callbacks.cloud_state_loaded_delivered) {
+                            return true;
+                        }
+
+                        if (callbacks.native_cloud_state_loaded_address ==
+                            0u) {
+                            callbacks.Append(
+                                "V49 CLOUD HANDSHAKE: completion pending but Native_CloudStateLoaded was not captured; retaining previous behavior.");
+                            return true;
+                        }
+
+                        callbacks.Append(
+                            "V49 CLOUD DELIVER phase=" +
+                            std::string{
+                                phase != nullptr
+                                    ? phase
+                                    : "n/a"} +
+                            " callback=0x" +
+                            JniProbeHex(
+                                callbacks
+                                    .native_cloud_state_loaded_address));
+
+                        // Verified in PvZ2 1.5.252752: this callback does not
+                        // consume its Java String argument; it signals the
+                        // native cloud singleton. Null therefore completes the
+                        // async handshake without fabricating cloud payload.
+                        if (!run_lifecycle(
+                                "V49_Native_CloudStateLoaded",
+                                callbacks
+                                    .native_cloud_state_loaded_address,
+                                kCloud,
+                                0u,
+                                0u,
+                                false)) {
+                            callbacks.Append(
+                                "V49 CLOUD DELIVER failed.");
+                            return false;
+                        }
+
+                        callbacks.cloud_state_loaded_delivered =
+                            true;
+                        callbacks.pending_cloud_state_loaded =
+                            false;
+                        callbacks.Append(
+                            "V49 CLOUD DELIVER returned successfully.");
+                        return true;
+                    };
+
                 std::size_t http_delivery_cursor = 0u;
 
                 auto drain_offline_http_callbacks =
@@ -17622,6 +17709,14 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                         820,
                         1180,
                         false)) {
+                    return result;
+                }
+
+                // v49: finish the Java-side silent cloud sync handshake now
+                // that startup + surface setup are complete, before rendering
+                // the first frame.
+                if (!drain_cloud_state_callback(
+                        "pre-frame")) {
                     return result;
                 }
 
@@ -18045,7 +18140,15 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                         callbacks.resource_wrapper_exhausted_nulls) +
                     " wrapperRecoveries=" +
                     std::to_string(
-                        callbacks.resource_wrapper_recoveries));
+                        callbacks.resource_wrapper_recoveries) +
+                    " | cloudPending=" +
+                    (callbacks.pending_cloud_state_loaded
+                        ? std::string{"YES"}
+                        : std::string{"NO"}) +
+                    " cloudDelivered=" +
+                    (callbacks.cloud_state_loaded_delivered
+                        ? std::string{"YES"}
+                        : std::string{"NO"}));
 
                 if (!post_ea_best_path.empty()) {
                     result.host_frame_png_path =
