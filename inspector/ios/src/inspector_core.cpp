@@ -823,6 +823,8 @@ StartupLogoProfileValidation ValidateStartupLogoProfile(
     return v;
 }
 
+std::string RelocName(std::uint32_t type);
+
 struct NamedRelocation {
     std::uint32_t offset = 0u;
     std::uint32_t type = 0u;
