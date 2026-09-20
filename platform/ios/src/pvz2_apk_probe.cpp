@@ -773,6 +773,21 @@ constexpr std::uint32_t kJniProbeSvcStartupGroupsLookupResult = 0x00f061u;
 constexpr std::uint32_t kJniProbeSvcStartupGroupsContribution = 0x00f062u;
 constexpr std::uint32_t kV55StartupGroupsVectorGuest = 0x10d54698u;
 
+// v56 Diagnostic Matrix: direct observation of the ResourceManager registry
+// construction pipeline plus an optional post-proof Gate-A scout. Full Matrix
+// additionally traces the compact trie lookup helper globally for selected
+// startup keys.
+constexpr std::uint32_t kJniProbeSvcV56RegistryPipelineEntry = 0x00f070u;
+constexpr std::uint32_t kJniProbeSvcV56RegistrySource28 = 0x00f071u;
+constexpr std::uint32_t kJniProbeSvcV56RegistryPost28 = 0x00f072u;
+constexpr std::uint32_t kJniProbeSvcV56RegistrySource30 = 0x00f073u;
+constexpr std::uint32_t kJniProbeSvcV56RegistryPost30 = 0x00f074u;
+constexpr std::uint32_t kJniProbeSvcV56RegistryPipelineReturn = 0x00f075u;
+constexpr std::uint32_t kJniProbeSvcV56TrieEntry = 0x00f076u;
+constexpr std::uint32_t kJniProbeSvcV56TrieMissBranch = 0x00f077u;
+constexpr std::uint32_t kJniProbeSvcV56TrieFound = 0x00f078u;
+constexpr std::uint32_t kJniProbeSvcV56TrieMissZero = 0x00f079u;
+
 constexpr std::uint32_t kJniProbeSvcUnsupportedJniBase = 0x00e000u;
 constexpr std::uint32_t kJniProbeJniSlotCount = 256u;
 
@@ -1607,12 +1622,15 @@ public:
         PvZ2JniProbeResult& output,
         PvZ2ProbeProgress progress = {},
         const std::uint8_t* expansion_data = nullptr,
-        std::size_t expansion_size = 0)
+        std::size_t expansion_size = 0,
+        PvZ2DiagnosticMode mode =
+            PvZ2DiagnosticMode::PassiveRegistry)
         : mem(memory),
           result(output),
           progress_callback(std::move(progress)),
           obb_data(expansion_data),
-          obb_size(expansion_size) {}
+          obb_size(expansion_size),
+          diagnostic_mode(mode) {}
 
     Dynarmic::A32::Jit* jit = nullptr;
     const JniProbeLoadedElf* loaded_elf = nullptr;
@@ -2413,6 +2431,48 @@ public:
     std::uint32_t v55_last_vector_count = 0xffffffffu;
     std::string v55_ctor_vector_snapshot;
     std::string v55_gate_vector_snapshot;
+
+    // v56 Diagnostic Matrix state.
+    PvZ2DiagnosticMode diagnostic_mode =
+        PvZ2DiagnosticMode::PassiveRegistry;
+    std::uint32_t v56_resource_manager = 0u;
+    std::uint64_t v56_registry_pipeline_calls = 0u;
+    std::uint64_t v56_registry_pipeline_returns = 0u;
+    std::uint64_t v56_registry_write_events = 0u;
+    std::uint64_t v56_table28_write_events = 0u;
+    std::uint64_t v56_table30_write_events = 0u;
+    std::uint32_t v56_source28_ptr = 0u;
+    std::uint32_t v56_source28_bytes = 0u;
+    std::uint32_t v56_source30_ptr = 0u;
+    std::uint32_t v56_source30_bytes = 0u;
+    std::uint32_t v56_table28_root = 0u;
+    std::uint32_t v56_table28_count = 0u;
+    std::uint32_t v56_table30_root = 0u;
+    std::uint32_t v56_table30_count = 0u;
+    std::uint32_t v56_pipeline_last_result = 0xffffffffu;
+    bool v56_gate_a_scout_activated = false;
+    std::uint64_t v56_gate_a_forced_hits = 0u;
+    std::uint32_t v56_gate_a_activation_frame = 0u;
+    std::string v56_last_registry_snapshot;
+
+    struct V56TrieContext {
+        std::uint32_t table = 0u;
+        std::uint32_t caller_lr = 0u;
+        std::string key;
+        bool relevant = false;
+    };
+    std::unordered_map<std::uint32_t, V56TrieContext>
+        v56_trie_contexts;
+
+    struct V56TargetLookupStat {
+        std::uint64_t calls = 0u;
+        std::uint64_t found = 0u;
+        std::uint64_t misses = 0u;
+        std::uint32_t last_table = 0u;
+        std::uint32_t last_caller = 0u;
+    };
+    std::map<std::string, V56TargetLookupStat>
+        v56_target_lookups;
 
     std::unordered_map<std::uint32_t, z_stream> zstreams;
     std::unordered_map<std::uint32_t, bool> zstream_deflate_mode;
