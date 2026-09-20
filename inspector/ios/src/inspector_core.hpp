@@ -24,6 +24,8 @@ struct PvZ2InspectorResult {
     std::string addresses_csv;
     std::string annotated_log;
     std::string startup_diagnosis;
+    std::string matrix_diagnosis;
+    std::string v57_plan;
     std::string message;
 };
 
