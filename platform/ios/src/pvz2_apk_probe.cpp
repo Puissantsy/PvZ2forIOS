@@ -806,6 +806,12 @@ constexpr std::uint32_t kV61ResStreamsPumpUnlockReturnGuest =
 constexpr std::uint32_t kV61GenericPthreadWrapperGuest =
     kGuestBase + 0x009cb6d0u;
 
+// v62: exact return after the same pump trylock plus an observational trap
+// for LDR r1,[r0,#0x14] immediately before TaskResource::vfn14 dispatch.
+constexpr std::uint32_t kV62ResStreamsPumpTrylockReturnGuest =
+    kGuestBase + 0x00868ba4u;
+constexpr std::uint32_t kJniProbeSvcV62TaskDispatch = 0x00f081u;
+
 constexpr std::uint32_t kJniProbeSvcUnsupportedJniBase = 0x00e000u;
 constexpr std::uint32_t kJniProbeJniSlotCount = 256u;
 
@@ -1095,6 +1101,8 @@ public:
     std::uint32_t heap_live_bytes = 0;
     std::uint32_t object_next = 0;
     std::unordered_map<std::uint32_t, std::uint32_t> heap_allocations;
+    std::vector<std::pair<std::uint32_t, std::uint32_t>>
+        heap_retired_allocations;
     std::map<std::uint32_t, std::uint32_t> heap_free_blocks;
 
     const std::uint8_t* Ptr(
@@ -1480,6 +1488,13 @@ public:
         const std::uint32_t size =
             it->second;
 
+        heap_retired_allocations.emplace_back(address, size);
+        if (heap_retired_allocations.size() > 1024u) {
+            heap_retired_allocations.erase(
+                heap_retired_allocations.begin(),
+                heap_retired_allocations.begin() + 256);
+        }
+
         heap_allocations.erase(it);
 
         if (heap_live_bytes >= size) {
@@ -1699,6 +1714,31 @@ public:
     bool v61_res_stream_pump_signature_ok = false;
     bool v61_res_stream_pump_boundary_pending = false;
     std::uint64_t v61_res_stream_pump_yields = 0;
+
+    struct V62WorkerPayload {
+        std::uint32_t entry = 0;
+        std::uint32_t object = 0;
+        std::uint32_t sentinel30 = 0;
+    };
+    std::unordered_map<std::uint32_t, V62WorkerPayload> v62_worker_payloads;
+    std::uint32_t v62_tid1_sentinel = 0;
+    std::uint32_t v62_pump_manager = 0;
+    std::uint32_t v62_pump_mutex = 0;
+    std::uint32_t v62_pump_vector_begin = 0;
+    std::uint32_t v62_pump_vector_end = 0;
+    std::uint32_t v62_pump_vector_cap = 0;
+    bool v62_pump_mutex_locked = false;
+    std::uint32_t v62_pump_mutex_owner = 0xffffffffu;
+    std::uint64_t v62_pump_mutex_acquires = 0;
+    std::uint64_t v62_pump_mutex_releases = 0;
+    std::uint64_t v62_pump_mutex_contentions = 0;
+    std::uint64_t v62_mutex_coherence_continuations = 0;
+    std::uint64_t v62_pointer_write_events = 0;
+    std::uint64_t v62_task_dispatch_events = 0;
+    bool v62_first_bad_pointer_writer_seen = false;
+    std::uint32_t v62_first_bad_pointer_writer_pc = 0;
+    std::uint32_t v62_first_bad_pointer_writer_lr = 0;
+    std::uint32_t v62_first_bad_pointer_writer_dst = 0;
 
     std::uint32_t next_pthread_key = 1;
     std::uint32_t next_synthetic_thread = 1;
@@ -2818,6 +2858,161 @@ public:
             V46DescribeGuestAddress(sp));
     }
 
+    std::string V62HeapPointerClass(std::uint32_t address) const {
+        for (const auto& item : mem.heap_allocations) {
+            const std::uint32_t base = item.first;
+            const std::uint32_t size = item.second;
+            const std::uint64_t end = static_cast<std::uint64_t>(base) + size;
+            if (address >= base && static_cast<std::uint64_t>(address) < end) {
+                const std::uint32_t offset = address - base;
+                return std::string{offset == 0u ? "live-allocation-start" : "live-interior"} +
+                    "{base=0x" + JniProbeHex(base) +
+                    ",size=" + std::to_string(size) +
+                    ",offset=+0x" + JniProbeHex(offset) + "}";
+            }
+        }
+
+        for (auto it = mem.heap_retired_allocations.rbegin();
+             it != mem.heap_retired_allocations.rend(); ++it) {
+            const std::uint32_t base = it->first;
+            const std::uint32_t size = it->second;
+            const std::uint64_t end = static_cast<std::uint64_t>(base) + size;
+            if (address >= base && static_cast<std::uint64_t>(address) < end) {
+                return "retired-allocation{base=0x" + JniProbeHex(base) +
+                    ",size=" + std::to_string(size) +
+                    ",offset=+0x" + JniProbeHex(address - base) + "}";
+            }
+        }
+        return "not-in-tracked-allocation";
+    }
+
+    std::string V62WorkerAlias(std::uint32_t address) const {
+        for (const auto& item : v62_worker_payloads) {
+            if (address == item.second.object)
+                return "tid=" + std::to_string(item.first) + ".this";
+            if (address == item.second.sentinel30)
+                return "tid=" + std::to_string(item.first) + ".this+0x30";
+        }
+        return {};
+    }
+
+    void V62RefreshPumpVector() {
+        if (v62_pump_manager == 0u ||
+            mem.Ptr(v62_pump_manager + 0x58u, 4u) == nullptr) return;
+        v62_pump_vector_begin = mem.Read32Guest(v62_pump_manager + 0x50u);
+        v62_pump_vector_end = mem.Read32Guest(v62_pump_manager + 0x54u);
+        v62_pump_vector_cap = mem.Read32Guest(v62_pump_manager + 0x58u);
+    }
+
+    void V62ScanPumpVector(const char* reason) {
+        if (!V62Enabled()) return;
+        V62RefreshPumpVector();
+        if (v62_pump_vector_begin == 0u ||
+            v62_pump_vector_end < v62_pump_vector_begin ||
+            v62_pump_vector_cap < v62_pump_vector_end) {
+            Append(std::string{"V62 VECTOR SNAPSHOT "} +
+                   (reason ? reason : "?") + " invalid begin=0x" +
+                   JniProbeHex(v62_pump_vector_begin) + " end=0x" +
+                   JniProbeHex(v62_pump_vector_end) + " cap=0x" +
+                   JniProbeHex(v62_pump_vector_cap));
+            return;
+        }
+
+        const std::uint32_t count = std::min<std::uint32_t>(
+            (v62_pump_vector_end - v62_pump_vector_begin) / 4u, 16384u);
+        std::uint32_t aliases = 0;
+        for (std::uint32_t i = 0; i < count; ++i) {
+            const std::uint32_t value =
+                mem.Read32Guest(v62_pump_vector_begin + i * 4u);
+            const std::string alias = V62WorkerAlias(value);
+            if (alias.empty()) continue;
+            ++aliases;
+            Append(std::string{"V62 VECTOR ALIAS "} + (reason ? reason : "?") +
+                   " slot=" + std::to_string(i) +
+                   " value=" + V46DescribeGuestAddress(value) +
+                   " alias=" + alias +
+                   " class=" + V62HeapPointerClass(value));
+        }
+        Append(std::string{"V62 VECTOR SNAPSHOT "} + (reason ? reason : "?") +
+               " begin=0x" + JniProbeHex(v62_pump_vector_begin) +
+               " end=0x" + JniProbeHex(v62_pump_vector_end) +
+               " cap=0x" + JniProbeHex(v62_pump_vector_cap) +
+               " count=" + std::to_string(count) +
+               " workerAliases=" + std::to_string(aliases));
+    }
+
+    void V62ObserveWrite(
+        std::uint32_t address,
+        std::uint32_t width,
+        std::uint64_t old_value,
+        std::uint64_t new_value,
+        const char* source = "guest-store") {
+
+        if (!V62Enabled() || width != 4u) return;
+        V62RefreshPumpVector();
+
+        const std::uint32_t old32 = static_cast<std::uint32_t>(old_value);
+        const std::uint32_t new32 = static_cast<std::uint32_t>(new_value);
+        const std::string alias = V62WorkerAlias(new32);
+        const bool metadata =
+            v62_pump_manager != 0u &&
+            (address == v62_pump_manager + 0x50u ||
+             address == v62_pump_manager + 0x54u ||
+             address == v62_pump_manager + 0x58u);
+        const bool vector_slot =
+            v62_pump_vector_begin != 0u &&
+            v62_pump_vector_cap >= v62_pump_vector_begin &&
+            address >= v62_pump_vector_begin &&
+            address + 4u <= v62_pump_vector_cap &&
+            ((address - v62_pump_vector_begin) % 4u) == 0u;
+
+        if (alias.empty() && !metadata && !vector_slot) return;
+        ++v62_pointer_write_events;
+
+        const bool bad_tid1 =
+            v62_tid1_sentinel != 0u && new32 == v62_tid1_sentinel &&
+            (vector_slot || metadata);
+        const std::uint32_t pc = jit ? jit->Regs()[15] : 0u;
+        const std::uint32_t lr = jit ? jit->Regs()[14] : 0u;
+
+        if (bad_tid1 && !v62_first_bad_pointer_writer_seen) {
+            v62_first_bad_pointer_writer_seen = true;
+            v62_first_bad_pointer_writer_pc = pc;
+            v62_first_bad_pointer_writer_lr = lr;
+            v62_first_bad_pointer_writer_dst = address;
+            Append("V62 FIRST BAD POINTER INSERT: value=0x" + JniProbeHex(new32) +
+                   " alias=" + V62WorkerAlias(new32) +
+                   " dst=" + V46DescribeGuestAddress(address) +
+                   " old=0x" + JniProbeHex(old32) +
+                   " PC=" + V46DescribeGuestAddress(pc) +
+                   " LR=" + V46DescribeGuestAddress(lr) +
+                   " thread=" + std::to_string(current_probe_thread_id) +
+                   " source=" + (source ? source : "?"));
+        }
+
+        if (!(bad_tid1 || !alias.empty() || v62_pointer_write_events <= 64u ||
+              (v62_pointer_write_events % 512u) == 0u)) return;
+
+        std::ostringstream out;
+        out << "V62 POINTER WRITE #" << v62_pointer_write_events
+            << " source=" << (source ? source : "?")
+            << " thread=" << current_probe_thread_id
+            << " dst=" << V46DescribeGuestAddress(address)
+            << " old=0x" << JniProbeHex(old32)
+            << " new=0x" << JniProbeHex(new32)
+            << " newClass=" << V62HeapPointerClass(new32);
+        if (!alias.empty()) out << " alias=" << alias;
+        if (vector_slot)
+            out << " vectorSlot=" << ((address - v62_pump_vector_begin) / 4u);
+        if (metadata) out << " managerMetadata=YES";
+        out << " vector={begin=0x" << JniProbeHex(v62_pump_vector_begin)
+            << ",end=0x" << JniProbeHex(v62_pump_vector_end)
+            << ",cap=0x" << JniProbeHex(v62_pump_vector_cap)
+            << "} PC=" << V46DescribeGuestAddress(pc)
+            << " LR=" << V46DescribeGuestAddress(lr);
+        Append(out.str());
+    }
+
     static std::string V53GameStateName(
         std::int32_t state) {
 
@@ -3306,54 +3501,52 @@ public:
 
     const char* V56ModeName() const {
         switch (diagnostic_mode) {
-        case PvZ2DiagnosticMode::PassiveRegistry:
-            return "PASSIVE_REGISTRY";
-        case PvZ2DiagnosticMode::GateAScout:
-            return "GATE_A_SCOUT";
-        case PvZ2DiagnosticMode::FullMatrix:
-            return "V56_BASELINE";
+        case PvZ2DiagnosticMode::PassiveRegistry: return "PASSIVE_REGISTRY";
+        case PvZ2DiagnosticMode::GateAScout: return "GATE_A_SCOUT";
+        case PvZ2DiagnosticMode::FullMatrix: return "V56_BASELINE";
         case PvZ2DiagnosticMode::CtypeCompatNativePath:
             return "CTYPE_COMPAT_NATIVE_PATH";
         case PvZ2DiagnosticMode::CtypeCompatDeepScout:
             return "CTYPE_COMPAT_DEEP_SCOUT";
+        case PvZ2DiagnosticMode::V62TaskProvenanceControlA:
+            return "V62_TASK_PROVENANCE_CONTROL_A";
+        case PvZ2DiagnosticMode::V62PumpMutexCoherentB:
+            return "V62_PUMP_MUTEX_COHERENT_B";
         }
-
         return "UNKNOWN";
+    }
+
+    bool V62Enabled() const {
+        return diagnostic_mode == PvZ2DiagnosticMode::V62TaskProvenanceControlA ||
+               diagnostic_mode == PvZ2DiagnosticMode::V62PumpMutexCoherentB;
+    }
+
+    bool V62MutexCoherentEnabled() const {
+        return diagnostic_mode == PvZ2DiagnosticMode::V62PumpMutexCoherentB;
     }
 
     bool V57CtypeEnabled() const {
         return
-            diagnostic_mode ==
-                PvZ2DiagnosticMode::CtypeCompatNativePath ||
-            diagnostic_mode ==
-                PvZ2DiagnosticMode::CtypeCompatDeepScout;
+            diagnostic_mode == PvZ2DiagnosticMode::CtypeCompatNativePath ||
+            diagnostic_mode == PvZ2DiagnosticMode::CtypeCompatDeepScout ||
+            V62Enabled();
     }
 
     bool V57DeepScoutEnabled() const {
-        return
-            diagnostic_mode ==
-                PvZ2DiagnosticMode::CtypeCompatDeepScout;
+        return diagnostic_mode == PvZ2DiagnosticMode::CtypeCompatDeepScout;
     }
 
     bool V56ScoutEnabled() const {
         return
-            diagnostic_mode ==
-                PvZ2DiagnosticMode::GateAScout ||
-            diagnostic_mode ==
-                PvZ2DiagnosticMode::FullMatrix ||
-            diagnostic_mode ==
-                PvZ2DiagnosticMode::CtypeCompatDeepScout;
+            diagnostic_mode == PvZ2DiagnosticMode::GateAScout ||
+            diagnostic_mode == PvZ2DiagnosticMode::FullMatrix ||
+            diagnostic_mode == PvZ2DiagnosticMode::CtypeCompatDeepScout;
     }
 
-    // v58: compact-trie SVC tracing is diagnostic-only. Keep it in the exact
-    // v56 baseline and in Deep Scout, but remove it from Ctype Native so the
-    // causal ctype+scheduler run leaves the guest trie hot path unpatched.
     bool V56FullMatrixEnabled() const {
         return
-            diagnostic_mode ==
-                PvZ2DiagnosticMode::FullMatrix ||
-            diagnostic_mode ==
-                PvZ2DiagnosticMode::CtypeCompatDeepScout;
+            diagnostic_mode == PvZ2DiagnosticMode::FullMatrix ||
+            diagnostic_mode == PvZ2DiagnosticMode::CtypeCompatDeepScout;
     }
 
     bool V56IsTargetLookupKey(
@@ -5043,6 +5236,7 @@ public:
             4u,
             old,
             value);
+        V62ObserveWrite(address, 4u, old, value);
     }
 
     void MemoryWrite64(
@@ -5126,6 +5320,7 @@ public:
             4u,
             old,
             value);
+        V62ObserveWrite(address, 4u, old, value, "guest-strex");
         return true;
     }
 
@@ -12323,7 +12518,32 @@ public:
                 return;
             }
 
+            struct V62BulkPointerCopy {
+                std::uint32_t destination;
+                std::uint32_t old_value;
+                std::uint32_t value;
+            };
+            std::vector<V62BulkPointerCopy> v62_copies;
+            if (V62Enabled() && size <= 0x00010000u &&
+                !v62_worker_payloads.empty()) {
+                for (std::uint32_t off = 0u;
+                     off + 4u <= size && v62_copies.size() < 32u;
+                     off += 4u) {
+                    const std::uint32_t value = mem.Read32Guest(source + off);
+                    if (V62WorkerAlias(value).empty()) continue;
+                    v62_copies.push_back({
+                        destination + off,
+                        mem.Read32Guest(destination + off),
+                        value});
+                }
+            }
+
             std::memmove(dst, src, size);
+            for (const auto& copy : v62_copies) {
+                V62ObserveWrite(
+                    copy.destination, 4u, copy.old_value, copy.value,
+                    name.c_str());
+            }
             regs[0] = destination;
             ++supported_calls;
             return;
@@ -14293,17 +14513,34 @@ public:
                 argument != 0u &&
                 mem.Ptr(argument, 8u) != nullptr) {
 
+                const std::uint32_t worker_entry = mem.Read32Guest(argument);
+                const std::uint32_t worker_object =
+                    mem.Read32Guest(argument + 4u);
+
                 Append(
-                    "V61 WORKER PAYLOAD tid=" +
-                    std::to_string(thread_id) +
-                    " entry=0x" +
-                    JniProbeHex(
-                        mem.Read32Guest(argument)) +
-                    " this=0x" +
-                    JniProbeHex(
-                        mem.Read32Guest(argument + 4u)) +
-                    " wrapperArg=0x" +
-                    JniProbeHex(argument));
+                    "V61 WORKER PAYLOAD tid=" + std::to_string(thread_id) +
+                    " entry=0x" + JniProbeHex(worker_entry) +
+                    " this=0x" + JniProbeHex(worker_object) +
+                    " wrapperArg=0x" + JniProbeHex(argument));
+
+                if (V62Enabled()) {
+                    V62WorkerPayload payload{
+                        worker_entry,
+                        worker_object,
+                        worker_object ? worker_object + 0x30u : 0u};
+                    v62_worker_payloads[thread_id] = payload;
+                    if (thread_id == 1u) v62_tid1_sentinel = payload.sentinel30;
+
+                    Append(
+                        "V62 WORKER ALIAS tid=" + std::to_string(thread_id) +
+                        " entry=" + V46DescribeGuestAddress(worker_entry) +
+                        " this=" + V46DescribeGuestAddress(worker_object) +
+                        " thisClass=" + V62HeapPointerClass(worker_object) +
+                        " sentinel30=" +
+                        V46DescribeGuestAddress(payload.sentinel30) +
+                        " sentinelClass=" +
+                        V62HeapPointerClass(payload.sentinel30));
+                }
             }
 
             regs[0] = 0;
