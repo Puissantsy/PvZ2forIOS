@@ -315,7 +315,7 @@ NSString *NSStringFromStd(
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — Writable User-State Probe v51";
+        @"PvZ2forIOS — Startup Diagnostic Cockpit v52";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -324,7 +324,7 @@ NSString *NSStringFromStd(
         NO;
 
     title.text =
-        @"PvZ2forIOS — writable user-state probe v51";
+        @"PvZ2forIOS — startup diagnostic cockpit v52";
 
     title.font =
         [UIFont
@@ -340,8 +340,8 @@ NSString *NSStringFromStd(
         NO;
 
     explanation.text =
-        @"v50 ruled out the network-status gate as well: the game observed Wi-Fi hundreds of times, cloud completion succeeded, UI_Android and Init loaded, but MainMenu_Background/UI_MainMenu were never requested and post-EA remained genuinely black. The same run exposed a stronger pre-menu failure during Native_onSurfaceCreated: PvZDB tries to save table 40 (Player profiles) to No_Backup/snapshot2.dat, but our read-only VFS returned null; even its /dev/null fallback failed. "
-         @"v51 fixes that whole Android persistent-state class instead of patching one filename. Android private files/cache now have an in-memory writable filesystem covering fopen/open/read/write/fread/fwrite/seek/stat/access/mkdir/unlink/ftruncate plus valid empty directory handles and /dev/null. Config_ConfigKeyExists/read/write string/int/bool now share a real process-local store; importantly, Config_ConfigReadString is corrected to its actual one-argument APK signature instead of reading a nonexistent second 'default' argument. Existing cloud/network/RSB/GLES/menu milestones remain enabled. No UI_iPad remap is introduced yet.";
+        @"v51 proved that Android player-profile persistence is now real: snapshot2.dat is created and Config values persist, but the game still fades from the EA splash into a genuinely black framebuffer without requesting MainMenu_Background or UI_MainMenu. "
+         @"v52 changes strategy from one-hypothesis-per-build to a reusable diagnostic cockpit. It snapshots the real AndroidAppDriver/GameApp object graph around the EA transition, reports small enum/boolean-like field changes, captures post-EA JNI caller PCs and stack code candidates, summarizes every deferred worker, and keeps all existing resource/cloud/network/VFS/GLES probes. The frame soak is now adaptive: 600 is only a safety ceiling and a stable black post-EA state stops early. The persistent logger also keeps one file handle open instead of reopening the log for every line, removing a major diagnostic-time overhead. The displayed PNG is now the FINAL framebuffer, not the visually richest EA frame.";
 
     explanation.numberOfLines = 0;
 
@@ -644,7 +644,7 @@ NSString *NSStringFromStd(
             monospacedSystemFontOfSize:13.0
             weight:UIFontWeightRegular];
     caption.text =
-        @"v51 — writable Android user state + player-profile persistence\nTap Close to return to the full diagnostic log.";
+        @"v52 — FINAL framebuffer (not the richest splash frame)\nTap Close to inspect the state-graph / callsite diagnostic log.";
 
     UIButton *closeButton =
         [UIButton
@@ -1013,7 +1013,7 @@ NSString *NSStringFromStd(
 
     [self
         appendUI:
-            @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v51 keeps the v50 Wi-Fi/cloud/resource probes but repairs the missing Android persistent-state surface. Watch for V51 USERFS writes to No_Backup/snapshot2.dat, a non-zero V51 PROFILE SNAPSHOT size, Config keys becoming stored/existing, and especially whether MainMenu_Background/UI_MainMenu or texture uploads finally advance after the EA splash."];
+            @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v52 runs one high-information startup diagnosis instead of another single-gate probe. Key outputs are V52 OBJECT ROOT / STATE-LIKE CHANGE / STATE CANDIDATE, V52 POST-EA JNI CALLSITE / STACK CODE, V52 WORKER FINAL, resource/menu milestones, and the adaptive-stop decision. The image shown at the end is the actual FINAL framebuffer."];
 
     [self
         presentViewController:
@@ -1074,7 +1074,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v51 probe run started; PID=%d ===",
+                    @"=== PvZ2 v52 diagnostic run started; PID=%d ===",
                     getpid()]];
 
     self.jniRunning =
@@ -1224,7 +1224,7 @@ NSString *NSStringFromStd(
                         appendUI:
                             [NSString
                                 stringWithFormat:
-                                    @"STEP 3C: JNI_OnLoad=%@ | GameAppInit returned=%@ result=%u | lifecycle=%u | firstDraw reached=%@ returned=%@ | frames=%u | hostGLES=%@ | bestFrame=%u nonBlack=%llu",
+                                    @"STEP 3C: JNI_OnLoad=%@ | GameAppInit returned=%@ result=%u | lifecycle=%u | firstDraw reached=%@ returned=%@ | frames=%u | adaptiveStop=%@ | hostGLES=%@ | richestFrame=%u nonBlack=%llu | lastNonBlack=%u pixels=%llu",
                                     result.returned_from_jni_onload ? @"YES" : @"NO",
                                     result.returned_game_app_initialize ? @"YES" : @"NO",
                                     result.game_app_initialize_return & 0xffu,
@@ -1232,9 +1232,22 @@ NSString *NSStringFromStd(
                                     result.reached_first_draw_frame ? @"YES" : @"NO",
                                     result.returned_first_draw_frame ? @"YES" : @"NO",
                                     result.draw_frames_completed,
+                                    result.adaptive_frame_stop ? @"YES" : @"NO",
                                     result.host_gles_active ? @"YES" : @"NO",
                                     result.best_frame_number,
-                                    (unsigned long long)result.best_frame_nonblack]];
+                                    (unsigned long long)result.best_frame_nonblack,
+                                    result.last_nonblack_frame_number,
+                                    (unsigned long long)result.last_nonblack_pixels]];
+
+                    if (!result.diagnostic_summary.empty()) {
+                        [selfRef
+                            appendUI:
+                                [NSString
+                                    stringWithFormat:
+                                        @"STEP 3C3: %@",
+                                        NSStringFromStd(
+                                            result.diagnostic_summary)]];
+                    }
 
                     [selfRef
                         appendUI:
@@ -1317,29 +1330,39 @@ NSString *NSStringFromStd(
                     if (result.ok) {
                         [selfRef
                             appendUI:
-                                @"SUCCESS STEP 3: PvZ2 completed lifecycle + host GLES + v45 RESFILE recovery + v46 address mapping + v47 framebuffer diagnosis + 600-frame soak."];
+                                @"SUCCESS STEP 3: PvZ2 completed lifecycle + host GLES + v52 state/callsite diagnostics + adaptive frame soak."];
 
-                        if (!result.host_frame_png_path.empty()) {
+                        if (!result.final_frame_png_path.empty()) {
                             [selfRef
                                 appendUI:
                                     [NSString
                                         stringWithFormat:
-                                            @"STEP 3G: best sampled GLES framebuffer PNG = %@",
+                                            @"STEP 3G: FINAL GLES framebuffer PNG = %@",
                                             NSStringFromStd(
-                                                result.host_frame_png_path)]];
+                                                result.final_frame_png_path)]];
+
+                            if (!result.best_frame_png_path.empty()) {
+                                [selfRef
+                                    appendUI:
+                                        [NSString
+                                            stringWithFormat:
+                                                @"STEP 3G2: richest sampled framebuffer (diagnostic only) = %@",
+                                                NSStringFromStd(
+                                                    result.best_frame_png_path)]];
+                            }
 
                             [selfRef
                                 showCapturedFrameAtPath:
                                     NSStringFromStd(
-                                        result.host_frame_png_path)];
+                                        result.final_frame_png_path)];
                         } else {
                             [selfRef
                                 showResult:
-                                    @"PvZ2 v47 frame soak returned"
+                                    @"PvZ2 v52 diagnostic returned"
                                 message:
                                     [NSString
                                         stringWithFormat:
-                                            @"PvZ2 completed its native startup and v47 frame soak.\n\nGameAppInitialize: %u\nLifecycle calls completed: %u\nFrames returned: %u\nHost GLES active: %@\nBest sampled frame: %u (%llu non-black pixels)\nConstructors: %u/%u\nJNI_OnLoad: 0x%08x\n\nNo PNG capture was produced, so check the V47 GLES GEN/BIND/ATTACH and V47 FBO SNAPSHOT lines, plus V39 FRAME STATS and V38 RESFILE / BOUNDARY WORKER lines in the full log.",
+                                            @"PvZ2 completed its native startup and v52 adaptive diagnostic.\n\nGameAppInitialize: %u\nLifecycle calls completed: %u\nFrames returned: %u\nHost GLES active: %@\nRichest sampled frame: %u (%llu non-black pixels)\nConstructors: %u/%u\nJNI_OnLoad: 0x%08x\n\nNo final PNG capture was produced; inspect V52 STATE CANDIDATE / POST-EA JNI / WORKER FINAL plus the V47 framebuffer lines in the full log.",
                                             result.game_app_initialize_return & 0xffu,
                                             result.lifecycle_calls_completed,
                                             result.draw_frames_completed,
