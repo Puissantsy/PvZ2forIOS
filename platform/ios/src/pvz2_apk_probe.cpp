@@ -20694,6 +20694,8 @@ bool JniProbePrepareRuntime(
         ". Ctype Native now leaves the compact-trie hot path unpatched; Deep Scout retains exact trie-node compare tracing@0x10a83af8. Gate-C scouting rules remain unchanged.");
     callbacks.Append(
         "V58 STREAM-FUTURE SCHEDULER: recognizes poll@0x109f7140..0x109f71a8 plus atomic helpers@0x109f9868..0x109f98d4 only when LR comes from a known future poll. Future snapshots include vfn+0x2c; ordinary main-thread CPU slices still never run workers.");
+    callbacks.Append(
+        "V59 ASYNC CALLER-POLL SCHEDULER: stream-future objects are identified dynamically by vfn+0x2c==0x109f7140. Caller-side virtual-status spin loops are recognized by ARM instruction shape plus an LR still inside the verified stream poll; ordinary CPU slices remain main-only.");
 
     return_trampoline =
         JniProbeMakeTrampoline(
@@ -21559,6 +21561,196 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                         clean_lr);
                             };
 
+                        // v59: identify the stream-future class from the
+                        // guest object's virtual status method, rather than
+                        // assuming that a particular caller preserves the
+                        // object in r4. At the 0x9f7140 entry the object is
+                        // still in r0; inside its atomic helper it is in r4;
+                        // caller-side status spins can preserve it elsewhere.
+                        auto is_stream_future_object =
+                            [&](std::uint32_t candidate) {
+                                if (candidate == 0u ||
+                                    memory.Ptr(
+                                        candidate,
+                                        4u) == nullptr) {
+                                    return false;
+                                }
+
+                                const std::uint32_t vtable =
+                                    memory.Read32Guest(
+                                        candidate);
+
+                                if (vtable == 0u ||
+                                    vtable >
+                                        0xffffffffu - 0x2cu ||
+                                    memory.Ptr(
+                                        vtable + 0x2cu,
+                                        4u) == nullptr) {
+                                    return false;
+                                }
+
+                                return
+                                    (memory.Read32Guest(
+                                         vtable + 0x2cu) &
+                                     ~1u) ==
+                                    kGuestBase + 0x009f7140u;
+                            };
+
+                        auto find_stream_future_object =
+                            [&](std::uint32_t& reg_index) {
+                                static constexpr
+                                    std::array<std::uint32_t, 8>
+                                        kCandidateRegs = {
+                                            0u,
+                                            4u,
+                                            5u,
+                                            1u,
+                                            2u,
+                                            3u,
+                                            6u,
+                                            7u};
+
+                                for (const std::uint32_t ri :
+                                     kCandidateRegs) {
+                                    const std::uint32_t candidate =
+                                        jit.Regs()[ri];
+
+                                    if (is_stream_future_object(
+                                            candidate)) {
+                                        reg_index = ri;
+                                        return candidate;
+                                    }
+                                }
+
+                                reg_index = 0xffffffffu;
+                                return 0u;
+                            };
+
+                        // Detect the whole caller-side status-spin class. The
+                        // verified ARM shape is:
+                        //   LDR vt,[obj] ; LDR fn,[vt,#0x2c]
+                        //   MOV r0,obj  ; BLX fn
+                        //   CMP r0,#1   ; BEQ <loop-start>
+                        // We scan up to five instructions behind the current
+                        // PC so a Dynarmic timeslice may land anywhere inside
+                        // the six-instruction loop. LR must still point back
+                        // into the verified stream poll, and the live object
+                        // must advertise that poll in vfn+0x2c.
+                        auto stream_future_caller_poll_object =
+                            [&](std::uint32_t pc,
+                                std::uint32_t lr,
+                                std::uint32_t& reg_index) {
+                                reg_index = 0xffffffffu;
+
+                                if (!is_stream_future_poll_pc(
+                                        lr & ~1u)) {
+                                    return 0u;
+                                }
+
+                                for (std::uint32_t back = 0u;
+                                     back <= 20u;
+                                     back += 4u) {
+                                    if (pc <
+                                        kGuestBase + back) {
+                                        continue;
+                                    }
+
+                                    const std::uint32_t start =
+                                        pc - back;
+
+                                    if (memory.Ptr(
+                                            start,
+                                            24u) == nullptr) {
+                                        continue;
+                                    }
+
+                                    const std::uint32_t i0 =
+                                        memory.Read32Guest(
+                                            start + 0u);
+                                    const std::uint32_t i1 =
+                                        memory.Read32Guest(
+                                            start + 4u);
+                                    const std::uint32_t i2 =
+                                        memory.Read32Guest(
+                                            start + 8u);
+                                    const std::uint32_t i3 =
+                                        memory.Read32Guest(
+                                            start + 12u);
+                                    const std::uint32_t i4 =
+                                        memory.Read32Guest(
+                                            start + 16u);
+                                    const std::uint32_t i5 =
+                                        memory.Read32Guest(
+                                            start + 20u);
+
+                                    if ((i0 & 0x0ff00fffu) !=
+                                            0x05900000u ||
+                                        (i1 & 0x0ff00fffu) !=
+                                            0x0590002cu) {
+                                        continue;
+                                    }
+
+                                    const std::uint32_t object_reg =
+                                        (i0 >> 16u) & 0x0fu;
+                                    const std::uint32_t vtable_reg =
+                                        (i0 >> 12u) & 0x0fu;
+                                    const std::uint32_t i1_base =
+                                        (i1 >> 16u) & 0x0fu;
+                                    const std::uint32_t call_reg =
+                                        (i1 >> 12u) & 0x0fu;
+
+                                    if (i1_base != vtable_reg ||
+                                        (i2 & 0x0ffffff0u) !=
+                                            0x01a00000u ||
+                                        (i2 & 0x0fu) !=
+                                            object_reg ||
+                                        (i3 & 0x0ffffff0u) !=
+                                            0x012fff30u ||
+                                        (i3 & 0x0fu) !=
+                                            call_reg ||
+                                        (i4 & 0x0fffffffu) !=
+                                            0x03500001u ||
+                                        (i5 & 0xff000000u) !=
+                                            0x0a000000u) {
+                                        continue;
+                                    }
+
+                                    const std::int32_t branch_delta =
+                                        static_cast<std::int32_t>(
+                                            (i5 &
+                                             0x00ffffffu)
+                                            << 8u) >>
+                                        6u;
+
+                                    const std::int64_t branch_target =
+                                        static_cast<std::int64_t>(
+                                            start + 20u + 8u) +
+                                        static_cast<std::int64_t>(
+                                            branch_delta);
+
+                                    if (branch_target !=
+                                        static_cast<std::int64_t>(
+                                            start) ||
+                                        object_reg >=
+                                            jit.Regs().size()) {
+                                        continue;
+                                    }
+
+                                    const std::uint32_t object =
+                                        jit.Regs()[object_reg];
+
+                                    if (!is_stream_future_object(
+                                            object)) {
+                                        continue;
+                                    }
+
+                                    reg_index = object_reg;
+                                    return object;
+                                }
+
+                                return 0u;
+                            };
+
                         auto wait_kind =
                             [&](std::uint32_t pc,
                                 std::uint32_t lr) -> const char* {
@@ -21598,12 +21790,23 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                     return "rsb-read-wait";
                                 }
 
+                                std::uint32_t caller_reg =
+                                    0xffffffffu;
+
+                                if (stream_future_caller_poll_object(
+                                        pc,
+                                        lr,
+                                        caller_reg) != 0u) {
+                                    return "stream-future-caller-poll";
+                                }
+
                                 return "timeslice";
                             };
 
                         auto wait_object_for_pc =
                             [&](std::uint32_t pc,
-                                std::uint32_t lr) {
+                                std::uint32_t lr,
+                                std::uint32_t& reg_index) {
                                 const char* kind =
                                     wait_kind(
                                         pc,
@@ -21612,12 +21815,38 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                 if (std::strcmp(
                                         kind,
                                         "rsb-read-wait") == 0) {
+                                    reg_index = 5u;
                                     return jit.Regs()[5];
                                 }
 
-                                // Both legacy and stream-future polls preserve
-                                // the outer async object in r4, including while
-                                // executing the atomic helpers.
+                                if (std::strcmp(
+                                        kind,
+                                        "stream-future-caller-poll") ==
+                                    0) {
+                                    const std::uint32_t object =
+                                        stream_future_caller_poll_object(
+                                            pc,
+                                            lr,
+                                            reg_index);
+
+                                    if (object != 0u) {
+                                        return object;
+                                    }
+                                }
+
+                                if (std::strcmp(
+                                        kind,
+                                        "stream-future-poll") == 0) {
+                                    const std::uint32_t object =
+                                        find_stream_future_object(
+                                            reg_index);
+
+                                    if (object != 0u) {
+                                        return object;
+                                    }
+                                }
+
+                                reg_index = 4u;
                                 return jit.Regs()[4];
                             };
 
@@ -21839,12 +22068,24 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                     current_wait_kind,
                                     "timeslice") != 0;
 
+                            std::uint32_t wait_object_reg =
+                                0xffffffffu;
+
                             const std::uint32_t future =
                                 concrete_wait
                                     ? wait_object_for_pc(
                                           result.final_pc,
-                                          wait_lr)
+                                          wait_lr,
+                                          wait_object_reg)
                                     : 0u;
+
+                            const std::string wait_reg_label =
+                                wait_object_reg ==
+                                        0xffffffffu
+                                    ? "n/a"
+                                    : "r" +
+                                        std::to_string(
+                                            wait_object_reg);
 
                             std::array<std::uint8_t, 64> future_before{};
                             if (concrete_wait &&
@@ -21871,6 +22112,8 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                     " LR=0x" +
                                     JniProbeHex(
                                         wait_lr) +
+                                    " waitReg=" +
+                                    wait_reg_label +
                                     " wait_object{" +
                                     async_future_snapshot(
                                         future) +
