@@ -1,0 +1,1234 @@
+#include "inspector_core.hpp"
+
+#include <zlib.h>
+
+#include <algorithm>
+#include <array>
+#include <cctype>
+#include <cstdint>
+#include <cstring>
+#include <iomanip>
+#include <map>
+#include <optional>
+#include <set>
+#include <sstream>
+#include <stdexcept>
+#include <string>
+#include <unordered_map>
+#include <utility>
+#include <vector>
+
+namespace {
+
+constexpr std::uint32_t kGuestBase = 0x10000000u;
+constexpr std::uint32_t kStackBase = 0x20000000u;
+constexpr std::uint32_t kStackSize = 0x00100000u;
+constexpr std::uint32_t kHeapBase = 0x30000000u;
+constexpr std::uint32_t kHeapSize = 0x04000000u;
+constexpr std::uint32_t kTrampBase = 0x40000000u;
+constexpr std::uint32_t kTrampSize = 0x00100000u;
+constexpr std::uint32_t kJniBase = 0x50000000u;
+constexpr std::uint32_t kJniSize = 0x00010000u;
+constexpr std::uint32_t kObjectBase = 0x51000000u;
+constexpr std::uint32_t kObjectSize = 0x00010000u;
+
+constexpr std::uint32_t kPtLoad = 1;
+constexpr std::uint32_t kShtDynamic = 6;
+constexpr std::uint32_t kShtDynsym = 11;
+constexpr std::uint32_t kShtRel = 9;
+constexpr std::uint32_t kShtArmExidx = 0x70000001u;
+
+std::uint16_t U16(const std::uint8_t* p) {
+    return static_cast<std::uint16_t>(p[0]) |
+           (static_cast<std::uint16_t>(p[1]) << 8);
+}
+
+std::uint32_t U32(const std::uint8_t* p) {
+    return static_cast<std::uint32_t>(p[0]) |
+           (static_cast<std::uint32_t>(p[1]) << 8) |
+           (static_cast<std::uint32_t>(p[2]) << 16) |
+           (static_cast<std::uint32_t>(p[3]) << 24);
+}
+
+std::string Hex(std::uint32_t v, int width = 8) {
+    std::ostringstream s;
+    s << "0x" << std::hex << std::setfill('0') << std::setw(width) << v;
+    return s.str();
+}
+
+std::string JsonEscape(const std::string& s) {
+    std::ostringstream out;
+    for (unsigned char c : s) {
+        switch (c) {
+            case '\\': out << "\\\\"; break;
+            case '"': out << "\\\""; break;
+            case '\n': out << "\\n"; break;
+            case '\r': out << "\\r"; break;
+            case '\t': out << "\\t"; break;
+            default:
+                if (c < 0x20) {
+                    out << "\\u" << std::hex << std::setw(4)
+                        << std::setfill('0') << static_cast<int>(c);
+                } else {
+                    out << static_cast<char>(c);
+                }
+        }
+    }
+    return out.str();
+}
+
+std::string CsvEscape(const std::string& s) {
+    if (s.find_first_of(",\"\n\r") == std::string::npos) {
+        return s;
+    }
+    std::string out = "\"";
+    for (char c : s) {
+        if (c == '\"') out += "\"\"";
+        else out += c;
+    }
+    out += "\"";
+    return out;
+}
+
+struct ZipMember {
+    std::uint16_t method = 0;
+    std::uint32_t compressed_size = 0;
+    std::uint32_t uncompressed_size = 0;
+    std::uint32_t local_header_offset = 0;
+};
+
+std::vector<std::uint8_t> ExtractZipMember(
+    const std::uint8_t* data,
+    std::size_t size,
+    const std::string& wanted) {
+
+    if (size < 22) {
+        throw std::runtime_error("APK is too small to be a ZIP");
+    }
+
+    const std::size_t min_pos =
+        size > (0xffffu + 22u) ? size - (0xffffu + 22u) : 0;
+
+    std::optional<std::size_t> eocd;
+    for (std::size_t p = size - 22;; --p) {
+        if (p + 4 <= size && U32(data + p) == 0x06054b50u) {
+            eocd = p;
+            break;
+        }
+        if (p == min_pos) break;
+    }
+
+    if (!eocd) {
+        throw std::runtime_error("ZIP end-of-central-directory not found");
+    }
+
+    const std::uint16_t entries = U16(data + *eocd + 10);
+    const std::uint32_t central_size = U32(data + *eocd + 12);
+    const std::uint32_t central_offset = U32(data + *eocd + 16);
+
+    if (static_cast<std::uint64_t>(central_offset) + central_size > size) {
+        throw std::runtime_error("ZIP central directory is outside APK");
+    }
+
+    std::size_t pos = central_offset;
+    std::optional<ZipMember> member;
+
+    for (std::uint32_t i = 0; i < entries && pos + 46 <= size; ++i) {
+        if (U32(data + pos) != 0x02014b50u) {
+            throw std::runtime_error("Invalid ZIP central-directory entry");
+        }
+
+        const std::uint16_t method = U16(data + pos + 10);
+        const std::uint32_t compressed = U32(data + pos + 20);
+        const std::uint32_t uncompressed = U32(data + pos + 24);
+        const std::uint16_t name_len = U16(data + pos + 28);
+        const std::uint16_t extra_len = U16(data + pos + 30);
+        const std::uint16_t comment_len = U16(data + pos + 32);
+        const std::uint32_t local_offset = U32(data + pos + 42);
+
+        if (pos + 46u + name_len + extra_len + comment_len > size) {
+            throw std::runtime_error("Truncated ZIP central-directory entry");
+        }
+
+        const std::string name(
+            reinterpret_cast<const char*>(data + pos + 46),
+            name_len);
+
+        if (name == wanted) {
+            member = ZipMember{method, compressed, uncompressed, local_offset};
+            break;
+        }
+
+        pos += 46u + name_len + extra_len + comment_len;
+    }
+
+    if (!member) {
+        throw std::runtime_error(
+            "lib/armeabi-v7a/libPVZ2.so was not found in this APK");
+    }
+
+    const std::size_t local = member->local_header_offset;
+    if (local + 30 > size || U32(data + local) != 0x04034b50u) {
+        throw std::runtime_error("Invalid ZIP local header for libPVZ2.so");
+    }
+
+    const std::uint16_t name_len = U16(data + local + 26);
+    const std::uint16_t extra_len = U16(data + local + 28);
+    const std::size_t payload = local + 30u + name_len + extra_len;
+
+    if (payload + member->compressed_size > size) {
+        throw std::runtime_error("Compressed libPVZ2.so extends past APK");
+    }
+
+    if (member->method == 0) {
+        return std::vector<std::uint8_t>(
+            data + payload,
+            data + payload + member->compressed_size);
+    }
+
+    if (member->method != 8) {
+        throw std::runtime_error(
+            "Unsupported ZIP compression method for libPVZ2.so: " +
+            std::to_string(member->method));
+    }
+
+    std::vector<std::uint8_t> out(member->uncompressed_size);
+    z_stream zs{};
+    zs.next_in = const_cast<Bytef*>(
+        reinterpret_cast<const Bytef*>(data + payload));
+    zs.avail_in = member->compressed_size;
+    zs.next_out = reinterpret_cast<Bytef*>(out.data());
+    zs.avail_out = static_cast<uInt>(out.size());
+
+    if (inflateInit2(&zs, -MAX_WBITS) != Z_OK) {
+        throw std::runtime_error("zlib inflateInit2 failed");
+    }
+
+    const int rc = inflate(&zs, Z_FINISH);
+    inflateEnd(&zs);
+
+    if (rc != Z_STREAM_END || zs.total_out != member->uncompressed_size) {
+        throw std::runtime_error("Failed to inflate libPVZ2.so from APK");
+    }
+
+    return out;
+}
+
+struct ProgramHeader {
+    std::uint32_t type = 0;
+    std::uint32_t offset = 0;
+    std::uint32_t vaddr = 0;
+    std::uint32_t paddr = 0;
+    std::uint32_t filesz = 0;
+    std::uint32_t memsz = 0;
+    std::uint32_t flags = 0;
+    std::uint32_t align = 0;
+};
+
+struct Section {
+    std::uint32_t name_offset = 0;
+    std::uint32_t type = 0;
+    std::uint32_t flags = 0;
+    std::uint32_t addr = 0;
+    std::uint32_t offset = 0;
+    std::uint32_t size = 0;
+    std::uint32_t link = 0;
+    std::uint32_t info = 0;
+    std::uint32_t align = 0;
+    std::uint32_t entsize = 0;
+    std::string name;
+};
+
+struct Symbol {
+    std::string name;
+    std::uint32_t value = 0;
+    std::uint32_t size = 0;
+    std::uint8_t info = 0;
+    std::uint16_t shndx = 0;
+};
+
+class Elf32Arm {
+public:
+    explicit Elf32Arm(std::vector<std::uint8_t> bytes)
+        : data_(std::move(bytes)) {
+        Parse();
+    }
+
+    const std::vector<std::uint8_t>& data() const { return data_; }
+    const std::vector<ProgramHeader>& phdrs() const { return phdrs_; }
+    const std::vector<Section>& sections() const { return sections_; }
+    const std::vector<Symbol>& symbols() const { return symbols_; }
+    const std::vector<std::uint32_t>& function_starts() const {
+        return function_starts_;
+    }
+    const std::vector<std::string>& needed_libraries() const {
+        return needed_libraries_;
+    }
+    const std::string& soname() const { return soname_; }
+    const std::map<std::uint32_t, std::uint32_t>& relocation_types() const {
+        return relocation_types_;
+    }
+    std::uint32_t relocation_count() const { return relocation_count_; }
+    std::uint32_t image_end() const { return image_end_; }
+
+    std::vector<std::string> undefined_symbols() const {
+        std::vector<std::string> out;
+        for (const auto& s : symbols_) {
+            if (s.shndx == 0 && !s.name.empty()) out.push_back(s.name);
+        }
+        std::sort(out.begin(), out.end());
+        out.erase(std::unique(out.begin(), out.end()), out.end());
+        return out;
+    }
+
+    std::optional<std::size_t> VaddrToFile(std::uint32_t vaddr) const {
+        for (const auto& p : phdrs_) {
+            if (p.type == kPtLoad &&
+                vaddr >= p.vaddr &&
+                vaddr < p.vaddr + p.filesz) {
+                return static_cast<std::size_t>(p.offset + (vaddr - p.vaddr));
+            }
+        }
+        return std::nullopt;
+    }
+
+    std::vector<std::uint8_t> Read(
+        std::uint32_t vaddr,
+        std::size_t count) const {
+
+        const auto off = VaddrToFile(vaddr);
+        if (!off || *off + count > data_.size()) return {};
+        return std::vector<std::uint8_t>(
+            data_.begin() + static_cast<std::ptrdiff_t>(*off),
+            data_.begin() + static_cast<std::ptrdiff_t>(*off + count));
+    }
+
+    std::pair<std::optional<std::uint32_t>,
+              std::optional<std::uint32_t>>
+    FunctionRange(std::uint32_t off) const {
+        auto it = std::upper_bound(
+            function_starts_.begin(),
+            function_starts_.end(),
+            off);
+
+        if (it == function_starts_.begin()) {
+            return {std::nullopt, std::nullopt};
+        }
+
+        --it;
+        const std::uint32_t start = *it;
+        ++it;
+        if (it == function_starts_.end()) {
+            return {start, std::nullopt};
+        }
+        return {start, *it};
+    }
+
+    std::optional<std::pair<Symbol, std::uint32_t>>
+    NearestSymbol(std::uint32_t off) const {
+        std::optional<std::pair<Symbol, std::uint32_t>> best;
+        for (const auto& s : symbols_) {
+            if (s.shndx == 0) continue;
+            const std::uint32_t value = s.value & ~1u;
+            if (value > off) continue;
+            const std::uint32_t delta = off - value;
+            const bool contains = s.size != 0 && delta < s.size;
+            if (!best ||
+                contains ||
+                delta < best->second) {
+                best = std::make_pair(s, delta);
+                if (contains && delta == 0) break;
+            }
+        }
+        if (best && best->second <= 0x10000u) return best;
+        return std::nullopt;
+    }
+
+private:
+    std::vector<std::uint8_t> data_;
+    std::vector<ProgramHeader> phdrs_;
+    std::vector<Section> sections_;
+    std::vector<Symbol> symbols_;
+    std::vector<std::uint32_t> function_starts_;
+    std::vector<std::string> needed_libraries_;
+    std::string soname_;
+    std::map<std::uint32_t, std::uint32_t> relocation_types_;
+    std::uint32_t relocation_count_ = 0;
+    std::uint32_t image_end_ = 0;
+
+    std::string CString(std::size_t off) const {
+        if (off >= data_.size()) return {};
+        std::size_t end = off;
+        while (end < data_.size() && data_[end] != 0) ++end;
+        return std::string(
+            reinterpret_cast<const char*>(data_.data() + off),
+            end - off);
+    }
+
+    std::string StringFromSection(
+        const Section& strings,
+        std::uint32_t off) const {
+
+        if (off >= strings.size) return {};
+        return CString(static_cast<std::size_t>(strings.offset) + off);
+    }
+
+    void Parse() {
+        if (data_.size() < 52 ||
+            std::memcmp(data_.data(), "\x7f" "ELF", 4) != 0 ||
+            data_[4] != 1 ||
+            data_[5] != 1) {
+            throw std::runtime_error(
+                "Expected ELF32 little-endian libPVZ2.so");
+        }
+
+        const std::uint16_t e_type = U16(data_.data() + 16);
+        const std::uint16_t e_machine = U16(data_.data() + 18);
+        const std::uint32_t e_phoff = U32(data_.data() + 28);
+        const std::uint32_t e_shoff = U32(data_.data() + 32);
+        const std::uint16_t e_phentsize = U16(data_.data() + 42);
+        const std::uint16_t e_phnum = U16(data_.data() + 44);
+        const std::uint16_t e_shentsize = U16(data_.data() + 46);
+        const std::uint16_t e_shnum = U16(data_.data() + 48);
+        const std::uint16_t e_shstrndx = U16(data_.data() + 50);
+
+        if (e_type != 3 || e_machine != 40 ||
+            e_phentsize != 32 || e_shentsize != 40) {
+            throw std::runtime_error(
+                "ELF is not the expected ARM32 shared object");
+        }
+
+        if (static_cast<std::uint64_t>(e_phoff) +
+                static_cast<std::uint64_t>(e_phnum) * e_phentsize >
+            data_.size()) {
+            throw std::runtime_error("Truncated ELF program-header table");
+        }
+
+        for (std::uint32_t i = 0; i < e_phnum; ++i) {
+            const std::size_t p = e_phoff + i * e_phentsize;
+            ProgramHeader h;
+            h.type = U32(data_.data() + p + 0);
+            h.offset = U32(data_.data() + p + 4);
+            h.vaddr = U32(data_.data() + p + 8);
+            h.paddr = U32(data_.data() + p + 12);
+            h.filesz = U32(data_.data() + p + 16);
+            h.memsz = U32(data_.data() + p + 20);
+            h.flags = U32(data_.data() + p + 24);
+            h.align = U32(data_.data() + p + 28);
+            phdrs_.push_back(h);
+
+            if (h.type == kPtLoad) {
+                image_end_ = std::max(image_end_, h.vaddr + h.memsz);
+            }
+        }
+
+        if (static_cast<std::uint64_t>(e_shoff) +
+                static_cast<std::uint64_t>(e_shnum) * e_shentsize >
+            data_.size()) {
+            throw std::runtime_error("Truncated ELF section-header table");
+        }
+
+        for (std::uint32_t i = 0; i < e_shnum; ++i) {
+            const std::size_t p = e_shoff + i * e_shentsize;
+            Section h;
+            h.name_offset = U32(data_.data() + p + 0);
+            h.type = U32(data_.data() + p + 4);
+            h.flags = U32(data_.data() + p + 8);
+            h.addr = U32(data_.data() + p + 12);
+            h.offset = U32(data_.data() + p + 16);
+            h.size = U32(data_.data() + p + 20);
+            h.link = U32(data_.data() + p + 24);
+            h.info = U32(data_.data() + p + 28);
+            h.align = U32(data_.data() + p + 32);
+            h.entsize = U32(data_.data() + p + 36);
+            sections_.push_back(h);
+        }
+
+        if (e_shstrndx < sections_.size()) {
+            const auto& names = sections_[e_shstrndx];
+            for (auto& s : sections_) {
+                s.name = StringFromSection(names, s.name_offset);
+            }
+        }
+
+        for (const auto& sh : sections_) {
+            if (static_cast<std::uint64_t>(sh.offset) + sh.size >
+                data_.size()) {
+                continue;
+            }
+
+            if (sh.type == kShtDynsym && sh.link < sections_.size()) {
+                const auto& strings = sections_[sh.link];
+                const std::uint32_t entsize = sh.entsize ? sh.entsize : 16;
+                for (std::uint32_t rel = 0;
+                     rel + 16 <= sh.size;
+                     rel += entsize) {
+
+                    const std::size_t p = sh.offset + rel;
+                    Symbol sym;
+                    const std::uint32_t name_off = U32(data_.data() + p);
+                    sym.value = U32(data_.data() + p + 4);
+                    sym.size = U32(data_.data() + p + 8);
+                    sym.info = data_[p + 12];
+                    sym.shndx = U16(data_.data() + p + 14);
+                    sym.name = StringFromSection(strings, name_off);
+                    if (!sym.name.empty()) symbols_.push_back(std::move(sym));
+                }
+            }
+
+            if (sh.type == kShtArmExidx) {
+                std::set<std::uint32_t> starts(
+                    function_starts_.begin(),
+                    function_starts_.end());
+
+                for (std::uint32_t rel = 0; rel + 8 <= sh.size; rel += 8) {
+                    const std::uint32_t word =
+                        U32(data_.data() + sh.offset + rel);
+                    const std::uint32_t place = sh.addr + rel;
+                    std::int64_t delta = word & 0x7fffffffu;
+                    if (delta & 0x40000000u) delta -= 0x80000000ll;
+                    const std::uint32_t target =
+                        static_cast<std::uint32_t>(place + delta) & ~1u;
+                    if (target > 0 && target < image_end_) {
+                        starts.insert(target);
+                    }
+                }
+
+                function_starts_.assign(starts.begin(), starts.end());
+            }
+
+            if (sh.type == kShtRel) {
+                const std::uint32_t entsize = sh.entsize ? sh.entsize : 8;
+                for (std::uint32_t rel = 0;
+                     rel + 8 <= sh.size;
+                     rel += entsize) {
+                    const std::uint32_t info =
+                        U32(data_.data() + sh.offset + rel + 4);
+                    const std::uint32_t type = info & 0xffu;
+                    ++relocation_count_;
+                    ++relocation_types_[type];
+                }
+            }
+
+            if (sh.type == kShtDynamic && sh.link < sections_.size()) {
+                const auto& strings = sections_[sh.link];
+                const std::uint32_t entsize = sh.entsize ? sh.entsize : 8;
+
+                for (std::uint32_t rel = 0;
+                     rel + 8 <= sh.size;
+                     rel += entsize) {
+
+                    const std::uint32_t tag =
+                        U32(data_.data() + sh.offset + rel);
+                    const std::uint32_t val =
+                        U32(data_.data() + sh.offset + rel + 4);
+
+                    if (tag == 0) break;
+                    if (tag == 1) {
+                        needed_libraries_.push_back(
+                            StringFromSection(strings, val));
+                    } else if (tag == 14) {
+                        soname_ = StringFromSection(strings, val);
+                    }
+                }
+            }
+        }
+
+        std::sort(function_starts_.begin(), function_starts_.end());
+        function_starts_.erase(
+            std::unique(function_starts_.begin(), function_starts_.end()),
+            function_starts_.end());
+    }
+};
+
+const std::map<std::uint32_t, std::string>& KnownLabels() {
+    static const std::map<std::uint32_t, std::string> labels = {
+        {0x005149c4u, "ImageRes.splash-null virtual-call site observed in v36"},
+        {0x005149c8u, "ImageRes.splash-null virtual-call return observed in v36"},
+        {0x0086f66cu, "ResourceRegistryLookup.function_start"},
+        {0x0086f674u, "ResourceRegistryLookup.entry MOV r4,r2"},
+        {0x0086f8a0u, "ResourceRegistryLookup.group return boundary"},
+        {0x0086fa78u, "ResourceRegistryLookup.global miss return"},
+        {0x0086fa84u, "ResourceRegistryLookup.global found-value load"},
+        {0x0087a704u, "GenericResFileRes.lookup callsite A"},
+        {0x0087a708u, "GenericResFileRes.direct-group return branch / v48 null recovery"},
+        {0x0087a758u, "GenericResFileRes.lookup callsite B"},
+        {0x0087a76cu, "GenericResFileRes.all-groups exhausted null / v48 final recovery"},
+        {0x009ead80u, "JNI_OnLoad"},
+        {0x009ebf80u, "Native_applicationWillFinishLaunching"},
+        {0x009ec0a0u, "Native_applicationDidFinishLaunching"},
+        {0x009ec0bcu, "Native_applicationWillBecomeForeground"},
+        {0x009ec0c8u, "Native_applicationDidBecomeActive"},
+        {0x009f1840u, "Native_onSurfaceCreated"},
+        {0x009f18dcu, "Native_onSurfaceChanged"},
+        {0x009f190cu, "Native_onDrawFrame"},
+    };
+    return labels;
+}
+
+struct Classified {
+    std::string region;
+    std::optional<std::uint32_t> offset;
+};
+
+Classified Classify(std::uint32_t address, const Elf32Arm& elf) {
+    const std::uint32_t plain = address & ~1u;
+
+    if (plain >= kGuestBase &&
+        plain < kGuestBase + elf.image_end()) {
+        return {"libPVZ2.so", plain - kGuestBase};
+    }
+
+    const std::array<std::tuple<const char*, std::uint32_t, std::uint32_t>, 5>
+    regions = {{
+        {"guest-stack", kStackBase, kStackSize},
+        {"guest-heap", kHeapBase, kHeapSize},
+        {"host-trampoline", kTrampBase, kTrampSize},
+        {"synthetic-JNI", kJniBase, kJniSize},
+        {"synthetic-object", kObjectBase, kObjectSize},
+    }};
+
+    for (const auto& [name, base, size] : regions) {
+        if (plain >= base && plain < base + size) {
+            return {name, plain - base};
+        }
+    }
+
+    if (address == 0) return {"null", 0u};
+    return {"other", std::nullopt};
+}
+
+std::string Resolve(std::uint32_t address, const Elf32Arm& elf) {
+    const auto c = Classify(address, elf);
+
+    if (c.region != "libPVZ2.so") {
+        if (c.offset) {
+            return Hex(address) + " [" + c.region + "+" +
+                   Hex(*c.offset, 1) + "]";
+        }
+        return Hex(address) + " [" + c.region + "]";
+    }
+
+    const std::uint32_t off = *c.offset;
+    std::ostringstream out;
+    out << Hex(address)
+        << " [libPVZ2.so+" << Hex(off)
+        << " " << ((address & 1u) ? "Thumb" : "ARM") << "]";
+
+    const auto label = KnownLabels().find(off);
+    if (label != KnownLabels().end()) {
+        out << " known=" << label->second;
+    }
+
+    const auto [start, end] = elf.FunctionRange(off);
+    if (start) {
+        out << " fn=+" << Hex(*start)
+            << "+" << Hex(off - *start, 1);
+        if (end) {
+            out << "/size=" << Hex(*end - *start, 1);
+        }
+    }
+
+    const auto sym = elf.NearestSymbol(off);
+    if (sym) {
+        out << " symbol=" << sym->first.name
+            << "+" << Hex(sym->second, 1);
+    }
+
+    return out.str();
+}
+
+std::int32_t SignExtend(std::uint32_t value, int bits) {
+    const std::uint32_t sign = 1u << (bits - 1);
+    return static_cast<std::int32_t>((value ^ sign) - sign);
+}
+
+std::string Reg(unsigned n) {
+    if (n == 13) return "sp";
+    if (n == 14) return "lr";
+    if (n == 15) return "pc";
+    return "r" + std::to_string(n);
+}
+
+std::string DecodeArm(std::uint32_t word, std::uint32_t runtime) {
+    const unsigned cond = (word >> 28) & 0xf;
+    static const char* kCond[] = {
+        "eq","ne","cs","cc","mi","pl","vs","vc",
+        "hi","ls","ge","lt","gt","le","","nv"
+    };
+    const std::string suffix = kCond[cond];
+
+    if ((word & 0x0f000000u) == 0x0f000000u) {
+        return "svc" + suffix + " #" + Hex(word & 0x00ffffffu, 1);
+    }
+
+    if ((word & 0x0ffffff0u) == 0x012fff10u) {
+        return "bx" + suffix + " " + Reg(word & 0xfu);
+    }
+
+    if ((word & 0x0ffffff0u) == 0x012fff30u) {
+        return "blx" + suffix + " " + Reg(word & 0xfu);
+    }
+
+    if ((word & 0x0e000000u) == 0x0a000000u) {
+        const std::int32_t delta =
+            SignExtend(word & 0x00ffffffu, 24) << 2;
+        const std::uint32_t target =
+            static_cast<std::uint32_t>(runtime + 8 + delta);
+        return std::string((word & 0x01000000u) ? "bl" : "b") +
+               suffix + " " + Hex(target);
+    }
+
+    if ((word & 0x0c000000u) == 0x04000000u &&
+        !(word & (1u << 25))) {
+        const bool load = (word & (1u << 20)) != 0;
+        const bool up = (word & (1u << 23)) != 0;
+        const bool pre = (word & (1u << 24)) != 0;
+        const unsigned rn = (word >> 16) & 0xf;
+        const unsigned rd = (word >> 12) & 0xf;
+        const unsigned imm = word & 0xfff;
+        std::ostringstream o;
+        o << (load ? "ldr" : "str") << suffix << " "
+          << Reg(rd) << ",[" << Reg(rn);
+        if (pre) {
+            o << ",#" << (up ? "+" : "-") << Hex(imm, 1) << "]";
+        } else {
+            o << "],#" << (up ? "+" : "-") << Hex(imm, 1);
+        }
+        return o.str();
+    }
+
+    if ((word & 0x0fe00000u) == 0x01a00000u) {
+        return "mov" + suffix + " " +
+               Reg((word >> 12) & 0xfu) + "," +
+               Reg(word & 0xfu);
+    }
+
+    return {};
+}
+
+std::string DecodeThumb16(std::uint16_t h, std::uint32_t runtime) {
+    if ((h & 0xff87u) == 0x4700u) {
+        return std::string((h & 0x0080u) ? "blx " : "bx ") +
+               Reg((h >> 3) & 0xfu);
+    }
+
+    if ((h & 0xf800u) == 0xe000u) {
+        const std::int32_t delta =
+            SignExtend(h & 0x07ffu, 11) << 1;
+        return "b " + Hex(static_cast<std::uint32_t>(runtime + 4 + delta));
+    }
+
+    if ((h & 0xf000u) == 0xd000u &&
+        ((h >> 8) & 0xfu) != 0xfu) {
+        static const char* kCond[] = {
+            "eq","ne","cs","cc","mi","pl","vs","vc",
+            "hi","ls","ge","lt","gt","le"
+        };
+        const unsigned cond = (h >> 8) & 0xfu;
+        const std::int32_t delta =
+            SignExtend(h & 0x00ffu, 8) << 1;
+        return std::string("b") + kCond[cond] + " " +
+               Hex(static_cast<std::uint32_t>(runtime + 4 + delta));
+    }
+
+    if ((h & 0xf800u) == 0x4800u) {
+        const unsigned rd = (h >> 8) & 7u;
+        const unsigned imm = (h & 0xffu) << 2;
+        return "ldr " + Reg(rd) + ",[pc,#" + Hex(imm, 1) + "]";
+    }
+
+    if ((h & 0xfe00u) == 0xb400u) return "push {...}";
+    if ((h & 0xfe00u) == 0xbc00u) return "pop {...}";
+
+    return {};
+}
+
+std::vector<std::string> Disassemble(
+    const Elf32Arm& elf,
+    std::uint32_t runtime_address,
+    int before = 3,
+    int after = 5) {
+
+    const auto c = Classify(runtime_address, elf);
+    if (c.region != "libPVZ2.so" || !c.offset) return {};
+
+    const bool thumb = (runtime_address & 1u) != 0;
+    const std::uint32_t center = *c.offset;
+    const std::uint32_t width = thumb ? 2u : 4u;
+    const std::uint32_t start =
+        center >= static_cast<std::uint32_t>(before) * width
+            ? center - static_cast<std::uint32_t>(before) * width
+            : 0u;
+
+    const auto blob = elf.Read(
+        start,
+        static_cast<std::size_t>(before + after + 1) * width);
+
+    std::vector<std::string> out;
+    for (std::size_t i = 0; i + width <= blob.size(); i += width) {
+        const std::uint32_t off = start + static_cast<std::uint32_t>(i);
+        const std::uint32_t runtime = kGuestBase + off;
+        const bool hit = off == center;
+
+        std::ostringstream line;
+        line << (hit ? "=> " : "   ") << Hex(runtime) << ": ";
+
+        if (thumb) {
+            const std::uint16_t h = U16(blob.data() + i);
+            line << Hex(h, 4);
+            const std::string decoded = DecodeThumb16(h, runtime);
+            if (!decoded.empty()) line << "  " << decoded;
+        } else {
+            const std::uint32_t w = U32(blob.data() + i);
+            line << Hex(w);
+            const std::string decoded = DecodeArm(w, runtime);
+            if (!decoded.empty()) line << "  " << decoded;
+        }
+
+        out.push_back(line.str());
+    }
+
+    return out;
+}
+
+std::string RelocName(std::uint32_t type) {
+    switch (type) {
+        case 2: return "R_ARM_ABS32";
+        case 21: return "R_ARM_GLOB_DAT";
+        case 22: return "R_ARM_JUMP_SLOT";
+        case 23: return "R_ARM_RELATIVE";
+        default: return "R_ARM_" + std::to_string(type);
+    }
+}
+
+bool IsHex(char c) {
+    return std::isxdigit(static_cast<unsigned char>(c)) != 0;
+}
+
+std::unordered_map<std::uint32_t, std::uint32_t>
+CollectHexAddresses(const std::string& text, std::uint32_t& occurrences) {
+    std::unordered_map<std::uint32_t, std::uint32_t> counts;
+    occurrences = 0;
+
+    for (std::size_t i = 0; i + 9 <= text.size(); ++i) {
+        if (text[i] != '0' ||
+            (text[i + 1] != 'x' && text[i + 1] != 'X')) {
+            continue;
+        }
+
+        std::size_t j = i + 2;
+        std::size_t digits = 0;
+        while (j < text.size() && IsHex(text[j]) && digits < 8) {
+            ++j;
+            ++digits;
+        }
+
+        if (digits < 7) continue;
+        if (j < text.size() && IsHex(text[j])) continue;
+
+        const std::string raw = text.substr(i + 2, digits);
+        const auto value =
+            static_cast<std::uint32_t>(std::stoul(raw, nullptr, 16));
+        ++counts[value];
+        ++occurrences;
+        i = j - 1;
+    }
+
+    return counts;
+}
+
+std::map<std::string, std::unordered_map<std::uint32_t, std::uint32_t>>
+CollectControlAddresses(const std::string& text) {
+    const std::array<std::string, 5> keys = {
+        "PC", "LR", "returnPC", "callerLR", "SP"
+    };
+
+    std::map<std::string, std::unordered_map<std::uint32_t, std::uint32_t>>
+        out;
+
+    for (const auto& key : keys) {
+        const std::string needle = key + "=0x";
+        std::size_t pos = 0;
+
+        while ((pos = text.find(needle, pos)) != std::string::npos) {
+            const std::size_t start = pos + needle.size();
+            std::size_t end = start;
+            while (end < text.size() &&
+                   IsHex(text[end]) &&
+                   end - start < 8) {
+                ++end;
+            }
+
+            if (end - start >= 7) {
+                const auto value = static_cast<std::uint32_t>(
+                    std::stoul(text.substr(start, end - start), nullptr, 16));
+                ++out[key][value];
+            }
+            pos = end;
+        }
+    }
+
+    return out;
+}
+
+template <class Map>
+std::vector<std::pair<std::uint32_t, std::uint32_t>>
+SortedCounts(const Map& counts) {
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> v;
+    v.reserve(counts.size());
+    for (const auto& [address, count] : counts) {
+        v.emplace_back(address, count);
+    }
+    std::sort(
+        v.begin(),
+        v.end(),
+        [](const auto& a, const auto& b) {
+            if (a.second != b.second) return a.second > b.second;
+            return a.first < b.first;
+        });
+    return v;
+}
+
+std::string AnnotateLog(
+    const std::string& log,
+    const Elf32Arm& elf) {
+
+    if (log.empty()) return {};
+
+    std::ostringstream out;
+    std::istringstream input(log);
+    std::string line;
+    const std::array<std::string, 4> keys = {
+        "PC=0x", "LR=0x", "returnPC=0x", "callerLR=0x"
+    };
+
+    while (std::getline(input, line)) {
+        out << line << "\n";
+        std::set<std::uint32_t> emitted;
+
+        for (const auto& key : keys) {
+            std::size_t pos = 0;
+            while ((pos = line.find(key, pos)) != std::string::npos) {
+                const std::size_t start = pos + key.size();
+                std::size_t end = start;
+                while (end < line.size() &&
+                       IsHex(line[end]) &&
+                       end - start < 8) {
+                    ++end;
+                }
+
+                if (end - start >= 7) {
+                    const auto value = static_cast<std::uint32_t>(
+                        std::stoul(
+                            line.substr(start, end - start),
+                            nullptr,
+                            16));
+                    if (emitted.insert(value).second) {
+                        out << "    [Inspector] "
+                            << Resolve(value, elf)
+                            << "\n";
+                    }
+                }
+                pos = end;
+            }
+        }
+    }
+
+    return out.str();
+}
+
+} // namespace
+
+PvZ2InspectorResult InspectPvZ2ApkAndLog(
+    const std::uint8_t* apk_data,
+    std::size_t apk_size,
+    const std::string& log_text) {
+
+    PvZ2InspectorResult result;
+    result.apk_size = apk_size;
+
+    try {
+        if (apk_data == nullptr || apk_size == 0) {
+            throw std::runtime_error("No APK data supplied");
+        }
+
+        auto so = ExtractZipMember(
+            apk_data,
+            apk_size,
+            "lib/armeabi-v7a/libPVZ2.so");
+
+        result.elf_size = so.size();
+        Elf32Arm elf(std::move(so));
+        result.image_size = elf.image_end();
+        result.sections = static_cast<std::uint32_t>(elf.sections().size());
+        result.dynamic_symbols =
+            static_cast<std::uint32_t>(elf.symbols().size());
+        result.exidx_function_starts =
+            static_cast<std::uint32_t>(elf.function_starts().size());
+        result.relocations = elf.relocation_count();
+
+        std::uint32_t loads = 0;
+        for (const auto& p : elf.phdrs()) {
+            if (p.type == kPtLoad) ++loads;
+        }
+        result.load_segments = loads;
+
+        const auto imports = elf.undefined_symbols();
+        result.undefined_symbols =
+            static_cast<std::uint32_t>(imports.size());
+
+        std::uint32_t occurrences = 0;
+        const auto addresses =
+            CollectHexAddresses(log_text, occurrences);
+        result.log_hex_occurrences = occurrences;
+        result.log_unique_addresses =
+            static_cast<std::uint32_t>(addresses.size());
+
+        const auto controls = CollectControlAddresses(log_text);
+
+        std::ostringstream summary;
+        summary
+            << "PvZ2 Inspector Lab v1\n"
+            << "APK bytes: " << apk_size << "\n"
+            << "libPVZ2.so bytes: " << result.elf_size << "\n"
+            << "mapped image span: " << Hex(result.image_size) << "\n"
+            << "PT_LOAD segments: " << result.load_segments << "\n"
+            << "ELF sections: " << result.sections << "\n"
+            << "dynamic symbols: " << result.dynamic_symbols << "\n"
+            << "undefined/import symbols: " << result.undefined_symbols << "\n"
+            << ".ARM.exidx function starts: "
+            << result.exidx_function_starts << "\n"
+            << "REL relocations: " << result.relocations << "\n";
+
+        if (!log_text.empty()) {
+            summary
+                << "log hex occurrences: "
+                << result.log_hex_occurrences << "\n"
+                << "unique log addresses: "
+                << result.log_unique_addresses << "\n";
+        } else {
+            summary << "log: not supplied (static ELF analysis only)\n";
+        }
+
+        result.summary = summary.str();
+
+        std::ostringstream report;
+        report << result.summary << "\n";
+
+        report << "ELF identity\n"
+               << "============\n"
+               << "guest base: " << Hex(kGuestBase) << "\n"
+               << "SONAME: "
+               << (elf.soname().empty() ? "(none)" : elf.soname())
+               << "\n"
+               << "needed libraries (" << elf.needed_libraries().size()
+               << "):\n";
+        for (const auto& lib : elf.needed_libraries()) {
+            report << "  - " << lib << "\n";
+        }
+
+        report << "\nPT_LOAD map\n"
+               << "===========\n";
+        unsigned load_index = 0;
+        for (const auto& p : elf.phdrs()) {
+            if (p.type != kPtLoad) continue;
+            report
+                << "  [" << load_index++ << "] "
+                << "vaddr=" << Hex(p.vaddr)
+                << " fileOff=" << Hex(p.offset)
+                << " fileSize=" << Hex(p.filesz)
+                << " memSize=" << Hex(p.memsz)
+                << " flags=" << Hex(p.flags, 1)
+                << " align=" << Hex(p.align, 1)
+                << "\n";
+        }
+
+        report << "\nSections\n"
+               << "========\n";
+        for (std::size_t i = 0; i < elf.sections().size(); ++i) {
+            const auto& s = elf.sections()[i];
+            report
+                << "  [" << i << "] "
+                << (s.name.empty() ? "(unnamed)" : s.name)
+                << " type=" << Hex(s.type, 1)
+                << " addr=" << Hex(s.addr)
+                << " off=" << Hex(s.offset)
+                << " size=" << Hex(s.size)
+                << " flags=" << Hex(s.flags, 1)
+                << "\n";
+        }
+
+        report << "\nRelocation histogram\n"
+               << "====================\n";
+        for (const auto& [type, count] : elf.relocation_types()) {
+            report << "  "
+                   << std::setw(8) << count << "  "
+                   << RelocName(type)
+                   << " (" << type << ")\n";
+        }
+
+        report << "\nUndefined/import symbols\n"
+               << "========================\n";
+        for (const auto& name : imports) {
+            report << "  " << name << "\n";
+        }
+
+        report << "\nKnown port landmarks\n"
+               << "====================\n";
+        for (const auto& [off, label] : KnownLabels()) {
+            const std::uint32_t runtime = kGuestBase + off;
+            report << "  " << Resolve(runtime, elf) << "\n";
+        }
+
+        if (!log_text.empty()) {
+            report << "\nControl-flow addresses from log\n"
+                   << "===============================\n";
+
+            std::set<std::uint32_t> disassembled;
+            for (const auto& key :
+                 std::array<std::string, 5>{
+                    "PC","LR","returnPC","callerLR","SP"}) {
+
+                const auto it = controls.find(key);
+                if (it == controls.end()) continue;
+
+                report << "\n" << key << ":\n";
+                const auto ranked = SortedCounts(it->second);
+                const std::size_t limit =
+                    std::min<std::size_t>(ranked.size(), 80);
+
+                for (std::size_t i = 0; i < limit; ++i) {
+                    const auto [address, count] = ranked[i];
+                    report << "  "
+                           << std::setw(6) << count << "x  "
+                           << Resolve(address, elf)
+                           << "\n";
+
+                    if (key != "SP" &&
+                        disassembled.size() < 48 &&
+                        Classify(address, elf).region == "libPVZ2.so" &&
+                        disassembled.insert(address).second) {
+
+                        for (const auto& line :
+                             Disassemble(elf, address)) {
+                            report << "             " << line << "\n";
+                        }
+                    }
+                }
+            }
+
+            report << "\nMost frequent libPVZ2 addresses in entire log\n"
+                   << "==============================================\n";
+            std::vector<std::pair<std::uint32_t, std::uint32_t>> code;
+            for (const auto& [address, count] : addresses) {
+                if (Classify(address, elf).region == "libPVZ2.so") {
+                    code.emplace_back(address, count);
+                }
+            }
+            std::sort(
+                code.begin(),
+                code.end(),
+                [](const auto& a, const auto& b) {
+                    if (a.second != b.second) return a.second > b.second;
+                    return a.first < b.first;
+                });
+            const std::size_t limit =
+                std::min<std::size_t>(code.size(), 250);
+            for (std::size_t i = 0; i < limit; ++i) {
+                report
+                    << "  " << std::setw(6) << code[i].second << "x  "
+                    << Resolve(code[i].first, elf)
+                    << "\n";
+            }
+        }
+
+        result.report = report.str();
+
+        std::ostringstream csv;
+        csv << "address,count,region,offset,function_start,function_delta,known_label,nearest_symbol\n";
+        const auto ranked_all = SortedCounts(addresses);
+        for (const auto& [address, count] : ranked_all) {
+            const auto c = Classify(address, elf);
+            std::string offset;
+            std::string fn_start;
+            std::string fn_delta;
+            std::string label;
+            std::string sym;
+
+            if (c.offset) offset = Hex(*c.offset);
+
+            if (c.region == "libPVZ2.so" && c.offset) {
+                const auto [start, end] = elf.FunctionRange(*c.offset);
+                if (start) {
+                    fn_start = Hex(*start);
+                    fn_delta = Hex(*c.offset - *start, 1);
+                }
+
+                const auto known = KnownLabels().find(*c.offset);
+                if (known != KnownLabels().end()) {
+                    label = known->second;
+                }
+
+                const auto nearest = elf.NearestSymbol(*c.offset);
+                if (nearest) {
+                    sym = nearest->first.name + "+" +
+                          Hex(nearest->second, 1);
+                }
+            }
+
+            csv << Hex(address) << ","
+                << count << ","
+                << CsvEscape(c.region) << ","
+                << offset << ","
+                << fn_start << ","
+                << fn_delta << ","
+                << CsvEscape(label) << ","
+                << CsvEscape(sym) << "\n";
+        }
+        result.addresses_csv = csv.str();
+
+        result.annotated_log = AnnotateLog(log_text, elf);
+
+        std::ostringstream json;
+        json
+            << "{\n"
+            << "  \"tool\": \"PvZ2 Inspector Lab v1\",\n"
+            << "  \"apkSize\": " << result.apk_size << ",\n"
+            << "  \"elfSize\": " << result.elf_size << ",\n"
+            << "  \"guestBase\": \"" << Hex(kGuestBase) << "\",\n"
+            << "  \"imageSize\": \"" << Hex(result.image_size) << "\",\n"
+            << "  \"loadSegments\": " << result.load_segments << ",\n"
+            << "  \"sections\": " << result.sections << ",\n"
+            << "  \"dynamicSymbols\": " << result.dynamic_symbols << ",\n"
+            << "  \"undefinedSymbols\": " << result.undefined_symbols << ",\n"
+            << "  \"exidxFunctionStarts\": "
+            << result.exidx_function_starts << ",\n"
+            << "  \"relocations\": " << result.relocations << ",\n"
+            << "  \"logHexOccurrences\": "
+            << result.log_hex_occurrences << ",\n"
+            << "  \"logUniqueAddresses\": "
+            << result.log_unique_addresses << ",\n"
+            << "  \"soname\": \""
+            << JsonEscape(elf.soname()) << "\",\n"
+            << "  \"neededLibraries\": [";
+
+        for (std::size_t i = 0; i < elf.needed_libraries().size(); ++i) {
+            if (i) json << ", ";
+            json << "\"" << JsonEscape(elf.needed_libraries()[i]) << "\"";
+        }
+
+        json << "]\n}\n";
+        result.summary_json = json.str();
+
+        result.ok = true;
+        result.message =
+            "Analysis complete. Reports are ready for export.";
+    } catch (const std::exception& e) {
+        result.ok = false;
+        result.message = e.what();
+        result.summary = std::string("PvZ2 Inspector failed: ") + e.what();
+    }
+
+    return result;
+}
