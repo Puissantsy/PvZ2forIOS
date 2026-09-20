@@ -68,6 +68,9 @@ struct PvZ2JniProbeResult {
     // values remain in the exported V54 STARTUPLOGO log lines.
     std::string startup_logo_summary;
 
+    // v55: passive Gate-A resource-group vector / lookup / progress summary.
+    std::string startup_resource_group_summary;
+
     std::uint32_t return_value = 0;
     std::uint32_t game_app_initialize_address = 0;
     std::uint32_t game_app_initialize_return = 0;
