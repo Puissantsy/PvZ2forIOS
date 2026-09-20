@@ -20696,6 +20696,8 @@ bool JniProbePrepareRuntime(
         "V58 STREAM-FUTURE SCHEDULER: recognizes poll@0x109f7140..0x109f71a8 plus atomic helpers@0x109f9868..0x109f98d4 only when LR comes from a known future poll. Future snapshots include vfn+0x2c; ordinary main-thread CPU slices still never run workers.");
     callbacks.Append(
         "V59 ASYNC CALLER-POLL SCHEDULER: stream-future objects are identified dynamically by vfn+0x2c==0x109f7140. Caller-side virtual-status spin loops are recognized by ARM instruction shape plus an LR still inside the verified stream poll; ordinary CPU slices remain main-only.");
+    callbacks.Append(
+        "V60 FAIR ASYNC-WAIT SCHEDULER: concrete waits keep a persistent round-robin worker cursor. A worker that changes the wait object no longer permanently starves later deferred workers; ordinary CPU timeslices remain strictly main-only.");
 
     return_trampoline =
         JniProbeMakeTrampoline(
@@ -21920,6 +21922,17 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                         std::uint64_t lifecycle_ticks = 0;
                         std::uint32_t async_round = 0;
 
+                        // v60: v59 proved that every verified stream-future
+                        // wait restarted worker scanning at index 0. The first
+                        // worker (tid=1) normally changed the future object,
+                        // causing an immediate break and starving workers
+                        // created later (notably tid=7 during first draw).
+                        // Persist the next worker index for this lifecycle.
+                        // This cursor is consulted ONLY after wait_kind()
+                        // proves a concrete async wait; ordinary main-thread
+                        // CPU slices remain main-only.
+                        std::size_t scheduler_worker_cursor = 0u;
+
                         while (lifecycle_ticks <
                                kLifecycleTotalBudget) {
 
@@ -22119,7 +22132,10 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                         future) +
                                     "} workers=" +
                                     std::to_string(
-                                        callbacks.deferred_threads.size()));
+                                        callbacks.deferred_threads.size()) +
+                                    " nextWorkerIndex=" +
+                                    std::to_string(
+                                        scheduler_worker_cursor));
                             } else {
                                 if (async_round <= 8u ||
                                     (async_round % 50u) == 0u) {
@@ -22176,9 +22192,19 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                     callbacks.deferred_threads.size(),
                                     64u);
 
-                            for (std::size_t wi = 0;
-                                 wi < worker_limit;
-                                 ++wi) {
+                            const std::size_t worker_start =
+                                worker_limit == 0u
+                                    ? 0u
+                                    : scheduler_worker_cursor %
+                                          worker_limit;
+
+                            for (std::size_t worker_offset = 0u;
+                                 worker_offset < worker_limit;
+                                 ++worker_offset) {
+
+                                const std::size_t wi =
+                                    (worker_start + worker_offset) %
+                                    worker_limit;
 
                                 if (wi >=
                                     callbacks.deferred_threads.size()) {
@@ -22329,6 +22355,17 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                     callbacks.deferred_threads.size()) {
                                     callbacks.deferred_threads[wi] =
                                         worker_state;
+                                }
+
+                                // v60 fairness: the next verified wait starts
+                                // after the worker we just ran. If this worker
+                                // resolves the current wait and we break below,
+                                // later deferred workers still receive the
+                                // first chance at the next concrete wait.
+                                if (!callbacks.deferred_threads.empty()) {
+                                    scheduler_worker_cursor =
+                                        (wi + 1u) %
+                                        callbacks.deferred_threads.size();
                                 }
 
                                 callbacks.Append(
