@@ -8362,6 +8362,92 @@ public:
             }
         }
 
+        if (swi == kJniProbeSvcV62TaskDispatch) {
+            // Original @ 0x10868cb0: LDR r1,[r0,#0x14].
+            const std::uint32_t slot = regs[6];
+            const std::uint32_t object = regs[7];
+            const std::uint32_t vtable = regs[0];
+            const std::uint32_t target =
+                mem.Read32Guest(vtable + 0x14u);
+            regs[1] = target;
+
+            ++v62_task_dispatch_events;
+            V62RefreshPumpVector();
+
+            const std::string alias = V62WorkerAlias(object);
+            const std::uint32_t plain_target = target & ~1u;
+            const bool executable =
+                plain_target >= kGuestBase &&
+                static_cast<std::uint64_t>(plain_target) <
+                    static_cast<std::uint64_t>(kGuestBase) + mem.image.size();
+            const bool slot_in_vector =
+                v62_pump_vector_begin != 0u &&
+                slot >= v62_pump_vector_begin &&
+                slot + 4u <= v62_pump_vector_end;
+            const bool anomaly = !executable || !alias.empty();
+
+            if (anomaly ||
+                v62_task_dispatch_events <= 16u ||
+                (v62_task_dispatch_events % 1000u) == 0u) {
+                std::ostringstream out;
+                out << "V62 TASK DISPATCH #" << v62_task_dispatch_events
+                    << (anomaly ? " ANOMALY" : "")
+                    << " thread=" << current_probe_thread_id
+                    << " slot=" << V46DescribeGuestAddress(slot);
+
+                if (slot_in_vector)
+                    out << " slotIndex="
+                        << ((slot - v62_pump_vector_begin) / 4u);
+
+                out << " object=" << V46DescribeGuestAddress(object)
+                    << " objectClass=" << V62HeapPointerClass(object);
+                if (!alias.empty()) out << " alias=" << alias;
+
+                out << " vtable=" << V46DescribeGuestAddress(vtable)
+                    << " actualVptr=0x"
+                    << JniProbeHex(mem.Read32Guest(object))
+                    << " vfn14=" << V46DescribeGuestAddress(target)
+                    << " executable=" << (executable ? "YES" : "NO")
+                    << " vector={begin=0x"
+                    << JniProbeHex(v62_pump_vector_begin)
+                    << ",end=0x" << JniProbeHex(v62_pump_vector_end)
+                    << ",cap=0x" << JniProbeHex(v62_pump_vector_cap)
+                    << "}";
+
+                if (anomaly) {
+                    out << " objectWords={";
+                    for (std::uint32_t off=0; off<0x40u; off+=4u) {
+                        if (off) out << ",";
+                        out << "+0x" << JniProbeHex(off) << ":0x"
+                            << JniProbeHex(mem.Read32Guest(object + off));
+                    }
+                    out << "} vtableWords={";
+                    for (std::uint32_t off=0; off<0x44u; off+=4u) {
+                        if (off) out << ",";
+                        out << "+0x" << JniProbeHex(off) << ":0x"
+                            << JniProbeHex(mem.Read32Guest(vtable + off));
+                    }
+                    out << "}";
+
+                    if (v62_first_bad_pointer_writer_seen) {
+                        out << " firstBadWriter={dst=0x"
+                            << JniProbeHex(v62_first_bad_pointer_writer_dst)
+                            << ",PC="
+                            << V46DescribeGuestAddress(
+                                   v62_first_bad_pointer_writer_pc)
+                            << ",LR="
+                            << V46DescribeGuestAddress(
+                                   v62_first_bad_pointer_writer_lr)
+                            << "}";
+                    } else {
+                        out << " firstBadWriter=NOT_OBSERVED";
+                    }
+                }
+                Append(out.str());
+            }
+            return;
+        }
+
         if (swi == kJniProbeSvcV57TrieCompare) {
             // Original @ 0x10a83af8: UXTB r0,r5.
             const std::uint32_t raw =
@@ -14557,44 +14643,86 @@ public:
         }
 
         if (name == "pthread_mutex_unlock") {
+            const std::uint32_t mutex_arg = regs[0];
+            const std::uint32_t clean_lr = regs[14] & ~1u;
+
+            if (V62Enabled() &&
+                clean_lr == kV61ResStreamsPumpUnlockReturnGuest &&
+                v62_pump_mutex == 0u) {
+                v62_pump_mutex = mutex_arg;
+                if (mutex_arg >= 0x68u)
+                    v62_pump_manager = mutex_arg - 0x68u;
+                V62RefreshPumpVector();
+            }
+
+            if (V62MutexCoherentEnabled() &&
+                v62_pump_mutex != 0u &&
+                mutex_arg == v62_pump_mutex) {
+                if (v62_pump_mutex_locked &&
+                    v62_pump_mutex_owner == current_probe_thread_id) {
+                    v62_pump_mutex_locked = false;
+                    v62_pump_mutex_owner = 0xffffffffu;
+                    ++v62_pump_mutex_releases;
+                    if (v62_pump_mutex_releases <= 16u ||
+                        (v62_pump_mutex_releases % 1000u) == 0u) {
+                        Append(
+                            "V62 PUMP MUTEX RELEASE #" +
+                            std::to_string(v62_pump_mutex_releases) +
+                            " thread=" +
+                            std::to_string(current_probe_thread_id) +
+                            " mutex=" +
+                            V46DescribeGuestAddress(mutex_arg));
+                    }
+                } else {
+                    Append(
+                        "V62 PUMP MUTEX RELEASE MISMATCH thread=" +
+                        std::to_string(current_probe_thread_id) +
+                        " trackedOwner=" +
+                        std::to_string(v62_pump_mutex_owner) +
+                        " locked=" +
+                        (v62_pump_mutex_locked ? "YES" : "NO"));
+                }
+            }
+
             regs[0] = 0;
             ++supported_calls;
 
-            const std::uint32_t clean_lr =
-                regs[14] & ~1u;
+            // In coherent mode a worker's verified unlock is a safe slice end.
+            if (V62MutexCoherentEnabled() &&
+                current_probe_thread_id != 0u &&
+                clean_lr == kV61ResStreamsPumpUnlockReturnGuest &&
+                soft_slice_timeout) {
+                Append(
+                    "V62 WORKER SAFE UNLOCK tid=" +
+                    std::to_string(current_probe_thread_id) +
+                    " LR=0x" + JniProbeHex(clean_lr) +
+                    " -> end worker slice");
+                jit->HaltExecution(Dynarmic::HaltReason::UserDefined4);
+                return;
+            }
 
             if (v61_res_stream_pump_signature_ok &&
                 return_mode == ReturnMode::Lifecycle &&
                 current_probe_thread_id == 0u &&
-                current_lifecycle_name ==
-                    "Native_onDrawFrame" &&
-                clean_lr ==
-                    kV61ResStreamsPumpUnlockReturnGuest &&
+                current_lifecycle_name == "Native_onDrawFrame" &&
+                clean_lr == kV61ResStreamsPumpUnlockReturnGuest &&
                 soft_slice_timeout) {
 
-                v61_res_stream_pump_boundary_pending =
-                    true;
+                v61_res_stream_pump_boundary_pending = true;
                 ++v61_res_stream_pump_yields;
+                const std::uint64_t interval = V62Enabled() ? 1000u : 100u;
 
                 if (v61_res_stream_pump_yields <= 12u ||
-                    (v61_res_stream_pump_yields % 100u) ==
-                        0u) {
+                    (v61_res_stream_pump_yields % interval) == 0u) {
                     Append(
                         "V61 RES-STREAM PUMP UNLOCK #" +
-                        std::to_string(
-                            v61_res_stream_pump_yields) +
-                        " LR=0x" +
-                        JniProbeHex(clean_lr) +
+                        std::to_string(v61_res_stream_pump_yields) +
+                        " LR=0x" + JniProbeHex(clean_lr) +
                         " -> cooperative main-thread yield");
                 }
 
-                // This is a scheduler yield, not a fault. The import
-                // trampoline will finish and return to the pump epilogue on
-                // the next main slice.
-                jit->HaltExecution(
-                    Dynarmic::HaltReason::UserDefined4);
+                jit->HaltExecution(Dynarmic::HaltReason::UserDefined4);
             }
-
             return;
         }
 
@@ -14605,13 +14733,70 @@ public:
             name == "pthread_mutex_init" ||
             name == "pthread_mutex_destroy" ||
             name == "pthread_mutex_lock") {
-
             regs[0] = 0;
             ++supported_calls;
             return;
         }
 
         if (name == "pthread_mutex_trylock") {
+            const std::uint32_t mutex_arg = regs[0];
+            const std::uint32_t clean_lr = regs[14] & ~1u;
+
+            if (V62Enabled() &&
+                v61_res_stream_pump_signature_ok &&
+                clean_lr == kV62ResStreamsPumpTrylockReturnGuest) {
+
+                if (v62_pump_mutex == 0u) {
+                    v62_pump_mutex = mutex_arg;
+                    if (mutex_arg >= 0x68u)
+                        v62_pump_manager = mutex_arg - 0x68u;
+                    V62RefreshPumpVector();
+
+                    Append(
+                        "V62 PUMP DISCOVERED manager=" +
+                        V46DescribeGuestAddress(v62_pump_manager) +
+                        " mutex=" +
+                        V46DescribeGuestAddress(v62_pump_mutex) +
+                        " vector={begin=0x" +
+                        JniProbeHex(v62_pump_vector_begin) +
+                        ",end=0x" + JniProbeHex(v62_pump_vector_end) +
+                        ",cap=0x" + JniProbeHex(v62_pump_vector_cap) + "}");
+                    V62ScanPumpVector("first-trylock");
+                }
+
+                V62RefreshPumpVector();
+
+                if (V62MutexCoherentEnabled()) {
+                    if (!v62_pump_mutex_locked) {
+                        v62_pump_mutex_locked = true;
+                        v62_pump_mutex_owner = current_probe_thread_id;
+                        ++v62_pump_mutex_acquires;
+                        regs[0] = 0u;
+                        if (v62_pump_mutex_acquires <= 16u ||
+                            (v62_pump_mutex_acquires % 1000u) == 0u) {
+                            Append(
+                                "V62 PUMP MUTEX ACQUIRE #" +
+                                std::to_string(v62_pump_mutex_acquires) +
+                                " ownerTid=" +
+                                std::to_string(current_probe_thread_id));
+                        }
+                    } else {
+                        ++v62_pump_mutex_contentions;
+                        regs[0] = 16u; // Linux/Bionic EBUSY.
+                        Append(
+                            "V62 PUMP MUTEX BUSY #" +
+                            std::to_string(v62_pump_mutex_contentions) +
+                            " requesterTid=" +
+                            std::to_string(current_probe_thread_id) +
+                            " ownerTid=" +
+                            std::to_string(v62_pump_mutex_owner));
+                    }
+                    ++supported_calls;
+                    return;
+                }
+            }
+
+            // Control A and all legacy modes preserve v61's synthetic success.
             regs[0] = 0;
             ++supported_calls;
             return;
@@ -21020,6 +21205,16 @@ bool JniProbePrepareRuntime(
         return false;
     }
 
+    if (callbacks.V62Enabled() &&
+        !patch_resource_native_miss(
+            0x00868cb0u,
+            0xe5901014u,
+            kJniProbeSvcV62TaskDispatch)) {
+        error =
+            "v62 TaskResource dispatch probe did not match LDR r1,[r0,#0x14] at 0x10868cb0.";
+        return false;
+    }
+
     callbacks.Append(
         "V48 RESFILE WRAPPER-FINAL BRIDGE: v45 internal hooks preserved; direct-group null returns are observed at 0x1087a708 and all-groups-exhausted nulls at 0x1087a76c with the exact wrapper ID still in r6.");
     callbacks.Append(
@@ -21049,6 +21244,17 @@ bool JniProbePrepareRuntime(
         "V60 FAIR ASYNC-WAIT SCHEDULER: concrete waits keep a persistent round-robin worker cursor. A worker that changes the wait object no longer permanently starves later deferred workers; ordinary CPU timeslices remain strictly main-only.");
     callbacks.Append(
         "V61 RES-STREAM PUMP COOPERATION: the verified resource-task pump yields only after its pthread_mutex_unlock epilogue. One deferred worker slice is scheduled round-robin per safe pump boundary; ordinary CPU slices and in-pump container mutation remain main-only.");
+    if (callbacks.V62Enabled()) {
+        callbacks.Append(
+            std::string{"V62 TASKRESOURCE/POINTER PROVENANCE: mode="} +
+            callbacks.V56ModeName() +
+            ". Trap@0x10868cb0 emulates LDR r1,[r0,#0x14] exactly; worker this+0x30 aliases, live/retired allocation class, vector slots and the first observed bad-pointer writer are recorded.");
+        callbacks.Append(
+            std::string{"V62 PUMP MUTEX COHERENCE: "} +
+            (callbacks.V62MutexCoherentEnabled()
+                ? "ENABLED. Only verified manager+0x68 trylock/unlock ownership is modeled; a worker is not suspended while it owns that mutex."
+                : "CONTROL A. v61 synthetic trylock behavior is preserved for the causal A/B comparison."));
+    }
 
     return_trampoline =
         JniProbeMakeTrampoline(
