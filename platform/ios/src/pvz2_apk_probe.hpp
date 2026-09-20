@@ -56,12 +56,13 @@ struct PvZ2JniProbeResult {
     std::uint64_t last_nonblack_pixels = 0;
     bool adaptive_frame_stop = false;
 
-    // v53 exact startup state-machine diagnosis.
+    // v53: passive exact startup state-machine tracing. Unlike the aborted
+    // pre-first-draw experiment, these fields are observational only.
     std::uint32_t game_state_manager = 0;
-    std::int32_t game_state_before_force = -999;
-    std::int32_t game_state_after_force = -999;
-    bool main_menu_request_injected = false;
-    bool main_menu_direct_apply_injected = false;
+    std::int32_t game_state_current = -999;
+    std::int32_t game_state_pending = -999;
+    std::uint64_t game_state_request_calls = 0;
+    std::uint64_t game_state_apply_calls = 0;
 
     std::uint32_t return_value = 0;
     std::uint32_t game_app_initialize_address = 0;
