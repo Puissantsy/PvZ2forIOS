@@ -83,6 +83,59 @@ NSString *LogFilePath() {
             path];
 }
 
+// v52: the old logger opened, sought and closed an NSFileHandle for every
+// diagnostic line. A full-load run emits thousands of lines, so the diagnostic
+// logger itself became a major part of the wall-clock runtime. Keep one handle
+// open for the run instead. Writes still reach the file immediately, preserving
+// useful crash diagnostics without paying open/close cost per line.
+NSLock *PersistentLogLock() {
+    static NSLock *lock =
+        [[NSLock alloc] init];
+    return lock;
+}
+
+NSFileHandle *gPersistentLogHandle = nil;
+
+void EnsurePersistentLogHandleLocked() {
+    if (gPersistentLogHandle != nil) {
+        return;
+    }
+
+    NSString *path =
+        LogFilePath();
+
+    if (![[NSFileManager defaultManager]
+            fileExistsAtPath:path]) {
+        [[NSFileManager defaultManager]
+            createFileAtPath:path
+                    contents:[NSData data]
+                  attributes:nil];
+    }
+
+    gPersistentLogHandle =
+        [NSFileHandle
+            fileHandleForWritingAtPath:path];
+
+    [gPersistentLogHandle
+        seekToEndOfFile];
+}
+
+void FlushPersistentLog() {
+    NSLock *lock =
+        PersistentLogLock();
+
+    [lock lock];
+
+    EnsurePersistentLogHandleLocked();
+
+    if (gPersistentLogHandle != nil) {
+        [gPersistentLogHandle
+            synchronizeFile];
+    }
+
+    [lock unlock];
+}
+
 void AppendPersistentLog(NSString *line) {
     NSString *timestamp =
         [[NSDate date]
@@ -94,36 +147,30 @@ void AppendPersistentLog(NSString *line) {
             timestamp,
             line];
 
-    NSString *path =
-        LogFilePath();
-
-    if (![[NSFileManager defaultManager]
-            fileExistsAtPath:path]) {
-
+    NSData *data =
         [entry
-            writeToFile:path
-              atomically:YES
-                encoding:NSUTF8StringEncoding
-                   error:nil];
-        return;
+            dataUsingEncoding:
+                NSUTF8StringEncoding];
+
+    NSLock *lock =
+        PersistentLogLock();
+
+    [lock lock];
+
+    EnsurePersistentLogHandleLocked();
+
+    if (gPersistentLogHandle != nil &&
+        data != nil) {
+        [gPersistentLogHandle
+            writeData:data];
     }
 
-    NSFileHandle *handle =
-        [NSFileHandle
-            fileHandleForWritingAtPath:path];
-
-    [handle seekToEndOfFile];
-
-    [handle
-        writeData:
-            [entry
-                dataUsingEncoding:
-                    NSUTF8StringEncoding]];
-
-    [handle closeFile];
+    [lock unlock];
 }
 
 NSString *ReadPersistentLogFull() {
+    FlushPersistentLog();
+
     NSError *error = nil;
 
     NSString *text =
@@ -153,11 +200,34 @@ NSString *ReadPersistentLog() {
 }
 
 void ResetPersistentLog() {
+    NSLock *lock =
+        PersistentLogLock();
+
+    [lock lock];
+
+    if (gPersistentLogHandle != nil) {
+        [gPersistentLogHandle
+            synchronizeFile];
+        [gPersistentLogHandle
+            closeFile];
+        gPersistentLogHandle = nil;
+    }
+
     [[NSFileManager defaultManager]
         removeItemAtPath:
             LogFilePath()
                    error:
             nil];
+
+    [[NSFileManager defaultManager]
+        createFileAtPath:
+            LogFilePath()
+                contents:[NSData data]
+              attributes:nil];
+
+    EnsurePersistentLogHandleLocked();
+
+    [lock unlock];
 }
 
 NSString *NSStringFromStd(
@@ -1185,20 +1255,10 @@ NSString *NSStringFromStd(
                                     result.heap_live_bytes,
                                     result.heap_live_allocations]];
 
-                    if (!result.trace.empty()) {
-                        [selfRef
-                            appendUI:
-                                @"----- FULL LOAD TRACE -----"];
-
-                        [selfRef
-                            appendUI:
-                                NSStringFromStd(
-                                    result.trace)];
-
-                        [selfRef
-                            appendUI:
-                                @"----- END FULL LOAD TRACE -----"];
-                    }
+                    // v52: every trace line was already persisted by the
+                    // progress callback. Do not append result.trace again;
+                    // older probes doubled the exported log and made analysis
+                    // unnecessarily expensive.
 
                     [selfRef
                         appendUI:
