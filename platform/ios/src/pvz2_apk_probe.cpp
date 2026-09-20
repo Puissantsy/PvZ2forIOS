@@ -796,6 +796,16 @@ constexpr std::uint32_t kV57TolowerGotGuest = 0x10d010d8u;
 constexpr std::uint32_t kV57ToupperGotGuest = 0x10d010dcu;
 constexpr std::uint32_t kV57CtypeGotGuest = 0x10d01280u;
 
+// v61: verified PvZ2 1.5.252752 resource-stream task pump. The pump acquires
+// manager+0x68 through pthread_mutex_trylock and releases it at 0x10868f6c.
+// Yielding only after that unlock preserves the v29 "never interleave while
+// guest containers are being mutated" invariant while still allowing the
+// real deferred workers to advance between pump iterations.
+constexpr std::uint32_t kV61ResStreamsPumpUnlockReturnGuest =
+    kGuestBase + 0x00868f70u;
+constexpr std::uint32_t kV61GenericPthreadWrapperGuest =
+    kGuestBase + 0x009cb6d0u;
+
 constexpr std::uint32_t kJniProbeSvcUnsupportedJniBase = 0x00e000u;
 constexpr std::uint32_t kJniProbeJniSlotCount = 256u;
 
@@ -1682,6 +1692,14 @@ public:
     std::vector<DeferredThread> deferred_threads;
     std::uint32_t current_probe_thread_id = 0;
     bool soft_slice_timeout = false;
+
+    // v61 safe cooperative boundary. Set only by the main Native_onDrawFrame
+    // thread when the verified resource-stream pump has completed its
+    // pthread_mutex_unlock. The lifecycle scheduler consumes it exactly once.
+    bool v61_res_stream_pump_signature_ok = false;
+    bool v61_res_stream_pump_boundary_pending = false;
+    std::uint64_t v61_res_stream_pump_yields = 0;
+
     std::uint32_t next_pthread_key = 1;
     std::uint32_t next_synthetic_thread = 1;
     std::uint32_t next_synthetic_class = 1;
@@ -14266,6 +14284,28 @@ public:
                 " created_in=" +
                 phase);
 
+            // v61: 0x109cb6d0 is a tiny generic pthread wrapper:
+            //   fn = [arg+0], this = [arg+4], fn(this)
+            // Capture the real worker entry/object now so a later stall can
+            // be attributed without another diagnostic-only build.
+            if ((start_routine & ~1u) ==
+                    kV61GenericPthreadWrapperGuest &&
+                argument != 0u &&
+                mem.Ptr(argument, 8u) != nullptr) {
+
+                Append(
+                    "V61 WORKER PAYLOAD tid=" +
+                    std::to_string(thread_id) +
+                    " entry=0x" +
+                    JniProbeHex(
+                        mem.Read32Guest(argument)) +
+                    " this=0x" +
+                    JniProbeHex(
+                        mem.Read32Guest(argument + 4u)) +
+                    " wrapperArg=0x" +
+                    JniProbeHex(argument));
+            }
+
             regs[0] = 0;
             ++supported_calls;
             return;
@@ -14279,14 +14319,55 @@ public:
             return;
         }
 
+        if (name == "pthread_mutex_unlock") {
+            regs[0] = 0;
+            ++supported_calls;
+
+            const std::uint32_t clean_lr =
+                regs[14] & ~1u;
+
+            if (v61_res_stream_pump_signature_ok &&
+                return_mode == ReturnMode::Lifecycle &&
+                current_probe_thread_id == 0u &&
+                current_lifecycle_name ==
+                    "Native_onDrawFrame" &&
+                clean_lr ==
+                    kV61ResStreamsPumpUnlockReturnGuest &&
+                soft_slice_timeout) {
+
+                v61_res_stream_pump_boundary_pending =
+                    true;
+                ++v61_res_stream_pump_yields;
+
+                if (v61_res_stream_pump_yields <= 12u ||
+                    (v61_res_stream_pump_yields % 100u) ==
+                        0u) {
+                    Append(
+                        "V61 RES-STREAM PUMP UNLOCK #" +
+                        std::to_string(
+                            v61_res_stream_pump_yields) +
+                        " LR=0x" +
+                        JniProbeHex(clean_lr) +
+                        " -> cooperative main-thread yield");
+                }
+
+                // This is a scheduler yield, not a fault. The import
+                // trampoline will finish and return to the pump epilogue on
+                // the next main slice.
+                jit->HaltExecution(
+                    Dynarmic::HaltReason::UserDefined4);
+            }
+
+            return;
+        }
+
         if (name == "pthread_mutexattr_init" ||
             name == "pthread_mutexattr_settype" ||
             name == "pthread_mutexattr_setpshared" ||
             name == "pthread_mutexattr_destroy" ||
             name == "pthread_mutex_init" ||
             name == "pthread_mutex_destroy" ||
-            name == "pthread_mutex_lock" ||
-            name == "pthread_mutex_unlock") {
+            name == "pthread_mutex_lock") {
 
             regs[0] = 0;
             ++supported_calls;
@@ -20476,6 +20557,37 @@ bool JniProbePrepareRuntime(
         return false;
     }
 
+    // v61 safety proof: do not enable cooperative worker scheduling from an
+    // arbitrary sampled PC. Verify the resource-stream pump's trylock/unlock
+    // structure and epilogue directly in the original ARM image. Only the
+    // pthread_mutex_unlock return at this verified epilogue may become a
+    // worker scheduling boundary.
+    const auto v61_word =
+        [&](std::uint32_t offset) {
+            return
+                offset + 4u <= memory.image.size()
+                    ? Read32(
+                          memory.image.data() + offset)
+                    : 0u;
+        };
+
+    callbacks.v61_res_stream_pump_signature_ok =
+        v61_word(0x00868b98u) == 0xe2840068u &&
+        v61_word(0x00868ba0u) == 0xebe1ffcfu &&
+        v61_word(0x00868f68u) == 0xe59d0008u &&
+        v61_word(0x00868f6cu) == 0xebe1fe55u &&
+        v61_word(0x00868f70u) == 0xe28dd024u &&
+        v61_word(0x00868f74u) == 0xe8bd8ff0u;
+
+    if (!callbacks.v61_res_stream_pump_signature_ok) {
+        error =
+            "v61 resource-stream pump safety signature did not match PvZ2 1.5.252752; refusing to schedule workers at an unverified boundary.";
+        return false;
+    }
+
+    callbacks.Append(
+        "V61 RES-STREAM PUMP BOUNDARY: verified trylock@0x10868ba0 and unlock@0x10868f6c with epilogue@0x10868f70. During Native_onDrawFrame only, the main thread yields after this unlock and the scheduler runs at most one deferred worker slice round-robin; no worker is injected while the pump mutates its task containers.");
+
     // v45: keep 0x86f66c's native lookup logic intact, but observe the exact
     // entry plus all three relevant return shapes. v44 proved the group path
     // never produced a null-valued found node. The missing alternating IDs
@@ -20698,6 +20810,8 @@ bool JniProbePrepareRuntime(
         "V59 ASYNC CALLER-POLL SCHEDULER: stream-future objects are identified dynamically by vfn+0x2c==0x109f7140. Caller-side virtual-status spin loops are recognized by ARM instruction shape plus an LR still inside the verified stream poll; ordinary CPU slices remain main-only.");
     callbacks.Append(
         "V60 FAIR ASYNC-WAIT SCHEDULER: concrete waits keep a persistent round-robin worker cursor. A worker that changes the wait object no longer permanently starves later deferred workers; ordinary CPU timeslices remain strictly main-only.");
+    callbacks.Append(
+        "V61 RES-STREAM PUMP COOPERATION: the verified resource-task pump yields only after its pthread_mutex_unlock epilogue. One deferred worker slice is scheduled round-robin per safe pump boundary; ordinary CPU slices and in-pump container mutation remain main-only.");
 
     return_trampoline =
         JniProbeMakeTrampoline(
@@ -21756,6 +21870,11 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                         auto wait_kind =
                             [&](std::uint32_t pc,
                                 std::uint32_t lr) -> const char* {
+                                if (callbacks
+                                        .v61_res_stream_pump_boundary_pending) {
+                                    return "res-stream-pump-boundary";
+                                }
+
                                 if (is_legacy_future_poll_pc(pc)) {
                                     return "future-poll";
                                 }
@@ -21813,6 +21932,14 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                     wait_kind(
                                         pc,
                                         lr);
+
+                                if (std::strcmp(
+                                        kind,
+                                        "res-stream-pump-boundary") ==
+                                    0) {
+                                    reg_index = 0xffffffffu;
+                                    return 0u;
+                                }
 
                                 if (std::strcmp(
                                         kind,
@@ -22081,6 +22208,21 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                     current_wait_kind,
                                     "timeslice") != 0;
 
+                            const bool res_stream_pump_boundary =
+                                std::strcmp(
+                                    current_wait_kind,
+                                    "res-stream-pump-boundary") ==
+                                0;
+
+                            // Consume the import-triggered marker exactly once.
+                            // The kind string above retains the meaning for this
+                            // scheduling round while worker execution proceeds.
+                            if (res_stream_pump_boundary) {
+                                callbacks
+                                    .v61_res_stream_pump_boundary_pending =
+                                    false;
+                            }
+
                             std::uint32_t wait_object_reg =
                                 0xffffffffu;
 
@@ -22128,8 +22270,10 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                     " waitReg=" +
                                     wait_reg_label +
                                     " wait_object{" +
-                                    async_future_snapshot(
-                                        future) +
+                                    (future != 0u
+                                        ? async_future_snapshot(
+                                              future)
+                                        : std::string{"none"}) +
                                     "} workers=" +
                                     std::to_string(
                                         callbacks.deferred_threads.size()) +
@@ -22186,6 +22330,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
 
                             bool future_changed = false;
                             bool any_worker_ran = false;
+                            std::size_t worker_slices_this_round = 0u;
 
                             const std::size_t worker_limit =
                                 std::min<std::size_t>(
@@ -22309,6 +22454,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                 clear_probe_halts();
 
                                 any_worker_ran = true;
+                                ++worker_slices_this_round;
 
                                 const Dynarmic::HaltReason worker_halt =
                                     jit.Run();
@@ -22417,6 +22563,18 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
 
                                     break;
                                 }
+
+                                if (res_stream_pump_boundary &&
+                                    worker_slices_this_round >= 1u) {
+                                    callbacks.Append(
+                                        "V61 RES-STREAM PUMP SLICE tid=" +
+                                        std::to_string(
+                                            worker_state.id) +
+                                        " nextWorkerIndex=" +
+                                        std::to_string(
+                                            scheduler_worker_cursor));
+                                    break;
+                                }
                             }
 
                             clear_probe_halts();
@@ -22440,6 +22598,13 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             callbacks.soft_slice_timeout = true;
 
                             if (!any_worker_ran) {
+                                if (res_stream_pump_boundary) {
+                                    // This boundary is an opportunity to run a
+                                    // worker, not a dependency. If every worker
+                                    // has completed/failed, let main continue.
+                                    continue;
+                                }
+
                                 if (concrete_wait) {
                                     callbacks.soft_slice_timeout = false;
                                     result.lifecycle_failure_name =
@@ -22464,6 +22629,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             }
 
                             if (concrete_wait &&
+                                !res_stream_pump_boundary &&
                                 !future_changed) {
                                 callbacks.Append(
                                     "V30 SCHED WAIT " +
