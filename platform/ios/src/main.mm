@@ -245,7 +245,7 @@ NSString *NSStringFromStd(
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — Cloud Startup Completion v49";
+        @"PvZ2forIOS — Network/Menu Gate Probe v50";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -254,7 +254,7 @@ NSString *NSStringFromStd(
         NO;
 
     title.text =
-        @"PvZ2forIOS — cloud startup completion v49";
+        @"PvZ2forIOS — network/menu gate probe v50";
 
     title.font =
         [UIFont
@@ -270,8 +270,8 @@ NSString *NSStringFromStd(
         NO;
 
     explanation.text =
-        @"v48 isolated the black screen: the EA/PvZ2 splash fades normally to zero by frame 71, both the internal game FBO and the iOS framebuffer are genuinely black afterwards, GLES state remains valid, and texture uploads never advance beyond the five startup textures. The renderer is therefore not the blocker. "
-         @"v49 targets the first missing asynchronous startup handshake instead of adding more generic graphics probes. Native_onSurfaceCreated requests Cloud_attemptSilentSync, but our Android-Java bridge previously returned a no-op and the registered Native_CloudStateLoaded callback could never arrive. v49 captures that real registered native callback and delivers it exactly once at a lifecycle-safe pre-frame boundary. The APK-specific callback was verified not to consume the Java String payload, so no fake cloud data is injected. Existing HTTP, RSB, RESFILE, worker, address-map and framebuffer diagnostics remain enabled.";
+        @"v49 proved the cloud hypothesis false: Native_CloudStateLoaded is captured, delivered and returns successfully, yet the EA splash still fades to a genuinely black framebuffer and texture uploads remain stuck at five. The new extracted RSB metadata also gives us exact startup/menu resource names: UI_Android is loaded during surface creation, while MainMenu_Background and UI_MainMenu are never requested. "
+         @"v50 therefore targets the next concrete gate instead of forcing iPad assets prematurely. The original APK's AndroidHttpProxy.GetNetworkStatus bytecode was checked directly: 0 means no active connection, 1 mobile/WiMAX, 2 Wi-Fi and 3 another connected transport. Previous probes hard-coded 0, while libPVZ2 contains the startup state GAME_WaitForNetworkLoad. v50 reports the faithful Wi-Fi value 2 while preserving deterministic HTTP error callbacks, and adds low-noise milestones for UI_Android, UI_iPad, Init, MainMenu_Background and UI_MainMenu. No Android-to-iPad UI remap is applied yet, so any behavior change has one clear cause.";
 
     explanation.numberOfLines = 0;
 
@@ -574,7 +574,7 @@ NSString *NSStringFromStd(
             monospacedSystemFontOfSize:13.0
             weight:UIFontWeightRegular];
     caption.text =
-        @"v49 — async cloud startup completion + post-EA verification\nTap Close to return to the full diagnostic log.";
+        @"v50 — Wi-Fi startup gate + exact menu-resource milestones\nTap Close to return to the full diagnostic log.";
 
     UIButton *closeButton =
         [UIButton
@@ -943,7 +943,7 @@ NSString *NSStringFromStd(
 
     [self
         appendUI:
-            @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v49 keeps all previous diagnostics but now completes the Android cloud silent-sync handshake that v48 showed was left asynchronous forever: Cloud_attemptSilentSync queues the real registered Native_CloudStateLoaded callback, which is delivered once after surface setup and before frame 1. Watch for V49 CLOUD DELIVER and whether any new textures / non-black post-EA frame finally appear."];
+            @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v50 preserves the proven cloud completion and all prior diagnostics, but changes GetNetworkStatus from offline=0 to the APK-authentic Wi-Fi=2 path. It also traces exact RSB milestones for UI_Android/UI_iPad and the MainMenu_Background/UI_MainMenu atlas families discovered in the extracted metadata. The key result is whether mainMenuBg or uiMainMenu becomes YES and whether texture uploads advance past five."];
 
     [self
         presentViewController:
@@ -1004,7 +1004,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v49 probe run started; PID=%d ===",
+                    @"=== PvZ2 v50 probe run started; PID=%d ===",
                     getpid()]];
 
     self.jniRunning =
