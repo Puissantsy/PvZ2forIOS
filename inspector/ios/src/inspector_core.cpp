@@ -37,6 +37,9 @@ constexpr std::uint32_t kShtDynamic = 6;
 constexpr std::uint32_t kShtDynsym = 11;
 constexpr std::uint32_t kShtRel = 9;
 constexpr std::uint32_t kShtArmExidx = 0x70000001u;
+constexpr std::uint32_t kShfWrite = 0x1u;
+constexpr std::uint32_t kShfAlloc = 0x2u;
+constexpr std::uint32_t kShfExecInstr = 0x4u;
 
 std::uint16_t U16(const std::uint8_t* p) {
     return static_cast<std::uint16_t>(p[0]) |
@@ -271,6 +274,35 @@ public:
     std::uint32_t relocation_count() const { return relocation_count_; }
     std::uint32_t image_end() const { return image_end_; }
 
+    const Section* SectionAt(std::uint32_t vaddr) const {
+        const Section* best = nullptr;
+        for (const auto& s : sections_) {
+            if (s.size == 0u) continue;
+            const std::uint64_t begin = s.addr;
+            const std::uint64_t end =
+                static_cast<std::uint64_t>(s.addr) + s.size;
+            if (vaddr >= begin && vaddr < end) {
+                if (best == nullptr ||
+                    ((s.flags & kShfAlloc) != 0u &&
+                     (best->flags & kShfAlloc) == 0u)) {
+                    best = &s;
+                }
+            }
+        }
+        return best;
+    }
+
+    bool IsExecutable(std::uint32_t vaddr) const {
+        const Section* s = SectionAt(vaddr);
+        return s != nullptr && (s->flags & kShfExecInstr) != 0u;
+    }
+
+    std::string SectionName(std::uint32_t vaddr) const {
+        const Section* s = SectionAt(vaddr);
+        if (s == nullptr) return "(segment-only)";
+        return s->name.empty() ? "(unnamed)" : s->name;
+    }
+
     std::vector<std::string> undefined_symbols() const {
         std::vector<std::string> out;
         for (const auto& s : symbols_) {
@@ -306,6 +338,10 @@ public:
     std::pair<std::optional<std::uint32_t>,
               std::optional<std::uint32_t>>
     FunctionRange(std::uint32_t off) const {
+        if (!IsExecutable(off)) {
+            return {std::nullopt, std::nullopt};
+        }
+
         auto it = std::upper_bound(
             function_starts_.begin(),
             function_starts_.end(),
@@ -489,7 +525,9 @@ private:
                     if (delta & 0x40000000u) delta -= 0x80000000ll;
                     const std::uint32_t target =
                         static_cast<std::uint32_t>(place + delta) & ~1u;
-                    if (target > 0 && target < image_end_) {
+                    if (target > 0 &&
+                        target < image_end_ &&
+                        IsExecutable(target)) {
                         starts.insert(target);
                     }
                 }
@@ -553,6 +591,28 @@ const std::map<std::uint32_t, std::string>& KnownLabels() {
         {0x00275478u, "GameStateMgr pending/current transition update"},
         {0x002767b4u, "GameState.MainMenu.Enter(resources)"},
         {0x00276970u, "GameState.StartupLogo.Update"},
+        {0x002769d4u, "StartupLogo.GateA result VMOV"},
+        {0x002769e0u, "StartupLogo.GateA BLT return"},
+        {0x00276a00u, "StartupLogo.GateB BNE return"},
+        {0x00276a2cu, "StartupLogo.GateC BNE return"},
+        {0x00276a30u, "StartupLogo.GateD counter +0x430 load"},
+        {0x00276a38u, "StartupLogo.GateD BLT return"},
+        {0x00276a3cu, "StartupLogo.after-A-D marker"},
+        {0x00276a60u, "StartupLogo.GateE app +0xb7a load"},
+        {0x00276adcu, "StartupLogo.PatchScreen request-path marker"},
+        {0x00276b20u, "StartupLogo.main-flow marker"},
+        {0x00276d70u, "StartupLogo.MainMenu request-path marker"},
+        {0x002b88ecu, "StartupLogo.GateG helper result"},
+        {0x002b8b88u, "StartupLogo.GateH helper result"},
+        {0x002c84d0u, "StartupLogo.GateA resource load"},
+        {0x002c8620u, "StartupLogo.GateA completed/total counters"},
+        {0x002ef188u, "StartupLogo.progress helper result"},
+        {0x0036bbfcu, "StartupLogo.GateF helper result"},
+        {0x0037d158u, "StartupLogo.GateJ object marker"},
+        {0x00423adcu, "StartupLogo.find helper result"},
+        {0x004855b0u, "StartupLogo.GateI helper result"},
+        {0x004ac370u, "StartupLogo.late helper result"},
+        {0x005143a4u, "StartupLogo.GateC state +0x98 load"},
         {0x005149c4u, "ImageRes.splash-null virtual-call site observed in v36"},
         {0x005149c8u, "ImageRes.splash-null virtual-call return observed in v36"},
         {0x0086f66cu, "ResourceRegistryLookup.function_start"},
@@ -657,6 +717,84 @@ GameStateProfileValidation ValidateGameStateProfile(
     return v;
 }
 
+struct StartupLogoProfileCheck {
+    const char* name = "";
+    std::uint32_t offset = 0u;
+    std::uint32_t expected = 0u;
+    bool match = false;
+};
+
+struct StartupLogoProfileValidation {
+    std::vector<StartupLogoProfileCheck> checks;
+
+    bool exact_profile() const {
+        return
+            !checks.empty() &&
+            std::all_of(
+                checks.begin(),
+                checks.end(),
+                [](const auto& c) { return c.match; });
+    }
+
+    std::size_t matched() const {
+        return static_cast<std::size_t>(
+            std::count_if(
+                checks.begin(),
+                checks.end(),
+                [](const auto& c) { return c.match; }));
+    }
+};
+
+StartupLogoProfileValidation ValidateStartupLogoProfile(
+    const Elf32Arm& elf) {
+
+    StartupLogoProfileValidation v;
+
+    const std::array<std::tuple<const char*, std::uint32_t, std::uint32_t>, 22>
+    expected = {{
+        {"GateA.resource LDR",          0x002c84d0u, 0xe595064cu},
+        {"GateA.totals VMOV",           0x002c8620u, 0xee00ba10u},
+        {"GateA.result VMOV",           0x002769d4u, 0xee010a10u},
+        {"GateA.result VCMPE",          0x002769d8u, 0xeeb41ac0u},
+        {"GateA.result VMRS",           0x002769dcu, 0xeef1fa10u},
+        {"GateA BLT return",            0x002769e0u, 0xba0000efu},
+        {"GateB BNE return",            0x00276a00u, 0x1a0000e7u},
+        {"GateC.state LDR",             0x005143a4u, 0xe5901098u},
+        {"GateC BNE return",            0x00276a2cu, 0x1a0000dcu},
+        {"GateD.counter LDR",           0x00276a30u, 0xe5940430u},
+        {"GateD BLT return",            0x00276a38u, 0xba0000d9u},
+        {"after-A-D marker",            0x00276a3cu, 0xe59f03c8u},
+        {"GateE app byte",              0x00276a60u, 0xe5d00b7au},
+        {"GateF result",                0x0036bbfcu, 0xe1a00004u},
+        {"GateG result",                0x002b88ecu, 0xe1a00004u},
+        {"GateH result",                0x002b8b88u, 0xe1a00004u},
+        {"GateI result",                0x004855b0u, 0xe1a00005u},
+        {"GateJ object",                0x0037d158u, 0xe1a01000u},
+        {"Patch request marker",        0x00276adcu, 0xe1a00004u},
+        {"Main flow marker",            0x00276b20u, 0xe1a05000u},
+        {"Progress helper result",      0x002ef188u, 0xe1a00004u},
+        {"MainMenu request marker",     0x00276d70u, 0xe1a00004u},
+    }};
+
+    for (const auto& [name, offset, opcode] : expected) {
+        v.checks.push_back(
+            StartupLogoProfileCheck{
+                name,
+                offset,
+                opcode,
+                HasWordAt(elf, offset, opcode)});
+    }
+
+    v.checks.push_back(
+        {"Find helper result", 0x00423adcu, 0xe1a00004u,
+         HasWordAt(elf, 0x00423adcu, 0xe1a00004u)});
+    v.checks.push_back(
+        {"Late helper result", 0x004ac370u, 0xe1a00004u,
+         HasWordAt(elf, 0x004ac370u, 0xe1a00004u)});
+
+    return v;
+}
+
 std::string GameStateName(std::int32_t state) {
     switch (state) {
         case -1: return "NONE";
@@ -679,6 +817,8 @@ std::string GameStateName(std::int32_t state) {
 struct Classified {
     std::string region;
     std::optional<std::uint32_t> offset;
+    std::string section;
+    bool executable = false;
 };
 
 Classified Classify(std::uint32_t address, const Elf32Arm& elf) {
@@ -686,7 +826,12 @@ Classified Classify(std::uint32_t address, const Elf32Arm& elf) {
 
     if (plain >= kGuestBase &&
         plain < kGuestBase + elf.image_end()) {
-        return {"libPVZ2.so", plain - kGuestBase};
+        const std::uint32_t off = plain - kGuestBase;
+        return {
+            "libPVZ2.so",
+            off,
+            elf.SectionName(off),
+            elf.IsExecutable(off)};
     }
 
     const std::array<std::tuple<const char*, std::uint32_t, std::uint32_t>, 5>
@@ -700,12 +845,12 @@ Classified Classify(std::uint32_t address, const Elf32Arm& elf) {
 
     for (const auto& [name, base, size] : regions) {
         if (plain >= base && plain < base + size) {
-            return {name, plain - base};
+            return {name, plain - base, "", false};
         }
     }
 
-    if (address == 0) return {"null", 0u};
-    return {"other", std::nullopt};
+    if (address == 0) return {"null", 0u, "", false};
+    return {"other", std::nullopt, "", false};
 }
 
 std::string Resolve(std::uint32_t address, const Elf32Arm& elf) {
@@ -723,26 +868,34 @@ std::string Resolve(std::uint32_t address, const Elf32Arm& elf) {
     std::ostringstream out;
     out << Hex(address)
         << " [libPVZ2.so+" << Hex(off)
-        << " " << ((address & 1u) ? "Thumb" : "ARM") << "]";
+        << " section=" << c.section
+        << " " << (c.executable ? "CODE" : "DATA");
+
+    if (c.executable) {
+        out << " " << ((address & 1u) ? "Thumb" : "ARM");
+    }
+    out << "]";
 
     const auto label = KnownLabels().find(off);
     if (label != KnownLabels().end()) {
         out << " known=" << label->second;
     }
 
-    const auto [start, end] = elf.FunctionRange(off);
-    if (start) {
-        out << " fn=+" << Hex(*start)
-            << "+" << Hex(off - *start, 1);
-        if (end) {
-            out << "/size=" << Hex(*end - *start, 1);
+    if (c.executable) {
+        const auto [start, end] = elf.FunctionRange(off);
+        if (start) {
+            out << " fn=+" << Hex(*start)
+                << "+" << Hex(off - *start, 1);
+            if (end) {
+                out << "/size=" << Hex(*end - *start, 1);
+            }
         }
-    }
 
-    const auto sym = elf.NearestSymbol(off);
-    if (sym) {
-        out << " symbol=" << sym->first.name
-            << "+" << Hex(sym->second, 1);
+        const auto sym = elf.NearestSymbol(off);
+        if (sym) {
+            out << " symbol=" << sym->first.name
+                << "+" << Hex(sym->second, 1);
+        }
     }
 
     return out.str();
@@ -861,7 +1014,11 @@ std::vector<std::string> Disassemble(
     int after = 5) {
 
     const auto c = Classify(runtime_address, elf);
-    if (c.region != "libPVZ2.so" || !c.offset) return {};
+    if (c.region != "libPVZ2.so" ||
+        !c.offset ||
+        !c.executable) {
+        return {};
+    }
 
     const bool thumb = (runtime_address & 1u) != 0;
     const std::uint32_t center = *c.offset;
@@ -1048,6 +1205,328 @@ std::string AnnotateLog(
     return out.str();
 }
 
+
+std::size_t CountOccurrences(
+    const std::string& text,
+    const std::string& needle) {
+
+    if (needle.empty()) return 0u;
+    std::size_t count = 0u;
+    std::size_t pos = 0u;
+    while ((pos = text.find(needle, pos)) != std::string::npos) {
+        ++count;
+        pos += needle.size();
+    }
+    return count;
+}
+
+std::string LastLineContaining(
+    const std::string& text,
+    const std::string& needle) {
+
+    const std::size_t pos = text.rfind(needle);
+    if (pos == std::string::npos) return {};
+
+    std::size_t begin = text.rfind('\n', pos);
+    begin = begin == std::string::npos ? 0u : begin + 1u;
+
+    std::size_t end = text.find('\n', pos);
+    if (end == std::string::npos) end = text.size();
+
+    return text.substr(begin, end - begin);
+}
+
+std::optional<std::uint64_t> ParseUnsignedAfter(
+    const std::string& line,
+    const std::string& marker,
+    int base = 10) {
+
+    const std::size_t pos = line.find(marker);
+    if (pos == std::string::npos) return std::nullopt;
+
+    const std::size_t begin = pos + marker.size();
+    std::size_t end = begin;
+
+    while (end < line.size()) {
+        const char ch = line[end];
+        const bool ok =
+            base == 16
+                ? std::isxdigit(static_cast<unsigned char>(ch)) != 0
+                : std::isdigit(static_cast<unsigned char>(ch)) != 0;
+        if (!ok) break;
+        ++end;
+    }
+
+    if (end == begin) return std::nullopt;
+
+    try {
+        return std::stoull(line.substr(begin, end - begin), nullptr, base);
+    } catch (...) {
+        return std::nullopt;
+    }
+}
+
+struct StartupLogoRuntimeDiagnosis {
+    bool present = false;
+    std::uint64_t resource_hits = 0u;
+    std::uint64_t totals_hits = 0u;
+    std::uint64_t result_hits = 0u;
+    std::uint32_t owner = 0u;
+    std::uint32_t resource = 0u;
+    std::uint32_t completed = 0u;
+    std::uint32_t total = 0u;
+    std::uint32_t result_bits = 0u;
+    std::uint64_t gate_c_hits = 0u;
+    std::uint64_t gate_d_hits = 0u;
+    std::uint64_t after_d_hits = 0u;
+    std::uint64_t patch_marker_hits = 0u;
+    std::uint64_t mainmenu_marker_hits = 0u;
+    std::int32_t final_state = -999;
+    bool resource_present = false;
+    bool qnan_7fc00000 = false;
+    bool first_blocker_gate_a = false;
+    std::size_t resource_pointer_occurrences = 0u;
+    std::string object_correlation_line;
+    std::size_t resource_miss_lines = 0u;
+    std::size_t wait_progress_lines = 0u;
+    std::size_t http_start_lines = 0u;
+    std::string text;
+};
+
+StartupLogoRuntimeDiagnosis DiagnoseStartupLogoRuntime(
+    const std::string& log,
+    const StartupLogoProfileValidation& static_profile) {
+
+    StartupLogoRuntimeDiagnosis d;
+    if (log.find("V54 STARTUPLOGO") == std::string::npos) {
+        return d;
+    }
+
+    d.present = true;
+
+    const std::string resource_line =
+        LastLineContaining(log, "V54 STARTUPLOGO GateA.resource");
+    const std::string totals_line =
+        LastLineContaining(log, "V54 STARTUPLOGO GateA.totals");
+    const std::string result_line =
+        LastLineContaining(log, "V54 STARTUPLOGO GateA.result");
+    const std::string summary_line =
+        LastLineContaining(log, "V54 STARTUPLOGO SUMMARY:");
+    const std::string final_state_line =
+        LastLineContaining(log, "V53 GAMESTATE SNAPSHOT phase=final");
+
+    if (const auto v = ParseUnsignedAfter(resource_line, "hit=")) {
+        d.resource_hits = *v;
+    }
+    if (const auto v = ParseUnsignedAfter(resource_line, "owner=0x", 16)) {
+        d.owner = static_cast<std::uint32_t>(*v);
+    }
+    if (const auto v = ParseUnsignedAfter(resource_line, "resource=0x", 16)) {
+        d.resource = static_cast<std::uint32_t>(*v);
+    }
+    d.resource_present =
+        !resource_line.empty() &&
+        resource_line.find(" present") != std::string::npos;
+
+    if (const auto v = ParseUnsignedAfter(totals_line, "hit=")) {
+        d.totals_hits = *v;
+    }
+    if (const auto v = ParseUnsignedAfter(totals_line, "completed=")) {
+        d.completed = static_cast<std::uint32_t>(*v);
+    }
+    if (const auto v = ParseUnsignedAfter(totals_line, "total=")) {
+        d.total = static_cast<std::uint32_t>(*v);
+    }
+
+    if (const auto v = ParseUnsignedAfter(result_line, "hit=")) {
+        d.result_hits = *v;
+    }
+    if (const auto v = ParseUnsignedAfter(result_line, "bits=0x", 16)) {
+        d.result_bits = static_cast<std::uint32_t>(*v);
+    }
+
+    if (const auto v = ParseUnsignedAfter(summary_line, "C{hits=")) {
+        d.gate_c_hits = *v;
+    }
+    if (const auto v = ParseUnsignedAfter(summary_line, "D{hits=")) {
+        d.gate_d_hits = *v;
+    }
+    if (const auto v = ParseUnsignedAfter(summary_line, "afterD=")) {
+        d.after_d_hits = *v;
+    }
+    if (const auto v = ParseUnsignedAfter(summary_line, "patchReqMarker=")) {
+        d.patch_marker_hits = *v;
+    }
+    if (const auto v = ParseUnsignedAfter(summary_line, "mainMenuReqMarker=")) {
+        d.mainmenu_marker_hits = *v;
+    }
+    if (const auto v = ParseUnsignedAfter(final_state_line, "current=")) {
+        d.final_state = static_cast<std::int32_t>(*v);
+    }
+
+    d.qnan_7fc00000 =
+        d.completed == 0u &&
+        d.total == 0u &&
+        d.result_bits == 0x7fc00000u;
+
+    d.first_blocker_gate_a =
+        d.result_hits != 0u &&
+        d.gate_c_hits == 0u &&
+        d.gate_d_hits == 0u &&
+        d.after_d_hits == 0u &&
+        d.patch_marker_hits == 0u &&
+        d.mainmenu_marker_hits == 0u;
+
+    if (d.resource != 0u) {
+        const std::string pointer = Hex(d.resource);
+        d.resource_pointer_occurrences =
+            CountOccurrences(log, pointer);
+        d.object_correlation_line =
+            LastLineContaining(
+                log,
+                "V52 OBJECT node=" + pointer);
+    }
+
+    d.resource_miss_lines =
+        CountOccurrences(
+            log,
+            "ResourceInfoTypes::GenericResFileRes resource not found:");
+    d.wait_progress_lines =
+        CountOccurrences(
+            log,
+            "V30 WAIT OBJECT PROGRESS");
+    d.http_start_lines =
+        CountOccurrences(
+            log,
+            "V34 HTTP Start:");
+
+    std::ostringstream out;
+    out
+        << "PvZ2 Inspector Lab v1.2 - StartupLogo runtime diagnosis\n"
+        << "========================================================\n"
+        << "Source evidence: supplied runtime log only.\n"
+        << "Static profile: "
+        << (static_profile.exact_profile()
+                ? "MATCH"
+                : "PARTIAL/MISMATCH")
+        << " ("
+        << static_profile.matched()
+        << "/"
+        << static_profile.checks.size()
+        << " opcode checks)\n\n";
+
+    out
+        << "CONFIRMED RUNTIME PATH\n"
+        << "----------------------\n"
+        << "Final GameState: "
+        << d.final_state
+        << " ("
+        << GameStateName(d.final_state)
+        << ")\n"
+        << "Gate A resource hits: "
+        << d.resource_hits
+        << "\n"
+        << "Gate A owner: "
+        << Hex(d.owner)
+        << "\n"
+        << "Gate A resource: "
+        << Hex(d.resource)
+        << (d.resource_present ? " PRESENT" : " NOT CONFIRMED PRESENT")
+        << "\n"
+        << "Gate A completed/total: "
+        << d.completed
+        << "/"
+        << d.total
+        << "\n"
+        << "Gate A result bits: "
+        << Hex(d.result_bits)
+        << (d.qnan_7fc00000 ? " (quiet NaN)" : "")
+        << "\n"
+        << "Gate C hits: "
+        << d.gate_c_hits
+        << "\n"
+        << "Gate D hits: "
+        << d.gate_d_hits
+        << "\n"
+        << "after-A-D hits: "
+        << d.after_d_hits
+        << "\n"
+        << "PatchScreen request marker hits: "
+        << d.patch_marker_hits
+        << "\n"
+        << "MainMenu request marker hits: "
+        << d.mainmenu_marker_hits
+        << "\n\n";
+
+    if (d.first_blocker_gate_a) {
+        out
+            << "FIRST OBSERVED BLOCKER\n"
+            << "----------------------\n"
+            << "Gate A is the first observed blocking gate. "
+            << "No instrumented gate after A was reached.\n";
+    } else {
+        out
+            << "FIRST OBSERVED BLOCKER\n"
+            << "----------------------\n"
+            << "The supplied log does not prove a unique first blocker.\n";
+    }
+
+    if (d.qnan_7fc00000) {
+        out
+            << "The observed arithmetic is 0/0 -> IEEE-754 qNaN "
+            << "(0x7fc00000).\n";
+        if (static_profile.exact_profile()) {
+            out
+                << "The verified 1.5.252752 code then executes "
+                << "VCMPE.F32, VMRS APSR_nzcv,FPSCR and BLT at "
+                << Hex(kGuestBase + 0x002769e0u)
+                << ". An unordered NaN comparison sets ARM flags so this "
+                << "BLT return path is taken.\n";
+        }
+    }
+
+    out
+        << "\nOBJECT CORRELATION\n"
+        << "------------------\n"
+        << "Resource pointer occurrences in the log: "
+        << d.resource_pointer_occurrences
+        << "\n";
+    if (!d.object_correlation_line.empty()) {
+        out
+            << "The same pointer appears in the runtime object graph:\n"
+            << d.object_correlation_line
+            << "\n";
+    } else {
+        out
+            << "No V52 object-graph line was found for that pointer.\n";
+    }
+
+    out
+        << "\nCORRELATED EVENTS - CAUSALITY NOT ESTABLISHED\n"
+        << "---------------------------------------------\n"
+        << "GenericResFileRes missing-resource log lines: "
+        << d.resource_miss_lines
+        << "\n"
+        << "wait-object progress lines: "
+        << d.wait_progress_lines
+        << "\n"
+        << "HTTP Start lines: "
+        << d.http_start_lines
+        << "\n"
+        << "These events coexist with the Gate A failure, but this report "
+        << "does not claim that any of them caused completed=0,total=0.\n";
+
+    out
+        << "\nNEXT UNKNOWN\n"
+        << "------------\n"
+        << "The immediate machine-level blocker is identified. "
+        << "The remaining question is why Gate A's completed and total "
+        << "counters both stay at zero.\n";
+
+    d.text = out.str();
+    return d;
+}
+
 } // namespace
 
 PvZ2InspectorResult InspectPvZ2ApkAndLog(
@@ -1097,9 +1576,18 @@ PvZ2InspectorResult InspectPvZ2ApkAndLog(
 
         const auto controls = CollectControlAddresses(log_text);
 
+        const auto game_state_profile =
+            ValidateGameStateProfile(elf);
+        const auto startup_logo_profile =
+            ValidateStartupLogoProfile(elf);
+        const auto startup_runtime =
+            DiagnoseStartupLogoRuntime(
+                log_text,
+                startup_logo_profile);
+
         std::ostringstream summary;
         summary
-            << "PvZ2 Inspector Lab v1\n"
+            << "PvZ2 Inspector Lab v1.2\n"
             << "APK bytes: " << apk_size << "\n"
             << "libPVZ2.so bytes: " << result.elf_size << "\n"
             << "mapped image span: " << Hex(result.image_size) << "\n"
@@ -1121,15 +1609,34 @@ PvZ2InspectorResult InspectPvZ2ApkAndLog(
             summary << "log: not supplied (static ELF analysis only)\n";
         }
 
-        const auto game_state_profile =
-            ValidateGameStateProfile(elf);
-
         summary
             << "GameState v53 static profile: "
             << (game_state_profile.exact_profile()
                     ? "MATCH"
                     : "PARTIAL/MISMATCH")
-            << "\n";
+            << "\n"
+            << "StartupLogo v54 static profile: "
+            << (startup_logo_profile.exact_profile()
+                    ? "MATCH"
+                    : "PARTIAL/MISMATCH")
+            << " ("
+            << startup_logo_profile.matched()
+            << "/"
+            << startup_logo_profile.checks.size()
+            << ")\n";
+
+        if (startup_runtime.present) {
+            summary
+                << "StartupLogo runtime: "
+                << (startup_runtime.first_blocker_gate_a
+                        ? "Gate A is first observed blocker"
+                        : "v54 evidence present; no unique blocker inferred")
+                << "\n";
+            if (startup_runtime.qnan_7fc00000) {
+                summary
+                    << "Gate A arithmetic: 0/0 -> qNaN 0x7fc00000\n";
+            }
+        }
 
         result.summary = summary.str();
 
@@ -1251,6 +1758,43 @@ PvZ2InspectorResult InspectPvZ2ApkAndLog(
             << "\nThis profile is descriptive evidence from the exact 1.5.252752 ARM binary. "
             << "The inspector does not execute or mutate the state machine.\n";
 
+        report
+            << "\nExact StartupLogo v54 profile (PvZ2 1.5.252752)\n"
+            << "=================================================\n"
+            << "profile validation: "
+            << (startup_logo_profile.exact_profile()
+                    ? "MATCH"
+                    : "PARTIAL/MISMATCH")
+            << " ("
+            << startup_logo_profile.matched()
+            << "/"
+            << startup_logo_profile.checks.size()
+            << ")\n";
+
+        for (const auto& check : startup_logo_profile.checks) {
+            report
+                << "  "
+                << (check.match ? "[MATCH] " : "[MISMATCH] ")
+                << check.name
+                << " @ "
+                << Hex(kGuestBase + check.offset)
+                << " expected="
+                << Hex(check.expected)
+                << "\n";
+        }
+
+        report
+            << "\nGate A verified sequence includes VMOV/VCMPE/VMRS/BLT. "
+            << "This allows a v54 log containing 0x7fc00000 to be interpreted "
+            << "as an unordered IEEE-754 comparison instead of an opaque hex value.\n";
+
+        if (startup_runtime.present) {
+            report
+                << "\n"
+                << startup_runtime.text
+                << "\n";
+        }
+
         report << "\nKnown port landmarks\n"
                << "====================\n";
         for (const auto& [off, label] : KnownLabels()) {
@@ -1282,9 +1826,13 @@ PvZ2InspectorResult InspectPvZ2ApkAndLog(
                            << Resolve(address, elf)
                            << "\n";
 
+                    const auto classified =
+                        Classify(address, elf);
+
                     if (key != "SP" &&
                         disassembled.size() < 48 &&
-                        Classify(address, elf).region == "libPVZ2.so" &&
+                        classified.region == "libPVZ2.so" &&
+                        classified.executable &&
                         disassembled.insert(address).second) {
 
                         for (const auto& line :
@@ -1295,11 +1843,14 @@ PvZ2InspectorResult InspectPvZ2ApkAndLog(
                 }
             }
 
-            report << "\nMost frequent libPVZ2 addresses in entire log\n"
-                   << "==============================================\n";
+            report << "\nMost frequent executable libPVZ2 addresses in entire log\n"
+                   << "=========================================================\n";
             std::vector<std::pair<std::uint32_t, std::uint32_t>> code;
             for (const auto& [address, count] : addresses) {
-                if (Classify(address, elf).region == "libPVZ2.so") {
+                const auto classified =
+                    Classify(address, elf);
+                if (classified.region == "libPVZ2.so" &&
+                    classified.executable) {
                     code.emplace_back(address, count);
                 }
             }
@@ -1323,7 +1874,7 @@ PvZ2InspectorResult InspectPvZ2ApkAndLog(
         result.report = report.str();
 
         std::ostringstream csv;
-        csv << "address,count,region,offset,function_start,function_delta,known_label,nearest_symbol\n";
+        csv << "address,count,region,section,executable,offset,function_start,function_delta,known_label,nearest_symbol\n";
         const auto ranked_all = SortedCounts(addresses);
         for (const auto& [address, count] : ranked_all) {
             const auto c = Classify(address, elf);
@@ -1335,7 +1886,9 @@ PvZ2InspectorResult InspectPvZ2ApkAndLog(
 
             if (c.offset) offset = Hex(*c.offset);
 
-            if (c.region == "libPVZ2.so" && c.offset) {
+            if (c.region == "libPVZ2.so" &&
+                c.offset &&
+                c.executable) {
                 const auto [start, end] = elf.FunctionRange(*c.offset);
                 if (start) {
                     fn_start = Hex(*start);
@@ -1357,6 +1910,8 @@ PvZ2InspectorResult InspectPvZ2ApkAndLog(
             csv << Hex(address) << ","
                 << count << ","
                 << CsvEscape(c.region) << ","
+                << CsvEscape(c.section) << ","
+                << (c.executable ? "YES" : "NO") << ","
                 << offset << ","
                 << fn_start << ","
                 << fn_delta << ","
@@ -1366,11 +1921,15 @@ PvZ2InspectorResult InspectPvZ2ApkAndLog(
         result.addresses_csv = csv.str();
 
         result.annotated_log = AnnotateLog(log_text, elf);
+        result.startup_diagnosis =
+            startup_runtime.present
+                ? startup_runtime.text
+                : std::string{};
 
         std::ostringstream json;
         json
             << "{\n"
-            << "  \"tool\": \"PvZ2 Inspector Lab v1\",\n"
+            << "  \"tool\": \"PvZ2 Inspector Lab v1.2\",\n"
             << "  \"apkSize\": " << result.apk_size << ",\n"
             << "  \"elfSize\": " << result.elf_size << ",\n"
             << "  \"guestBase\": \"" << Hex(kGuestBase) << "\",\n"
@@ -1386,6 +1945,17 @@ PvZ2InspectorResult InspectPvZ2ApkAndLog(
             << (game_state_profile.exact_profile()
                     ? "true"
                     : "false")
+            << ",\n"
+            << "  \"startupLogoV54ProfileExactMatch\": "
+            << (startup_logo_profile.exact_profile()
+                    ? "true"
+                    : "false")
+            << ",\n"
+            << "  \"startupLogoV54ProfileMatchedChecks\": "
+            << startup_logo_profile.matched()
+            << ",\n"
+            << "  \"startupLogoV54ProfileTotalChecks\": "
+            << startup_logo_profile.checks.size()
             << ",\n"
             << "  \"gameStateManagerVtable\": \""
             << Hex(kGuestBase + 0x00cdb7d8u)
@@ -1406,7 +1976,57 @@ PvZ2InspectorResult InspectPvZ2ApkAndLog(
             json << "\"" << JsonEscape(elf.needed_libraries()[i]) << "\"";
         }
 
-        json << "]\n}\n";
+        json << "],\n"
+             << "  \"startupLogoRuntime\": {\n"
+             << "    \"present\": "
+             << (startup_runtime.present ? "true" : "false")
+             << ",\n"
+             << "    \"finalGameState\": "
+             << startup_runtime.final_state
+             << ",\n"
+             << "    \"resourceHits\": "
+             << startup_runtime.resource_hits
+             << ",\n"
+             << "    \"resource\": \""
+             << Hex(startup_runtime.resource)
+             << "\",\n"
+             << "    \"resourcePresent\": "
+             << (startup_runtime.resource_present ? "true" : "false")
+             << ",\n"
+             << "    \"completed\": "
+             << startup_runtime.completed
+             << ",\n"
+             << "    \"total\": "
+             << startup_runtime.total
+             << ",\n"
+             << "    \"resultBits\": \""
+             << Hex(startup_runtime.result_bits)
+             << "\",\n"
+             << "    \"quietNaN\": "
+             << (startup_runtime.qnan_7fc00000 ? "true" : "false")
+             << ",\n"
+             << "    \"gateCHits\": "
+             << startup_runtime.gate_c_hits
+             << ",\n"
+             << "    \"gateDHits\": "
+             << startup_runtime.gate_d_hits
+             << ",\n"
+             << "    \"afterDHits\": "
+             << startup_runtime.after_d_hits
+             << ",\n"
+             << "    \"patchRequestMarkerHits\": "
+             << startup_runtime.patch_marker_hits
+             << ",\n"
+             << "    \"mainMenuRequestMarkerHits\": "
+             << startup_runtime.mainmenu_marker_hits
+             << ",\n"
+             << "    \"firstObservedBlocker\": \""
+             << (startup_runtime.first_blocker_gate_a
+                    ? "GateA"
+                    : "")
+             << "\"\n"
+             << "  }\n"
+             << "}\n";
         result.summary_json = json.str();
 
         result.ok = true;
