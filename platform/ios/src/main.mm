@@ -245,7 +245,7 @@ NSString *NSStringFromStd(
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — Wrapper RESFILE Recovery v48";
+        @"PvZ2forIOS — Cloud Startup Completion v49";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -254,7 +254,7 @@ NSString *NSStringFromStd(
         NO;
 
     title.text =
-        @"PvZ2forIOS — wrapper RESFILE recovery v48";
+        @"PvZ2forIOS — cloud startup completion v49";
 
     title.font =
         [UIFont
@@ -270,8 +270,8 @@ NSString *NSStringFromStd(
         NO;
 
     explanation.text =
-        @"v47 ruled out the framebuffer/presentation theory: the internal 2210x1536 game FBO and the 1180x820 iOS system framebuffer contain the same EA image during the fade and both become genuinely black by frame 75, while draw/clear counts continue rising and texture uploads stay fixed at five. The missing next screen therefore originates earlier than presentation. "
-         @"The same run also preserved the exact 85 recovered / 86 missing RESFILE split. v48 moves the fallback one semantic layer higher instead of guessing another internal exit inside 0x1086f66c. It observes the GenericResFile wrapper only when a direct-group lookup has returned null or when its loop over every group is completely exhausted. At those two points the original requested ID is still unambiguous in r6, with the ResourceManager in r5 and the optional group in r8. Only RESFILE_* nulls invoke the already-proven real ResourceInfo/RSB recovery; successful native and non-RESFILE paths remain unchanged. v46 address mapping and v47 independent framebuffer diagnostics stay enabled.";
+        @"v48 isolated the black screen: the EA/PvZ2 splash fades normally to zero by frame 71, both the internal game FBO and the iOS framebuffer are genuinely black afterwards, GLES state remains valid, and texture uploads never advance beyond the five startup textures. The renderer is therefore not the blocker. "
+         @"v49 targets the first missing asynchronous startup handshake instead of adding more generic graphics probes. Native_onSurfaceCreated requests Cloud_attemptSilentSync, but our Android-Java bridge previously returned a no-op and the registered Native_CloudStateLoaded callback could never arrive. v49 captures that real registered native callback and delivers it exactly once at a lifecycle-safe pre-frame boundary. The APK-specific callback was verified not to consume the Java String payload, so no fake cloud data is injected. Existing HTTP, RSB, RESFILE, worker, address-map and framebuffer diagnostics remain enabled.";
 
     explanation.numberOfLines = 0;
 
@@ -574,7 +574,7 @@ NSString *NSStringFromStd(
             monospacedSystemFontOfSize:13.0
             weight:UIFontWeightRegular];
     caption.text =
-        @"v48 — wrapper-level RESFILE recovery + framebuffer verification\nTap Close to return to the full diagnostic log.";
+        @"v49 — async cloud startup completion + post-EA verification\nTap Close to return to the full diagnostic log.";
 
     UIButton *closeButton =
         [UIButton
@@ -943,7 +943,7 @@ NSString *NSStringFromStd(
 
     [self
         appendUI:
-            @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v48 preserves the previous runtime, address mapping and framebuffer diagnostics, then adds two narrow GenericResFile wrapper checks: 0x1087a708 handles a direct-group RESFILE null before the original branch to 0x1087a770, and 0x1087a76c handles the final null only after every group has been tried. The requested ID is read from r6, so this run should show whether the persistent 86 misses can be recovered one layer above the native registry implementation."];
+            @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v49 keeps all previous diagnostics but now completes the Android cloud silent-sync handshake that v48 showed was left asynchronous forever: Cloud_attemptSilentSync queues the real registered Native_CloudStateLoaded callback, which is delivered once after surface setup and before frame 1. Watch for V49 CLOUD DELIVER and whether any new textures / non-black post-EA frame finally appear."];
 
     [self
         presentViewController:
@@ -1004,7 +1004,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v48 probe run started; PID=%d ===",
+                    @"=== PvZ2 v49 probe run started; PID=%d ===",
                     getpid()]];
 
     self.jniRunning =
