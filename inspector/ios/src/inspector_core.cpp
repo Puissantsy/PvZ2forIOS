@@ -4128,7 +4128,50 @@ PvZ2InspectorResult InspectPvZ2ApkAndLog(
         }
 
         report
-            << "\nv57 high-information plan\n"
+            << "\nExact v61 resource-pump/worker profile\n"
+            << "=========================================\n"
+            << "profile validation: "
+            << (v61_profile.exact_profile()
+                    ? "MATCH"
+                    : "PARTIAL/MISMATCH")
+            << " ("
+            << v61_profile.matched()
+            << "/"
+            << v61_profile.checks.size()
+            << ")\n";
+
+        for (const auto& check : v61_profile.checks) {
+            report
+                << "  "
+                << (check.match
+                        ? "[MATCH] "
+                        : "[MISMATCH] ")
+                << check.name
+                << " @ "
+                << Hex(kGuestBase + check.offset)
+                << " expected="
+                << Hex(check.expected)
+                << "\n";
+        }
+
+        report
+            << "\n"
+            << task_resource_audit.text
+            << "\n";
+
+        if (v61_runtime.present) {
+            report
+                << "\n"
+                << v61_runtime.text
+                << "\n"
+                << "\nNext high-information probe plan\n"
+                << "================================\n"
+                << next_probe_plan
+                << "\n";
+        }
+
+        report
+            << "\nv57 high-information plan (historical compatibility)\n"
             << "=========================\n"
             << v57_plan
             << "\n";
@@ -4181,8 +4224,14 @@ PvZ2InspectorResult InspectPvZ2ApkAndLog(
                 }
             }
 
-            report << "\nMost frequent executable libPVZ2 addresses in entire log\n"
-                   << "=========================================================\n";
+            report
+                << "\nMost frequent executable libPVZ2 addresses "
+                << (result.log_address_analysis_sampled
+                        ? "in large-log sample\n"
+                        : "in entire log\n")
+                << (result.log_address_analysis_sampled
+                        ? "=======================================================\n"
+                        : "=========================================================\n");
             std::vector<std::pair<std::uint32_t, std::uint32_t>> code;
             for (const auto& [address, count] : addresses) {
                 const auto classified =
@@ -4258,7 +4307,12 @@ PvZ2InspectorResult InspectPvZ2ApkAndLog(
         }
         result.addresses_csv = csv.str();
 
-        result.annotated_log = AnnotateLog(log_text, elf);
+        result.annotated_log =
+            result.log_address_analysis_sampled
+                ? std::string{}
+                : AnnotateLog(
+                      log_text,
+                      elf);
         result.startup_diagnosis =
             startup_runtime.present
                 ? startup_runtime.text
@@ -4271,11 +4325,23 @@ PvZ2InspectorResult InspectPvZ2ApkAndLog(
                 : ctype_audit.text;
         result.v57_plan =
             v57_plan;
+        result.v61_crash_diagnosis =
+            v61_runtime.present
+                ? v61_runtime.text
+                : std::string{};
+        result.next_probe_plan =
+            v61_runtime.present
+                ? next_probe_plan
+                : std::string{};
+        result.critical_log_excerpt =
+            v61_runtime.present
+                ? v61_runtime.critical_excerpt
+                : std::string{};
 
         std::ostringstream json;
         json
             << "{\n"
-            << "  \"tool\": \"PvZ2 Inspector Lab v1.3\",\n"
+            << "  \"tool\": \"PvZ2 Inspector Lab v1.4\",\n"
             << "  \"apkSize\": " << result.apk_size << ",\n"
             << "  \"elfSize\": " << result.elf_size << ",\n"
             << "  \"guestBase\": \"" << Hex(kGuestBase) << "\",\n"
@@ -4287,6 +4353,17 @@ PvZ2InspectorResult InspectPvZ2ApkAndLog(
             << "  \"exidxFunctionStarts\": "
             << result.exidx_function_starts << ",\n"
             << "  \"relocations\": " << result.relocations << ",\n"
+            << "  \"sourceLogBytes\": "
+            << result.source_log_bytes
+            << ",\n"
+            << "  \"genericAddressAnalysisBytes\": "
+            << result.generic_log_bytes
+            << ",\n"
+            << "  \"logAddressAnalysisSampled\": "
+            << (result.log_address_analysis_sampled
+                    ? "true"
+                    : "false")
+            << ",\n"
             << "  \"gameStateProfileExactMatch\": "
             << (game_state_profile.exact_profile()
                     ? "true"
@@ -4314,6 +4391,38 @@ PvZ2InspectorResult InspectPvZ2ApkAndLog(
             << "  \"v56ProfileTotalChecks\": "
             << v56_profile.checks.size()
             << ",\n"
+            << "  \"v61ProfileExactMatch\": "
+            << (v61_profile.exact_profile()
+                    ? "true"
+                    : "false")
+            << ",\n"
+            << "  \"v61ProfileMatchedChecks\": "
+            << v61_profile.matched()
+            << ",\n"
+            << "  \"v61ProfileTotalChecks\": "
+            << v61_profile.checks.size()
+            << ",\n"
+            << "  \"taskResourceTemplateSymbol\": "
+            << (task_resource_audit.template_symbol_present
+                    ? "true"
+                    : "false")
+            << ",\n"
+            << "  \"taskResourceProducerProfileMatch\": "
+            << (task_resource_audit.producer_profile_match
+                    ? "true"
+                    : "false")
+            << ",\n"
+            << "  \"taskResourceVtableProfileMatch\": "
+            << (task_resource_audit.vtable_profile_match
+                    ? "true"
+                    : "false")
+            << ",\n"
+            << "  \"taskResourceReferenceVtable\": \""
+            << Hex(kGuestBase + task_resource_audit.vtable_offset)
+            << "\",\n"
+            << "  \"taskResourceReferenceVfn14\": \""
+            << Hex(kGuestBase + task_resource_audit.vfn14_raw)
+            << "\",\n"
             << "  \"ctypeHighPriorityCandidate\": "
             << (ctype_audit.high_priority_candidate
                     ? "true"
