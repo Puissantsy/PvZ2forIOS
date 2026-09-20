@@ -318,7 +318,7 @@ NSString *NSStringFromStd(
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — v56 Diagnostic Matrix";
+        @"PvZ2forIOS — v57 Ctype Deep Scout";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -327,7 +327,7 @@ NSString *NSStringFromStd(
         NO;
 
     title.text =
-        @"PvZ2forIOS — v56 Diagnostic Matrix";
+        @"PvZ2forIOS — v57 Ctype Deep Scout";
 
     title.font =
         [UIFont
@@ -343,7 +343,7 @@ NSString *NSStringFromStd(
         NO;
 
     explanation.text =
-        @"v56 keeps every validated v52-v55 diagnostic and adds a three-mode ResourceManager matrix. Passive Registry never changes guest behavior. Gate-A Scout records one complete native 4/4-MISS Gate-A cycle before forcing only the comparison input S2 to 1.0. Full Matrix does the same Scout plus targeted compact-trie tracing for startup groups/resources. Registry tables, resource indices and GameState transitions are never fabricated.";
+        @"v57 keeps the entire validated v52-v56 stack and tests the high-priority Bionic ctype ABI root-cause candidate. V56 Baseline preserves the old behavior exactly. Ctype Native installs ABI-correct _toupper_tab_/_tolower_tab_/_ctype_ and never scouts Gate A/C. Ctype Deep Scout adds the same ctype fix, character-by-character trie tracing, the existing proof-gated Gate-A scout, and a delayed proof-gated Gate-C scout. ResourceManager tables and GameState transitions are never fabricated.";
 
     explanation.numberOfLines = 0;
 
@@ -393,9 +393,9 @@ NSString *NSStringFromStd(
         [[UISegmentedControl alloc]
             initWithItems:
                 @[
-                    @"Passive Registry",
-                    @"Gate-A Scout",
-                    @"Full Matrix"
+                    @"V56 Baseline",
+                    @"Ctype Native",
+                    @"Ctype Deep Scout"
                 ]];
 
     self.diagnosticModeControl.translatesAutoresizingMaskIntoConstraints =
@@ -1034,9 +1034,9 @@ NSString *NSStringFromStd(
 
     NSArray<NSString *> *modeNames =
         @[
-            @"PASSIVE_REGISTRY",
-            @"GATE_A_SCOUT",
-            @"FULL_MATRIX"
+            @"V56_BASELINE",
+            @"CTYPE_COMPAT_NATIVE_PATH",
+            @"CTYPE_COMPAT_DEEP_SCOUT"
         ];
 
     NSInteger modeIndex =
@@ -1052,7 +1052,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v56 mode=%@. Passive Registry observes the ResourceManager registry pipeline; Scout/Matrix only bypass Gate A after one native 4/4-MISS proof. Full Matrix also traces targeted compact-trie keys. All v52-v55 diagnostics remain enabled.",
+                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v57 mode=%@. Baseline preserves v56 unchanged. Ctype Native repairs only the Bionic ctype imported-data ABI and remains natural. Ctype Deep Scout adds first-lookup trie paths plus proof-gated Gate-A/Gate-C exploration. All v52-v56 diagnostics remain enabled.",
                     modeNames[modeIndex]]];
 
     [self
@@ -1111,20 +1111,20 @@ NSString *NSStringFromStd(
         self.diagnosticModeControl.selectedSegmentIndex;
 
     PvZ2DiagnosticMode diagnosticMode =
-        PvZ2DiagnosticMode::PassiveRegistry;
+        PvZ2DiagnosticMode::FullMatrix;
     NSString *diagnosticModeName =
-        @"PASSIVE_REGISTRY";
+        @"V56_BASELINE";
 
     if (selectedMode == 1) {
         diagnosticMode =
-            PvZ2DiagnosticMode::GateAScout;
+            PvZ2DiagnosticMode::CtypeCompatNativePath;
         diagnosticModeName =
-            @"GATE_A_SCOUT";
+            @"CTYPE_COMPAT_NATIVE_PATH";
     } else if (selectedMode == 2) {
         diagnosticMode =
-            PvZ2DiagnosticMode::FullMatrix;
+            PvZ2DiagnosticMode::CtypeCompatDeepScout;
         diagnosticModeName =
-            @"FULL_MATRIX";
+            @"CTYPE_COMPAT_DEEP_SCOUT";
     }
 
     ResetPersistentLog();
@@ -1134,7 +1134,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v56 Diagnostic Matrix started mode=%@; PID=%d ===",
+                    @"=== PvZ2 v57 Ctype Deep Scout started mode=%@; PID=%d ===",
                     diagnosticModeName,
                     getpid()]];
 
@@ -1370,6 +1370,16 @@ NSString *NSStringFromStd(
                                             result.diagnostic_matrix_summary)]];
                     }
 
+                    if (!result.ctype_deep_scout_summary.empty()) {
+                        [selfRef
+                            appendUI:
+                                [NSString
+                                    stringWithFormat:
+                                        @"STEP 3C7: %@",
+                                        NSStringFromStd(
+                                            result.ctype_deep_scout_summary)]];
+                    }
+
                     [selfRef
                         appendUI:
                             [NSString
@@ -1427,7 +1437,7 @@ NSString *NSStringFromStd(
                     if (result.ok) {
                         [selfRef
                             appendUI:
-                                @"SUCCESS STEP 3: PvZ2 completed v56 Diagnostic Matrix on top of v52-v55 diagnostics. Check V56 REGISTRY DIAGNOSIS / WRITE / TARGET LOOKUP / SCOUT / SUMMARY lines."];
+                                @"SUCCESS STEP 3: PvZ2 completed v57 Ctype Deep Scout on top of v52-v56 diagnostics. Check V57 CTYPE ABI / TRIE PATH / GATEC WRITE / V57 SUMMARY plus preserved V56 lines."];
 
                         if (!result.final_frame_png_path.empty()) {
                             [selfRef
@@ -1455,7 +1465,7 @@ NSString *NSStringFromStd(
                         } else {
                             [selfRef
                                 showResult:
-                                    @"PvZ2 v56 Diagnostic Matrix returned"
+                                    @"PvZ2 v57 Ctype Deep Scout returned"
                                 message:
                                     [NSString
                                         stringWithFormat:
