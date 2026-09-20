@@ -2949,7 +2949,6 @@ public:
         const char* source = "guest-store") {
 
         if (!V62Enabled() || width != 4u) return;
-        V62RefreshPumpVector();
 
         const std::uint32_t old32 = static_cast<std::uint32_t>(old_value);
         const std::uint32_t new32 = static_cast<std::uint32_t>(new_value);
@@ -2959,6 +2958,19 @@ public:
             (address == v62_pump_manager + 0x50u ||
              address == v62_pump_manager + 0x54u ||
              address == v62_pump_manager + 0x58u);
+
+        // MemoryWrite32 is called after the guest store. Update the cached
+        // vector triplet directly instead of rereading manager+0x50/+0x54/+0x58
+        // on every unrelated store in the process.
+        if (metadata) {
+            if (address == v62_pump_manager + 0x50u)
+                v62_pump_vector_begin = new32;
+            else if (address == v62_pump_manager + 0x54u)
+                v62_pump_vector_end = new32;
+            else
+                v62_pump_vector_cap = new32;
+        }
+
         const bool vector_slot =
             v62_pump_vector_begin != 0u &&
             v62_pump_vector_cap >= v62_pump_vector_begin &&
@@ -2990,7 +3002,14 @@ public:
                    " source=" + (source ? source : "?"));
         }
 
-        if (!(bad_tid1 || !alias.empty() || v62_pointer_write_events <= 64u ||
+        const bool alias_important =
+            !alias.empty() &&
+            (vector_slot || metadata ||
+             v62_pointer_write_events <= 128u ||
+             (v62_pointer_write_events % 512u) == 0u);
+
+        if (!(bad_tid1 || alias_important ||
+              v62_pointer_write_events <= 64u ||
               (v62_pointer_write_events % 512u) == 0u)) return;
 
         std::ostringstream out;
@@ -12625,6 +12644,23 @@ public:
             }
 
             std::memmove(dst, src, size);
+
+            // A host-side bulk move bypasses MemoryWrite32. Refresh once if it
+            // could have touched the cached manager vector metadata.
+            if (V62Enabled() &&
+                v62_pump_manager != 0u) {
+                const std::uint64_t dst_begin = destination;
+                const std::uint64_t dst_end =
+                    dst_begin + static_cast<std::uint64_t>(size);
+                const std::uint64_t meta_begin =
+                    static_cast<std::uint64_t>(v62_pump_manager) + 0x50u;
+                const std::uint64_t meta_end =
+                    static_cast<std::uint64_t>(v62_pump_manager) + 0x5cu;
+
+                if (dst_begin < meta_end && dst_end > meta_begin)
+                    V62RefreshPumpVector();
+            }
+
             for (const auto& copy : v62_copies) {
                 V62ObserveWrite(
                     copy.destination, 4u, copy.old_value, copy.value,
