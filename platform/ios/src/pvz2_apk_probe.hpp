@@ -48,6 +48,12 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // v57 modes. FullMatrix remains the exact v56 control path.
     CtypeCompatNativePath = 3u,
     CtypeCompatDeepScout = 4u,
+
+    // v62: same ctype/native path, with an explicit A/B around the
+    // resource-stream TaskResource pump. A preserves v61 scheduling while
+    // collecting provenance; B adds coherent ownership for manager+0x68.
+    V62TaskProvenanceControlA = 5u,
+    V62PumpMutexCoherentB = 6u,
 };
 
 struct PvZ2JniProbeResult {
