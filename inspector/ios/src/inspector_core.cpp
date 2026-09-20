@@ -1287,6 +1287,7 @@ struct StartupLogoRuntimeDiagnosis {
     bool first_blocker_gate_a = false;
     std::size_t resource_pointer_occurrences = 0u;
     std::string object_correlation_line;
+    std::uint32_t object_vtable = 0u;
     std::size_t resource_miss_lines = 0u;
     std::size_t wait_progress_lines = 0u;
     std::size_t http_start_lines = 0u;
@@ -1295,7 +1296,8 @@ struct StartupLogoRuntimeDiagnosis {
 
 StartupLogoRuntimeDiagnosis DiagnoseStartupLogoRuntime(
     const std::string& log,
-    const StartupLogoProfileValidation& static_profile) {
+    const StartupLogoProfileValidation& static_profile,
+    const Elf32Arm& elf) {
 
     StartupLogoRuntimeDiagnosis d;
     if (log.find("V54 STARTUPLOGO") == std::string::npos) {
@@ -1385,6 +1387,14 @@ StartupLogoRuntimeDiagnosis DiagnoseStartupLogoRuntime(
             LastLineContaining(
                 log,
                 "V52 OBJECT node=" + pointer);
+        if (const auto v =
+                ParseUnsignedAfter(
+                    d.object_correlation_line,
+                    "vtable=0x",
+                    16)) {
+            d.object_vtable =
+                static_cast<std::uint32_t>(*v);
+        }
     }
 
     d.resource_miss_lines =
@@ -1493,9 +1503,19 @@ StartupLogoRuntimeDiagnosis DiagnoseStartupLogoRuntime(
         << "\n";
     if (!d.object_correlation_line.empty()) {
         out
-            << "The same pointer appears in the runtime object graph:\n"
-            << d.object_correlation_line
+            << "The same pointer appears in the runtime object graph.\n"
+            << "Object: "
+            << Hex(d.resource)
             << "\n";
+        if (d.object_vtable != 0u) {
+            out
+                << "Vtable: "
+                << Resolve(d.object_vtable, elf)
+                << "\n";
+        }
+        out
+            << "The raw v52 annotation is intentionally not copied here, "
+            << "because v1/v1.1 could mislabel data-section vtables as code.\n";
     } else {
         out
             << "No V52 object-graph line was found for that pointer.\n";
@@ -1583,7 +1603,8 @@ PvZ2InspectorResult InspectPvZ2ApkAndLog(
         const auto startup_runtime =
             DiagnoseStartupLogoRuntime(
                 log_text,
-                startup_logo_profile);
+                startup_logo_profile,
+                elf);
 
         std::ostringstream summary;
         summary
