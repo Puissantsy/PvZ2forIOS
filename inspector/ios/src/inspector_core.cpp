@@ -4601,6 +4601,128 @@ PvZ2InspectorResult InspectPvZ2ApkAndLog(
 
         json
              << "}\n"
+             << "  },\n"
+             << "  \"v61Runtime\": {\n"
+             << "    \"present\": "
+             << (v61_runtime.present ? "true" : "false")
+             << ",\n"
+             << "    \"sourceLogBytes\": "
+             << v61_runtime.source_log_bytes
+             << ",\n"
+             << "    \"sourceLogLines\": "
+             << v61_runtime.source_log_lines
+             << ",\n"
+             << "    \"pumpBoundaries\": "
+             << v61_runtime.pump_boundaries
+             << ",\n"
+             << "    \"pumpBoundariesAtFault\": "
+             << v61_runtime.pump_boundaries_at_fault
+             << ",\n"
+             << "    \"pumpBoundariesAfterFault\": "
+             << v61_runtime.pump_boundaries_after_fault
+             << ",\n"
+             << "    \"pseudoFutureBoundaryLines\": "
+             << v61_runtime.pseudo_future_boundary_lines
+             << ",\n"
+             << "    \"workerSliceLines\": "
+             << v61_runtime.worker_slice_lines
+             << ",\n"
+             << "    \"successStepPresent\": "
+             << (v61_runtime.success_step_present ? "true" : "false")
+             << ",\n"
+             << "    \"dispatchChainConsistent\": "
+             << (v61_runtime.dispatch_chain_consistent ? "true" : "false")
+             << ",\n"
+             << "    \"workerPayloadMatches\": "
+             << (v61_runtime.worker_payload_matches ? "true" : "false")
+             << ",\n"
+             << "    \"runawayAfterFault\": "
+             << (v61_runtime.runaway_after_fault ? "true" : "false")
+             << ",\n"
+             << "    \"boundaryFutureSnapshotInvalid\": "
+             << (v61_runtime.boundary_future_snapshot_invalid ? "true" : "false")
+             << ",\n"
+             << "    \"crash\": {\n"
+             << "      \"present\": "
+             << (v61_runtime.crash.present ? "true" : "false")
+             << ",\n"
+             << "      \"line\": "
+             << v61_runtime.crash.line_number
+             << ",\n"
+             << "      \"pthread\": "
+             << v61_runtime.crash.pthread_id
+             << ",\n"
+             << "      \"phase\": \""
+             << JsonEscape(v61_runtime.crash.phase)
+             << "\",\n"
+             << "      \"pc\": \""
+             << Hex(v61_runtime.crash.pc)
+             << "\",\n"
+             << "      \"lr\": \""
+             << Hex(v61_runtime.crash.lr)
+             << "\",\n"
+             << "      \"r1Target\": \""
+             << Hex(v61_runtime.crash.regs[1])
+             << "\",\n"
+             << "      \"managerR4\": \""
+             << Hex(v61_runtime.crash.regs[4])
+             << "\",\n"
+             << "      \"nextSlotR5\": \""
+             << Hex(v61_runtime.crash.regs[5])
+             << "\",\n"
+             << "      \"slotR6\": \""
+             << Hex(v61_runtime.crash.regs[6])
+             << "\",\n"
+             << "      \"objectR7\": \""
+             << Hex(v61_runtime.crash.regs[7])
+             << "\",\n"
+             << "      \"lastLog\": \""
+             << JsonEscape(v61_runtime.crash.last_log)
+             << "\"\n"
+             << "    },\n"
+             << "    \"workers\": {";
+
+        {
+            bool first = true;
+            for (const auto& [tid, w] :
+                 v61_runtime.workers) {
+                if (!first) {
+                    json << ",";
+                }
+                first = false;
+                json
+                    << "\n      \""
+                    << tid
+                    << "\": {"
+                    << "\"payloadPresent\": "
+                    << (w.payload_present ? "true" : "false")
+                    << ", \"entry\": \""
+                    << Hex(w.entry)
+                    << "\", \"this\": \""
+                    << Hex(w.this_ptr)
+                    << "\", \"wrapperArg\": \""
+                    << Hex(w.wrapper_arg)
+                    << "\", \"slices\": "
+                    << w.slices
+                    << ", \"slicesAfterFault\": "
+                    << w.slices_after_fault
+                    << ", \"maxTotalTicks\": "
+                    << w.max_total_ticks
+                    << ", \"lastPC\": \""
+                    << Hex(w.last_pc)
+                    << "\", \"returned\": "
+                    << (w.returned ? "true" : "false")
+                    << ", \"failed\": "
+                    << (w.failed ? "true" : "false")
+                    << "}";
+            }
+            if (!v61_runtime.workers.empty()) {
+                json << "\n    ";
+            }
+        }
+
+        json
+             << "}\n"
              << "  }\n"
              << "}\n";
         result.summary_json = json.str();
