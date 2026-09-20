@@ -7634,9 +7634,17 @@ public:
                         // result expected by the native decoder.
                         regs[0] = 0u;
 
-                        Append(
-                            "JNI bridge: UI_ProcessEvents -> false; zeroed direct buffer bytes=" +
-                            std::to_string(cleared));
+                        ++v52_ui_process_events_calls;
+
+                        if (v52_ui_process_events_calls <= 8u ||
+                            (v52_ui_process_events_calls % 250u) == 0u) {
+                            Append(
+                                "V52 JNI UI_ProcessEvents call#" +
+                                std::to_string(
+                                    v52_ui_process_events_calls) +
+                                " -> false; zeroed direct buffer bytes=" +
+                                std::to_string(cleared));
+                        }
                         return true;
                     }
 
@@ -7694,8 +7702,17 @@ public:
 
                         // OpenGL ES default framebuffer.
                         regs[0] = 0u;
-                        Append(
-                            "JNI bridge: Graphics_GetGLViewSysFBO -> 0");
+
+                        ++v52_graphics_fbo_calls;
+
+                        if (v52_graphics_fbo_calls <= 8u ||
+                            (v52_graphics_fbo_calls % 250u) == 0u) {
+                            Append(
+                                "V52 JNI Graphics_GetGLViewSysFBO call#" +
+                                std::to_string(
+                                    v52_graphics_fbo_calls) +
+                                " -> 0");
+                        }
                         return true;
                     }
 
