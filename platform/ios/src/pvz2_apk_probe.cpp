@@ -7941,6 +7941,8 @@ public:
                                         java_object,
                                         peer);
 
+                                ++v52_http_starts;
+
                                 Append(
                                     "V34 HTTP Start: queued deterministic offline error callback java=0x" +
                                     JniProbeHex(
@@ -19182,6 +19184,8 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                 callbacks
                                     .pending_http_failures[
                                         http_delivery_cursor++];
+
+                            ++callbacks.v52_http_deliveries;
 
                             callbacks.Append(
                                 "V34 HTTP OFFLINE DELIVER phase=" +
