@@ -1013,7 +1013,7 @@ NSString *NSStringFromStd(
 
     [self
         appendUI:
-            @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. Rebuilt v53 preserves the stable v52 startup path and adds passive exact GameState tracing only. Key outputs are V53 GAMESTATE MANAGER / REQUEST / APPLY / SNAPSHOT plus all existing V52 state-graph, JNI, worker, resource and adaptive-stop diagnostics. No state is forced. The image shown at the end is the actual FINAL framebuffer."];
+            @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v54 preserves the stable v52 startup/render path and v53 exact GameState tracing, then passively instruments StartupLogo.Update gates and late path depth. Key outputs are V54 STARTUPLOGO GateA/C/D/... lines, V54 STARTUPLOGO SUMMARY, V53 GAMESTATE MANAGER / REQUEST / APPLY / SNAPSHOT, plus all existing V52 diagnostics. No state, gate result, or transition is forced. The image shown at the end is the actual FINAL framebuffer."];
 
     [self
         presentViewController:
@@ -1074,7 +1074,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v53 passive exact GameState run started; PID=%d ===",
+                    @"=== PvZ2 v54 passive StartupLogo gate run started; PID=%d ===",
                     getpid()]];
 
     self.jniRunning =
@@ -1278,6 +1278,16 @@ NSString *NSStringFromStd(
                     // older probes doubled the exported log and made analysis
                     // unnecessarily expensive.
 
+                    if (!result.startup_logo_summary.empty()) {
+                        [selfRef
+                            appendUI:
+                                [NSString
+                                    stringWithFormat:
+                                        @"STEP 3C4: %@",
+                                        NSStringFromStd(
+                                            result.startup_logo_summary)]];
+                    }
+
                     [selfRef
                         appendUI:
                             [NSString
@@ -1335,7 +1345,7 @@ NSString *NSStringFromStd(
                     if (result.ok) {
                         [selfRef
                             appendUI:
-                                @"SUCCESS STEP 3: PvZ2 completed the stable v52 lifecycle + host GLES path with passive v53 exact GameState tracing; no state was forced."];
+                                @"SUCCESS STEP 3: PvZ2 completed stable v52 rendering + v53 GameState + passive v54 StartupLogo gate/depth tracing; nothing was forced."];
 
                         if (!result.final_frame_png_path.empty()) {
                             [selfRef
@@ -1363,11 +1373,11 @@ NSString *NSStringFromStd(
                         } else {
                             [selfRef
                                 showResult:
-                                    @"PvZ2 v53 passive GameState diagnostic returned"
+                                    @"PvZ2 v54 passive StartupLogo diagnostic returned"
                                 message:
                                     [NSString
                                         stringWithFormat:
-                                            @"PvZ2 completed its native startup and rebuilt v53 passive GameState diagnostic.\n\nGameAppInitialize: %u\nLifecycle calls completed: %u\nFrames returned: %u\nHost GLES active: %@\nRichest sampled frame: %u (%llu non-black pixels)\nConstructors: %u/%u\nJNI_OnLoad: 0x%08x\n\nNo final PNG capture was produced; inspect V53 GAMESTATE MANAGER / REQUEST / APPLY / SNAPSHOT plus the preserved V52/V47 diagnostics in the full log.",
+                                            @"PvZ2 completed its native startup and v54 passive StartupLogo diagnostic.\n\nGameAppInitialize: %u\nLifecycle calls completed: %u\nFrames returned: %u\nHost GLES active: %@\nRichest sampled frame: %u (%llu non-black pixels)\nConstructors: %u/%u\nJNI_OnLoad: 0x%08x\n\nNo final PNG capture was produced; inspect V54 STARTUPLOGO, V53 GAMESTATE and preserved V52/V47 diagnostics in the full log.",
                                             result.game_app_initialize_return & 0xffu,
                                             result.lifecycle_calls_completed,
                                             result.draw_frames_completed,
