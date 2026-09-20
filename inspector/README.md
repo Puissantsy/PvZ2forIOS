@@ -2,105 +2,97 @@
 
 Auxiliary iOS/iPadOS application for the PvZ2forIOS reverse-engineering project.
 
-This target is deliberately separate from the main `platform/ios` port. Its job is
-**not** to launch Plants vs. Zombies 2. It turns raw probe evidence into useful,
-repeatable diagnostics without risking regressions in the main app.
+The inspector does **not** launch PvZ2. It consumes the original PvZ2
+1.5.252752 APK plus an optional probe log and turns static ARM/ELF facts and
+real-iPad traces into repeatable diagnostics.
 
-## Lab v1.2
+## Lab v1.3
 
-Lab v1.2 accepts:
+v1.3 keeps all v1.2 functionality and adds a semantic model for the v55/v56
+Diagnostic Matrix so the next main-port build can test an entire failure class
+instead of one symptom at a time.
 
-1. the original PvZ2 1.5.252752 APK;
-2. optionally, a full `pvz2forios-probe.log` from the main port.
+### What v1.3 validates statically
 
-It retains the v1/v1.1 ELF/address analysis and adds three important capabilities.
+The APK profile now includes:
 
-### 1. Section-aware ELF classification
+- the v53 GameState hooks;
+- the 24-point v54 StartupLogo profile;
+- the v56 ResourceManager registry-builder traps;
+- the two native group-name lookup calls into the compact trie;
+- the compact-trie byte-normalization / compare / miss / found path;
+- the Gate-C helper that returns true only when object field `+0x98 == 4`.
 
-Addresses inside `libPVZ2.so` are now classified by their real ELF section.
-Only sections carrying `SHF_EXECINSTR` are treated as code and allowed to use
-`.ARM.exidx` function ranges or automatic disassembly.
+The v56 registry/trie/Gate-C profile is checked against exact ARM opcodes before
+the inspector attaches meaning to runtime evidence.
 
-This fixes the v1/v1.1 failure mode where a vtable in `.data.rel.ro*` or a
-global in `.bss` could be incorrectly described as if it were inside the last
-stripped code function.
+### Imported ctype ABI audit
 
-Examples now distinguish:
-
-```
-libPVZ2.so+... section=.text CODE ARM
-libPVZ2.so+... section=.data.rel.ro.local DATA
-libPVZ2.so+... section=.bss DATA
-```
-
-### 2. Exact StartupLogo v54 static profile
-
-The inspector validates the exact ARM opcodes used by the passive v54
-instrumentation, including:
-
-- Gate A resource load;
-- Gate A completed/total capture;
-- Gate A VMOV / VCMPE / VMRS / BLT sequence;
-- Gate B/C/D branch instructions;
-- Gate C state load;
-- Gate D `manager+0x430` load;
-- after-A-D, E through J and late-flow markers;
-- PatchScreen and MainMenu request-path markers.
-
-This is tied to the exact PvZ2 1.5.252752 ARM binary. A mismatch is reported
-instead of silently applying labels to another build.
-
-### 3. Semantic v54 log diagnosis
-
-When a supplied log contains `V54 STARTUPLOGO` evidence, Lab v1.2 creates
-`startup-diagnosis.txt` and a structured `startupLogoRuntime` object in
-`summary.json`.
-
-For the reference v54 log from the real iPad, the expected diagnosis is:
+A new audit resolves the original APK's imported object relocations:
 
 ```
-GameState: GAME_LogoScreen
-Gate A resource: present
-Gate A completed/total: 0/0
-Gate A result bits: 0x7fc00000 (quiet NaN)
-Gate C: not reached
+ELF 0x00d010d8  R_ARM_GLOB_DAT  _tolower_tab_
+ELF 0x00d010dc  R_ARM_GLOB_DAT  _toupper_tab_
+ELF 0x00d01280  R_ARM_GLOB_DAT  _ctype_
+```
+
+The compact-trie function at ELF `0x00a83ab0` is verified to dereference the
+`_toupper_tab_` imported object. For each input byte it indexes a 16-bit
+table at `byte + 1` before comparing the normalized byte with the trie node.
+
+This matters because the current v56 port source gives generic non-function
+GLOB_DAT imports a zero-filled synthetic object (apart from
+`__stack_chk_guard`). That is not the pointer-to-character-table ABI required
+by these three Bionic objects.
+
+Inspector v1.3 therefore reports this as a **high-priority static root-cause
+candidate**, not as a runtime-proven conclusion. v57 should A/B test an
+ABI-correct ctype implementation before mutating the ResourceManager tables.
+
+### v55/v56 semantic diagnosis
+
+With the v56 FULL_MATRIX log, v1.3 reconstructs:
+
+- the four-name Gate-A startup vector;
+- total lookup/contribution counts;
+- ResourceManager builder call/return/result;
+- source and destination table sizes;
+- all selected-key found/miss counters;
+- Gate-A Scout activation;
+- Gate-C object and its `+0x98` state;
+- whether Gate D and later probes were reached.
+
+For the current real-iPad v56 run the expected high-level result is:
+
+```
+startup vector: 4 names
+table +0x28: 5289 entries
+table +0x30: 3801 entries
+builder result: 1
+selected keys: all MISS
+Gate-A scout: activated
+Gate C: object+0x98 = 1, expected 4
 Gate D: not reached
-PatchScreen marker: not reached
-MainMenu marker: not reached
 
-First observed blocker: Gate A
+matrix diagnosis:
+MANAGER_TABLES_PRESENT_BUT_STARTUP_KEYS_MISS
 ```
 
-The report also explains the verified ARM floating-point sequence. A 0/0 result
-becomes an IEEE-754 qNaN; with the verified `VCMPE.F32 -> VMRS -> BLT` sequence,
-the comparison is unordered and the early-return branch is taken.
+### v57 plan generator
 
-That identifies the **immediate machine-level blocker**. It deliberately does
-not claim why the completed/total counters are zero.
+v1.3 creates `v57-plan.txt`. The plan is deliberately designed around one
+multi-mode IPA:
 
-The report separately counts nearby resource-miss, wait-object and HTTP events
-under a **causality not established** heading.
+1. a v56-compatible baseline;
+2. a CTYPE_COMPAT natural-path mode that implements the imported Bionic ctype
+   data ABI without touching registry tables or GameState;
+3. a CTYPE_COMPAT_DEEP_SCOUT mode that can preserve native proof, then scout
+   beyond Gate A and Gate C without forcing a GameState transition.
 
-### 4. Object-pointer correlation
-
-If Gate A exposes a guest pointer, the inspector searches the supplied log for
-that same pointer and links it to the V52 object graph when available. This is
-the first step toward a generic runtime Object Inspector.
-
-## Existing analysis retained
-
-Lab v1.2 still:
-
-- extracts `lib/armeabi-v7a/libPVZ2.so` directly from the APK;
-- parses ARM32 ELF program headers and sections;
-- lists `DT_NEEDED`, SONAME, dynamic/import symbols and REL relocations;
-- parses `.ARM.exidx` function starts;
-- recognizes the guest module/stack/heap/trampoline/JNI/object ranges;
-- ranks raw hexadecimal addresses and PC/LR/returnPC/callerLR/SP values;
-- validates the exact v53 GameState profile;
-- produces small ARM/Thumb disassembly windows for executable addresses only.
-
-No JIT, StikDebug, or guest execution is required.
+The recommended v57 instrumentation also includes a character-by-character
+compact-trie path trace and a write watch for the Gate-C object's `+0x98`
+field. This lets one build distinguish bad character normalization, bad trie
+data, loading-progress failure, and the next downstream startup gate.
 
 ## Reports
 
@@ -110,12 +102,20 @@ PvZ2InspectorReport/
   report.txt
   addresses.csv
   annotated-log.txt        # when a log is supplied
-  startup-diagnosis.txt    # when v54 StartupLogo evidence is present
+  startup-diagnosis.txt    # v54 semantic diagnosis
+  matrix-diagnosis.txt     # v55/v56 + imported ctype audit
+  v57-plan.txt             # generated next-build plan
 ```
 
-## Current boundary
+## Existing v1.2 features retained
 
-Lab v1.2 can prove where StartupLogo first blocks, but it cannot yet explain
-why Gate A's two progress counters remain zero. The next useful Inspector work
-is to trace the resource object's fields/writers or compare object snapshots
-around the code that feeds those counters.
+- APK extraction of `lib/armeabi-v7a/libPVZ2.so`;
+- section-aware ELF classification;
+- code/data separation for vtables and globals;
+- dynamic imports, relocations and `.ARM.exidx`;
+- exact v53/v54 profiles;
+- raw log address ranking and annotation;
+- StartupLogo 0/0 -> qNaN diagnosis;
+- ResourceManager object correlation.
+
+No JIT or StikDebug is required by Inspector itself.
