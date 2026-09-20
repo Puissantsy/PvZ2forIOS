@@ -19442,6 +19442,43 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                 std::uint32_t post_ea_best_frame = 0u;
                 std::string post_ea_best_path;
 
+                auto should_capture_state_graph =
+                    [](std::uint32_t frame) {
+                        return
+                            frame == 1u ||
+                            frame == 15u ||
+                            frame == 60u ||
+                            frame == 70u ||
+                            frame == 74u ||
+                            frame == 75u ||
+                            frame == 76u ||
+                            frame == 80u ||
+                            frame == 90u ||
+                            frame == 120u ||
+                            frame == 180u ||
+                            frame == 300u ||
+                            frame == 600u;
+                    };
+
+                std::uint32_t
+                    v52_last_progress_frame = 0u;
+                std::uint64_t
+                    v52_last_sample_non_black =
+                        std::numeric_limits<
+                            std::uint64_t>::max();
+                std::uint64_t
+                    v52_last_texture_uploads =
+                        callbacks
+                            .gles_texture_uploads;
+                std::uint32_t
+                    v52_last_resource_lookups =
+                        result
+                            .resource_registry_lookup_calls;
+                std::uint64_t
+                    v52_last_http_activity =
+                        callbacks.v52_http_starts +
+                        callbacks.v52_http_deliveries;
+
                 for (std::uint32_t frame = 0u;
                      frame < kV36FrameCount;
                      ++frame) {
@@ -19509,6 +19546,12 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                         return result;
                     }
 
+                    if (should_capture_state_graph(
+                            frame_number)) {
+                        callbacks.V52CaptureStateGraph(
+                            frame_number);
+                    }
+
                     if (callbacks.host_gles_ready &&
                         sample) {
 
@@ -19516,6 +19559,48 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             PvZ2HostGLESFrameStats();
                         const std::uint64_t non_black =
                             PvZ2HostGLESLastNonBlackPixels();
+
+                        if (non_black > 0u) {
+                            result.last_nonblack_frame_number =
+                                frame_number;
+                            result.last_nonblack_pixels =
+                                non_black;
+                        }
+
+                        const std::uint64_t
+                            v52_http_activity =
+                                callbacks.v52_http_starts +
+                                callbacks.v52_http_deliveries;
+
+                        if (v52_last_sample_non_black !=
+                                non_black ||
+                            v52_last_texture_uploads !=
+                                callbacks
+                                    .gles_texture_uploads ||
+                            v52_last_resource_lookups !=
+                                result
+                                    .resource_registry_lookup_calls ||
+                            v52_last_http_activity !=
+                                v52_http_activity ||
+                            callbacks
+                                .v50_mainmenu_background_seen ||
+                            callbacks
+                                .v50_ui_mainmenu_seen) {
+
+                            v52_last_progress_frame =
+                                frame_number;
+                        }
+
+                        v52_last_sample_non_black =
+                            non_black;
+                        v52_last_texture_uploads =
+                            callbacks
+                                .gles_texture_uploads;
+                        v52_last_resource_lookups =
+                            result
+                                .resource_registry_lookup_calls;
+                        v52_last_http_activity =
+                            v52_http_activity;
 
                         callbacks.Append(
                             "V39 FRAME STATS #" +
@@ -19681,7 +19766,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                     best_frame;
                                 result.best_frame_nonblack =
                                     best_non_black;
-                                result.host_frame_png_path =
+                                result.best_frame_png_path =
                                     best;
 
                                 callbacks.Append(
@@ -19692,7 +19777,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                     std::to_string(
                                         best_non_black) +
                                     " path=" +
-                                    result.host_frame_png_path);
+                                    result.best_frame_png_path);
                             }
                         }
 
@@ -19736,6 +19821,40 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             "/" +
                             std::to_string(
                                 kV36FrameCount));
+
+                        // v52 adaptive stop: 600 remains the safety ceiling,
+                        // not a mandatory wait. Once EA is fully black and 45
+                        // sampled frames have produced no new pixels, texture
+                        // uploads, resource lookups, HTTP activity or menu
+                        // milestone, additional identical frames are not useful.
+                        if (frame_number >= 120u &&
+                            non_black == 0u &&
+                            !callbacks
+                                 .v50_mainmenu_background_seen &&
+                            !callbacks
+                                 .v50_ui_mainmenu_seen &&
+                            !callbacks
+                                 .pending_cloud_state_loaded &&
+                            callbacks.v52_http_starts ==
+                                callbacks
+                                    .v52_http_deliveries &&
+                            frame_number >=
+                                v52_last_progress_frame +
+                                    45u) {
+
+                            result.adaptive_frame_stop =
+                                true;
+
+                            callbacks.Append(
+                                "V52 ADAPTIVE STOP frame=" +
+                                std::to_string(
+                                    frame_number) +
+                                " lastProgressFrame=" +
+                                std::to_string(
+                                    v52_last_progress_frame) +
+                                " reason=post-EA framebuffer/resource/HTTP state stable");
+                            break;
+                        }
                     }
 
                     if (frame_number !=
@@ -19759,16 +19878,22 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             ? final_capture
                             : "failed"));
 
-                    if (result.host_frame_png_path.empty() &&
-                        final_capture != nullptr &&
+                    if (final_capture != nullptr &&
                         *final_capture != '\0') {
+                        result.final_frame_png_path =
+                            final_capture;
+
+                        // v52 deliberately displays the final framebuffer,
+                        // not the visually richest splash frame.
                         result.host_frame_png_path =
                             final_capture;
                     }
                 }
 
+                callbacks.V52FinalizeDiagnostics();
+
                 callbacks.Append(
-                    "V48 BEST FRAME SUMMARY: frame=" +
+                    "V52 FRAME SUMMARY: frame=" +
                     std::to_string(
                         best_frame) +
                     " nonBlack=" +
@@ -19852,14 +19977,9 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             .v51_config_keys
                             .size()));
 
-                if (!post_ea_best_path.empty()) {
-                    result.host_frame_png_path =
-                        post_ea_best_path;
-                }
-
                 result.ok = true;
                 result.message =
-                    "PvZ2 completed GameAppInitialize, lifecycle, surface setup, deterministic offline AndroidHttpTransaction callbacks, safe boundary-only background worker scheduling, and a 600-frame timed host-GLES soak.";
+                    "PvZ2 completed GameAppInitialize, lifecycle, surface setup, deterministic Android compatibility callbacks, v52 state-graph/callsite diagnostics, and an adaptive host-GLES soak (600-frame safety ceiling).";
                 return result;
             }
 
