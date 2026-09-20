@@ -2488,7 +2488,9 @@ public:
     std::unordered_set<std::string>
         v57_trie_traced_key_tables;
 
+    std::uint64_t v57_gate_a_natural_pass_hits = 0u;
     std::uint64_t v57_gate_c_native_hits = 0u;
+    std::uint64_t v57_gate_c_native_pass_hits = 0u;
     std::uint64_t v57_gate_c_write_events = 0u;
     std::uint64_t v57_gate_c_forced_hits = 0u;
     std::uint32_t v57_gate_c_first_frame = 0xffffffffu;
@@ -3686,6 +3688,560 @@ public:
             out
                 << "STARTUP_GROUP_LOOKUP_PROGRESS_OBSERVED";
         }
+
+        return out.str();
+    }
+
+    bool V57IsPathTraceKey(
+        const std::string& key) const {
+
+        return
+            key == "AlwaysLoaded" ||
+            key == "UIImages" ||
+            key == "UI_MainMenu" ||
+            key == "MainMenu_Background";
+    }
+
+    std::string V57TrieTableLabel(
+        std::uint32_t table) const {
+
+        if (v56_resource_manager != 0u &&
+            table ==
+                v56_resource_manager +
+                    0x28u) {
+            return "manager+0x28";
+        }
+
+        if (v56_resource_manager != 0u &&
+            table ==
+                v56_resource_manager +
+                    0x30u) {
+            return "manager+0x30";
+        }
+
+        return "other@0x" +
+            JniProbeHex(table);
+    }
+
+    bool V57LogCtypeSelfCheck() {
+        if (!V57CtypeEnabled()) {
+            return false;
+        }
+
+        auto read_short =
+            [&](std::uint32_t backing,
+                unsigned char ch) {
+                return
+                    mem.Read16Guest(
+                        backing +
+                        static_cast<std::uint32_t>(
+                            (static_cast<unsigned>(
+                                 ch) +
+                             1u) *
+                            2u));
+            };
+
+        auto read_ctype =
+            [&](unsigned char ch) {
+                return
+                    mem.Read8(
+                        v57_ctype_backing +
+                        static_cast<std::uint32_t>(
+                            static_cast<unsigned>(
+                                ch) +
+                            1u));
+            };
+
+        const std::uint32_t toupper_got =
+            mem.Read32Guest(
+                kV57ToupperGotGuest);
+        const std::uint32_t tolower_got =
+            mem.Read32Guest(
+                kV57TolowerGotGuest);
+        const std::uint32_t ctype_got =
+            mem.Read32Guest(
+                kV57CtypeGotGuest);
+
+        const std::uint32_t toupper_backing =
+            toupper_got != 0u
+                ? mem.Read32Guest(
+                      toupper_got)
+                : 0u;
+        const std::uint32_t tolower_backing =
+            tolower_got != 0u
+                ? mem.Read32Guest(
+                      tolower_got)
+                : 0u;
+        const std::uint32_t ctype_backing =
+            ctype_got != 0u
+                ? mem.Read32Guest(
+                      ctype_got)
+                : 0u;
+
+        constexpr std::uint8_t kUpper = 0x01u;
+        constexpr std::uint8_t kLower = 0x02u;
+        constexpr std::uint8_t kNumber = 0x04u;
+        constexpr std::uint8_t kSpace = 0x08u;
+        constexpr std::uint8_t kHex = 0x40u;
+        constexpr std::uint8_t kBlank = 0x80u;
+
+        const bool addresses_ok =
+            toupper_got ==
+                v57_toupper_variable &&
+            tolower_got ==
+                v57_tolower_variable &&
+            ctype_got ==
+                v57_ctype_variable &&
+            toupper_backing ==
+                v57_toupper_backing &&
+            tolower_backing ==
+                v57_tolower_backing &&
+            ctype_backing ==
+                v57_ctype_backing &&
+            toupper_backing != 0u &&
+            tolower_backing != 0u &&
+            ctype_backing != 0u;
+
+        const bool samples_ok =
+            read_short(
+                toupper_backing,
+                'a') == 'A' &&
+            read_short(
+                toupper_backing,
+                'A') == 'A' &&
+            read_short(
+                toupper_backing,
+                'd') == 'D' &&
+            read_short(
+                toupper_backing,
+                'i') == 'I' &&
+            read_short(
+                toupper_backing,
+                'r') == 'R' &&
+            read_short(
+                toupper_backing,
+                'u') == 'U' &&
+            read_short(
+                toupper_backing,
+                '_') == '_' &&
+            read_short(
+                toupper_backing,
+                '0') == '0' &&
+            read_short(
+                toupper_backing,
+                '9') == '9' &&
+            read_short(
+                tolower_backing,
+                'A') == 'a' &&
+            read_short(
+                tolower_backing,
+                'a') == 'a' &&
+            (read_ctype('A') &
+                (kUpper | kHex)) ==
+                (kUpper | kHex) &&
+            (read_ctype('a') &
+                (kLower | kHex)) ==
+                (kLower | kHex) &&
+            (read_ctype('0') &
+                (kNumber | kHex)) ==
+                (kNumber | kHex) &&
+            (read_ctype(' ') &
+                (kSpace | kBlank)) ==
+                (kSpace | kBlank);
+
+        v57_ctype_self_check_passed =
+            addresses_ok &&
+            samples_ok;
+
+        if (!v57_ctype_self_check_logged) {
+            v57_ctype_self_check_logged =
+                true;
+
+            std::ostringstream line;
+            line
+                << "V57 CTYPE ABI selfCheck="
+                << (v57_ctype_self_check_passed
+                        ? "PASS"
+                        : "FAIL")
+                << " toupper{GOT=0x"
+                << JniProbeHex(
+                       kV57ToupperGotGuest)
+                << ",variable=0x"
+                << JniProbeHex(
+                       toupper_got)
+                << ",backing=0x"
+                << JniProbeHex(
+                       toupper_backing)
+                << ",a->"
+                << static_cast<char>(
+                       read_short(
+                           toupper_backing,
+                           'a'))
+                << ",A->"
+                << static_cast<char>(
+                       read_short(
+                           toupper_backing,
+                           'A'))
+                << ",_->"
+                << static_cast<char>(
+                       read_short(
+                           toupper_backing,
+                           '_'))
+                << ",0->"
+                << static_cast<char>(
+                       read_short(
+                           toupper_backing,
+                           '0'))
+                << "} tolower{GOT=0x"
+                << JniProbeHex(
+                       kV57TolowerGotGuest)
+                << ",variable=0x"
+                << JniProbeHex(
+                       tolower_got)
+                << ",backing=0x"
+                << JniProbeHex(
+                       tolower_backing)
+                << ",A->"
+                << static_cast<char>(
+                       read_short(
+                           tolower_backing,
+                           'A'))
+                << "} ctype{GOT=0x"
+                << JniProbeHex(
+                       kV57CtypeGotGuest)
+                << ",variable=0x"
+                << JniProbeHex(
+                       ctype_got)
+                << ",backing=0x"
+                << JniProbeHex(
+                       ctype_backing)
+                << ",A=0x"
+                << JniProbeHex(
+                       read_ctype('A'))
+                << ",a=0x"
+                << JniProbeHex(
+                       read_ctype('a'))
+                << ",0=0x"
+                << JniProbeHex(
+                       read_ctype('0'))
+                << ",space=0x"
+                << JniProbeHex(
+                       read_ctype(' '))
+                << "}";
+
+            Append(line.str());
+        }
+
+        return v57_ctype_self_check_passed;
+    }
+
+    void V57ObserveGateCWrite(
+        std::uint32_t address,
+        std::uint32_t width,
+        std::uint64_t old_value,
+        std::uint64_t new_value) {
+
+        if (v57_gate_c_last_object == 0u ||
+            old_value == new_value) {
+            return;
+        }
+
+        const std::uint32_t target =
+            v57_gate_c_last_object +
+            0x98u;
+
+        const std::uint64_t write_start =
+            address;
+        const std::uint64_t write_end =
+            write_start +
+            width;
+
+        if (write_end <= target ||
+            write_start >=
+                static_cast<std::uint64_t>(
+                    target) +
+                    4u) {
+            return;
+        }
+
+        ++v57_gate_c_write_events;
+
+        const std::uint32_t pc =
+            jit != nullptr
+                ? jit->Regs()[15]
+                : 0u;
+        const std::uint32_t lr =
+            jit != nullptr
+                ? jit->Regs()[14]
+                : 0u;
+        const std::uint32_t state_now =
+            mem.Read32Guest(target);
+
+        std::ostringstream line;
+        line
+            << "V57 GATEC WRITE #"
+            << v57_gate_c_write_events
+            << " object=0x"
+            << JniProbeHex(
+                   v57_gate_c_last_object)
+            << " address=0x"
+            << JniProbeHex(address)
+            << " width="
+            << width
+            << " old=0x"
+            << std::hex
+            << old_value
+            << " new=0x"
+            << new_value
+            << std::dec
+            << " state98="
+            << state_now
+            << " pc="
+            << V46DescribeGuestAddress(pc)
+            << " lr="
+            << V46DescribeGuestAddress(lr)
+            << " frame="
+            << current_frame_number
+            << " tid="
+            << current_probe_thread_id
+            << " lifecycle=\""
+            << current_lifecycle_name
+            << "\" snapshot80_B0=[";
+
+        for (std::uint32_t offset =
+                 0x80u;
+             offset <= 0xb0u;
+             offset += 4u) {
+            if (offset != 0x80u) {
+                line << ",";
+            }
+
+            line
+                << "+0x"
+                << std::hex
+                << offset
+                << "=0x"
+                << mem.Read32Guest(
+                       v57_gate_c_last_object +
+                       offset)
+                << std::dec;
+        }
+
+        line << "]";
+        Append(line.str());
+    }
+
+    void V57TraceTrieStep(
+        V56TrieContext& context,
+        std::uint32_t raw,
+        std::uint32_t normalized,
+        std::uint32_t node_word,
+        std::uint32_t node_pointer) {
+
+        if (!context.trace_path) {
+            return;
+        }
+
+        const std::uint32_t node_byte =
+            node_word &
+            0xffu;
+        const std::uint32_t position =
+            jit != nullptr &&
+                    jit->Regs()[1] >=
+                        context.key_start
+                ? jit->Regs()[1] -
+                      context.key_start
+                : 0xffffffffu;
+
+        const char* relation =
+            node_byte == normalized
+                ? "EQUAL"
+                : node_byte > normalized
+                    ? "NODE_HIGHER"
+                    : "NODE_LOWER";
+
+        ++context.trace_steps;
+
+        std::ostringstream line;
+        line
+            << "V57 TRIE PATH key=\""
+            << context.key
+            << "\" table="
+            << V57TrieTableLabel(
+                   context.table)
+            << " step="
+            << context.trace_steps
+            << " pos="
+            << position
+            << " raw=0x"
+            << JniProbeHex(raw)
+            << " normalized=0x"
+            << JniProbeHex(normalized)
+            << " nodeByte=0x"
+            << JniProbeHex(node_byte)
+            << " nodeWord=0x"
+            << JniProbeHex(node_word)
+            << " nodePtr=0x"
+            << JniProbeHex(node_pointer)
+            << " nextIndex="
+            << (node_word >> 8u)
+            << " relation="
+            << relation;
+
+        Append(line.str());
+    }
+
+    std::string V57EffectiveDepth() const {
+        if (v54_mainmenu_marker_hits != 0u) {
+            return "MAINMENU_REQUEST_PATH";
+        }
+        if (v54_patch_marker_hits != 0u) {
+            return "PATCH_REQUEST_PATH";
+        }
+        if (v54_gate_j_hits != 0u) {
+            return "GATE_J";
+        }
+        if (v54_gate_i_hits != 0u) {
+            return "GATE_I";
+        }
+        if (v54_gate_h_hits != 0u) {
+            return "GATE_H";
+        }
+        if (v54_gate_g_hits != 0u) {
+            return "GATE_G";
+        }
+        if (v54_gate_f_hits != 0u) {
+            return "GATE_F";
+        }
+        if (v54_gate_e_hits != 0u) {
+            return "GATE_E";
+        }
+        if (v54_after_d_hits != 0u) {
+            return "AFTER_D";
+        }
+        if (v54_gate_d_hits != 0u) {
+            return "GATE_D";
+        }
+        if (v54_gate_c_hits != 0u) {
+            return "GATE_C";
+        }
+        if (v54_gate_a_result_hits != 0u) {
+            return "GATE_A";
+        }
+        return "NONE";
+    }
+
+    std::string V57NaturalDepth() const {
+        if (v57_gate_a_natural_pass_hits == 0u) {
+            return
+                v54_gate_a_result_hits != 0u
+                    ? "GATE_A_BLOCK"
+                    : "NONE";
+        }
+
+        if (v54_gate_c_hits != 0u &&
+            v57_gate_c_native_pass_hits == 0u) {
+            return "GATE_C_BLOCK";
+        }
+
+        if (!v56_gate_a_scout_activated &&
+            !v57_gate_c_scout_activated) {
+            return V57EffectiveDepth();
+        }
+
+        if (v57_gate_c_scout_activated) {
+            return "GATE_C_BLOCK";
+        }
+
+        return "GATE_A_BLOCK";
+    }
+
+    std::string V57CtypeDeepScoutSummary() {
+        float gate_a_ratio = 0.0f;
+        std::memcpy(
+            &gate_a_ratio,
+            &v54_gate_a_result_bits,
+            sizeof(gate_a_ratio));
+
+        std::uint64_t selected_found = 0u;
+        std::uint64_t selected_misses = 0u;
+
+        for (const auto& pair :
+             v56_target_lookups) {
+            selected_found +=
+                pair.second.found;
+            selected_misses +=
+                pair.second.misses;
+        }
+
+        std::ostringstream out;
+        out
+            << "V57 CtypeDeepScout"
+            << " mode="
+            << V56ModeName()
+            << " ctype{enabled="
+            << (V57CtypeEnabled()
+                    ? "YES"
+                    : "NO")
+            << ",selfCheck="
+            << (v57_ctype_self_check_passed
+                    ? "PASS"
+                    : V57CtypeEnabled()
+                        ? "FAIL"
+                        : "DISABLED")
+            << ",toupperVar=0x"
+            << JniProbeHex(
+                   v57_toupper_variable)
+            << ",toupperBacking=0x"
+            << JniProbeHex(
+                   v57_toupper_backing)
+            << "}"
+            << " lookups{found="
+            << selected_found
+            << ",misses="
+            << selected_misses
+            << "}"
+            << " gateA{nativePassHits="
+            << v57_gate_a_natural_pass_hits
+            << ",lastRatio="
+            << gate_a_ratio
+            << ",scoutUsed="
+            << (v56_gate_a_scout_activated
+                    ? "YES"
+                    : "NO")
+            << "}"
+            << " gateC{hits="
+            << v57_gate_c_native_hits
+            << ",object=0x"
+            << JniProbeHex(
+                   v57_gate_c_last_object)
+            << ",nativeState="
+            << v57_gate_c_last_native_state
+            << ",nativePassHits="
+            << v57_gate_c_native_pass_hits
+            << ",writes="
+            << v57_gate_c_write_events
+            << ",scoutUsed="
+            << (v57_gate_c_scout_activated
+                    ? "YES"
+                    : "NO")
+            << ",forcedHits="
+            << v57_gate_c_forced_hits
+            << "}"
+            << " deepestNatural="
+            << V57NaturalDepth()
+            << " deepestEffective="
+            << V57EffectiveDepth()
+            << " GameState="
+            << V53CurrentGameState()
+            << " requests="
+            << v53_state_request_calls
+            << " applies="
+            << v53_state_apply_calls
+            << " patchMarker="
+            << v54_patch_marker_hits
+            << " mainMenuMarker="
+            << v54_mainmenu_marker_hits;
 
         return out.str();
     }
