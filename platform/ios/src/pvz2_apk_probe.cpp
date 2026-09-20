@@ -2496,6 +2496,7 @@ public:
     std::uint32_t v57_gate_c_first_frame = 0xffffffffu;
     std::uint32_t v57_gate_c_last_native_state = 0xffffffffu;
     std::uint32_t v57_gate_c_last_object = 0u;
+    std::uint64_t v57_gate_c_window_write_base = 0u;
     bool v57_gate_c_scout_activated = false;
     std::uint32_t v57_gate_c_activation_frame = 0u;
 
@@ -3570,6 +3571,22 @@ public:
             " caller=" +
             V46DescribeGuestAddress(
                 context.caller_lr));
+
+        if (context.trace_path) {
+            Append(
+                "V57 TRIE PATH END key=\"" +
+                context.key +
+                "\" table=" +
+                V57TrieTableLabel(
+                    context.table) +
+                " result=" +
+                (found
+                    ? "FOUND"
+                    : "MISS") +
+                " steps=" +
+                std::to_string(
+                    context.trace_steps));
+        }
     }
 
     std::string V56DiagnosticMatrixSummary() {
@@ -7953,9 +7970,41 @@ public:
                         table;
                     context.caller_lr =
                         regs[14];
+                    context.key_start =
+                        key_ptr;
                     context.key =
                         key;
                     context.relevant = true;
+
+                    if (V57CtypeEnabled() &&
+                        V57IsPathTraceKey(key)) {
+                        const std::string trace_token =
+                            key +
+                            "@" +
+                            V57TrieTableLabel(
+                                table);
+
+                        context.trace_path =
+                            v57_trie_traced_key_tables
+                                .insert(
+                                    trace_token)
+                                .second;
+
+                        if (context.trace_path) {
+                            Append(
+                                "V57 TRIE PATH BEGIN key=\"" +
+                                key +
+                                "\" table=" +
+                                V57TrieTableLabel(
+                                    table) +
+                                " keyPtr=" +
+                                V46DescribeGuestAddress(
+                                    key_ptr) +
+                                " caller=" +
+                                V46DescribeGuestAddress(
+                                    regs[14]));
+                        }
+                    }
 
                     v56_trie_contexts[
                         regs[13]] =
@@ -8352,6 +8401,11 @@ public:
                     &v54_gate_a_result_bits,
                     sizeof(value));
 
+                if (logo_state &&
+                    value >= 1.0f) {
+                    ++v57_gate_a_natural_pass_hits;
+                }
+
                 bool scout_forced = false;
 
                 // v56 Scout rule: the first complete Gate-A evaluation is
@@ -8434,19 +8488,88 @@ public:
             }
 
             case kJniProbeSvcStartupGateCState: {
-                // Original: LDR r1,[r0,#0x98].
+                // Original: LDR r1,[r0,#0x98]. v57 may alter only the
+                // loaded comparison operand after a delayed native proof;
+                // object+0x98 itself is never modified by the Scout.
                 const std::uint32_t object =
                     regs[0];
-                regs[1] =
+                const std::uint32_t native_state =
                     mem.Read32Guest(
                         object + 0x98u);
+                regs[1] =
+                    native_state;
+
+                bool scout_forced = false;
 
                 if (logo_state) {
                     ++v54_gate_c_hits;
                     v54_gate_c_object =
                         object;
                     v54_gate_c_state =
-                        regs[1];
+                        native_state;
+
+                    ++v57_gate_c_native_hits;
+
+                    if (native_state == 4u) {
+                        ++v57_gate_c_native_pass_hits;
+                    }
+
+                    const bool object_changed =
+                        v57_gate_c_last_object !=
+                            object;
+                    const bool state_changed =
+                        v57_gate_c_last_native_state !=
+                            native_state;
+
+                    if (object_changed ||
+                        state_changed ||
+                        v57_gate_c_first_frame ==
+                            0xffffffffu) {
+                        v57_gate_c_first_frame =
+                            current_frame_number;
+                        v57_gate_c_window_write_base =
+                            v57_gate_c_write_events;
+                    }
+
+                    v57_gate_c_last_object =
+                        object;
+                    v57_gate_c_last_native_state =
+                        native_state;
+
+                    const bool stable_window =
+                        current_frame_number >=
+                            v57_gate_c_first_frame +
+                                10u &&
+                        v57_gate_c_write_events ==
+                            v57_gate_c_window_write_base;
+
+                    if (V57DeepScoutEnabled() &&
+                        native_state == 1u &&
+                        (v57_gate_c_scout_activated ||
+                         stable_window)) {
+
+                        regs[1] = 4u;
+                        scout_forced = true;
+                        ++v57_gate_c_forced_hits;
+
+                        if (!v57_gate_c_scout_activated) {
+                            v57_gate_c_scout_activated =
+                                true;
+                            v57_gate_c_activation_frame =
+                                current_frame_number;
+
+                            Append(
+                                "V57 GATEC SCOUT ACTIVATED after delayed native proof: "
+                                "object+0x98 remained 1 for >=10 frames with no writes "
+                                "during the stable window; only loaded r1 is set to 4 "
+                                "for the native compare. object=" +
+                                V46DescribeGuestAddress(
+                                    object) +
+                                " frame=" +
+                                std::to_string(
+                                    current_frame_number));
+                        }
+                    }
                 }
 
                 append_gate(
@@ -8455,11 +8578,13 @@ public:
                         v54_gate_c_hits) +
                     " object=" +
                     V46DescribeGuestAddress(object) +
-                    " state98=" +
-                    std::to_string(regs[1]) +
-                    (regs[1] == 4u
-                        ? " => PASS"
-                        : " => BLOCK(!=4)"));
+                    " nativeState98=" +
+                    std::to_string(native_state) +
+                    (scout_forced
+                        ? " => V57_SCOUT_COMPARE_AS_4"
+                        : native_state == 4u
+                            ? " => PASS"
+                            : " => BLOCK(!=4)"));
                 return;
             }
 
@@ -20240,6 +20365,13 @@ bool JniProbePrepareRuntime(
 
             ++result.imports_patched;
         }
+    }
+
+    if (callbacks.V57CtypeEnabled() &&
+        !callbacks.V57LogCtypeSelfCheck()) {
+        error =
+            "v57 Bionic ctype imported-data ABI self-check failed before guest startup.";
+        return false;
     }
 
     // v45: keep 0x86f66c's native lookup logic intact, but observe the exact
