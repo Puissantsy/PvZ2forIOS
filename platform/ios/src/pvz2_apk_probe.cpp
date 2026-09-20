@@ -3510,8 +3510,12 @@ public:
 
         for (const auto& stat :
              v55_group_stats) {
+            // A Scout proof must still represent the exact v55 failure
+            // class: every observed lookup for every startup group missed.
+            // A single natural FOUND invalidates the bypass condition.
             if (stat.lookup_hits == 0u ||
-                stat.lookup_misses == 0u) {
+                stat.lookup_misses !=
+                    stat.lookup_hits) {
                 return false;
             }
         }
