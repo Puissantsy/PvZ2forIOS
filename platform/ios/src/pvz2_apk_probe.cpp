@@ -19929,9 +19929,12 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
     std::size_t apk_size,
     const std::uint8_t* obb_data,
     std::size_t obb_size,
-    PvZ2ProbeProgress progress) {
+    PvZ2ProbeProgress progress,
+    PvZ2DiagnosticMode diagnostic_mode) {
 
     PvZ2JniProbeResult result;
+    result.diagnostic_mode =
+        diagnostic_mode;
 
     if (!apk_data || apk_size == 0) {
         result.message =
@@ -19979,7 +19982,8 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
             result,
             std::move(progress),
             obb_data,
-            obb_size);
+            obb_size,
+            diagnostic_mode);
 
         std::uint32_t return_trampoline = 0;
 
@@ -22289,9 +22293,19 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                     "V55 STARTUP GROUP SUMMARY: " +
                     result.startup_resource_group_summary);
 
+                result.diagnostic_matrix_summary =
+                    callbacks.V56DiagnosticMatrixSummary();
+                result.gate_a_scout_activated =
+                    callbacks.v56_gate_a_scout_activated;
+                callbacks.Append(
+                    "V56 DIAGNOSTIC MATRIX SUMMARY: " +
+                    result.diagnostic_matrix_summary);
+
                 result.ok = true;
                 result.message =
-                    "PvZ2 completed stable v52 lifecycle/host-GLES, passive v53 GameState tracing, passive v54 StartupLogo gate tracing, and passive v55 Gate-A resource-group vector/lookup/progress tracing; nothing was forced (600-frame safety ceiling, adaptive stop preserved).";
+                    std::string{"PvZ2 completed v56 Diagnostic Matrix mode "} +
+                    callbacks.V56ModeName() +
+                    " on top of stable v52 rendering + v53/v54/v55 diagnostics. Registry observation remains passive; Scout/Matrix only alter Gate-A comparison S2 after a complete native 4/4-MISS proof. No resource table, resource index, GameState, or transition target is forced.";
                 return result;
             }
 
