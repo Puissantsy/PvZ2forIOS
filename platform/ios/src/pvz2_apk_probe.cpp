@@ -7727,12 +7727,6 @@ public:
             }
 
             case kJniProbeSvcStartupGateAResult: {
-                // Original: VMOV s2,r0.
-                if (jit != nullptr) {
-                    jit->ExtRegs()[2] =
-                        regs[0];
-                }
-
                 ++v54_gate_a_result_hits;
                 v54_gate_a_result_bits =
                     regs[0];
@@ -7743,6 +7737,57 @@ public:
                     &v54_gate_a_result_bits,
                     sizeof(value));
 
+                bool scout_forced = false;
+
+                // v56 Scout rule: the first complete Gate-A evaluation is
+                // always native. Only subsequent evaluations may be forced,
+                // and only after v55 has proven that all four startup groups
+                // were actually looked up and all four missed with no
+                // contribution. We modify only S2, exactly the destination
+                // of the original VMOV; R0 and all registry data stay native.
+                if (jit != nullptr &&
+                    logo_state &&
+                    V56ScoutEnabled() &&
+                    v54_gate_a_result_hits >= 2u &&
+                    V56GateAProofReady() &&
+                    !(value >= 1.0f)) {
+
+                    constexpr std::uint32_t
+                        kOneFloatBits =
+                            0x3f800000u;
+
+                    jit->ExtRegs()[2] =
+                        kOneFloatBits;
+                    scout_forced = true;
+                    ++v56_gate_a_forced_hits;
+
+                    if (!v56_gate_a_scout_activated) {
+                        v56_gate_a_scout_activated =
+                            true;
+                        v56_gate_a_activation_frame =
+                            current_frame_number;
+
+                        Append(
+                            "V56 SCOUT ACTIVATED after native proof: "
+                            "GateA first cycle saw all four startup groups "
+                            "MISS with zero contributions; subsequent "
+                            "comparison input S2 is set to 1.0 only. "
+                            "frame=" +
+                            std::to_string(
+                                current_frame_number) +
+                            " nativeBits=0x" +
+                            JniProbeHex(
+                                v54_gate_a_result_bits));
+
+                        V56AppendRegistrySnapshot(
+                            "scout-activation");
+                    }
+                } else if (jit != nullptr) {
+                    // Native instruction: VMOV s2,r0.
+                    jit->ExtRegs()[2] =
+                        regs[0];
+                }
+
                 std::ostringstream line;
                 line
                     << "GateA.result hit="
@@ -7752,10 +7797,22 @@ public:
                            v54_gate_a_result_bits)
                     << " float="
                     << value
-                    << " => "
-                    << (value >= 1.0f
-                        ? "PASS"
-                        : "BLOCK(<1.0)");
+                    << " => ";
+
+                if (scout_forced) {
+                    line
+                        << "V56_SCOUT_FORCE_PASS"
+                        << "(native="
+                        << (!(value >= 1.0f)
+                                ? "BLOCK"
+                                : "PASS")
+                        << ")";
+                } else {
+                    line
+                        << (value >= 1.0f
+                            ? "PASS"
+                            : "BLOCK(<1.0)");
+                }
 
                 append_gate(line.str());
                 return;
