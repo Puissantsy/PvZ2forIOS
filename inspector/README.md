@@ -6,6 +6,54 @@ The inspector does **not** launch PvZ2. It consumes the original PvZ2
 1.5.252752 APK plus an optional probe log and turns static ARM/ELF facts and
 real-iPad traces into repeatable diagnostics.
 
+## Lab v1.4
+
+v1.4 adds a dedicated analyzer for the very large partial v61
+`Res-Stream Pump Cooperation` log while keeping every v1.3 capability.
+
+### v61 / TaskResource crash analysis
+
+The inspector validates a 28-instruction static profile covering the native
+resource-stream pump at `0x10868b7c`, its `manager+0x50/+0x54` task vector,
+the three virtual slots used by the pump, the generic pthread wrapper at
+`0x109cb6d0`, and the real resource worker entry at `0x10abd894`.
+
+It also identifies the APK's exported
+`vector<IResStreamsDriver::TaskResource*>::_M_emplace_back_aux` helper and
+verifies the direct TaskResource producer vtable at `0x10cd0d88`, whose
+reference pump slots are `+0x14 -> 0x10abede0`,
+`+0x18 -> 0x10abf23c`, and `+0x3c -> 0x10ac0984`.
+
+For a v61 log, `v61-crash-diagnosis.txt` reconstructs worker payloads,
+per-worker slice/tick maxima, the exact number of
+`res-stream-pump-boundary` observations, the first NoExecuteFault register
+set, and the verified `r6 -> r7 -> [r7] -> [vtable+0x14] -> BLX r1` path.
+It explicitly keeps `[r7]` as UNKNOWN when the runtime log did not capture
+the actual vtable pointer.
+
+### Huge-log safe mode
+
+For logs above 24 MiB, v61-specific analysis still scans the complete file,
+but generic address ranking uses a bounded head/tail sample and the app skips
+the full annotated-log copy. `critical-log-excerpt.txt` replaces it with
+worker-7 creation context, the first crash context, and the tail of the
+partial run. The iOS picker also stores the log as `NSData` instead of first
+building a second huge `NSString`.
+
+### New v1.4 reports
+
+```
+v61-crash-diagnosis.txt
+next-probe-plan.txt
+critical-log-excerpt.txt
+```
+
+`next-probe-plan.txt` batches the next useful instrumentation: pre-BLX object
+and vtable dump, TaskResource producer/provenance tracing, vptr write-watch,
+and a bounded/fail-fast scheduler so a failed worker cannot generate another
+75 MiB loop. Inspector itself does not modify the main PvZ2 probe.
+
+---
 ## Lab v1.3
 
 v1.3 keeps all v1.2 functionality and adds a semantic model for the v55/v56
