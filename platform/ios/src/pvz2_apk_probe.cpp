@@ -1630,7 +1630,10 @@ public:
         std::uint64_t length = 0;
         std::uint64_t offset = 0;
         bool eof = false;
+        bool writable = false;
+        bool dev_null = false;
         std::string label;
+        std::string virtual_path;
         std::shared_ptr<std::vector<std::uint8_t>> owned;
     };
 
@@ -2245,6 +2248,41 @@ public:
     std::unordered_map<std::uint32_t, std::vector<std::uint32_t>> jni_object_arrays;
     std::unordered_map<std::uint32_t, std::uint32_t> jni_direct_buffer_address;
     std::unordered_map<std::uint32_t, std::uint64_t> jni_direct_buffer_capacity;
+
+    // v51: Native_onSurfaceCreated creates first-run/player-profile state
+    // under Android's private user-data directory. Earlier probes claimed
+    // mkdir/config writes succeeded without keeping any backing data:
+    // snapshot2.dat fopen failed, the Player profiles table could not be
+    // saved, and Config_ConfigKeyExists stayed false forever. Keep one
+    // process-local Android persistence surface so startup can advance
+    // without coupling guest paths to the host iOS filesystem.
+    std::unordered_map<
+        std::string,
+        std::shared_ptr<std::vector<std::uint8_t>>>
+        v51_writable_files;
+    std::unordered_set<std::string>
+        v51_writable_directories;
+    std::unordered_map<std::uint32_t, std::string>
+        v51_file_token_paths;
+    std::unordered_map<std::uint32_t, std::string>
+        v51_fd_token_paths;
+    std::unordered_set<std::uint32_t>
+        v51_directory_handles;
+    std::uint32_t v51_next_directory_handle = 0xf2000000u;
+    std::uint64_t v51_userfs_write_calls = 0u;
+    std::uint64_t v51_userfs_bytes_written = 0u;
+    std::uint64_t v51_snapshot2_bytes = 0u;
+
+    std::unordered_set<std::string> v51_config_keys;
+    std::unordered_map<std::string, std::string>
+        v51_config_strings;
+    std::unordered_map<std::string, std::int32_t>
+        v51_config_integers;
+    std::unordered_map<std::string, bool>
+        v51_config_booleans;
+    std::unordered_set<std::string>
+        v51_config_logged_keys;
+
     std::unordered_map<std::uint32_t, z_stream> zstreams;
     std::unordered_map<std::uint32_t, bool> zstream_deflate_mode;
 
@@ -6720,23 +6758,115 @@ public:
                         method_name ==
                             "Config_ConfigKeyExists") {
 
-                        regs[0] = 0u;
-                        Append(
-                            "JNI bridge: Config_ConfigKeyExists -> false");
+                        const std::string key =
+                            java_string_value(
+                                java_arg_word(0u));
+                        const bool exists =
+                            v51_config_keys.count(key) != 0u;
+
+                        regs[0] =
+                            exists
+                                ? 1u
+                                : 0u;
+
+                        if (v51_config_logged_keys
+                                .insert(
+                                    "exists:" + key)
+                                .second) {
+                            Append(
+                                "V51 CONFIG exists key=\"" +
+                                key +
+                                "\" -> " +
+                                (exists
+                                    ? std::string{"true"}
+                                    : std::string{"false"}));
+                        }
                         return true;
                     }
 
                     if (family == 1 &&
-                        (method_name ==
-                             "Config_ConfigWriteInteger" ||
-                         method_name ==
-                             "Config_ConfigWriteString")) {
+                        method_name ==
+                            "Config_ConfigWriteString") {
 
+                        const std::string key =
+                            java_string_value(
+                                java_arg_word(0u));
+                        const std::string value =
+                            java_string_value(
+                                java_arg_word(1u));
+
+                        v51_config_keys.insert(key);
+                        v51_config_strings[key] = value;
                         regs[0] = 1u;
-                        Append(
-                            "JNI bridge: " +
-                            method_name +
-                            " -> true");
+
+                        if (v51_config_logged_keys
+                                .insert(
+                                    "write-string:" + key)
+                                .second) {
+                            Append(
+                                "V51 CONFIG write-string key=\"" +
+                                key +
+                                "\" bytes=" +
+                                std::to_string(
+                                    value.size()));
+                        }
+                        return true;
+                    }
+
+                    if (family == 1 &&
+                        method_name ==
+                            "Config_ConfigWriteInteger") {
+
+                        const std::string key =
+                            java_string_value(
+                                java_arg_word(0u));
+                        const std::int32_t value =
+                            static_cast<std::int32_t>(
+                                java_arg_word(1u));
+
+                        v51_config_keys.insert(key);
+                        v51_config_integers[key] = value;
+                        regs[0] = 1u;
+
+                        if (v51_config_logged_keys
+                                .insert(
+                                    "write-int:" + key)
+                                .second) {
+                            Append(
+                                "V51 CONFIG write-int key=\"" +
+                                key +
+                                "\" value=" +
+                                std::to_string(value));
+                        }
+                        return true;
+                    }
+
+                    if (family == 1 &&
+                        method_name ==
+                            "Config_ConfigWriteBoolean") {
+
+                        const std::string key =
+                            java_string_value(
+                                java_arg_word(0u));
+                        const bool value =
+                            java_arg_word(1u) != 0u;
+
+                        v51_config_keys.insert(key);
+                        v51_config_booleans[key] = value;
+                        regs[0] = 1u;
+
+                        if (v51_config_logged_keys
+                                .insert(
+                                    "write-bool:" + key)
+                                .second) {
+                            Append(
+                                "V51 CONFIG write-bool key=\"" +
+                                key +
+                                "\" value=" +
+                                (value
+                                    ? std::string{"true"}
+                                    : std::string{"false"}));
+                        }
                         return true;
                     }
 
@@ -6744,16 +6874,94 @@ public:
                         method_name ==
                             "Config_ConfigReadString") {
 
-                        const std::uint32_t default_value =
-                            java_arg_word(1u);
+                        const std::string key =
+                            java_string_value(
+                                java_arg_word(0u));
+                        const auto it =
+                            v51_config_strings.find(key);
+                        const std::string value =
+                            it != v51_config_strings.end()
+                                ? it->second
+                                : std::string{};
 
                         regs[0] =
-                            default_value != 0u
-                                ? default_value
-                                : new_string("");
+                            new_string(value);
 
-                        Append(
-                            "JNI bridge: Config_ConfigReadString -> caller default");
+                        if (v51_config_logged_keys
+                                .insert(
+                                    "read-string:" + key)
+                                .second) {
+                            Append(
+                                "V51 CONFIG read-string key=\"" +
+                                key +
+                                "\" -> " +
+                                (it != v51_config_strings.end()
+                                    ? std::string{"stored"}
+                                    : std::string{"empty"}));
+                        }
+                        return true;
+                    }
+
+                    if (family == 5 &&
+                        method_name ==
+                            "Config_ConfigReadInteger") {
+
+                        const std::string key =
+                            java_string_value(
+                                java_arg_word(0u));
+                        const auto it =
+                            v51_config_integers.find(key);
+                        regs[0] =
+                            it != v51_config_integers.end()
+                                ? static_cast<std::uint32_t>(
+                                      it->second)
+                                : 0u;
+
+                        if (v51_config_logged_keys
+                                .insert(
+                                    "read-int:" + key)
+                                .second) {
+                            Append(
+                                "V51 CONFIG read-int key=\"" +
+                                key +
+                                "\" -> " +
+                                (it != v51_config_integers.end()
+                                    ? std::to_string(
+                                          it->second)
+                                    : std::string{"0"}));
+                        }
+                        return true;
+                    }
+
+                    if (family == 1 &&
+                        method_name ==
+                            "Config_ConfigReadBoolean") {
+
+                        const std::string key =
+                            java_string_value(
+                                java_arg_word(0u));
+                        const auto it =
+                            v51_config_booleans.find(key);
+                        const bool value =
+                            it != v51_config_booleans.end() &&
+                            it->second;
+                        regs[0] =
+                            value
+                                ? 1u
+                                : 0u;
+
+                        if (v51_config_logged_keys
+                                .insert(
+                                    "read-bool:" + key)
+                                .second) {
+                            Append(
+                                "V51 CONFIG read-bool key=\"" +
+                                key +
+                                "\" -> " +
+                                (value
+                                    ? std::string{"true"}
+                                    : std::string{"false"}));
+                        }
                         return true;
                     }
 
@@ -11097,6 +11305,172 @@ public:
                 return path;
             };
 
+        auto normalize_v51_user_path =
+            [&](std::string path) {
+                path =
+                    normalize_guest_path(
+                        std::move(path));
+
+                while (path.size() > 1u &&
+                       path.back() == '/') {
+                    path.pop_back();
+                }
+
+                return path;
+            };
+
+        auto v51_is_user_data_path =
+            [&](const std::string& raw) {
+                const std::string path =
+                    normalize_v51_user_path(raw);
+
+                static constexpr char kFiles[] =
+                    "/data/data/com.ea.game.pvz2_row/files";
+                static constexpr char kCache[] =
+                    "/data/data/com.ea.game.pvz2_row/cache";
+
+                const auto under =
+                    [&](const char* root) {
+                        const std::string prefix{root};
+                        return
+                            path == prefix ||
+                            (path.size() > prefix.size() &&
+                             path.compare(
+                                 0u,
+                                 prefix.size(),
+                                 prefix) == 0 &&
+                             path[prefix.size()] == '/');
+                    };
+
+                return
+                    under(kFiles) ||
+                    under(kCache);
+            };
+
+        auto v51_open_memory_file =
+            [&](const std::string& raw,
+                bool create,
+                bool truncate,
+                bool append,
+                bool writable)
+                -> std::optional<ProbeObbHandle> {
+
+                const std::string path =
+                    normalize_v51_user_path(raw);
+
+                if (path == "/dev/null") {
+                    ProbeObbHandle handle;
+                    handle.owned =
+                        std::make_shared<
+                            std::vector<std::uint8_t>>();
+                    handle.writable = true;
+                    handle.dev_null = true;
+                    handle.virtual_path = path;
+                    handle.label = "v51-dev-null";
+                    return handle;
+                }
+
+                if (!v51_is_user_data_path(path)) {
+                    return std::nullopt;
+                }
+
+                auto it =
+                    v51_writable_files.find(path);
+
+                if (it == v51_writable_files.end()) {
+                    if (!create) {
+                        return std::nullopt;
+                    }
+
+                    auto bytes =
+                        std::make_shared<
+                            std::vector<std::uint8_t>>();
+                    it =
+                        v51_writable_files
+                            .emplace(
+                                path,
+                                std::move(bytes))
+                            .first;
+                }
+
+                if (truncate) {
+                    it->second->clear();
+                }
+
+                ProbeObbHandle handle;
+                handle.base = 0u;
+                handle.length =
+                    static_cast<std::uint64_t>(
+                        it->second->size());
+                handle.offset =
+                    append
+                        ? handle.length
+                        : 0u;
+                handle.eof = false;
+                handle.writable = writable;
+                handle.dev_null = false;
+                handle.virtual_path = path;
+                handle.label =
+                    "v51-userfs:" + path;
+                handle.owned = it->second;
+                return handle;
+            };
+
+        auto v51_path_exists =
+            [&](const std::string& raw,
+                std::uint64_t* size_out,
+                bool* directory_out) {
+                const std::string path =
+                    normalize_v51_user_path(raw);
+
+                if (path == "/dev/null") {
+                    if (size_out) {
+                        *size_out = 0u;
+                    }
+                    if (directory_out) {
+                        *directory_out = false;
+                    }
+                    return true;
+                }
+
+                const auto file =
+                    v51_writable_files.find(path);
+                if (file !=
+                    v51_writable_files.end()) {
+                    if (size_out) {
+                        *size_out =
+                            static_cast<std::uint64_t>(
+                                file->second->size());
+                    }
+                    if (directory_out) {
+                        *directory_out = false;
+                    }
+                    return true;
+                }
+
+                const bool known_root =
+                    path ==
+                        "/data/data/com.ea.game.pvz2_row/files" ||
+                    path ==
+                        "/data/data/com.ea.game.pvz2_row/cache";
+                const bool known_directory =
+                    known_root ||
+                    v51_writable_directories.count(path) !=
+                        0u;
+
+                if (known_directory) {
+                    if (size_out) {
+                        *size_out = 0u;
+                    }
+                    if (directory_out) {
+                        *directory_out = true;
+                    }
+                    return true;
+                }
+
+                return false;
+            };
+
         auto is_expansion_path =
             [&](const std::string& raw) {
                 std::string path =
@@ -11759,6 +12133,116 @@ public:
                 return true;
             };
 
+        auto write_armeabi_dir_stat =
+            [&](std::uint32_t address) {
+                constexpr std::uint32_t kStatSize =
+                    0x68u;
+
+                if (address == 0u ||
+                    mem.Ptr(
+                        address,
+                        kStatSize) == nullptr) {
+                    return false;
+                }
+
+                for (std::uint32_t i = 0u;
+                     i < kStatSize;
+                     i += 4u) {
+                    mem.Write32Guest(
+                        address + i,
+                        0u);
+                }
+
+                mem.Write32Guest(
+                    address + 0x10u,
+                    0040755u);
+                return true;
+            };
+
+        auto v51_write_handle =
+            [&](ProbeObbHandle& handle,
+                std::uint32_t source,
+                std::uint64_t bytes)
+                -> bool {
+
+                if (!handle.writable) {
+                    set_guest_errno(9u);
+                    return false;
+                }
+
+                if (handle.dev_null) {
+                    handle.offset += bytes;
+                    ++v51_userfs_write_calls;
+                    v51_userfs_bytes_written += bytes;
+                    return true;
+                }
+
+                if (!handle.owned) {
+                    set_guest_errno(9u);
+                    return false;
+                }
+
+                if (bytes != 0u &&
+                    mem.Ptr(
+                        source,
+                        static_cast<std::size_t>(
+                            bytes)) == nullptr) {
+                    set_guest_errno(14u);
+                    return false;
+                }
+
+                const std::uint64_t end =
+                    handle.offset + bytes;
+
+                if (end >
+                    static_cast<std::uint64_t>(
+                        std::numeric_limits<
+                            std::size_t>::max())) {
+                    set_guest_errno(27u);
+                    return false;
+                }
+
+                if (end > handle.owned->size()) {
+                    handle.owned->resize(
+                        static_cast<std::size_t>(
+                            end),
+                        0u);
+                }
+
+                if (bytes != 0u) {
+                    std::memcpy(
+                        handle.owned->data() +
+                            static_cast<std::size_t>(
+                                handle.offset),
+                        mem.Ptr(
+                            source,
+                            static_cast<std::size_t>(
+                                bytes)),
+                        static_cast<std::size_t>(
+                            bytes));
+                }
+
+                handle.offset = end;
+                handle.length =
+                    static_cast<std::uint64_t>(
+                        handle.owned->size());
+                handle.eof = false;
+
+                ++v51_userfs_write_calls;
+                v51_userfs_bytes_written += bytes;
+
+                if (handle.virtual_path.find(
+                        "snapshot2.dat") !=
+                    std::string::npos) {
+                    v51_snapshot2_bytes =
+                        std::max<std::uint64_t>(
+                            v51_snapshot2_bytes,
+                            handle.length);
+                }
+
+                return true;
+            };
+
         static const std::unordered_set<std::string> kStdio = {
             "fclose","fdopen","feof","ferror","fflush","fgetc","fgets",
             "fopen","fprintf","fputc","fputs","fread","fscanf","fseek",
@@ -11913,6 +12397,76 @@ public:
                     mem.ReadCStringGuest(
                         regs[0],
                         2048);
+                const std::string mode =
+                    mem.ReadCStringGuest(
+                        regs[1],
+                        32);
+
+                const bool user_path =
+                    v51_is_user_data_path(
+                        guest_path) ||
+                    normalize_v51_user_path(
+                        guest_path) ==
+                        "/dev/null";
+
+                if (user_path) {
+                    const bool create =
+                        mode.find('w') !=
+                            std::string::npos ||
+                        mode.find('a') !=
+                            std::string::npos;
+                    const bool truncate =
+                        mode.find('w') !=
+                        std::string::npos;
+                    const bool append =
+                        mode.find('a') !=
+                        std::string::npos;
+                    const bool writable =
+                        create ||
+                        mode.find('+') !=
+                            std::string::npos;
+
+                    const auto opened =
+                        v51_open_memory_file(
+                            guest_path,
+                            create,
+                            truncate,
+                            append,
+                            writable);
+
+                    if (opened.has_value()) {
+                        const std::uint32_t token =
+                            next_probe_file++;
+                        obb_files[token] = *opened;
+                        v51_file_token_paths[token] =
+                            opened->virtual_path;
+                        regs[0] = token;
+                        ++supported_calls;
+
+                        Append(
+                            "V51 USERFS fopen(\"" +
+                            guest_path +
+                            "\", \"" +
+                            mode +
+                            "\") -> token=0x" +
+                            JniProbeHex(token) +
+                            " size=" +
+                            std::to_string(
+                                opened->length));
+                        return;
+                    }
+
+                    set_guest_errno(2u);
+                    regs[0] = 0u;
+                    ++supported_calls;
+                    Append(
+                        "V51 USERFS fopen(\"" +
+                        guest_path +
+                        "\", \"" +
+                        mode +
+                        "\") -> null ENOENT");
+                    return;
+                }
 
                 const auto resolved =
                     resolve_obb_virtual_file(
@@ -11958,8 +12512,36 @@ public:
             }
 
             if (name == "fclose") {
+                const std::uint32_t token =
+                    regs[0];
+                const auto path_it =
+                    v51_file_token_paths.find(
+                        token);
+
+                if (path_it !=
+                        v51_file_token_paths.end() &&
+                    path_it->second.find(
+                        "snapshot2.dat") !=
+                        std::string::npos) {
+
+                    const auto file_it =
+                        v51_writable_files.find(
+                            path_it->second);
+                    Append(
+                        "V51 PROFILE SNAPSHOT close path=\"" +
+                        path_it->second +
+                        "\" bytes=" +
+                        std::to_string(
+                            file_it !=
+                                    v51_writable_files.end()
+                                ? file_it->second->size()
+                                : 0u));
+                }
+
+                v51_file_token_paths.erase(token);
+
                 const auto erased =
-                    obb_files.erase(regs[0]);
+                    obb_files.erase(token);
 
                 regs[0] =
                     erased != 0u
@@ -12115,9 +12697,10 @@ public:
                     base + offset;
 
                 if (next < 0 ||
-                    static_cast<std::uint64_t>(
-                        next) >
-                        it->second.length) {
+                    (!it->second.writable &&
+                     static_cast<std::uint64_t>(
+                         next) >
+                         it->second.length)) {
 
                     set_guest_errno(22u);
                     regs[0] = 0xffffffffu;
@@ -12169,6 +12752,37 @@ public:
                 regs[0] = 0;
                 ++supported_calls;
                 return;
+            }
+
+            if (name == "fwrite") {
+                const std::uint32_t source =
+                    regs[0];
+                const std::uint32_t element_size =
+                    regs[1];
+                const std::uint32_t element_count =
+                    regs[2];
+                const std::uint32_t token =
+                    regs[3];
+
+                const auto it =
+                    obb_files.find(token);
+
+                if (it != obb_files.end()) {
+                    const std::uint64_t bytes =
+                        static_cast<std::uint64_t>(
+                            element_size) *
+                        element_count;
+
+                    regs[0] =
+                        v51_write_handle(
+                            it->second,
+                            source,
+                            bytes)
+                            ? element_count
+                            : 0u;
+                    ++supported_calls;
+                    return;
+                }
             }
 
             log_fallback_once("stdio");
@@ -12234,11 +12848,33 @@ public:
                         regs[0],
                         2048);
 
-                // The probe VFS currently exposes individual APK/OBB/RSB
-                // files, not a writable Android directory hierarchy. v27
-                // returned the generic -1 value as a non-null DIR*, which
-                // made PvZ2 call readdir(-1) forever. POSIX opendir failure is
-                // NULL, so unavailable directories must return 0.
+                if (v51_is_user_data_path(
+                        guest_path)) {
+                    const std::string path =
+                        normalize_v51_user_path(
+                            guest_path);
+                    v51_writable_directories.insert(
+                        path);
+
+                    const std::uint32_t token =
+                        v51_next_directory_handle++;
+                    v51_directory_handles.insert(
+                        token);
+                    regs[0] = token;
+                    ++supported_calls;
+
+                    if (fallback_logged.insert(
+                            "v51-opendir:" +
+                            path).second) {
+                        Append(
+                            "V51 USERFS opendir(\"" +
+                            guest_path +
+                            "\") -> empty dir token=0x" +
+                            JniProbeHex(token));
+                    }
+                    return;
+                }
+
                 set_guest_errno(2u);
                 regs[0] = 0u;
                 ++supported_calls;
@@ -12301,11 +12937,15 @@ public:
             }
 
             if (name == "closedir") {
-                // No synthetic DIR handle is currently produced. Keep failure
-                // semantics correct rather than pretending an invalid handle
-                // closed successfully.
-                set_guest_errno(9u);
-                regs[0] = 0xffffffffu;
+                const auto erased =
+                    v51_directory_handles.erase(
+                        regs[0]);
+                if (erased != 0u) {
+                    regs[0] = 0u;
+                } else {
+                    set_guest_errno(9u);
+                    regs[0] = 0xffffffffu;
+                }
                 ++supported_calls;
                 return;
             }
@@ -12315,6 +12955,79 @@ public:
                     mem.ReadCStringGuest(
                         regs[0],
                         2048);
+                const std::uint32_t flags =
+                    regs[1];
+
+                const bool user_path =
+                    v51_is_user_data_path(
+                        guest_path) ||
+                    normalize_v51_user_path(
+                        guest_path) ==
+                        "/dev/null";
+
+                if (user_path) {
+                    constexpr std::uint32_t kOCreat =
+                        0x40u;
+                    constexpr std::uint32_t kOTrunc =
+                        0x200u;
+                    constexpr std::uint32_t kOAppend =
+                        0x400u;
+                    constexpr std::uint32_t kAccMode =
+                        0x3u;
+
+                    const bool create =
+                        (flags & kOCreat) != 0u;
+                    const bool truncate =
+                        (flags & kOTrunc) != 0u;
+                    const bool append =
+                        (flags & kOAppend) != 0u;
+                    const bool writable =
+                        (flags & kAccMode) != 0u ||
+                        create ||
+                        truncate ||
+                        append;
+
+                    const auto opened =
+                        v51_open_memory_file(
+                            guest_path,
+                            create,
+                            truncate,
+                            append,
+                            writable);
+
+                    if (opened.has_value()) {
+                        const std::uint32_t token =
+                            next_probe_fd++;
+                        obb_fds[token] = *opened;
+                        v51_fd_token_paths[token] =
+                            opened->virtual_path;
+                        regs[0] = token;
+                        ++supported_calls;
+
+                        Append(
+                            "V51 USERFS open(\"" +
+                            guest_path +
+                            "\", flags=0x" +
+                            JniProbeHex(flags) +
+                            ") -> fd=0x" +
+                            JniProbeHex(token) +
+                            " size=" +
+                            std::to_string(
+                                opened->length));
+                        return;
+                    }
+
+                    set_guest_errno(2u);
+                    regs[0] = 0xffffffffu;
+                    ++supported_calls;
+                    Append(
+                        "V51 USERFS open(\"" +
+                        guest_path +
+                        "\", flags=0x" +
+                        JniProbeHex(flags) +
+                        ") -> -1 ENOENT");
+                    return;
+                }
 
                 const auto resolved =
                     resolve_obb_virtual_file(
@@ -12360,8 +13073,12 @@ public:
             }
 
             if (name == "close") {
+                const std::uint32_t token =
+                    regs[0];
+                v51_fd_token_paths.erase(token);
+
                 const auto erased =
-                    obb_fds.erase(regs[0]);
+                    obb_fds.erase(token);
 
                 regs[0] =
                     erased != 0u
@@ -12518,9 +13235,10 @@ public:
                     base + offset;
 
                 if (next < 0 ||
-                    static_cast<std::uint64_t>(
-                        next) >
-                        it->second.length) {
+                    (!it->second.writable &&
+                     static_cast<std::uint64_t>(
+                         next) >
+                         it->second.length)) {
 
                     set_guest_errno(22u);
                     regs[0] = 0xffffffffu;
@@ -12569,11 +13287,22 @@ public:
                         regs[0],
                         2048);
 
+                std::uint64_t user_size = 0u;
+                bool user_directory = false;
+                const bool user_exists =
+                    v51_path_exists(
+                        guest_path,
+                        &user_size,
+                        &user_directory);
+
                 const auto resolved =
-                    resolve_obb_virtual_file(
-                        guest_path);
+                    user_exists
+                        ? std::optional<ProbeObbHandle>{}
+                        : resolve_obb_virtual_file(
+                              guest_path);
 
                 const bool exists =
+                    user_exists ||
                     resolved.has_value();
 
                 if (name == "access") {
@@ -12581,11 +13310,21 @@ public:
                         exists
                             ? 0u
                             : 0xffffffffu;
-                } else if (exists &&
+                } else if (user_exists) {
+                    regs[0] =
+                        (user_directory
+                             ? write_armeabi_dir_stat(
+                                   regs[1])
+                             : write_armeabi_stat(
+                                   regs[1],
+                                   user_size))
+                            ? 0u
+                            : 0xffffffffu;
+                } else if (resolved.has_value() &&
                            write_armeabi_stat(
                                regs[1],
                                resolved->length)) {
-                    regs[0] = 0;
+                    regs[0] = 0u;
                 } else {
                     regs[0] = 0xffffffffu;
                 }
@@ -12598,15 +13337,115 @@ public:
                 return;
             }
 
+            if (name == "write") {
+                const auto it =
+                    obb_fds.find(regs[0]);
+                if (it != obb_fds.end()) {
+                    const std::uint32_t requested =
+                        regs[2];
+                    regs[0] =
+                        v51_write_handle(
+                            it->second,
+                            regs[1],
+                            requested)
+                            ? requested
+                            : 0xffffffffu;
+                    ++supported_calls;
+                    return;
+                }
+            }
+
+            if (name == "ftruncate") {
+                const auto it =
+                    obb_fds.find(regs[0]);
+                const std::uint32_t requested =
+                    regs[1];
+
+                if (it != obb_fds.end() &&
+                    it->second.writable &&
+                    it->second.owned &&
+                    !it->second.dev_null) {
+                    it->second.owned->resize(
+                        requested,
+                        0u);
+                    it->second.length = requested;
+                    if (it->second.offset >
+                        requested) {
+                        it->second.offset =
+                            requested;
+                    }
+                    regs[0] = 0u;
+                } else {
+                    set_guest_errno(9u);
+                    regs[0] = 0xffffffffu;
+                }
+
+                ++supported_calls;
+                return;
+            }
+
+            if (name == "mkdir") {
+                const std::string guest_path =
+                    mem.ReadCStringGuest(
+                        regs[0],
+                        2048);
+
+                if (v51_is_user_data_path(
+                        guest_path)) {
+                    const std::string path =
+                        normalize_v51_user_path(
+                            guest_path);
+                    v51_writable_directories.insert(
+                        path);
+                    regs[0] = 0u;
+
+                    if (fallback_logged.insert(
+                            "v51-mkdir:" + path)
+                            .second) {
+                        Append(
+                            "V51 USERFS mkdir(\"" +
+                            guest_path +
+                            "\") -> 0");
+                    }
+                } else {
+                    regs[0] = 0u;
+                }
+
+                ++supported_calls;
+                return;
+            }
+
+            if (name == "unlink") {
+                const std::string guest_path =
+                    normalize_v51_user_path(
+                        mem.ReadCStringGuest(
+                            regs[0],
+                            2048));
+
+                if (v51_is_user_data_path(
+                        guest_path)) {
+                    const auto erased =
+                        v51_writable_files.erase(
+                            guest_path);
+                    regs[0] =
+                        erased != 0u
+                            ? 0u
+                            : 0xffffffffu;
+                    if (erased == 0u) {
+                        set_guest_errno(2u);
+                    }
+                    ++supported_calls;
+                    return;
+                }
+            }
+
             log_fallback_once("posix-fs");
 
             if (name == "write") {
                 regs[0] = regs[2];
             } else if (name == "writev") {
                 regs[0] = 0;
-            } else if (name == "mkdir" ||
-                       name == "fsync" ||
-                       name == "unlink") {
+            } else if (name == "fsync") {
                 regs[0] = 0;
             } else if (name == "poll") {
                 regs[0] = 0;
@@ -18372,7 +19211,29 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                     " initAtlas=" +
                     (callbacks.v50_init_atlas_seen
                         ? std::string{"YES"}
-                        : std::string{"NO"}));
+                        : std::string{"NO"}) +
+                    " | userFsFiles=" +
+                    std::to_string(
+                        callbacks
+                            .v51_writable_files
+                            .size()) +
+                    " userFsWrites=" +
+                    std::to_string(
+                        callbacks
+                            .v51_userfs_write_calls) +
+                    " userFsBytes=" +
+                    std::to_string(
+                        callbacks
+                            .v51_userfs_bytes_written) +
+                    " snapshot2Bytes=" +
+                    std::to_string(
+                        callbacks
+                            .v51_snapshot2_bytes) +
+                    " configKeys=" +
+                    std::to_string(
+                        callbacks
+                            .v51_config_keys
+                            .size()));
 
                 if (!post_ea_best_path.empty()) {
                     result.host_frame_png_path =
