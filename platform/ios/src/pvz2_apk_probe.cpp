@@ -3799,6 +3799,8 @@ public:
         constexpr std::uint8_t kLower = 0x02u;
         constexpr std::uint8_t kNumber = 0x04u;
         constexpr std::uint8_t kSpace = 0x08u;
+        constexpr std::uint8_t kPunct = 0x10u;
+        constexpr std::uint8_t kControl = 0x20u;
         constexpr std::uint8_t kHex = 0x40u;
         constexpr std::uint8_t kBlank = 0x80u;
 
@@ -3864,7 +3866,14 @@ public:
                 (kNumber | kHex) &&
             (read_ctype(' ') &
                 (kSpace | kBlank)) ==
-                (kSpace | kBlank);
+                (kSpace | kBlank) &&
+            (read_ctype('\t') &
+                (kControl | kSpace | kBlank)) ==
+                (kControl | kSpace) &&
+            read_ctype(0x80u) ==
+                kControl &&
+            read_ctype(0xa0u) ==
+                kPunct;
 
         v57_ctype_self_check_passed =
             addresses_ok &&
@@ -3944,6 +3953,15 @@ public:
                 << ",space=0x"
                 << JniProbeHex(
                        read_ctype(' '))
+                << ",tab=0x"
+                << JniProbeHex(
+                       read_ctype('\t'))
+                << ",80=0x"
+                << JniProbeHex(
+                       read_ctype(0x80u))
+                << ",a0=0x"
+                << JniProbeHex(
+                       read_ctype(0xa0u))
                 << "}";
 
             Append(line.str());
@@ -20165,8 +20183,14 @@ std::uint32_t JniProbeAllocateImportedObject(
                  ++c) {
                 std::uint8_t flags = 0u;
 
+                // Match Android/Bionic's historical _C_ctype_
+                // table used by this era of ARM binaries. In particular,
+                // only ASCII space carries _B; 0x80..0x9f are control and
+                // 0xa0..0xff are punctuation in the ISO-8859-oriented table.
                 if (c <= 0x1fu ||
-                    c == 0x7fu) {
+                    c == 0x7fu ||
+                    (c >= 0x80u &&
+                     c <= 0x9fu)) {
                     flags |= kControl;
                 }
 
@@ -20179,8 +20203,7 @@ std::uint32_t JniProbeAllocateImportedObject(
                     flags |= kSpace;
                 }
 
-                if (c == 0x09u ||
-                    c == 0x20u) {
+                if (c == 0x20u) {
                     flags |= kBlank;
                 }
 
@@ -20214,8 +20237,9 @@ std::uint32_t JniProbeAllocateImportedObject(
                         kNumber |
                         kHex;
                 } else if (
-                    c >= 0x21u &&
-                    c <= 0x7eu) {
+                    (c >= 0x21u &&
+                     c <= 0x7eu) ||
+                    c >= 0xa0u) {
                     flags |= kPunct;
                 }
 
