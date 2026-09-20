@@ -23,6 +23,7 @@ struct PvZ2InspectorResult {
     std::string summary_json;
     std::string addresses_csv;
     std::string annotated_log;
+    std::string startup_diagnosis;
     std::string message;
 };
 
