@@ -318,7 +318,7 @@ NSString *NSStringFromStd(
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — v60 Fair Async-Wait Scheduler";
+        @"PvZ2forIOS — v61 Res-Stream Pump Cooperation";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -327,7 +327,7 @@ NSString *NSStringFromStd(
         NO;
 
     title.text =
-        @"PvZ2forIOS — v60 Fair Async-Wait Scheduler";
+        @"PvZ2forIOS — v61 Res-Stream Pump Cooperation";
 
     title.font =
         [UIFont
@@ -343,7 +343,7 @@ NSString *NSStringFromStd(
         NO;
 
     explanation.text =
-        @"v60 keeps the validated v57 ctype fix, v58 stream-future scheduler, and v59 caller-poll recognition, then fixes deferred-worker starvation at verified async waits. Concrete waits now keep a persistent round-robin worker cursor, so a worker that changes the wait object cannot permanently prevent later workers from running. Ctype Native remains the clean default. Ordinary CPU slices remain strictly main-only.";
+        @"v61 keeps the validated v57 ctype fix and v58-v60 async scheduling fixes, then adds a safe cooperative boundary for the resource-stream task pump reached during the first draw. The exact trylock/unlock/epilogue ARM signature is verified before startup; only after that pump releases its mutex may one deferred worker run round-robin. Ordinary CPU slices and in-pump container mutation remain main-only. Worker wrapper payloads are also logged for attribution.";
 
     explanation.numberOfLines = 0;
 
@@ -1052,7 +1052,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v60 mode=%@. Ctype Native is the default clean run: Bionic ctype compatibility + stream-future/caller-poll recognition + fair verified-wait worker scheduling, with compact-trie hot-path tracing disabled. Ctype Deep Scout keeps the diagnostic trie/Gate scouts available. Baseline preserves the v56 control path.",
+                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v61 mode=%@. Ctype Native is the default clean run: Bionic ctype compatibility + stream-future/caller-poll recognition + fair verified-wait scheduling + safe resource-stream pump cooperation after the verified mutex unlock. Ctype Deep Scout keeps the diagnostic trie/Gate scouts available. Baseline preserves the v56 control path.",
                     modeNames[modeIndex]]];
 
     [self
@@ -1134,7 +1134,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v60 Fair Async-Wait Scheduler started mode=%@; PID=%d ===",
+                    @"=== PvZ2 v61 Res-Stream Pump Cooperation started mode=%@; PID=%d ===",
                     diagnosticModeName,
                     getpid()]];
 
@@ -1437,7 +1437,7 @@ NSString *NSStringFromStd(
                     if (result.ok) {
                         [selfRef
                             appendUI:
-                                @"SUCCESS STEP 3: PvZ2 completed v60 Fair Async-Wait Scheduler. For Ctype Native, check V57 CTYPE ABI plus V58 STREAM-FUTURE / V59 ASYNC CALLER-POLL / V60 FAIR ASYNC-WAIT / V30 SCHED WAIT / V22 WORKER SLICE and preserved Gate/RSB diagnostics. Deep Scout additionally keeps V57 TRIE PATH / GATEC WRITE."];
+                                @"SUCCESS STEP 3: PvZ2 completed v61 Res-Stream Pump Cooperation. For Ctype Native, check V57 CTYPE ABI plus V58 STREAM-FUTURE / V59 ASYNC CALLER-POLL / V60 FAIR ASYNC-WAIT / V61 RES-STREAM PUMP / V30 SCHED WAIT / V22 WORKER SLICE and preserved Gate/RSB diagnostics. Deep Scout additionally keeps V57 TRIE PATH / GATEC WRITE."];
 
                         if (!result.final_frame_png_path.empty()) {
                             [selfRef
@@ -1465,7 +1465,7 @@ NSString *NSStringFromStd(
                         } else {
                             [selfRef
                                 showResult:
-                                    @"PvZ2 v60 Fair Async-Wait Scheduler returned"
+                                    @"PvZ2 v61 Res-Stream Pump Cooperation returned"
                                 message:
                                     [NSString
                                         stringWithFormat:
