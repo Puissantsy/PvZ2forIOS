@@ -40,6 +40,9 @@ constexpr std::uint32_t kShtArmExidx = 0x70000001u;
 constexpr std::uint32_t kShfWrite = 0x1u;
 constexpr std::uint32_t kShfAlloc = 0x2u;
 constexpr std::uint32_t kShfExecInstr = 0x4u;
+constexpr std::uint32_t kRArmGlobDat = 21u;
+constexpr std::uint32_t kRArmJumpSlot = 22u;
+constexpr std::uint32_t kRArmRelative = 23u;
 
 std::uint16_t U16(const std::uint8_t* p) {
     return static_cast<std::uint16_t>(p[0]) |
@@ -605,6 +608,8 @@ const std::map<std::uint32_t, std::string>& KnownLabels() {
         {0x002b88ecu, "StartupLogo.GateG helper result"},
         {0x002b8b88u, "StartupLogo.GateH helper result"},
         {0x002c84d0u, "StartupLogo.GateA resource load"},
+        {0x002c85ccu, "StartupLogo.GateA group lookup result"},
+        {0x002c85f4u, "StartupLogo.GateA group contribution"},
         {0x002c8620u, "StartupLogo.GateA completed/total counters"},
         {0x002ef188u, "StartupLogo.progress helper result"},
         {0x0036bbfcu, "StartupLogo.GateF helper result"},
@@ -615,6 +620,16 @@ const std::map<std::uint32_t, std::string>& KnownLabels() {
         {0x005143a4u, "StartupLogo.GateC state +0x98 load"},
         {0x005149c4u, "ImageRes.splash-null virtual-call site observed in v36"},
         {0x005149c8u, "ImageRes.splash-null virtual-call return observed in v36"},
+        {0x00867708u, "ResourceManager registry builder"},
+        {0x00867710u, "ResourceManager registry builder entry trap"},
+        {0x00867860u, "ResourceManager source28 copy trap"},
+        {0x00867868u, "ResourceManager post-table28 trap"},
+        {0x00867b24u, "ResourceManager source30 copy trap"},
+        {0x00867b2cu, "ResourceManager post-table30 trap"},
+        {0x00867b68u, "ResourceManager registry builder return trap"},
+        {0x00867f54u, "ResourceManager group-name-to-index"},
+        {0x0086b50cu, "ResourceManager group completed-count helper"},
+        {0x0086b630u, "ResourceManager group total-count helper"},
         {0x0086f66cu, "ResourceRegistryLookup.function_start"},
         {0x0086f674u, "ResourceRegistryLookup.entry MOV r4,r2"},
         {0x0086f8a0u, "ResourceRegistryLookup.group return boundary"},
@@ -632,6 +647,19 @@ const std::map<std::uint32_t, std::string>& KnownLabels() {
         {0x009f1840u, "Native_onSurfaceCreated"},
         {0x009f18dcu, "Native_onSurfaceChanged"},
         {0x009f190cu, "Native_onDrawFrame"},
+        {0x00a83ab0u, "ResourceManager compact-trie string lookup"},
+        {0x00a83ab4u, "compact-trie root/count load trap"},
+        {0x00a83ae4u, "compact-trie input-byte load"},
+        {0x00a83ae8u, "compact-trie _toupper_tab_ index"},
+        {0x00a83aecu, "compact-trie normalized-byte load"},
+        {0x00a83af8u, "compact-trie node-byte extract"},
+        {0x00a83afcu, "compact-trie normalized-byte compare"},
+        {0x00a83b24u, "compact-trie miss branch"},
+        {0x00a83b38u, "compact-trie found return"},
+        {0x00a83b44u, "compact-trie null return"},
+        {0x00d010d8u, "GOT R_ARM_GLOB_DAT _tolower_tab_"},
+        {0x00d010dcu, "GOT R_ARM_GLOB_DAT _toupper_tab_"},
+        {0x00d01280u, "GOT R_ARM_GLOB_DAT _ctype_"},
     };
     return labels;
 }
@@ -793,6 +821,335 @@ StartupLogoProfileValidation ValidateStartupLogoProfile(
          HasWordAt(elf, 0x004ac370u, 0xe1a00004u)});
 
     return v;
+}
+
+struct NamedRelocation {
+    std::uint32_t offset = 0u;
+    std::uint32_t type = 0u;
+    std::uint32_t symbol_index = 0u;
+    std::uint8_t symbol_type = 0u;
+    std::uint16_t symbol_shndx = 0u;
+    std::string symbol;
+};
+
+std::optional<NamedRelocation> FindNamedRelocation(
+    const Elf32Arm& elf,
+    const std::string& wanted) {
+
+    const auto& data = elf.data();
+    const auto& sections = elf.sections();
+
+    for (const auto& relsec : sections) {
+        if (relsec.type != kShtRel ||
+            relsec.link >= sections.size()) {
+            continue;
+        }
+
+        const auto& dynsym = sections[relsec.link];
+        if (dynsym.type != kShtDynsym ||
+            dynsym.link >= sections.size()) {
+            continue;
+        }
+
+        const auto& strings = sections[dynsym.link];
+        const std::uint32_t rel_entsize =
+            relsec.entsize ? relsec.entsize : 8u;
+        const std::uint32_t sym_entsize =
+            dynsym.entsize ? dynsym.entsize : 16u;
+
+        if (relsec.offset + relsec.size > data.size() ||
+            dynsym.offset + dynsym.size > data.size() ||
+            strings.offset + strings.size > data.size()) {
+            continue;
+        }
+
+        for (std::uint32_t rel = 0u;
+             rel + 8u <= relsec.size;
+             rel += rel_entsize) {
+
+            const std::size_t p =
+                static_cast<std::size_t>(relsec.offset) + rel;
+            const std::uint32_t offset = U32(data.data() + p);
+            const std::uint32_t info = U32(data.data() + p + 4u);
+            const std::uint32_t symbol_index = info >> 8u;
+            const std::uint32_t type = info & 0xffu;
+
+            const std::uint64_t sym_rel =
+                static_cast<std::uint64_t>(symbol_index) *
+                sym_entsize;
+            if (sym_rel + 16u > dynsym.size) {
+                continue;
+            }
+
+            const std::size_t sp =
+                static_cast<std::size_t>(dynsym.offset + sym_rel);
+            const std::uint32_t name_off =
+                U32(data.data() + sp);
+            if (name_off >= strings.size) {
+                continue;
+            }
+
+            const std::size_t name_start =
+                static_cast<std::size_t>(strings.offset) +
+                name_off;
+            std::size_t name_end = name_start;
+            const std::size_t strings_end =
+                static_cast<std::size_t>(strings.offset) +
+                strings.size;
+            while (name_end < strings_end &&
+                   data[name_end] != 0u) {
+                ++name_end;
+            }
+            if (name_end >= strings_end) {
+                continue;
+            }
+
+            const std::string name(
+                reinterpret_cast<const char*>(
+                    data.data() + name_start),
+                name_end - name_start);
+
+            if (name != wanted) {
+                continue;
+            }
+
+            NamedRelocation out;
+            out.offset = offset;
+            out.type = type;
+            out.symbol_index = symbol_index;
+            out.symbol_type =
+                static_cast<std::uint8_t>(
+                    data[sp + 12u] & 0x0fu);
+            out.symbol_shndx =
+                U16(data.data() + sp + 14u);
+            out.symbol = name;
+            return out;
+        }
+    }
+
+    return std::nullopt;
+}
+
+struct V56ProfileValidation {
+    std::vector<StartupLogoProfileCheck> checks;
+
+    bool exact_profile() const {
+        return
+            !checks.empty() &&
+            std::all_of(
+                checks.begin(),
+                checks.end(),
+                [](const auto& c) { return c.match; });
+    }
+
+    std::size_t matched() const {
+        return static_cast<std::size_t>(
+            std::count_if(
+                checks.begin(),
+                checks.end(),
+                [](const auto& c) { return c.match; }));
+    }
+};
+
+V56ProfileValidation ValidateV56Profile(
+    const Elf32Arm& elf) {
+
+    V56ProfileValidation v;
+
+    const std::array<
+        std::tuple<const char*, std::uint32_t, std::uint32_t>,
+        21> expected = {{
+        {"Registry builder entry",   0x00867710u, 0xe1a08000u},
+        {"Registry source28",        0x00867860u, 0xe2880028u},
+        {"Registry post28",          0x00867868u, 0xe5990048u},
+        {"Registry source30",        0x00867b24u, 0xe2880030u},
+        {"Registry post30",          0x00867b2cu, 0xe2880070u},
+        {"Registry return",          0x00867b68u, 0xe1a00006u},
+        {"Group lookup table30",     0x00867f64u, 0xe2840030u},
+        {"Group lookup trie call30", 0x00867f68u, 0xeb086ed0u},
+        {"Group lookup table28",     0x00867f80u, 0xe2840028u},
+        {"Group lookup trie call28", 0x00867f84u, 0xeb086ec9u},
+        {"Compact trie count/root",  0x00a83ab4u, 0xe5902004u},
+        {"Compact trie key byte",    0x00a83ae4u, 0xe5d10000u},
+        {"Compact trie table index", 0x00a83ae8u, 0xe08c0080u},
+        {"Compact trie norm load",   0x00a83aecu, 0xe1d0e0b2u},
+        {"Compact trie node byte",   0x00a83af8u, 0xe6ef0075u},
+        {"Compact trie compare",     0x00a83afcu, 0xe1500004u},
+        {"Compact trie miss",        0x00a83b24u, 0xea000005u},
+        {"Compact trie found",       0x00a83b38u, 0xe1a00002u},
+        {"Compact trie null",        0x00a83b44u, 0xe3a00000u},
+        {"Gate C field +0x98",       0x005143a4u, 0xe5901098u},
+        {"Gate C compare state 4",   0x005143acu, 0xe3510004u},
+    }};
+
+    for (const auto& [name, offset, opcode] : expected) {
+        v.checks.push_back(
+            StartupLogoProfileCheck{
+                name,
+                offset,
+                opcode,
+                HasWordAt(elf, offset, opcode)});
+    }
+
+    return v;
+}
+
+struct CtypeImportAudit {
+    std::optional<NamedRelocation> tolower_rel;
+    std::optional<NamedRelocation> toupper_rel;
+    std::optional<NamedRelocation> ctype_rel;
+    bool trie_got_literals_match = false;
+    bool trie_dependency_match = false;
+    bool exact_import_profile = false;
+    bool high_priority_candidate = false;
+    std::string text;
+};
+
+CtypeImportAudit AuditCtypeImports(
+    const Elf32Arm& elf,
+    const V56ProfileValidation& v56_profile) {
+
+    CtypeImportAudit a;
+    a.tolower_rel =
+        FindNamedRelocation(
+            elf,
+            "_tolower_tab_");
+    a.toupper_rel =
+        FindNamedRelocation(
+            elf,
+            "_toupper_tab_");
+    a.ctype_rel =
+        FindNamedRelocation(
+            elf,
+            "_ctype_");
+
+    auto exact_object_glob =
+        [](const std::optional<NamedRelocation>& r,
+           std::uint32_t expected_offset) {
+            return
+                r.has_value() &&
+                r->offset == expected_offset &&
+                r->type == kRArmGlobDat &&
+                r->symbol_type == 1u &&
+                r->symbol_shndx == 0u;
+        };
+
+    a.exact_import_profile =
+        exact_object_glob(
+            a.tolower_rel,
+            0x00d010d8u) &&
+        exact_object_glob(
+            a.toupper_rel,
+            0x00d010dcu) &&
+        exact_object_glob(
+            a.ctype_rel,
+            0x00d01280u);
+
+    // At 0xa83ac0/0xa83ac4 the function loads two literals, combines them
+    // through the GOT-base sequence at 0xa83ac8/0xa83acc, and reaches
+    // 0x00d010dc: the R_ARM_GLOB_DAT cell for _toupper_tab_.
+    a.trie_got_literals_match =
+        HasWordAt(
+            elf,
+            0x00a83b4cu,
+            0x0027e034u) &&
+        HasWordAt(
+            elf,
+            0x00a83b50u,
+            0xfffff5d8u);
+
+    a.trie_dependency_match =
+        v56_profile.exact_profile() &&
+        a.trie_got_literals_match &&
+        exact_object_glob(
+            a.toupper_rel,
+            0x00d010dcu);
+
+    a.high_priority_candidate =
+        a.exact_import_profile &&
+        a.trie_dependency_match;
+
+    std::ostringstream out;
+    out
+        << "PvZ2 Inspector Lab v1.3 - imported ctype ABI audit\n"
+        << "==================================================\n"
+        << "Evidence source: original PvZ2 1.5.252752 ARM ELF.\n\n";
+
+    auto emit =
+        [&](const char* name,
+            const std::optional<NamedRelocation>& r,
+            std::uint32_t expected) {
+            out
+                << name
+                << ": ";
+            if (!r) {
+                out << "NOT FOUND\n";
+                return;
+            }
+            out
+                << RelocName(r->type)
+                << " at ELF "
+                << Hex(r->offset)
+                << " / runtime GOT "
+                << Hex(kGuestBase + r->offset)
+                << " symbolType="
+                << static_cast<unsigned>(
+                       r->symbol_type)
+                << " shndx="
+                << r->symbol_shndx
+                << (r->offset == expected
+                        ? " [EXPECTED OFFSET]"
+                        : " [OFFSET MISMATCH]")
+                << "\n";
+        };
+
+    emit(
+        "_tolower_tab_",
+        a.tolower_rel,
+        0x00d010d8u);
+    emit(
+        "_toupper_tab_",
+        a.toupper_rel,
+        0x00d010dcu);
+    emit(
+        "_ctype_",
+        a.ctype_rel,
+        0x00d01280u);
+
+    out
+        << "\nCompact-trie dependency profile: "
+        << (a.trie_dependency_match
+                ? "MATCH"
+                : "MISMATCH")
+        << "\n"
+        << "The verified lookup at "
+        << Hex(kGuestBase + 0x00a83ab0u)
+        << " dereferences the _toupper_tab_ imported object, then indexes "
+        << "a 16-bit table using (inputByte + 1) before comparing the "
+        << "normalized byte with the trie node byte.\n"
+        << "Verified core sequence: "
+        << "LDRB key -> ADD table,key,LSL#1 -> LDRH [table,#2] -> "
+        << "UXTB -> compare.\n\n";
+
+    out
+        << "PORT-COMPATIBILITY RISK\n"
+        << "-----------------------\n"
+        << "PvZ2forIOS v56 source was audited when Inspector v1.3 was built: "
+        << "non-function GLOB_DAT imports other than __stack_chk_guard are "
+        << "backed by generic zero-filled synthetic objects. That strategy "
+        << "does not provide the pointer-to-character-table ABI required by "
+        << "_toupper_tab_, _tolower_tab_ or _ctype_.\n"
+        << "This is a source-level compatibility mismatch. Whether it is the "
+        << "runtime cause of every v56 registry miss still requires a real "
+        << "iPad A/B test.\n\n"
+        << "Priority: "
+        << (a.high_priority_candidate
+                ? "HIGH - direct v57 A/B candidate"
+                : "PROFILE INCOMPLETE - do not infer causality")
+        << "\n";
+
+    a.text = out.str();
+    return a;
 }
 
 std::string GameStateName(std::int32_t state) {
@@ -1277,6 +1634,8 @@ struct StartupLogoRuntimeDiagnosis {
     std::uint32_t total = 0u;
     std::uint32_t result_bits = 0u;
     std::uint64_t gate_c_hits = 0u;
+    std::uint32_t gate_c_object = 0u;
+    std::uint32_t gate_c_state = 0xffffffffu;
     std::uint64_t gate_d_hits = 0u;
     std::uint64_t after_d_hits = 0u;
     std::uint64_t patch_marker_hits = 0u;
@@ -1349,6 +1708,14 @@ StartupLogoRuntimeDiagnosis DiagnoseStartupLogoRuntime(
 
     if (const auto v = ParseUnsignedAfter(summary_line, "C{hits=")) {
         d.gate_c_hits = *v;
+    }
+    if (const auto v = ParseUnsignedAfter(summary_line, "object=0x", 16)) {
+        d.gate_c_object =
+            static_cast<std::uint32_t>(*v);
+    }
+    if (const auto v = ParseUnsignedAfter(summary_line, "state=")) {
+        d.gate_c_state =
+            static_cast<std::uint32_t>(*v);
     }
     if (const auto v = ParseUnsignedAfter(summary_line, "D{hits=")) {
         d.gate_d_hits = *v;
@@ -1547,6 +1914,639 @@ StartupLogoRuntimeDiagnosis DiagnoseStartupLogoRuntime(
     return d;
 }
 
+std::string TokenAfter(
+    const std::string& line,
+    const std::string& marker) {
+
+    const std::size_t pos =
+        line.find(marker);
+    if (pos == std::string::npos) {
+        return {};
+    }
+
+    const std::size_t begin =
+        pos + marker.size();
+    std::size_t end = begin;
+
+    while (end < line.size()) {
+        const char ch = line[end];
+        if (std::isspace(
+                static_cast<unsigned char>(ch)) ||
+            ch == '}' ||
+            ch == '|' ||
+            ch == ',') {
+            break;
+        }
+        ++end;
+    }
+
+    return line.substr(
+        begin,
+        end - begin);
+}
+
+struct V55RuntimeDiagnosis {
+    bool present = false;
+    std::uint32_t vector_count = 0u;
+    std::uint64_t lookups = 0u;
+    std::uint64_t contributions = 0u;
+    bool all_four_miss = false;
+    std::string diagnosis;
+};
+
+V55RuntimeDiagnosis DiagnoseV55Runtime(
+    const std::string& log) {
+
+    V55RuntimeDiagnosis d;
+    const std::string line =
+        LastLineContaining(
+            log,
+            "V55 STARTUP GROUP SUMMARY:");
+
+    if (line.empty()) {
+        return d;
+    }
+
+    d.present = true;
+
+    const std::size_t gate =
+        line.find("gate={");
+    if (gate != std::string::npos) {
+        const std::string tail =
+            line.substr(gate);
+        if (const auto v =
+                ParseUnsignedAfter(
+                    tail,
+                    "count=")) {
+            d.vector_count =
+                static_cast<std::uint32_t>(*v);
+        }
+    }
+
+    if (const auto v =
+            ParseUnsignedAfter(
+                line,
+                " lookups=")) {
+        d.lookups = *v;
+    }
+    if (const auto v =
+            ParseUnsignedAfter(
+                line,
+                " contributions=")) {
+        d.contributions = *v;
+    }
+
+    d.diagnosis =
+        TokenAfter(
+            line,
+            "diagnosis=");
+    d.all_four_miss =
+        d.diagnosis ==
+            "ALL_4_GROUPS_MISS_RESOURCE_MANAGER";
+
+    return d;
+}
+
+struct V56TargetStat {
+    std::uint64_t calls = 0u;
+    std::uint64_t found = 0u;
+    std::uint64_t misses = 0u;
+    std::uint32_t last_table = 0u;
+    std::uint32_t caller = 0u;
+};
+
+struct V56RuntimeDiagnosis {
+    bool present = false;
+    std::string mode;
+    std::uint64_t pipeline_calls = 0u;
+    std::uint64_t pipeline_returns = 0u;
+    std::uint32_t pipeline_result = 0u;
+    std::uint32_t src28 = 0u;
+    std::uint32_t src28_bytes = 0u;
+    std::uint32_t src28_count = 0u;
+    std::uint32_t src30 = 0u;
+    std::uint32_t src30_bytes = 0u;
+    std::uint32_t src30_count = 0u;
+    std::uint32_t manager = 0u;
+    std::uint32_t table28_root = 0u;
+    std::uint32_t table28_count = 0u;
+    std::uint32_t table30_root = 0u;
+    std::uint32_t table30_count = 0u;
+    std::uint64_t registry_writes = 0u;
+    bool scout_enabled = false;
+    bool scout_activated = false;
+    std::uint64_t scout_forced_hits = 0u;
+    std::uint32_t scout_activation_frame = 0u;
+    std::int32_t downstream_state = -999;
+    std::uint64_t downstream_requests = 0u;
+    std::uint64_t downstream_applies = 0u;
+    std::map<std::string, V56TargetStat> targets;
+    std::string diagnosis;
+    bool every_target_missed = false;
+    std::string text;
+};
+
+V56RuntimeDiagnosis DiagnoseV56Runtime(
+    const std::string& log,
+    const V55RuntimeDiagnosis& v55,
+    const StartupLogoRuntimeDiagnosis& startup,
+    const V56ProfileValidation& static_profile,
+    const CtypeImportAudit& ctype) {
+
+    V56RuntimeDiagnosis d;
+    const std::string line =
+        LastLineContaining(
+            log,
+            "V56 DIAGNOSTIC MATRIX SUMMARY:");
+
+    if (line.empty()) {
+        return d;
+    }
+
+    d.present = true;
+    d.mode =
+        TokenAfter(
+            line,
+            "mode=");
+
+    auto u32 =
+        [&](const std::string& marker,
+            std::uint32_t& dst,
+            int base = 10) {
+            if (const auto v =
+                    ParseUnsignedAfter(
+                        line,
+                        marker,
+                        base)) {
+                dst =
+                    static_cast<std::uint32_t>(*v);
+            }
+        };
+
+    auto u64 =
+        [&](const std::string& marker,
+            std::uint64_t& dst) {
+            if (const auto v =
+                    ParseUnsignedAfter(
+                        line,
+                        marker)) {
+                dst = *v;
+            }
+        };
+
+    u64(
+        "pipeline{calls=",
+        d.pipeline_calls);
+    u64(
+        "returns=",
+        d.pipeline_returns);
+    u32(
+        "lastResult=",
+        d.pipeline_result);
+    u32(
+        "src28=0x",
+        d.src28,
+        16);
+    u32(
+        "src28Bytes=",
+        d.src28_bytes);
+    u32(
+        "src28Count=",
+        d.src28_count);
+    u32(
+        "src30=0x",
+        d.src30,
+        16);
+    u32(
+        "src30Bytes=",
+        d.src30_bytes);
+    u32(
+        "src30Count=",
+        d.src30_count);
+    u32(
+        "registry{manager=0x",
+        d.manager,
+        16);
+    u32(
+        "table28Root=0x",
+        d.table28_root,
+        16);
+    u32(
+        "table28Count=",
+        d.table28_count);
+    u32(
+        "table30Root=0x",
+        d.table30_root,
+        16);
+    u32(
+        "table30Count=",
+        d.table30_count);
+    u64(
+        "writes=",
+        d.registry_writes);
+    d.scout_enabled =
+        line.find(
+            "scout{enabled=YES") !=
+        std::string::npos;
+    d.scout_activated =
+        line.find(
+            "activated=YES") !=
+        std::string::npos;
+    u64(
+        "forcedHits=",
+        d.scout_forced_hits);
+    u32(
+        "activationFrame=",
+        d.scout_activation_frame);
+
+    if (const auto v =
+            ParseUnsignedAfter(
+                line,
+                "downstream{state=")) {
+        d.downstream_state =
+            static_cast<std::int32_t>(*v);
+    }
+    u64(
+        "requests=",
+        d.downstream_requests);
+    u64(
+        "applies=",
+        d.downstream_applies);
+
+    std::size_t pos = 0u;
+    while ((pos = line.find(" | ", pos)) !=
+           std::string::npos) {
+
+        const std::size_t begin =
+            pos + 3u;
+        std::size_t end =
+            line.find(
+                " | ",
+                begin);
+        if (end == std::string::npos) {
+            end = line.size();
+        }
+
+        const std::string segment =
+            line.substr(
+                begin,
+                end - begin);
+
+        const std::size_t brace =
+            segment.find("{calls=");
+        if (brace != std::string::npos) {
+            const std::string key =
+                segment.substr(0u, brace);
+            V56TargetStat s;
+            if (const auto v =
+                    ParseUnsignedAfter(
+                        segment,
+                        "{calls=")) {
+                s.calls = *v;
+            }
+            if (const auto v =
+                    ParseUnsignedAfter(
+                        segment,
+                        "found=")) {
+                s.found = *v;
+            }
+            if (const auto v =
+                    ParseUnsignedAfter(
+                        segment,
+                        "misses=")) {
+                s.misses = *v;
+            }
+            if (const auto v =
+                    ParseUnsignedAfter(
+                        segment,
+                        "lastTable=0x",
+                        16)) {
+                s.last_table =
+                    static_cast<std::uint32_t>(*v);
+            }
+            if (const auto v =
+                    ParseUnsignedAfter(
+                        segment,
+                        "caller=0x",
+                        16)) {
+                s.caller =
+                    static_cast<std::uint32_t>(*v);
+            }
+            d.targets[key] = s;
+        }
+
+        pos = end;
+    }
+
+    d.diagnosis =
+        TokenAfter(
+            line,
+            "diagnosis=");
+
+    d.every_target_missed =
+        !d.targets.empty() &&
+        std::all_of(
+            d.targets.begin(),
+            d.targets.end(),
+            [](const auto& pair) {
+                return
+                    pair.second.calls != 0u &&
+                    pair.second.found == 0u &&
+                    pair.second.misses ==
+                        pair.second.calls;
+            });
+
+    std::ostringstream out;
+    out
+        << "PvZ2 Inspector Lab v1.3 - v55/v56 matrix diagnosis\n"
+        << "====================================================\n"
+        << "Source evidence: supplied iPad runtime log + verified APK static profile.\n\n"
+        << "STATIC PROFILE\n"
+        << "--------------\n"
+        << "v56 registry/trie/Gate-C opcode profile: "
+        << (static_profile.exact_profile()
+                ? "MATCH"
+                : "PARTIAL/MISMATCH")
+        << " ("
+        << static_profile.matched()
+        << "/"
+        << static_profile.checks.size()
+        << ")\n\n";
+
+    if (v55.present) {
+        out
+            << "V55 STARTUP VECTOR/GROUP EVIDENCE\n"
+            << "---------------------------------\n"
+            << "Gate-A vector count: "
+            << v55.vector_count
+            << "\n"
+            << "Group lookups: "
+            << v55.lookups
+            << "\n"
+            << "Per-group contributions: "
+            << v55.contributions
+            << "\n"
+            << "Diagnosis: "
+            << v55.diagnosis
+            << "\n\n";
+    }
+
+    out
+        << "V56 REGISTRY CONSTRUCTION\n"
+        << "-------------------------\n"
+        << "Mode: "
+        << d.mode
+        << "\n"
+        << "Builder calls/returns/result: "
+        << d.pipeline_calls
+        << "/"
+        << d.pipeline_returns
+        << "/"
+        << d.pipeline_result
+        << "\n"
+        << "source28: ptr="
+        << Hex(d.src28)
+        << " bytes="
+        << d.src28_bytes
+        << " count="
+        << d.src28_count
+        << "\n"
+        << "source30: ptr="
+        << Hex(d.src30)
+        << " bytes="
+        << d.src30_bytes
+        << " count="
+        << d.src30_count
+        << "\n"
+        << "manager: "
+        << Hex(d.manager)
+        << "\n"
+        << "table28: root="
+        << Hex(d.table28_root)
+        << " count="
+        << d.table28_count
+        << "\n"
+        << "table30: root="
+        << Hex(d.table30_root)
+        << " count="
+        << d.table30_count
+        << "\n"
+        << "registry writes observed: "
+        << d.registry_writes
+        << "\n"
+        << "Runtime diagnosis: "
+        << d.diagnosis
+        << "\n\n";
+
+    out
+        << "TARGET LOOKUPS\n"
+        << "--------------\n";
+    for (const auto& pair : d.targets) {
+        out
+            << pair.first
+            << ": calls="
+            << pair.second.calls
+            << " found="
+            << pair.second.found
+            << " misses="
+            << pair.second.misses
+            << " lastTable="
+            << Hex(pair.second.last_table)
+            << " caller="
+            << Hex(pair.second.caller)
+            << "\n";
+    }
+
+    out
+        << "\nSCOUT / NEXT GATE\n"
+        << "-----------------\n"
+        << "Gate-A scout enabled/activated: "
+        << (d.scout_enabled ? "YES" : "NO")
+        << "/"
+        << (d.scout_activated ? "YES" : "NO")
+        << "\n"
+        << "Gate-A forced comparison hits after native proof: "
+        << d.scout_forced_hits
+        << "\n"
+        << "Gate-C hits: "
+        << startup.gate_c_hits
+        << "\n"
+        << "Gate-C object: "
+        << Hex(startup.gate_c_object)
+        << "\n"
+        << "Gate-C object+0x98 state: "
+        << startup.gate_c_state
+        << " (native helper requires 4)\n"
+        << "Gate-D hits: "
+        << startup.gate_d_hits
+        << "\n"
+        << "Downstream GameState/requests/applies: "
+        << d.downstream_state
+        << "/"
+        << d.downstream_requests
+        << "/"
+        << d.downstream_applies
+        << "\n\n";
+
+    out
+        << "ROOT-CAUSE CANDIDATE FOR THE UNIVERSAL STRING-KEY MISS\n"
+        << "------------------------------------------------------\n"
+        << (ctype.high_priority_candidate
+                ? "HIGH-PRIORITY STATIC CANDIDATE"
+                : "STATIC PROFILE INCOMPLETE")
+        << ": the compact-trie string lookup depends directly on "
+        << "_toupper_tab_, while the v56 port's generic imported-data "
+        << "placeholder does not implement that ABI.\n"
+        << "This explains a class-wide failure pattern (many unrelated textual "
+        << "keys all miss) better than an empty ResourceManager, which v56 has "
+        << "now disproved. It is not considered runtime-proven until v57 A/B.\n";
+
+    d.text = out.str();
+    return d;
+}
+
+std::string BuildV57Plan(
+    const V55RuntimeDiagnosis& v55,
+    const V56RuntimeDiagnosis& v56,
+    const StartupLogoRuntimeDiagnosis& startup,
+    const CtypeImportAudit& ctype,
+    const V56ProfileValidation& v56_profile) {
+
+    std::ostringstream out;
+    out
+        << "PvZ2 Inspector Lab v1.3 - v57 high-information test plan\n"
+        << "========================================================\n"
+        << "Goal: test the likely root cause and expose multiple downstream "
+        << "blockers in one iPad build, without forcing GameState transitions.\n\n"
+        << "CONFIRMED INPUT FACTS\n"
+        << "---------------------\n"
+        << "- v56 static registry/trie profile: "
+        << (v56_profile.exact_profile()
+                ? "MATCH"
+                : "PARTIAL/MISMATCH")
+        << "\n";
+
+    if (v55.present) {
+        out
+            << "- Startup vector count="
+            << v55.vector_count
+            << ", lookups="
+            << v55.lookups
+            << ", contributions="
+            << v55.contributions
+            << ", diagnosis="
+            << v55.diagnosis
+            << "\n";
+    }
+
+    if (v56.present) {
+        out
+            << "- ResourceManager tables are populated: +0x28="
+            << v56.table28_count
+            << " entries, +0x30="
+            << v56.table30_count
+            << " entries; builder result="
+            << v56.pipeline_result
+            << ".\n"
+            << "- Selected text-key lookups all-miss="
+            << (v56.every_target_missed
+                    ? "YES"
+                    : "NO")
+            << "; matrix diagnosis="
+            << v56.diagnosis
+            << ".\n"
+            << "- Gate-A scout reached Gate C "
+            << startup.gate_c_hits
+            << " times; object="
+            << Hex(startup.gate_c_object)
+            << ", +0x98="
+            << startup.gate_c_state
+            << ", required=4; Gate-D hits="
+            << startup.gate_d_hits
+            << ".\n";
+    }
+
+    out
+        << "- APK imports _toupper_tab_ at runtime GOT "
+        << Hex(kGuestBase + 0x00d010dcu)
+        << ", _tolower_tab_ at "
+        << Hex(kGuestBase + 0x00d010d8u)
+        << ", and _ctype_ at "
+        << Hex(kGuestBase + 0x00d01280u)
+        << ".\n"
+        << "- Compact-trie lookup "
+        << Hex(kGuestBase + 0x00a83ab0u)
+        << " directly dereferences _toupper_tab_ and reads a 16-bit "
+        << "entry at index inputByte+1.\n"
+        << "- Current v56 imported-data compatibility model supplies generic "
+        << "zero-filled objects for these symbols. This mismatch is confirmed "
+        << "statically; its causal role must be tested on-device.\n\n";
+
+    out
+        << "RECOMMENDED v57 MATRIX - ONE IPA, MULTIPLE MODES\n"
+        << "------------------------------------------------\n"
+        << "MODE A: V56_BASELINE\n"
+        << "  Preserve current FULL_MATRIX behavior unchanged. This is the "
+        << "control run and must remain available.\n\n"
+        << "MODE B: CTYPE_COMPAT_NATIVE_PATH\n"
+        << "  Implement ABI-correct imported data for _toupper_tab_, "
+        << "_tolower_tab_ and _ctype_. Do not patch ResourceManager tables, "
+        << "group indexes, Gate A, Gate C, or GameState.\n"
+        << "  For _toupper_tab_, provide the pointer variable expected by the "
+        << "guest plus a 257-entry 16-bit table where guest byte c is read "
+        << "from entry c+1. Verify at least A/a, D/d, I/i, R/r, U/u, '_', "
+        << "'0' and '9' in the log.\n"
+        << "  Before first registry lookup, log each GOT cell, imported-object "
+        << "address, dereferenced backing-table pointer, and sample values.\n"
+        << "  Success criterion: any previously universal text key becomes "
+        << "FOUND naturally, especially AlwaysLoaded/UIImages/UI_MainMenu.\n\n"
+        << "MODE C: CTYPE_COMPAT_DEEP_SCOUT\n"
+        << "  Start with the same ctype fix. If Gate A still fails, retain the "
+        << "existing post-proof Gate-A scout. If Gate A passes naturally, do "
+        << "not force it.\n"
+        << "  Add a Gate-C proof/scout: record object+0x98=1 repeatedly first; "
+        << "only after proof may the scout emulate a passing Gate-C return to "
+        << "discover Gate D/E/F/G/H/I/J and the natural request path. Do not "
+        << "force a GameState or RequestTransition target.\n\n"
+        << "HIGH-VALUE TRACE BATCH\n"
+        << "----------------------\n"
+        << "1. Compact-trie path tracer for the first lookup of each target "
+        << "key: raw input byte, normalized _toupper_tab_ byte, trie-node "
+        << "byte, node word/index, character position, and exact miss/found "
+        << "reason. This distinguishes bad normalization from bad trie data.\n"
+        << "2. Trace writes to Gate-C object "
+        << Hex(startup.gate_c_object)
+        << "+0x98 once the object is known: old/new value, PC, LR, frame, "
+        << "thread and lifecycle phase. Also snapshot +0x80..+0xb0 when the "
+        << "value changes.\n"
+        << "3. Preserve v54-v56 gate counters so one run reports the deepest "
+        << "natural/scouted gate reached.\n"
+        << "4. If ctype compatibility makes group lookups succeed, log native "
+        << "group index plus completed/total contribution per startup group; "
+        << "this immediately tells whether loading progress becomes the next "
+        << "class of blocker.\n"
+        << "5. If ctype values are correct but trie still misses, inspect the "
+        << "first source/root node for the same key before adding any table "
+        << "fallback. Avoid mutating the 5289/3801-entry tables until the "
+        << "character-by-character mismatch is known.\n\n"
+        << "DECISION TREE AFTER ONE v57 BUILD\n"
+        << "---------------------------------\n"
+        << "- CTYPE_COMPAT -> FOUND keys: imported-data ABI was causal; continue "
+        << "on natural Gate A/C progression.\n"
+        << "- CTYPE_COMPAT values correct but keys still MISS: use trie path "
+        << "trace to isolate source/root/index corruption.\n"
+        << "- Gate A passes but Gate C remains +0x98=1: writer trace identifies "
+        << "the subsystem responsible for state 1->4.\n"
+        << "- Deep Scout reaches Gate D+: existing v54 probes expose the next "
+        << "whole chain without another one-problem build.\n\n"
+        << "DO NOT use v57 to fabricate ResourceManager entries or force "
+        << "MainMenu. The highest-value experiment is repairing/testing the "
+        << "ctype import ABI first, because it can explain the broad lookup "
+        << "failure class at once.\n";
+
+    return out.str();
+}
+
 } // namespace
 
 PvZ2InspectorResult InspectPvZ2ApkAndLog(
@@ -1600,15 +2600,38 @@ PvZ2InspectorResult InspectPvZ2ApkAndLog(
             ValidateGameStateProfile(elf);
         const auto startup_logo_profile =
             ValidateStartupLogoProfile(elf);
+        const auto v56_profile =
+            ValidateV56Profile(elf);
+        const auto ctype_audit =
+            AuditCtypeImports(
+                elf,
+                v56_profile);
         const auto startup_runtime =
             DiagnoseStartupLogoRuntime(
                 log_text,
                 startup_logo_profile,
                 elf);
+        const auto v55_runtime =
+            DiagnoseV55Runtime(
+                log_text);
+        const auto v56_runtime =
+            DiagnoseV56Runtime(
+                log_text,
+                v55_runtime,
+                startup_runtime,
+                v56_profile,
+                ctype_audit);
+        const std::string v57_plan =
+            BuildV57Plan(
+                v55_runtime,
+                v56_runtime,
+                startup_runtime,
+                ctype_audit,
+                v56_profile);
 
         std::ostringstream summary;
         summary
-            << "PvZ2 Inspector Lab v1.2\n"
+            << "PvZ2 Inspector Lab v1.3\n"
             << "APK bytes: " << apk_size << "\n"
             << "libPVZ2.so bytes: " << result.elf_size << "\n"
             << "mapped image span: " << Hex(result.image_size) << "\n"
@@ -1644,7 +2667,21 @@ PvZ2InspectorResult InspectPvZ2ApkAndLog(
             << startup_logo_profile.matched()
             << "/"
             << startup_logo_profile.checks.size()
-            << ")\n";
+            << ")\n"
+            << "v56 registry/trie static profile: "
+            << (v56_profile.exact_profile()
+                    ? "MATCH"
+                    : "PARTIAL/MISMATCH")
+            << " ("
+            << v56_profile.matched()
+            << "/"
+            << v56_profile.checks.size()
+            << ")\n"
+            << "ctype import ABI audit: "
+            << (ctype_audit.high_priority_candidate
+                    ? "HIGH-PRIORITY v57 CANDIDATE"
+                    : "PROFILE INCOMPLETE")
+            << "\n";
 
         if (startup_runtime.present) {
             summary
@@ -1657,6 +2694,39 @@ PvZ2InspectorResult InspectPvZ2ApkAndLog(
                 summary
                     << "Gate A arithmetic: 0/0 -> qNaN 0x7fc00000\n";
             }
+        }
+
+        if (v55_runtime.present) {
+            summary
+                << "v55 groups: "
+                << v55_runtime.diagnosis
+                << " vectorCount="
+                << v55_runtime.vector_count
+                << " lookups="
+                << v55_runtime.lookups
+                << "\n";
+        }
+
+        if (v56_runtime.present) {
+            summary
+                << "v56 matrix: "
+                << v56_runtime.diagnosis
+                << " tables="
+                << v56_runtime.table28_count
+                << "+"
+                << v56_runtime.table30_count
+                << " selectedKeysAllMiss="
+                << (v56_runtime.every_target_missed
+                        ? "YES"
+                        : "NO")
+                << "\n"
+                << "next observed scout blocker: Gate C object="
+                << Hex(startup_runtime.gate_c_object)
+                << " +0x98="
+                << startup_runtime.gate_c_state
+                << " expected=4 hits="
+                << startup_runtime.gate_c_hits
+                << "\n";
         }
 
         result.summary = summary.str();
@@ -1816,6 +2886,51 @@ PvZ2InspectorResult InspectPvZ2ApkAndLog(
                 << "\n";
         }
 
+        report
+            << "\nExact v56 registry/trie/Gate-C profile\n"
+            << "========================================\n"
+            << "profile validation: "
+            << (v56_profile.exact_profile()
+                    ? "MATCH"
+                    : "PARTIAL/MISMATCH")
+            << " ("
+            << v56_profile.matched()
+            << "/"
+            << v56_profile.checks.size()
+            << ")\n";
+
+        for (const auto& check : v56_profile.checks) {
+            report
+                << "  "
+                << (check.match
+                        ? "[MATCH] "
+                        : "[MISMATCH] ")
+                << check.name
+                << " @ "
+                << Hex(kGuestBase + check.offset)
+                << " expected="
+                << Hex(check.expected)
+                << "\n";
+        }
+
+        report
+            << "\n"
+            << ctype_audit.text
+            << "\n";
+
+        if (v56_runtime.present) {
+            report
+                << "\n"
+                << v56_runtime.text
+                << "\n";
+        }
+
+        report
+            << "\nv57 high-information plan\n"
+            << "=========================\n"
+            << v57_plan
+            << "\n";
+
         report << "\nKnown port landmarks\n"
                << "====================\n";
         for (const auto& [off, label] : KnownLabels()) {
@@ -1946,11 +3061,19 @@ PvZ2InspectorResult InspectPvZ2ApkAndLog(
             startup_runtime.present
                 ? startup_runtime.text
                 : std::string{};
+        result.matrix_diagnosis =
+            v56_runtime.present
+                ? v56_runtime.text +
+                      "\n\n" +
+                      ctype_audit.text
+                : ctype_audit.text;
+        result.v57_plan =
+            v57_plan;
 
         std::ostringstream json;
         json
             << "{\n"
-            << "  \"tool\": \"PvZ2 Inspector Lab v1.2\",\n"
+            << "  \"tool\": \"PvZ2 Inspector Lab v1.3\",\n"
             << "  \"apkSize\": " << result.apk_size << ",\n"
             << "  \"elfSize\": " << result.elf_size << ",\n"
             << "  \"guestBase\": \"" << Hex(kGuestBase) << "\",\n"
@@ -1978,6 +3101,37 @@ PvZ2InspectorResult InspectPvZ2ApkAndLog(
             << "  \"startupLogoV54ProfileTotalChecks\": "
             << startup_logo_profile.checks.size()
             << ",\n"
+            << "  \"v56ProfileExactMatch\": "
+            << (v56_profile.exact_profile()
+                    ? "true"
+                    : "false")
+            << ",\n"
+            << "  \"v56ProfileMatchedChecks\": "
+            << v56_profile.matched()
+            << ",\n"
+            << "  \"v56ProfileTotalChecks\": "
+            << v56_profile.checks.size()
+            << ",\n"
+            << "  \"ctypeHighPriorityCandidate\": "
+            << (ctype_audit.high_priority_candidate
+                    ? "true"
+                    : "false")
+            << ",\n"
+            << "  \"toupperGlobDat\": \""
+            << (ctype_audit.toupper_rel
+                    ? Hex(ctype_audit.toupper_rel->offset)
+                    : std::string{})
+            << "\",\n"
+            << "  \"tolowerGlobDat\": \""
+            << (ctype_audit.tolower_rel
+                    ? Hex(ctype_audit.tolower_rel->offset)
+                    : std::string{})
+            << "\",\n"
+            << "  \"ctypeGlobDat\": \""
+            << (ctype_audit.ctype_rel
+                    ? Hex(ctype_audit.ctype_rel->offset)
+                    : std::string{})
+            << "\",\n"
             << "  \"gameStateManagerVtable\": \""
             << Hex(kGuestBase + 0x00cdb7d8u)
             << "\",\n"
@@ -2029,6 +3183,12 @@ PvZ2InspectorResult InspectPvZ2ApkAndLog(
              << "    \"gateCHits\": "
              << startup_runtime.gate_c_hits
              << ",\n"
+             << "    \"gateCObject\": \""
+             << Hex(startup_runtime.gate_c_object)
+             << "\",\n"
+             << "    \"gateCState\": "
+             << startup_runtime.gate_c_state
+             << ",\n"
              << "    \"gateDHits\": "
              << startup_runtime.gate_d_hits
              << ",\n"
@@ -2046,6 +3206,90 @@ PvZ2InspectorResult InspectPvZ2ApkAndLog(
                     ? "GateA"
                     : "")
              << "\"\n"
+             << "  },\n"
+             << "  \"v55Runtime\": {\n"
+             << "    \"present\": "
+             << (v55_runtime.present ? "true" : "false")
+             << ",\n"
+             << "    \"vectorCount\": "
+             << v55_runtime.vector_count
+             << ",\n"
+             << "    \"lookups\": "
+             << v55_runtime.lookups
+             << ",\n"
+             << "    \"contributions\": "
+             << v55_runtime.contributions
+             << ",\n"
+             << "    \"diagnosis\": \""
+             << JsonEscape(v55_runtime.diagnosis)
+             << "\"\n"
+             << "  },\n"
+             << "  \"v56Runtime\": {\n"
+             << "    \"present\": "
+             << (v56_runtime.present ? "true" : "false")
+             << ",\n"
+             << "    \"mode\": \""
+             << JsonEscape(v56_runtime.mode)
+             << "\",\n"
+             << "    \"pipelineCalls\": "
+             << v56_runtime.pipeline_calls
+             << ",\n"
+             << "    \"pipelineReturns\": "
+             << v56_runtime.pipeline_returns
+             << ",\n"
+             << "    \"pipelineResult\": "
+             << v56_runtime.pipeline_result
+             << ",\n"
+             << "    \"table28Count\": "
+             << v56_runtime.table28_count
+             << ",\n"
+             << "    \"table30Count\": "
+             << v56_runtime.table30_count
+             << ",\n"
+             << "    \"scoutActivated\": "
+             << (v56_runtime.scout_activated ? "true" : "false")
+             << ",\n"
+             << "    \"scoutForcedHits\": "
+             << v56_runtime.scout_forced_hits
+             << ",\n"
+             << "    \"selectedKeysAllMiss\": "
+             << (v56_runtime.every_target_missed ? "true" : "false")
+             << ",\n"
+             << "    \"diagnosis\": \""
+             << JsonEscape(v56_runtime.diagnosis)
+             << "\",\n"
+             << "    \"targets\": {";
+
+        {
+            bool first = true;
+            for (const auto& pair :
+                 v56_runtime.targets) {
+                if (!first) {
+                    json << ",";
+                }
+                first = false;
+                json
+                    << "\n      \""
+                    << JsonEscape(pair.first)
+                    << "\": {\"calls\": "
+                    << pair.second.calls
+                    << ", \"found\": "
+                    << pair.second.found
+                    << ", \"misses\": "
+                    << pair.second.misses
+                    << ", \"lastTable\": \""
+                    << Hex(pair.second.last_table)
+                    << "\", \"caller\": \""
+                    << Hex(pair.second.caller)
+                    << "\"}";
+            }
+            if (!v56_runtime.targets.empty()) {
+                json << "\n    ";
+            }
+        }
+
+        json
+             << "}\n"
              << "  }\n"
              << "}\n";
         result.summary_json = json.str();
