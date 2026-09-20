@@ -245,7 +245,7 @@ NSString *NSStringFromStd(
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — Network/Menu Gate Probe v50";
+        @"PvZ2forIOS — Writable User-State Probe v51";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -254,7 +254,7 @@ NSString *NSStringFromStd(
         NO;
 
     title.text =
-        @"PvZ2forIOS — network/menu gate probe v50";
+        @"PvZ2forIOS — writable user-state probe v51";
 
     title.font =
         [UIFont
@@ -270,8 +270,8 @@ NSString *NSStringFromStd(
         NO;
 
     explanation.text =
-        @"v49 proved the cloud hypothesis false: Native_CloudStateLoaded is captured, delivered and returns successfully, yet the EA splash still fades to a genuinely black framebuffer and texture uploads remain stuck at five. The new extracted RSB metadata also gives us exact startup/menu resource names: UI_Android is loaded during surface creation, while MainMenu_Background and UI_MainMenu are never requested. "
-         @"v50 therefore targets the next concrete gate instead of forcing iPad assets prematurely. The original APK's AndroidHttpProxy.GetNetworkStatus bytecode was checked directly: 0 means no active connection, 1 mobile/WiMAX, 2 Wi-Fi and 3 another connected transport. Previous probes hard-coded 0, while libPVZ2 contains the startup state GAME_WaitForNetworkLoad. v50 reports the faithful Wi-Fi value 2 while preserving deterministic HTTP error callbacks, and adds low-noise milestones for UI_Android, UI_iPad, Init, MainMenu_Background and UI_MainMenu. No Android-to-iPad UI remap is applied yet, so any behavior change has one clear cause.";
+        @"v50 ruled out the network-status gate as well: the game observed Wi-Fi hundreds of times, cloud completion succeeded, UI_Android and Init loaded, but MainMenu_Background/UI_MainMenu were never requested and post-EA remained genuinely black. The same run exposed a stronger pre-menu failure during Native_onSurfaceCreated: PvZDB tries to save table 40 (Player profiles) to No_Backup/snapshot2.dat, but our read-only VFS returned null; even its /dev/null fallback failed. "
+         @"v51 fixes that whole Android persistent-state class instead of patching one filename. Android private files/cache now have an in-memory writable filesystem covering fopen/open/read/write/fread/fwrite/seek/stat/access/mkdir/unlink/ftruncate plus valid empty directory handles and /dev/null. Config_ConfigKeyExists/read/write string/int/bool now share a real process-local store; importantly, Config_ConfigReadString is corrected to its actual one-argument APK signature instead of reading a nonexistent second 'default' argument. Existing cloud/network/RSB/GLES/menu milestones remain enabled. No UI_iPad remap is introduced yet.";
 
     explanation.numberOfLines = 0;
 
@@ -574,7 +574,7 @@ NSString *NSStringFromStd(
             monospacedSystemFontOfSize:13.0
             weight:UIFontWeightRegular];
     caption.text =
-        @"v50 — Wi-Fi startup gate + exact menu-resource milestones\nTap Close to return to the full diagnostic log.";
+        @"v51 — writable Android user state + player-profile persistence\nTap Close to return to the full diagnostic log.";
 
     UIButton *closeButton =
         [UIButton
@@ -943,7 +943,7 @@ NSString *NSStringFromStd(
 
     [self
         appendUI:
-            @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v50 preserves the proven cloud completion and all prior diagnostics, but changes GetNetworkStatus from offline=0 to the APK-authentic Wi-Fi=2 path. It also traces exact RSB milestones for UI_Android/UI_iPad and the MainMenu_Background/UI_MainMenu atlas families discovered in the extracted metadata. The key result is whether mainMenuBg or uiMainMenu becomes YES and whether texture uploads advance past five."];
+            @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v51 keeps the v50 Wi-Fi/cloud/resource probes but repairs the missing Android persistent-state surface. Watch for V51 USERFS writes to No_Backup/snapshot2.dat, a non-zero V51 PROFILE SNAPSHOT size, Config keys becoming stored/existing, and especially whether MainMenu_Background/UI_MainMenu or texture uploads finally advance after the EA splash."];
 
     [self
         presentViewController:
@@ -1004,7 +1004,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v50 probe run started; PID=%d ===",
+                    @"=== PvZ2 v51 probe run started; PID=%d ===",
                     getpid()]];
 
     self.jniRunning =
