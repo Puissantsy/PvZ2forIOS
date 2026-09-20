@@ -740,6 +740,29 @@ constexpr std::uint32_t kJniProbeSvcResourceWrapperExhausted = 0x00f026u;
 // Each trap replaces a MOV r4,r0 and the callback emulates that instruction.
 constexpr std::uint32_t kJniProbeSvcGameStateApply = 0x00f030u;
 constexpr std::uint32_t kJniProbeSvcGameStateRequest = 0x00f031u;
+
+// v54: passive StartupLogo.Update gate/depth instrumentation. Every trap
+// replaces one verified ARM instruction and emulates that exact instruction
+// before returning to guest code. No branch, return value, state field, or
+// transition target is forced.
+constexpr std::uint32_t kJniProbeSvcStartupGateAResource = 0x00f040u;
+constexpr std::uint32_t kJniProbeSvcStartupGateATotals = 0x00f041u;
+constexpr std::uint32_t kJniProbeSvcStartupGateAResult = 0x00f042u;
+constexpr std::uint32_t kJniProbeSvcStartupGateCState = 0x00f043u;
+constexpr std::uint32_t kJniProbeSvcStartupGateDCounter = 0x00f044u;
+constexpr std::uint32_t kJniProbeSvcStartupAfterD = 0x00f045u;
+constexpr std::uint32_t kJniProbeSvcStartupGateEByte = 0x00f046u;
+constexpr std::uint32_t kJniProbeSvcStartupGateFResult = 0x00f047u;
+constexpr std::uint32_t kJniProbeSvcStartupGateGResult = 0x00f048u;
+constexpr std::uint32_t kJniProbeSvcStartupGateHResult = 0x00f049u;
+constexpr std::uint32_t kJniProbeSvcStartupGateIResult = 0x00f04au;
+constexpr std::uint32_t kJniProbeSvcStartupGateJObject = 0x00f04bu;
+constexpr std::uint32_t kJniProbeSvcStartupPatchMarker = 0x00f04cu;
+constexpr std::uint32_t kJniProbeSvcStartupMainFlow = 0x00f04du;
+constexpr std::uint32_t kJniProbeSvcStartupProgressResult = 0x00f04eu;
+constexpr std::uint32_t kJniProbeSvcStartupFindResult = 0x00f04fu;
+constexpr std::uint32_t kJniProbeSvcStartupLateResult = 0x00f050u;
+constexpr std::uint32_t kJniProbeSvcStartupMainMenuMarker = 0x00f051u;
 constexpr std::uint32_t kJniProbeSvcUnsupportedJniBase = 0x00e000u;
 constexpr std::uint32_t kJniProbeJniSlotCount = 256u;
 
@@ -2324,6 +2347,44 @@ public:
     std::uint64_t v53_state_apply_calls = 0u;
     std::uint64_t v53_state_request_calls = 0u;
 
+    // v54: StartupLogo.Update gate/depth diagnostics. These are observation
+    // counters/last values only; guest control flow remains native.
+    std::uint64_t v54_gate_a_resource_hits = 0u;
+    std::uint64_t v54_gate_a_totals_hits = 0u;
+    std::uint64_t v54_gate_a_result_hits = 0u;
+    std::uint64_t v54_gate_c_hits = 0u;
+    std::uint64_t v54_gate_d_hits = 0u;
+    std::uint64_t v54_after_d_hits = 0u;
+    std::uint64_t v54_gate_e_hits = 0u;
+    std::uint64_t v54_gate_f_hits = 0u;
+    std::uint64_t v54_gate_g_hits = 0u;
+    std::uint64_t v54_gate_h_hits = 0u;
+    std::uint64_t v54_gate_i_hits = 0u;
+    std::uint64_t v54_gate_j_hits = 0u;
+    std::uint64_t v54_patch_marker_hits = 0u;
+    std::uint64_t v54_main_flow_hits = 0u;
+    std::uint64_t v54_progress_result_hits = 0u;
+    std::uint64_t v54_find_result_hits = 0u;
+    std::uint64_t v54_late_result_hits = 0u;
+    std::uint64_t v54_mainmenu_marker_hits = 0u;
+    std::uint32_t v54_gate_a_resource = 0u;
+    std::uint32_t v54_gate_a_completed = 0u;
+    std::uint32_t v54_gate_a_total = 0u;
+    std::uint32_t v54_gate_a_result_bits = 0u;
+    std::uint32_t v54_gate_c_object = 0u;
+    std::uint32_t v54_gate_c_state = 0xffffffffu;
+    std::uint32_t v54_gate_d_counter = 0u;
+    std::uint32_t v54_gate_e_value = 0u;
+    std::uint32_t v54_gate_f_value = 0u;
+    std::uint32_t v54_gate_g_value = 0u;
+    std::uint32_t v54_gate_h_value = 0u;
+    std::uint32_t v54_gate_i_value = 0u;
+    std::uint32_t v54_gate_j_byte20 = 0u;
+    std::uint32_t v54_gate_j_byte02 = 0u;
+    std::uint32_t v54_progress_value = 0u;
+    std::uint32_t v54_find_value = 0u;
+    std::uint32_t v54_late_value = 0u;
+
     std::unordered_map<std::uint32_t, z_stream> zstreams;
     std::unordered_map<std::uint32_t, bool> zstream_deflate_mode;
 
@@ -2339,6 +2400,28 @@ public:
             return "GameState.MainMenu.Enter(resources)";
         case 0x00276970u:
             return "GameState.StartupLogo.Update";
+        case 0x002769d4u:
+            return "StartupLogo.GateA.result-vmov";
+        case 0x00276a30u:
+            return "StartupLogo.GateD.counter-load";
+        case 0x00276a3cu:
+            return "StartupLogo.after-A-D";
+        case 0x00276a60u:
+            return "StartupLogo.GateE.b7a-load";
+        case 0x00276adcu:
+            return "StartupLogo.PatchScreen-request-marker";
+        case 0x00276b20u:
+            return "StartupLogo.main-flow-marker";
+        case 0x00276d70u:
+            return "StartupLogo.MainMenu-request-marker";
+        case 0x002c84d0u:
+            return "StartupLogo.GateA.resource-load";
+        case 0x002c8620u:
+            return "StartupLogo.GateA.completed-total";
+        case 0x002b9900u:
+            return "StartupLogo.GateC.helper";
+        case 0x005143a4u:
+            return "StartupLogo.GateC.state-load";
         case 0x005149c4u:
             return "ImageRes.splash-null virtual-call site";
         case 0x005149c8u:
@@ -2754,7 +2837,31 @@ public:
             << static_cast<unsigned>(
                    mem.Read8(
                        v53_game_state_manager +
-                       0x42au));
+                       0x42au))
+            << " startup430="
+            << mem.Read32Guest(
+                   v53_game_state_manager +
+                   0x430u)
+            << " field434=0x"
+            << JniProbeHex(
+                   mem.Read32Guest(
+                       v53_game_state_manager +
+                       0x434u))
+            << " field438=0x"
+            << JniProbeHex(
+                   mem.Read32Guest(
+                       v53_game_state_manager +
+                       0x438u))
+            << " byte43C="
+            << static_cast<unsigned>(
+                   mem.Read8(
+                       v53_game_state_manager +
+                       0x43cu))
+            << " field458=0x"
+            << JniProbeHex(
+                   mem.Read32Guest(
+                       v53_game_state_manager +
+                       0x458u));
 
         Append(out.str());
     }
