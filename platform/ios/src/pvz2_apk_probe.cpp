@@ -1813,9 +1813,9 @@ public:
                 "V50 RESOURCE MILESTONE frame=" +
                 std::to_string(
                     current_frame_number) +
-                " id="" +
+                " id=\"" +
                 id +
-                """);
+                "\"");
         }
     }
 
@@ -1920,9 +1920,9 @@ public:
                         : "?"} +
                 " category=" +
                 category +
-                " path="" +
+                " path=\"" +
                 raw +
-                """);
+                "\"");
         }
     }
 
