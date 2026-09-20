@@ -736,6 +736,11 @@ constexpr std::uint32_t kJniProbeSvcResourceRegistryGlobalValue = 0x00f024u;
 // where the requested ID and manager/group arguments are still intact.
 constexpr std::uint32_t kJniProbeSvcResourceWrapperDirectReturn = 0x00f025u;
 constexpr std::uint32_t kJniProbeSvcResourceWrapperExhausted = 0x00f026u;
+// v53: exact hooks into GameStateMgrState. These two sites replace only the
+// prologue MOV r4,r0 instructions and emulate them in the callback, so game
+// behavior is unchanged while every requested/applied state is observable.
+constexpr std::uint32_t kJniProbeSvcGameStateApply = 0x00f030u;
+constexpr std::uint32_t kJniProbeSvcGameStateRequest = 0x00f031u;
 constexpr std::uint32_t kJniProbeSvcUnsupportedJniBase = 0x00e000u;
 constexpr std::uint32_t kJniProbeJniSlotCount = 256u;
 
@@ -2315,6 +2320,17 @@ public:
     std::uint64_t v52_http_starts = 0u;
     std::uint64_t v52_http_deliveries = 0u;
 
+    // v53: static analysis of this exact APK identified the actual
+    // GameStateMgrState object (vtable 0x10cdb7d8). Its current state enum is
+    // the first word of the descriptor at +0x374, while +0x41c is the pending
+    // requested state. This supersedes v52's deliberately broad small-field
+    // heuristic (driver+0x124 turned out to be an update catch-up count).
+    std::uint32_t v53_game_state_manager = 0u;
+    std::uint64_t v53_state_apply_calls = 0u;
+    std::uint64_t v53_state_request_calls = 0u;
+    bool v53_forced_request_attempted = false;
+    bool v53_forced_direct_apply_attempted = false;
+
     std::unordered_map<std::uint32_t, z_stream> zstreams;
     std::unordered_map<std::uint32_t, bool> zstream_deflate_mode;
 
@@ -2322,6 +2338,14 @@ public:
         std::uint32_t offset) const {
 
         switch (offset) {
+        case 0x002747d0u:
+            return "GameStateMgrState.ApplyState";
+        case 0x00274b44u:
+            return "GameStateMgrState.RequestTransition";
+        case 0x002767b4u:
+            return "GameState.MainMenu.Enter(resources)";
+        case 0x00276970u:
+            return "GameState.StartupLogo.Update";
         case 0x005149c4u:
             return "ImageRes.splash-null virtual-call site";
         case 0x005149c8u:
@@ -2561,6 +2585,186 @@ public:
             V46DescribeGuestAddress(sp));
     }
 
+
+    static std::string V53GameStateName(
+        std::int32_t state) {
+
+        switch (state) {
+        case -1:
+            return "NONE";
+        case 1:
+            return "GAME_Initializing";
+        case 2:
+            return "GAME_LogoScreen";
+        case 3:
+            return "GAME_PatchScreen";
+        case 4:
+            return "GAME_MainMenu";
+        case 5:
+            return "GAME_Game";
+        case 6:
+            return "GAME_WorldMap";
+        case 7:
+            return "GAME_ContentUpdateScreen";
+        case 8:
+            return "GAME_Almanac";
+        case 9:
+            return "GAME_Store";
+        case 10:
+            return "GAME_WaitForNetworkLoad";
+        default:
+            return "UNKNOWN_" +
+                std::to_string(state);
+        }
+    }
+
+    bool V53IsGameStateManager(
+        std::uint32_t address) {
+
+        constexpr std::uint32_t
+            kGameStateManagerVtable =
+                kGuestBase +
+                0x00cdb7d8u;
+
+        return
+            address != 0u &&
+            mem.Ptr(
+                address,
+                0x45cu) != nullptr &&
+            mem.Read32Guest(address) ==
+                kGameStateManagerVtable;
+    }
+
+    void V53CacheGameStateManager(
+        std::uint32_t address,
+        const char* source) {
+
+        if (!V53IsGameStateManager(
+                address)) {
+            return;
+        }
+
+        if (v53_game_state_manager ==
+            address) {
+            return;
+        }
+
+        v53_game_state_manager =
+            address;
+        result.game_state_manager =
+            address;
+
+        Append(
+            "V53 GAMESTATE MANAGER source=" +
+            std::string{
+                source != nullptr
+                    ? source
+                    : "?"} +
+            " object=" +
+            V46DescribeGuestAddress(
+                address) +
+            " vtable=" +
+            V46DescribeGuestAddress(
+                mem.Read32Guest(address)));
+    }
+
+    std::int32_t V53CurrentGameState() {
+        if (!V53IsGameStateManager(
+                v53_game_state_manager)) {
+            return -999;
+        }
+
+        return static_cast<std::int32_t>(
+            mem.Read32Guest(
+                v53_game_state_manager +
+                0x374u));
+    }
+
+    void V53AppendGameStateSnapshot(
+        const std::string& phase) {
+
+        if (!V53IsGameStateManager(
+                v53_game_state_manager)) {
+            Append(
+                "V53 GAMESTATE SNAPSHOT phase=" +
+                phase +
+                " manager=NOT_FOUND");
+            return;
+        }
+
+        const std::uint32_t manager =
+            v53_game_state_manager;
+
+        const std::int32_t current =
+            static_cast<std::int32_t>(
+                mem.Read32Guest(
+                    manager + 0x374u));
+        const std::int32_t pending =
+            static_cast<std::int32_t>(
+                mem.Read32Guest(
+                    manager + 0x41cu));
+
+        std::ostringstream out;
+        out
+            << "V53 GAMESTATE SNAPSHOT phase="
+            << phase
+            << " manager=0x"
+            << JniProbeHex(manager)
+            << " current="
+            << current
+            << "("
+            << V53GameStateName(current)
+            << ") pending="
+            << pending
+            << "("
+            << V53GameStateName(pending)
+            << ")"
+            << " transitionArgA=0x"
+            << JniProbeHex(
+                   mem.Read32Guest(
+                       manager + 0x414u))
+            << " transitionArgB=0x"
+            << JniProbeHex(
+                   mem.Read32Guest(
+                       manager + 0x418u))
+            << " transitionMode="
+            << mem.Read32Guest(
+                   manager + 0x424u)
+            << " flag428="
+            << static_cast<unsigned>(
+                   mem.Read8(
+                       manager + 0x428u))
+            << " startup429="
+            << static_cast<unsigned>(
+                   mem.Read8(
+                       manager + 0x429u))
+            << " startup42A="
+            << static_cast<unsigned>(
+                   mem.Read8(
+                       manager + 0x42au))
+            << " startupCounter430="
+            << mem.Read32Guest(
+                   manager + 0x430u)
+            << " word434=0x"
+            << JniProbeHex(
+                   mem.Read32Guest(
+                       manager + 0x434u))
+            << " word438=0x"
+            << JniProbeHex(
+                   mem.Read32Guest(
+                       manager + 0x438u))
+            << " flag43C="
+            << static_cast<unsigned>(
+                   mem.Read8(
+                       manager + 0x43cu))
+            << " flag458="
+            << static_cast<unsigned>(
+                   mem.Read8(
+                       manager + 0x458u));
+
+        Append(out.str());
+    }
+
     void V52ObserveJniCallsite(
         const std::string& method_name) {
 
@@ -2791,6 +2995,14 @@ public:
                 mem.Read32Guest(
                     node.address);
 
+            if (vtable ==
+                kGuestBase +
+                    0x00cdb7d8u) {
+                V53CacheGameStateManager(
+                    node.address,
+                    "reachable-object-graph");
+            }
+
             for (std::uint32_t offset = 4u;
                  offset < bytes;
                  offset += 4u) {
@@ -2912,7 +3124,7 @@ public:
                 emitted < 48u) {
 
                 Append(
-                    "V52 STATE-LIKE CHANGE frame=" +
+                    "V52 SMALL-FIELD CHANGE (heuristic, not GameState) frame=" +
                     std::to_string(frame) +
                     " object=" +
                     V46DescribeGuestAddress(
@@ -2936,6 +3148,12 @@ public:
         v52_previous_small_fields =
             std::move(
                 current_small_fields);
+
+        if (v53_game_state_manager != 0u) {
+            V53AppendGameStateSnapshot(
+                "frame-" +
+                std::to_string(frame));
+        }
 
         Append(
             "V52 STATEGRAPH frame=" +
@@ -2966,7 +3184,27 @@ public:
             << " vtable=0x"
             << JniProbeHex(
                    v52_last_app_vtable)
-            << "; stateLikeChanges="
+            << "; exactGameState="
+            << V53CurrentGameState()
+            << "("
+            << V53GameStateName(
+                   V53CurrentGameState())
+            << ") manager=0x"
+            << JniProbeHex(
+                   v53_game_state_manager)
+            << " stateRequests="
+            << v53_state_request_calls
+            << " stateApplies="
+            << v53_state_apply_calls
+            << " forcedRequest="
+            << (v53_forced_request_attempted
+                    ? "YES"
+                    : "NO")
+            << " forcedDirectApply="
+            << (v53_forced_direct_apply_attempted
+                    ? "YES"
+                    : "NO")
+            << "; smallFieldChanges="
             << v52_state_field_events.size()
             << "; postEAJniCallsites="
             << v52_post_ea_jni_callsites
@@ -3054,7 +3292,7 @@ public:
             ++rank;
 
             Append(
-                "V52 STATE CANDIDATE #" +
+                "V52 SMALL-FIELD CANDIDATE (heuristic) #" +
                 std::to_string(rank) +
                 " frame=" +
                 std::to_string(
@@ -6053,6 +6291,80 @@ public:
                         next32,
                         next64);
             };
+
+
+        if (swi ==
+                kJniProbeSvcGameStateApply ||
+            swi ==
+                kJniProbeSvcGameStateRequest) {
+
+            const bool request =
+                swi ==
+                    kJniProbeSvcGameStateRequest;
+
+            // Both patched instructions were MOV r4,r0.
+            regs[4] = regs[0];
+
+            const std::uint32_t manager =
+                regs[0];
+            const std::int32_t target =
+                static_cast<std::int32_t>(
+                    regs[1]);
+
+            V53CacheGameStateManager(
+                manager,
+                request
+                    ? "RequestTransition-hook"
+                    : "ApplyState-hook");
+
+            const std::int32_t current =
+                V53IsGameStateManager(
+                    manager)
+                    ? static_cast<std::int32_t>(
+                          mem.Read32Guest(
+                              manager +
+                              0x374u))
+                    : -999;
+
+            if (request) {
+                ++v53_state_request_calls;
+            } else {
+                ++v53_state_apply_calls;
+            }
+
+            Append(
+                std::string{
+                    request
+                        ? "V53 GAMESTATE REQUEST #"
+                        : "V53 GAMESTATE APPLY #"} +
+                std::to_string(
+                    request
+                        ? v53_state_request_calls
+                        : v53_state_apply_calls) +
+                " current=" +
+                std::to_string(current) +
+                "(" +
+                V53GameStateName(current) +
+                ") target=" +
+                std::to_string(target) +
+                "(" +
+                V53GameStateName(target) +
+                ") manager=0x" +
+                JniProbeHex(manager) +
+                " callerLR=" +
+                V46DescribeGuestAddress(
+                    regs[14]) +
+                (request
+                    ? " arg2=0x" +
+                          JniProbeHex(
+                              regs[2]) +
+                          " arg3=0x" +
+                          JniProbeHex(
+                              regs[3])
+                    : std::string{}));
+
+            return;
+        }
 
         if (swi ==
                 kJniProbeSvcResourceWrapperDirectReturn ||
@@ -17106,6 +17418,58 @@ std::uint32_t JniProbeMakePthreadExitShim(
     return kShimAddress;
 }
 
+
+std::uint32_t JniProbeMakeV53StateCallShim(
+    JniProbeGuestMemory& memory,
+    std::uint32_t manager,
+    std::uint32_t target,
+    std::uint32_t state) {
+
+    // Diagnostic-only ARM helper:
+    //   r0 = GameStateMgrState*
+    //   r1 = desired state
+    //   r2 = r3 = 0
+    //   call RequestTransition or ApplyState
+    // It preserves the lifecycle runner's LR so the existing cooperative
+    // scheduler can execute the real guest function, including async waits.
+    constexpr std::uint32_t kShimAddress =
+        kJniProbeTrampolineBase +
+        0x00080300u;
+
+    const std::uint32_t words[] = {
+        0xE59F0018u,                    // ldr r0,[pc,#24] -> manager
+        0xE3A01000u | (state & 0xffu), // mov r1,#state
+        0xE3A02000u,                    // mov r2,#0
+        0xE3A03000u,                    // mov r3,#0
+        0xE92D4000u,                    // push {lr}
+        0xE59FC008u,                    // ldr r12,[pc,#8] -> target
+        0xE12FFF3Cu,                    // blx r12
+        0xE8BD8000u,                    // pop {pc}
+        manager,
+        target,
+    };
+
+    auto* p =
+        memory.Ptr(
+            kShimAddress,
+            sizeof(words));
+
+    if (!p) {
+        return 0u;
+    }
+
+    for (std::size_t i = 0u;
+         i < sizeof(words) / sizeof(words[0]);
+         ++i) {
+        Write32(
+            p + i * 4u,
+            words[i]);
+    }
+
+    return kShimAddress;
+}
+
+
 std::uint32_t JniProbeAllocateImportedObject(
     JniProbeGuestMemory& memory,
     const std::string& name) {
@@ -17338,15 +17702,25 @@ bool JniProbePrepareRuntime(
         !patch_resource_native_miss(
             0x0087a76cu,
             0xe3a00000u,
-            kJniProbeSvcResourceWrapperExhausted)) {
+            kJniProbeSvcResourceWrapperExhausted) ||
+        !patch_resource_native_miss(
+            0x002747d8u,
+            0xe1a04000u,
+            kJniProbeSvcGameStateApply) ||
+        !patch_resource_native_miss(
+            0x00274b4cu,
+            0xe1a04000u,
+            kJniProbeSvcGameStateRequest)) {
 
         error =
-            "v48 resource-entry/internal-return/wrapper-return profile did not match the verified PvZ2 1.5.252752 ARM code.";
+            "v53 resource/state-machine instrumentation profile did not match the verified PvZ2 1.5.252752 ARM code.";
         return false;
     }
 
     callbacks.Append(
         "V48 RESFILE WRAPPER-FINAL BRIDGE: v45 internal hooks preserved; direct-group null returns are observed at 0x1087a708 and all-groups-exhausted nulls at 0x1087a76c with the exact wrapper ID still in r6.");
+    callbacks.Append(
+        "V53 GAMESTATE TRAPS installed: ApplyState@0x102747d8 and RequestTransition@0x10274b4c; exact enum mapping 1=Initializing,2=Logo,3=Patch,4=MainMenu,5=Game,6=WorldMap,7=ContentUpdate,8=Almanac,9=Store,10=WaitForNetworkLoad.");
 
     return_trampoline =
         JniProbeMakeTrampoline(
@@ -19392,8 +19766,119 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                     return result;
                 }
 
+
+                // v53: v52 already established the natural baseline:
+                // Logo -> black, no MainMenu resources. Do not spend another
+                // run reproducing the same 130-frame result. Resolve the exact
+                // state manager before the first draw, then perform an A/B
+                // diagnostic: first ask the real transition API for MainMenu;
+                // if it remains queued, directly apply state 4 through the
+                // real guest ApplyState entry. This cleanly separates
+                // "startup gate is wrong" from "MainMenu itself cannot load".
+                callbacks.V52CaptureStateGraph(0u);
+                callbacks.V53AppendGameStateSnapshot(
+                    "pre-force-main-menu");
+
+                if (callbacks.v53_game_state_manager != 0u) {
+                    result.game_state_before_force =
+                        callbacks.V53CurrentGameState();
+
+                    if (result.game_state_before_force != 4) {
+                        constexpr std::uint32_t
+                            kV53RequestTransition =
+                                kGuestBase +
+                                0x00274b44u;
+
+                        const std::uint32_t request_stub =
+                            JniProbeMakeV53StateCallShim(
+                                memory,
+                                callbacks
+                                    .v53_game_state_manager,
+                                kV53RequestTransition,
+                                4u);
+
+                        if (request_stub == 0u) {
+                            result.message =
+                                "v53 could not allocate the diagnostic MainMenu request shim.";
+                            return result;
+                        }
+
+                        callbacks.v53_forced_request_attempted =
+                            true;
+                        result.main_menu_request_injected =
+                            true;
+
+                        callbacks.Append(
+                            "V53 A/B: invoking the real GameStateMgrState::RequestTransition(GAME_MainMenu=4) before first draw.");
+
+                        if (!run_lifecycle(
+                                "V53_RequestMainMenu",
+                                request_stub,
+                                0u,
+                                0u,
+                                0u,
+                                false)) {
+                            return result;
+                        }
+
+                        callbacks.V53AppendGameStateSnapshot(
+                            "after-request-main-menu");
+
+                        if (callbacks.V53CurrentGameState() !=
+                            4) {
+                            constexpr std::uint32_t
+                                kV53ApplyState =
+                                    kGuestBase +
+                                    0x002747d0u;
+
+                            const std::uint32_t apply_stub =
+                                JniProbeMakeV53StateCallShim(
+                                    memory,
+                                    callbacks
+                                        .v53_game_state_manager,
+                                    kV53ApplyState,
+                                    4u);
+
+                            if (apply_stub == 0u) {
+                                result.message =
+                                    "v53 could not allocate the diagnostic direct MainMenu apply shim.";
+                                return result;
+                            }
+
+                            callbacks
+                                .v53_forced_direct_apply_attempted =
+                                    true;
+                            result
+                                .main_menu_direct_apply_injected =
+                                    true;
+
+                            callbacks.Append(
+                                "V53 A/B: RequestTransition did not commit immediately; invoking the real ApplyState(GAME_MainMenu=4) as a diagnostic fallback.");
+
+                            if (!run_lifecycle(
+                                    "V53_ApplyMainMenu",
+                                    apply_stub,
+                                    0u,
+                                    0u,
+                                    0u,
+                                    false)) {
+                                return result;
+                            }
+
+                            callbacks.V53AppendGameStateSnapshot(
+                                "after-direct-main-menu");
+                        }
+                    }
+
+                    result.game_state_after_force =
+                        callbacks.V53CurrentGameState();
+                } else {
+                    callbacks.Append(
+                        "V53 A/B: exact GameStateMgrState object was not found before first draw; continuing without forced state.");
+                }
+
                 constexpr std::uint32_t
-                    kV36FrameCount = 600u;
+                    kV53FrameCount = 180u;
 
                 auto should_sample_frame =
                     [](std::uint32_t frame) {
@@ -19416,7 +19901,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             frame == 420u ||
                             frame == 480u ||
                             frame == 540u ||
-                            frame == 600u ||
+                            frame == 180u ||
                             (frame >= 90u &&
                              (frame % 10u) == 0u);
                     };
@@ -19433,7 +19918,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             frame == 80u ||
                             frame == 90u ||
                             frame == 120u ||
-                            frame == 600u;
+                            frame == 180u;
                     };
 
                 std::uint64_t best_non_black = 0u;
@@ -19457,7 +19942,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             frame == 120u ||
                             frame == 180u ||
                             frame == 300u ||
-                            frame == 600u;
+                            frame == 180u;
                     };
 
                 std::uint32_t
@@ -19478,9 +19963,12 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                     v52_last_http_activity =
                         callbacks.v52_http_starts +
                         callbacks.v52_http_deliveries;
+                std::int32_t
+                    v53_last_game_state =
+                        callbacks.V53CurrentGameState();
 
                 for (std::uint32_t frame = 0u;
-                     frame < kV36FrameCount;
+                     frame < kV53FrameCount;
                      ++frame) {
 
                     const std::uint32_t frame_number =
@@ -19499,7 +19987,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                 frame_number) +
                             "/" +
                             std::to_string(
-                                kV36FrameCount));
+                                kV53FrameCount));
                     }
 
                     if (!run_lifecycle(
@@ -19571,6 +20059,9 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             v52_http_activity =
                                 callbacks.v52_http_starts +
                                 callbacks.v52_http_deliveries;
+                        const std::int32_t
+                            v53_game_state =
+                                callbacks.V53CurrentGameState();
 
                         if (v52_last_sample_non_black !=
                                 non_black ||
@@ -19582,14 +20073,15 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                     .resource_registry_lookup_calls ||
                             v52_last_http_activity !=
                                 v52_http_activity ||
-                            callbacks
-                                .v50_mainmenu_background_seen ||
-                            callbacks
-                                .v50_ui_mainmenu_seen) {
+                            v53_last_game_state !=
+                                v53_game_state) {
 
                             v52_last_progress_frame =
                                 frame_number;
                         }
+
+                        v53_last_game_state =
+                            v53_game_state;
 
                         v52_last_sample_non_black =
                             non_black;
@@ -19820,19 +20312,14 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                 frame_number) +
                             "/" +
                             std::to_string(
-                                kV36FrameCount));
+                                kV53FrameCount));
 
-                        // v52 adaptive stop: 600 remains the safety ceiling,
-                        // not a mandatory wait. Once EA is fully black and 45
-                        // sampled frames have produced no new pixels, texture
-                        // uploads, resource lookups, HTTP activity or menu
-                        // milestone, additional identical frames are not useful.
-                        if (frame_number >= 120u &&
-                            non_black == 0u &&
-                            !callbacks
-                                 .v50_mainmenu_background_seen &&
-                            !callbacks
-                                 .v50_ui_mainmenu_seen &&
+                        // v53: after the pre-frame MainMenu A/B, stop once
+                        // framebuffer/resources/HTTP/exact GameState have been
+                        // stable for 30 frames. 180 is only a hard safety
+                        // ceiling; a successful menu render does not disable
+                        // the adaptive stop.
+                        if (frame_number >= 90u &&
                             !callbacks
                                  .pending_cloud_state_loaded &&
                             callbacks.v52_http_starts ==
@@ -19840,25 +20327,34 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                     .v52_http_deliveries &&
                             frame_number >=
                                 v52_last_progress_frame +
-                                    45u) {
+                                    30u) {
 
                             result.adaptive_frame_stop =
                                 true;
 
                             callbacks.Append(
-                                "V52 ADAPTIVE STOP frame=" +
+                                "V53 ADAPTIVE STOP frame=" +
                                 std::to_string(
                                     frame_number) +
                                 " lastProgressFrame=" +
                                 std::to_string(
                                     v52_last_progress_frame) +
-                                " reason=post-EA framebuffer/resource/HTTP state stable");
+                                " exactState=" +
+                                std::to_string(
+                                    callbacks
+                                        .V53CurrentGameState()) +
+                                "(" +
+                                PvZ2JniCallbacks::
+                                    V53GameStateName(
+                                        callbacks
+                                            .V53CurrentGameState()) +
+                                ") reason=framebuffer/resource/HTTP/GameState stable");
                             break;
                         }
                     }
 
                     if (frame_number !=
-                        kV36FrameCount) {
+                        kV53FrameCount) {
                         std::this_thread::sleep_for(
                             std::chrono::milliseconds(
                                 16));
@@ -19890,6 +20386,13 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                     }
                 }
 
+                result.game_state_manager =
+                    callbacks.v53_game_state_manager;
+                result.game_state_after_force =
+                    callbacks.V53CurrentGameState();
+
+                callbacks.V53AppendGameStateSnapshot(
+                    "final");
                 callbacks.V52FinalizeDiagnostics();
 
                 callbacks.Append(
@@ -19979,7 +20482,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
 
                 result.ok = true;
                 result.message =
-                    "PvZ2 completed GameAppInitialize, lifecycle, surface setup, deterministic Android compatibility callbacks, v52 state-graph/callsite diagnostics, and an adaptive host-GLES soak (600-frame safety ceiling).";
+                    "PvZ2 completed GameAppInitialize, lifecycle, surface setup, deterministic Android compatibility callbacks, v52 state-graph/callsite diagnostics, and a v53 forced-MainMenu A/B plus adaptive host-GLES soak (180-frame safety ceiling).";
                 return result;
             }
 

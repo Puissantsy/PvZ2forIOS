@@ -315,7 +315,7 @@ NSString *NSStringFromStd(
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — Startup Diagnostic Cockpit v52";
+        @"PvZ2forIOS — Exact GameState / MainMenu A-B Probe v53";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -324,7 +324,7 @@ NSString *NSStringFromStd(
         NO;
 
     title.text =
-        @"PvZ2forIOS — startup diagnostic cockpit v52";
+        @"PvZ2forIOS — exact GameState / MainMenu A-B probe v53";
 
     title.font =
         [UIFont
@@ -340,8 +340,8 @@ NSString *NSStringFromStd(
         NO;
 
     explanation.text =
-        @"v51 proved that Android player-profile persistence is now real: snapshot2.dat is created and Config values persist, but the game still fades from the EA splash into a genuinely black framebuffer without requesting MainMenu_Background or UI_MainMenu. "
-         @"v52 changes strategy from one-hypothesis-per-build to a reusable diagnostic cockpit. It snapshots the real AndroidAppDriver/GameApp object graph around the EA transition, reports small enum/boolean-like field changes, captures post-EA JNI caller PCs and stack code candidates, summarizes every deferred worker, and keeps all existing resource/cloud/network/VFS/GLES probes. The frame soak is now adaptive: 600 is only a safety ceiling and a stable black post-EA state stops early. The persistent logger also keeps one file handle open instead of reopening the log for every line, removing a major diagnostic-time overhead. The displayed PNG is now the FINAL framebuffer, not the visually richest EA frame.";
+        @"v52 confirmed the honest final framebuffer is black and stopped automatically at frame 130. More importantly, the new trace plus static analysis identified the REAL startup state machine: GameStateMgrState has vtable 0x10cdb7d8, current GameState at +0x374 and pending state at +0x41c. The old v52 driver+0x124 1/3/2/1 candidate was only the render/update catch-up count, not GameState. "
+         @"v53 instruments the exact RequestTransition and ApplyState guest functions, with the verified enum mapping (1 Initializing, 2 Logo, 3 Patch, 4 MainMenu, ... 10 WaitForNetworkLoad). Because v52 already gave us the natural Logo-to-black baseline, v53 does not waste another run reproducing it: after surface/cloud setup and before the first draw, it records the exact state then asks the REAL transition API for GAME_MainMenu. If that request stays queued it invokes the REAL ApplyState as a diagnostic fallback. This one A/B run tells us whether the blocker is the startup gate itself or whether MainMenu loading/rendering has another problem. The final PNG remains the actual final framebuffer.";
 
     explanation.numberOfLines = 0;
 
@@ -644,7 +644,7 @@ NSString *NSStringFromStd(
             monospacedSystemFontOfSize:13.0
             weight:UIFontWeightRegular];
     caption.text =
-        @"v52 — FINAL framebuffer (not the richest splash frame)\nTap Close to inspect the state-graph / callsite diagnostic log.";
+        @"v53 — FINAL framebuffer after exact GameState/MainMenu A-B probe\nTap Close to inspect the exact state-transition/resource log.";
 
     UIButton *closeButton =
         [UIButton
@@ -1013,7 +1013,7 @@ NSString *NSStringFromStd(
 
     [self
         appendUI:
-            @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v52 runs one high-information startup diagnosis instead of another single-gate probe. Key outputs are V52 OBJECT ROOT / STATE-LIKE CHANGE / STATE CANDIDATE, V52 POST-EA JNI CALLSITE / STACK CODE, V52 WORKER FINAL, resource/menu milestones, and the adaptive-stop decision. The image shown at the end is the actual FINAL framebuffer."];
+            @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v53 traces the exact GameState machine and performs a pre-first-draw MainMenu A/B. Key lines are V53 GAMESTATE MANAGER / SNAPSHOT / REQUEST / APPLY, V53 A/B, MainMenu resource milestones, and V53 ADAPTIVE STOP. The image shown at the end is the actual FINAL framebuffer."];
 
     [self
         presentViewController:
@@ -1074,7 +1074,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v52 diagnostic run started; PID=%d ===",
+                    @"=== PvZ2 v53 exact GameState/MainMenu A-B run started; PID=%d ===",
                     getpid()]];
 
     self.jniRunning =
@@ -1224,15 +1224,18 @@ NSString *NSStringFromStd(
                         appendUI:
                             [NSString
                                 stringWithFormat:
-                                    @"STEP 3C: JNI_OnLoad=%@ | GameAppInit returned=%@ result=%u | lifecycle=%u | firstDraw reached=%@ returned=%@ | frames=%u | adaptiveStop=%@ | hostGLES=%@ | richestFrame=%u nonBlack=%llu | lastNonBlack=%u pixels=%llu",
+                                    @"STEP 3C: JNI_OnLoad=%@ | GameAppInit=%@ result=%u | lifecycle=%u | frames=%u adaptiveStop=%@ | GameState manager=0x%08x before=%d after=%d requestInjected=%@ directApply=%@ | hostGLES=%@ | richestFrame=%u nonBlack=%llu | lastNonBlack=%u pixels=%llu",
                                     result.returned_from_jni_onload ? @"YES" : @"NO",
                                     result.returned_game_app_initialize ? @"YES" : @"NO",
                                     result.game_app_initialize_return & 0xffu,
                                     result.lifecycle_calls_completed,
-                                    result.reached_first_draw_frame ? @"YES" : @"NO",
-                                    result.returned_first_draw_frame ? @"YES" : @"NO",
                                     result.draw_frames_completed,
                                     result.adaptive_frame_stop ? @"YES" : @"NO",
+                                    result.game_state_manager,
+                                    result.game_state_before_force,
+                                    result.game_state_after_force,
+                                    result.main_menu_request_injected ? @"YES" : @"NO",
+                                    result.main_menu_direct_apply_injected ? @"YES" : @"NO",
                                     result.host_gles_active ? @"YES" : @"NO",
                                     result.best_frame_number,
                                     (unsigned long long)result.best_frame_nonblack,
@@ -1330,7 +1333,7 @@ NSString *NSStringFromStd(
                     if (result.ok) {
                         [selfRef
                             appendUI:
-                                @"SUCCESS STEP 3: PvZ2 completed lifecycle + host GLES + v52 state/callsite diagnostics + adaptive frame soak."];
+                                @"SUCCESS STEP 3: PvZ2 completed lifecycle + exact v53 GameState tracing + forced MainMenu A/B + adaptive frame soak."];
 
                         if (!result.final_frame_png_path.empty()) {
                             [selfRef
@@ -1358,11 +1361,11 @@ NSString *NSStringFromStd(
                         } else {
                             [selfRef
                                 showResult:
-                                    @"PvZ2 v52 diagnostic returned"
+                                    @"PvZ2 v53 GameState/MainMenu A-B returned"
                                 message:
                                     [NSString
                                         stringWithFormat:
-                                            @"PvZ2 completed its native startup and v52 adaptive diagnostic.\n\nGameAppInitialize: %u\nLifecycle calls completed: %u\nFrames returned: %u\nHost GLES active: %@\nRichest sampled frame: %u (%llu non-black pixels)\nConstructors: %u/%u\nJNI_OnLoad: 0x%08x\n\nNo final PNG capture was produced; inspect V52 STATE CANDIDATE / POST-EA JNI / WORKER FINAL plus the V47 framebuffer lines in the full log.",
+                                            @"PvZ2 completed its native startup and v53 exact-state/MainMenu A-B diagnostic.\n\nGameAppInitialize: %u\nLifecycle calls completed: %u\nFrames returned: %u\nHost GLES active: %@\nRichest sampled frame: %u (%llu non-black pixels)\nConstructors: %u/%u\nJNI_OnLoad: 0x%08x\n\nNo final PNG capture was produced; inspect V53 GAMESTATE REQUEST/APPLY/SNAPSHOT plus V52 WORKER FINAL plus the V47 framebuffer lines in the full log.",
                                             result.game_app_initialize_return & 0xffu,
                                             result.lifecycle_calls_completed,
                                             result.draw_frames_completed,
