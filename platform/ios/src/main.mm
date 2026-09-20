@@ -318,7 +318,7 @@ NSString *NSStringFromStd(
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — v58 Stream Future Scheduler";
+        @"PvZ2forIOS — v59 Async Caller-Poll Scheduler";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -327,7 +327,7 @@ NSString *NSStringFromStd(
         NO;
 
     title.text =
-        @"PvZ2forIOS — v58 Stream Future Scheduler";
+        @"PvZ2forIOS — v59 Async Caller-Poll Scheduler";
 
     title.font =
         [UIFont
@@ -343,7 +343,7 @@ NSString *NSStringFromStd(
         NO;
 
     explanation.text =
-        @"v58 keeps the validated v57 Bionic ctype fix and repairs the cooperative scheduler class exposed by the now-native resource path. Ctype Native is the clean causal run: ABI-correct ctype data, no compact-trie hot-path SVC tracing, no Gate A/C scout, and worker scheduling only on verified async waits including the 0x109f7140 stream future. Ctype Deep Scout retains trie tracing and proof-gated Gate-A/Gate-C exploration if the natural path still needs diagnosis. Ordinary CPU slices still never run workers.";
+        @"v59 keeps the validated v57 ctype fix and v58 stream-future scheduler, then closes the caller-side async gap exposed later in startup. Stream-future objects are identified dynamically from vfn+0x2c, and virtual status-spin loops may run workers only when their ARM loop shape and return linkage prove they belong to the verified 0x109f7140 future. Ctype Native remains the clean default: no trie hot-path tracing and no Gate A/C scout. Ordinary CPU slices remain main-only.";
 
     explanation.numberOfLines = 0;
 
@@ -1052,7 +1052,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v58 mode=%@. Ctype Native is the default clean run: Bionic ctype compatibility + stream-future scheduler correction, with compact-trie hot-path tracing disabled. Ctype Deep Scout keeps the diagnostic trie/Gate scouts available. Baseline preserves the v56 control path.",
+                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v59 mode=%@. Ctype Native is the default clean run: Bionic ctype compatibility + stream-future and caller-poll scheduler corrections, with compact-trie hot-path tracing disabled. Ctype Deep Scout keeps the diagnostic trie/Gate scouts available. Baseline preserves the v56 control path.",
                     modeNames[modeIndex]]];
 
     [self
@@ -1134,7 +1134,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v58 Stream Future Scheduler started mode=%@; PID=%d ===",
+                    @"=== PvZ2 v59 Async Caller-Poll Scheduler started mode=%@; PID=%d ===",
                     diagnosticModeName,
                     getpid()]];
 
@@ -1437,7 +1437,7 @@ NSString *NSStringFromStd(
                     if (result.ok) {
                         [selfRef
                             appendUI:
-                                @"SUCCESS STEP 3: PvZ2 completed v58 Stream Future Scheduler. For Ctype Native, check V57 CTYPE ABI plus V58 STREAM-FUTURE SCHEDULER / V30 SCHED WAIT / V22 WORKER SLICE and preserved Gate/RSB diagnostics. Deep Scout additionally keeps V57 TRIE PATH / GATEC WRITE."];
+                                @"SUCCESS STEP 3: PvZ2 completed v59 Async Caller-Poll Scheduler. For Ctype Native, check V57 CTYPE ABI plus V58 STREAM-FUTURE / V59 ASYNC CALLER-POLL / V30 SCHED WAIT / V22 WORKER SLICE and preserved Gate/RSB diagnostics. Deep Scout additionally keeps V57 TRIE PATH / GATEC WRITE."];
 
                         if (!result.final_frame_png_path.empty()) {
                             [selfRef
@@ -1465,7 +1465,7 @@ NSString *NSStringFromStd(
                         } else {
                             [selfRef
                                 showResult:
-                                    @"PvZ2 v58 Stream Future Scheduler returned"
+                                    @"PvZ2 v59 Async Caller-Poll Scheduler returned"
                                 message:
                                     [NSString
                                         stringWithFormat:
