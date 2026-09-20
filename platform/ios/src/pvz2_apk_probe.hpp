@@ -64,6 +64,10 @@ struct PvZ2JniProbeResult {
     std::uint64_t game_state_request_calls = 0;
     std::uint64_t game_state_apply_calls = 0;
 
+    // v54: passive StartupLogo.Update gate/depth summary. Detailed per-hit
+    // values remain in the exported V54 STARTUPLOGO log lines.
+    std::string startup_logo_summary;
+
     std::uint32_t return_value = 0;
     std::uint32_t game_app_initialize_address = 0;
     std::uint32_t game_app_initialize_return = 0;
