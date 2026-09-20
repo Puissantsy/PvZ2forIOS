@@ -4961,6 +4961,11 @@ public:
             1u,
             old,
             value);
+        V57ObserveGateCWrite(
+            address,
+            1u,
+            old,
+            value);
     }
 
     void MemoryWrite16(
@@ -4970,6 +4975,11 @@ public:
             mem.Read16Guest(address);
         mem.Write16Guest(address, value);
         V56ObserveRegistryWrite(
+            address,
+            2u,
+            old,
+            value);
+        V57ObserveGateCWrite(
             address,
             2u,
             old,
@@ -4987,6 +4997,11 @@ public:
             4u,
             old,
             value);
+        V57ObserveGateCWrite(
+            address,
+            4u,
+            old,
+            value);
     }
 
     void MemoryWrite64(
@@ -4996,6 +5011,11 @@ public:
             mem.Read64Guest(address);
         mem.Write64Guest(address, value);
         V56ObserveRegistryWrite(
+            address,
+            8u,
+            old,
+            value);
+        V57ObserveGateCWrite(
             address,
             8u,
             old,
@@ -5020,6 +5040,11 @@ public:
             1u,
             old,
             value);
+        V57ObserveGateCWrite(
+            address,
+            1u,
+            old,
+            value);
         return true;
     }
 
@@ -5031,6 +5056,11 @@ public:
             mem.Read16Guest(address);
         mem.Write16Guest(address, value);
         V56ObserveRegistryWrite(
+            address,
+            2u,
+            old,
+            value);
+        V57ObserveGateCWrite(
             address,
             2u,
             old,
@@ -5050,6 +5080,11 @@ public:
             4u,
             old,
             value);
+        V57ObserveGateCWrite(
+            address,
+            4u,
+            old,
+            value);
         return true;
     }
 
@@ -5061,6 +5096,11 @@ public:
             mem.Read64Guest(address);
         mem.Write64Guest(address, value);
         V56ObserveRegistryWrite(
+            address,
+            8u,
+            old,
+            value);
+        V57ObserveGateCWrite(
             address,
             8u,
             old,
@@ -8084,6 +8124,39 @@ public:
             default:
                 break;
             }
+        }
+
+        if (swi == kJniProbeSvcV57TrieCompare) {
+            // Original @ 0x10a83af8: UXTB r0,r5.
+            const std::uint32_t raw =
+                mem.Read8(regs[1]);
+            const std::uint32_t normalized =
+                regs[4] &
+                0xffu;
+            const std::uint32_t node_word =
+                regs[5];
+            const std::uint32_t node_pointer =
+                regs[2];
+
+            regs[0] =
+                node_word &
+                0xffu;
+
+            const auto found =
+                v56_trie_contexts.find(
+                    regs[13]);
+
+            if (found !=
+                v56_trie_contexts.end()) {
+                V57TraceTrieStep(
+                    found->second,
+                    raw,
+                    normalized,
+                    node_word,
+                    node_pointer);
+            }
+
+            return;
         }
 
         if (swi == kJniProbeSvcStartupGroupsCtorSnapshot ||
