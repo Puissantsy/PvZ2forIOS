@@ -2283,6 +2283,38 @@ public:
     std::unordered_set<std::string>
         v51_config_logged_keys;
 
+    // v52 diagnostic cockpit. Instead of guessing one startup gate per build,
+    // capture the real AndroidAppDriver/GameApp object graph at a handful of
+    // transition frames, record state-like small integer changes, and retain
+    // post-EA JNI callsites/stack code candidates. This gives one iPad run
+    // enough information to identify the state machine branch that remains
+    // active after the EA splash.
+    struct V52StateFieldEvent {
+        std::uint32_t frame = 0u;
+        std::uint32_t object = 0u;
+        std::uint32_t vtable = 0u;
+        std::uint32_t offset = 0u;
+        std::uint32_t before = 0u;
+        std::uint32_t after = 0u;
+    };
+
+    std::unordered_map<std::uint64_t, std::uint32_t>
+        v52_previous_small_fields;
+    std::vector<V52StateFieldEvent>
+        v52_state_field_events;
+    std::unordered_map<std::string, std::uint64_t>
+        v52_post_ea_jni_callsites;
+    std::unordered_set<std::string>
+        v52_stack_dumped_callsites;
+    std::uint32_t v52_last_driver = 0u;
+    std::uint32_t v52_last_app = 0u;
+    std::uint32_t v52_last_app_vtable = 0u;
+    std::uint64_t v52_is_same_object_calls = 0u;
+    std::uint64_t v52_ui_process_events_calls = 0u;
+    std::uint64_t v52_graphics_fbo_calls = 0u;
+    std::uint64_t v52_http_starts = 0u;
+    std::uint64_t v52_http_deliveries = 0u;
+
     std::unordered_map<std::uint32_t, z_stream> zstreams;
     std::unordered_map<std::uint32_t, bool> zstream_deflate_mode;
 
@@ -2527,6 +2559,554 @@ public:
             V46DescribeGuestAddress(lr & ~1u) +
             " SP=" +
             V46DescribeGuestAddress(sp));
+    }
+
+    void V52ObserveJniCallsite(
+        const std::string& method_name) {
+
+        if (current_frame_number < 75u ||
+            jit == nullptr) {
+            return;
+        }
+
+        const std::uint32_t lr =
+            jit->Regs()[14];
+        const std::uint32_t sp =
+            jit->Regs()[13];
+
+        const std::string key =
+            method_name +
+            "@0x" +
+            JniProbeHex(lr);
+
+        ++v52_post_ea_jni_callsites[key];
+
+        const bool high_value =
+            method_name == "GetNetworkStatus" ||
+            method_name == "UI_ProcessEvents" ||
+            method_name == "Graphics_GetGLViewSysFBO";
+
+        if (!high_value ||
+            !v52_stack_dumped_callsites
+                 .insert(key)
+                 .second) {
+            return;
+        }
+
+        Append(
+            "V52 POST-EA JNI CALLSITE frame=" +
+            std::to_string(
+                current_frame_number) +
+            " method=" +
+            method_name +
+            " LR=" +
+            V46DescribeGuestAddress(lr) +
+            " SP=" +
+            V46DescribeGuestAddress(sp));
+
+        std::unordered_set<std::uint32_t>
+            seen;
+        std::uint32_t emitted = 0u;
+
+        for (std::uint32_t offset = 0u;
+             offset < 0x180u &&
+             emitted < 16u;
+             offset += 4u) {
+
+            const std::uint32_t candidate =
+                mem.Read32Guest(
+                    sp + offset);
+            const std::uint32_t plain =
+                candidate & ~1u;
+
+            if (plain < kGuestBase ||
+                static_cast<std::uint64_t>(
+                    plain) >=
+                    static_cast<std::uint64_t>(
+                        kGuestBase) +
+                    mem.image.size() ||
+                !seen.insert(plain).second) {
+                continue;
+            }
+
+            Append(
+                "V52 STACK CODE method=" +
+                method_name +
+                " sp+0x" +
+                JniProbeHex(offset) +
+                " -> " +
+                V46DescribeGuestAddress(
+                    candidate));
+
+            ++emitted;
+        }
+    }
+
+    void V52CaptureStateGraph(
+        std::uint32_t frame) {
+
+        // Native_onDrawFrame (APK offset 0x009f190c) resolves the
+        // AndroidAppDriver* through this exact global for 1.5.252752.
+        constexpr std::uint32_t
+            kAndroidDriverGlobal =
+                kGuestBase +
+                0x00dc8fd4u;
+
+        const std::uint32_t driver =
+            mem.Read32Guest(
+                kAndroidDriverGlobal);
+
+        if (driver == 0u ||
+            mem.Ptr(driver, 0x50u) ==
+                nullptr) {
+            Append(
+                "V52 STATEGRAPH frame=" +
+                std::to_string(frame) +
+                " driverGlobal=" +
+                V46DescribeGuestAddress(
+                    kAndroidDriverGlobal) +
+                " driver=invalid");
+            return;
+        }
+
+        const std::uint32_t app =
+            mem.Read32Guest(
+                driver + 0x44u);
+
+        if (app == 0u ||
+            mem.Ptr(app, 4u) ==
+                nullptr) {
+            Append(
+                "V52 STATEGRAPH frame=" +
+                std::to_string(frame) +
+                " driver=" +
+                V46DescribeGuestAddress(
+                    driver) +
+                " app=invalid");
+            return;
+        }
+
+        const std::uint32_t app_vtable =
+            mem.Read32Guest(app);
+
+        if (driver != v52_last_driver ||
+            app != v52_last_app ||
+            app_vtable !=
+                v52_last_app_vtable) {
+
+            v52_last_driver = driver;
+            v52_last_app = app;
+            v52_last_app_vtable =
+                app_vtable;
+
+            Append(
+                "V52 OBJECT ROOT frame=" +
+                std::to_string(frame) +
+                " global=" +
+                V46DescribeGuestAddress(
+                    kAndroidDriverGlobal) +
+                " driver=" +
+                V46DescribeGuestAddress(
+                    driver) +
+                " app=" +
+                V46DescribeGuestAddress(
+                    app) +
+                " appVtable=" +
+                V46DescribeGuestAddress(
+                    app_vtable));
+
+            if (app_vtable >= kGuestBase &&
+                static_cast<std::uint64_t>(
+                    app_vtable) +
+                        32u * 4u <=
+                    static_cast<std::uint64_t>(
+                        kGuestBase) +
+                    mem.image.size()) {
+
+                for (std::uint32_t i = 0u;
+                     i < 32u;
+                     ++i) {
+
+                    const std::uint32_t target =
+                        mem.Read32Guest(
+                            app_vtable +
+                            i * 4u);
+
+                    if (target >= kGuestBase &&
+                        static_cast<std::uint64_t>(
+                            target & ~1u) <
+                            static_cast<std::uint64_t>(
+                                kGuestBase) +
+                            mem.image.size()) {
+
+                        Append(
+                            "V52 APP VTABLE[" +
+                            std::to_string(i) +
+                            "]=" +
+                            V46DescribeGuestAddress(
+                                target));
+                    }
+                }
+            }
+        }
+
+        struct Node {
+            std::uint32_t address = 0u;
+            std::uint32_t depth = 0u;
+        };
+
+        std::vector<Node> nodes;
+        nodes.push_back(
+            Node{app, 0u});
+
+        std::unordered_set<std::uint32_t>
+            visited;
+        visited.insert(app);
+
+        std::unordered_map<
+            std::uint64_t,
+            std::uint32_t>
+            current_small_fields;
+
+        for (std::size_t ni = 0u;
+             ni < nodes.size() &&
+             ni < 48u;
+             ++ni) {
+
+            const Node node =
+                nodes[ni];
+
+            const std::uint32_t bytes =
+                node.depth == 0u
+                    ? 0x800u
+                    : 0x180u;
+
+            if (mem.Ptr(
+                    node.address,
+                    bytes) == nullptr) {
+                continue;
+            }
+
+            const std::uint32_t vtable =
+                mem.Read32Guest(
+                    node.address);
+
+            for (std::uint32_t offset = 4u;
+                 offset < bytes;
+                 offset += 4u) {
+
+                const std::uint32_t value =
+                    mem.Read32Guest(
+                        node.address +
+                        offset);
+
+                if (value <= 12u) {
+                    const std::uint64_t key =
+                        (static_cast<
+                             std::uint64_t>(
+                             node.address)
+                         << 32u) |
+                        offset;
+
+                    current_small_fields[
+                        key] =
+                        value;
+                }
+
+                if (node.depth >= 2u ||
+                    value <
+                        kJniProbeHeapBase ||
+                    static_cast<
+                        std::uint64_t>(
+                        value) >=
+                        static_cast<
+                            std::uint64_t>(
+                            kJniProbeHeapBase) +
+                        kJniProbeHeapSize ||
+                    visited.size() >= 48u ||
+                    mem.Ptr(value, 4u) ==
+                        nullptr) {
+                    continue;
+                }
+
+                const std::uint32_t child_vtable =
+                    mem.Read32Guest(value);
+                const std::uint32_t child_plain =
+                    child_vtable & ~1u;
+
+                if (child_plain <
+                        kGuestBase ||
+                    static_cast<
+                        std::uint64_t>(
+                        child_plain) >=
+                        static_cast<
+                            std::uint64_t>(
+                            kGuestBase) +
+                        mem.image.size() ||
+                    !visited.insert(value)
+                         .second) {
+                    continue;
+                }
+
+                nodes.push_back(
+                    Node{
+                        value,
+                        node.depth + 1u});
+            }
+
+            if (frame == 1u &&
+                ni < 24u) {
+                Append(
+                    "V52 OBJECT node=" +
+                    V46DescribeGuestAddress(
+                        node.address) +
+                    " depth=" +
+                    std::to_string(
+                        node.depth) +
+                    " vtable=" +
+                    V46DescribeGuestAddress(
+                        vtable));
+            }
+        }
+
+        std::uint32_t emitted = 0u;
+
+        for (const auto& entry :
+             current_small_fields) {
+
+            const auto previous =
+                v52_previous_small_fields
+                    .find(entry.first);
+
+            if (previous ==
+                    v52_previous_small_fields
+                        .end() ||
+                previous->second ==
+                    entry.second) {
+                continue;
+            }
+
+            const std::uint32_t object =
+                static_cast<std::uint32_t>(
+                    entry.first >> 32u);
+            const std::uint32_t offset =
+                static_cast<std::uint32_t>(
+                    entry.first);
+            const std::uint32_t vtable =
+                mem.Read32Guest(object);
+
+            if (v52_state_field_events
+                    .size() < 2048u) {
+                v52_state_field_events.push_back(
+                    V52StateFieldEvent{
+                        frame,
+                        object,
+                        vtable,
+                        offset,
+                        previous->second,
+                        entry.second});
+            }
+
+            if (frame >= 55u &&
+                frame <= 90u &&
+                emitted < 48u) {
+
+                Append(
+                    "V52 STATE-LIKE CHANGE frame=" +
+                    std::to_string(frame) +
+                    " object=" +
+                    V46DescribeGuestAddress(
+                        object) +
+                    " vtable=" +
+                    V46DescribeGuestAddress(
+                        vtable) +
+                    " +0x" +
+                    JniProbeHex(offset) +
+                    " " +
+                    std::to_string(
+                        previous->second) +
+                    "->" +
+                    std::to_string(
+                        entry.second));
+
+                ++emitted;
+            }
+        }
+
+        v52_previous_small_fields =
+            std::move(
+                current_small_fields);
+
+        Append(
+            "V52 STATEGRAPH frame=" +
+            std::to_string(frame) +
+            " reachableObjects=" +
+            std::to_string(
+                visited.size()) +
+            " smallFields=" +
+            std::to_string(
+                v52_previous_small_fields
+                    .size()) +
+            " totalChanges=" +
+            std::to_string(
+                v52_state_field_events
+                    .size()));
+    }
+
+    void V52FinalizeDiagnostics() {
+        std::ostringstream summary;
+
+        summary
+            << "V52 root driver=0x"
+            << JniProbeHex(
+                   v52_last_driver)
+            << " app=0x"
+            << JniProbeHex(
+                   v52_last_app)
+            << " vtable=0x"
+            << JniProbeHex(
+                   v52_last_app_vtable)
+            << "; stateLikeChanges="
+            << v52_state_field_events.size()
+            << "; postEAJniCallsites="
+            << v52_post_ea_jni_callsites
+                   .size()
+            << "; HTTP starts="
+            << v52_http_starts
+            << " deliveries="
+            << v52_http_deliveries
+            << "; JNI noisyCounters{IsSameObject="
+            << v52_is_same_object_calls
+            << ",UI_ProcessEvents="
+            << v52_ui_process_events_calls
+            << ",Graphics_GetGLViewSysFBO="
+            << v52_graphics_fbo_calls
+            << "}";
+
+        result.diagnostic_summary =
+            summary.str();
+
+        Append(
+            "V52 DIAGNOSTIC SUMMARY: " +
+            result.diagnostic_summary);
+
+        std::vector<
+            std::pair<std::string,
+                      std::uint64_t>>
+            callsites(
+                v52_post_ea_jni_callsites
+                    .begin(),
+                v52_post_ea_jni_callsites
+                    .end());
+
+        std::sort(
+            callsites.begin(),
+            callsites.end(),
+            [](const auto& a,
+               const auto& b) {
+                return a.second >
+                    b.second;
+            });
+
+        for (std::size_t i = 0u;
+             i < callsites.size() &&
+             i < 24u;
+             ++i) {
+
+            Append(
+                "V52 POST-EA JNI TOP #" +
+                std::to_string(i + 1u) +
+                " calls=" +
+                std::to_string(
+                    callsites[i].second) +
+                " " +
+                callsites[i].first);
+        }
+
+        std::unordered_set<std::uint64_t>
+            emitted_fields;
+        std::uint32_t rank = 0u;
+
+        for (const auto& event :
+             v52_state_field_events) {
+
+            if (event.frame < 55u ||
+                event.frame > 90u ||
+                event.before > 9u ||
+                event.after > 9u) {
+                continue;
+            }
+
+            const std::uint64_t key =
+                (static_cast<
+                     std::uint64_t>(
+                     event.object)
+                 << 32u) |
+                event.offset;
+
+            if (!emitted_fields
+                    .insert(key)
+                    .second ||
+                rank >= 48u) {
+                continue;
+            }
+
+            ++rank;
+
+            Append(
+                "V52 STATE CANDIDATE #" +
+                std::to_string(rank) +
+                " frame=" +
+                std::to_string(
+                    event.frame) +
+                " object=" +
+                V46DescribeGuestAddress(
+                    event.object) +
+                " vtable=" +
+                V46DescribeGuestAddress(
+                    event.vtable) +
+                " +0x" +
+                JniProbeHex(
+                    event.offset) +
+                " " +
+                std::to_string(
+                    event.before) +
+                "->" +
+                std::to_string(
+                    event.after));
+        }
+
+        for (const auto& worker :
+             deferred_threads) {
+
+            Append(
+                "V52 WORKER FINAL tid=" +
+                std::to_string(
+                    worker.id) +
+                " created_in=" +
+                worker.created_in +
+                " start=" +
+                V46DescribeGuestAddress(
+                    worker.start_routine) +
+                " PC=" +
+                V46DescribeGuestAddress(
+                    worker.regs[15]) +
+                " ticks=" +
+                std::to_string(
+                    worker.runtime_ticks) +
+                " started=" +
+                (worker.runtime_started
+                    ? std::string{"YES"}
+                    : std::string{"NO"}) +
+                " completed=" +
+                (worker.runtime_completed
+                    ? std::string{"YES"}
+                    : std::string{"NO"}) +
+                " failed=" +
+                (worker.runtime_failed
+                    ? std::string{"YES"}
+                    : std::string{"NO"}));
+        }
     }
 
     void RefreshSweepSummary() {
