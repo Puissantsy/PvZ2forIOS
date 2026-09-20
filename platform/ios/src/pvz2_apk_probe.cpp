@@ -4321,25 +4321,53 @@ public:
     void MemoryWrite8(
         std::uint32_t address,
         std::uint8_t value) override {
+        const std::uint8_t old =
+            mem.Read8(address);
         mem.Write8Guest(address, value);
+        V56ObserveRegistryWrite(
+            address,
+            1u,
+            old,
+            value);
     }
 
     void MemoryWrite16(
         std::uint32_t address,
         std::uint16_t value) override {
+        const std::uint16_t old =
+            mem.Read16Guest(address);
         mem.Write16Guest(address, value);
+        V56ObserveRegistryWrite(
+            address,
+            2u,
+            old,
+            value);
     }
 
     void MemoryWrite32(
         std::uint32_t address,
         std::uint32_t value) override {
+        const std::uint32_t old =
+            mem.Read32Guest(address);
         mem.Write32Guest(address, value);
+        V56ObserveRegistryWrite(
+            address,
+            4u,
+            old,
+            value);
     }
 
     void MemoryWrite64(
         std::uint32_t address,
         std::uint64_t value) override {
+        const std::uint64_t old =
+            mem.Read64Guest(address);
         mem.Write64Guest(address, value);
+        V56ObserveRegistryWrite(
+            address,
+            8u,
+            old,
+            value);
     }
 
     // Dynarmic's callback-only exclusive-memory path calls these methods for
@@ -4352,7 +4380,14 @@ public:
         std::uint32_t address,
         std::uint8_t value,
         [[maybe_unused]] std::uint8_t expected) override {
+        const std::uint8_t old =
+            mem.Read8(address);
         mem.Write8Guest(address, value);
+        V56ObserveRegistryWrite(
+            address,
+            1u,
+            old,
+            value);
         return true;
     }
 
@@ -4360,7 +4395,14 @@ public:
         std::uint32_t address,
         std::uint16_t value,
         [[maybe_unused]] std::uint16_t expected) override {
+        const std::uint16_t old =
+            mem.Read16Guest(address);
         mem.Write16Guest(address, value);
+        V56ObserveRegistryWrite(
+            address,
+            2u,
+            old,
+            value);
         return true;
     }
 
@@ -4368,7 +4410,14 @@ public:
         std::uint32_t address,
         std::uint32_t value,
         [[maybe_unused]] std::uint32_t expected) override {
+        const std::uint32_t old =
+            mem.Read32Guest(address);
         mem.Write32Guest(address, value);
+        V56ObserveRegistryWrite(
+            address,
+            4u,
+            old,
+            value);
         return true;
     }
 
@@ -4376,7 +4425,14 @@ public:
         std::uint32_t address,
         std::uint64_t value,
         [[maybe_unused]] std::uint64_t expected) override {
+        const std::uint64_t old =
+            mem.Read64Guest(address);
         mem.Write64Guest(address, value);
+        V56ObserveRegistryWrite(
+            address,
+            8u,
+            old,
+            value);
         return true;
     }
 
