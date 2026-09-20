@@ -7050,6 +7050,9 @@ public:
                     const std::uint32_t call_variant =
                         (slot - family_base) % 3u;
 
+                    V52ObserveJniCallsite(
+                        method_name);
+
                     auto java_arg_word =
                         [&](std::uint32_t index)
                             -> std::uint32_t {
