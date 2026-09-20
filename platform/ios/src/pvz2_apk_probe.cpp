@@ -18682,9 +18682,21 @@ bool JniProbePrepareRuntime(
             0xe1a04000u,
             kJniProbeSvcGameStateRequest) ||
         !patch_resource_native_miss(
+            0x000f66e4u,
+            0xe28dd0b0u,
+            kJniProbeSvcStartupGroupsCtorSnapshot) ||
+        !patch_resource_native_miss(
             0x002c84d0u,
             0xe595064cu,
             kJniProbeSvcStartupGateAResource) ||
+        !patch_resource_native_miss(
+            0x002c85ccu,
+            0xe1a04000u,
+            kJniProbeSvcStartupGroupsLookupResult) ||
+        !patch_resource_native_miss(
+            0x002c85f4u,
+            0xe086a00au,
+            kJniProbeSvcStartupGroupsContribution) ||
         !patch_resource_native_miss(
             0x002c8620u,
             0xee00ba10u,
@@ -18755,7 +18767,7 @@ bool JniProbePrepareRuntime(
             kJniProbeSvcStartupMainMenuMarker)) {
 
         error =
-            "v54 passive resource/state/StartupLogo instrumentation profile did not match the verified PvZ2 1.5.252752 ARM code.";
+            "v55 passive resource/state/StartupLogo/group instrumentation profile did not match the verified PvZ2 1.5.252752 ARM code.";
         return false;
     }
 
@@ -18765,6 +18777,8 @@ bool JniProbePrepareRuntime(
         "V53 PASSIVE GAMESTATE TRAPS installed: ApplyState@0x102747d8 and RequestTransition@0x10274b4c. No state transition will be injected.");
     callbacks.Append(
         "V54 PASSIVE STARTUPLOGO TRAPS installed: GateA resource/totals/result, GateC state==4, GateD counter>=3, post-A-D depth, patch/main late decisions, and Patch/MainMenu request-path markers. Every replaced ARM instruction is emulated exactly; no gate or transition is forced.");
+    callbacks.Append(
+        "V55 PASSIVE STARTUP GROUP TRAPS installed: global four-group vector constructor snapshot@0x100f66e4, GateA native group lookup result@0x102c85cc, and per-group completed/total contribution@0x102c85f4. No resource-group index, progress value, vector entry, branch, or GameState is modified.");
 
     return_trampoline =
         JniProbeMakeTrampoline(
@@ -21426,9 +21440,15 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                     "V54 STARTUPLOGO SUMMARY: " +
                     result.startup_logo_summary);
 
+                result.startup_resource_group_summary =
+                    callbacks.V55StartupResourceGroupSummary();
+                callbacks.Append(
+                    "V55 STARTUP GROUP SUMMARY: " +
+                    result.startup_resource_group_summary);
+
                 result.ok = true;
                 result.message =
-                    "PvZ2 completed the stable v52 lifecycle/host-GLES path plus passive v53 exact GameState tracing and passive v54 StartupLogo gate/depth tracing; no GameState, gate result, or transition was forced (600-frame safety ceiling, adaptive stop preserved).";
+                    "PvZ2 completed stable v52 lifecycle/host-GLES, passive v53 GameState tracing, passive v54 StartupLogo gate tracing, and passive v55 Gate-A resource-group vector/lookup/progress tracing; nothing was forced (600-frame safety ceiling, adaptive stop preserved).";
                 return result;
             }
 
