@@ -52,6 +52,9 @@ struct PvZ2JniProbeResult {
     std::uint32_t draw_frames_completed = 0;
     std::uint32_t best_frame_number = 0;
     std::uint64_t best_frame_nonblack = 0;
+    std::uint32_t last_nonblack_frame_number = 0;
+    std::uint64_t last_nonblack_pixels = 0;
+    bool adaptive_frame_stop = false;
 
     std::uint32_t return_value = 0;
     std::uint32_t game_app_initialize_address = 0;
@@ -96,7 +99,14 @@ struct PvZ2JniProbeResult {
     std::string first_unsupported_import;
     std::string game_app_initialize_signature;
     std::string lifecycle_failure_name;
+    // v52 keeps the old field as the image selected for UI display, but also
+    // exposes the diagnostic captures independently so a splash frame can no
+    // longer masquerade as the final framebuffer.
     std::string host_frame_png_path;
+    std::string best_frame_png_path;
+    std::string last_nonblack_frame_png_path;
+    std::string final_frame_png_path;
+    std::string diagnostic_summary;
     std::string sweep_summary;
     std::string trace;
     std::string message;
