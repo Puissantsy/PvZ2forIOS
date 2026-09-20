@@ -3248,6 +3248,389 @@ public:
         return out.str();
     }
 
+    const char* V56ModeName() const {
+        switch (diagnostic_mode) {
+        case PvZ2DiagnosticMode::PassiveRegistry:
+            return "PASSIVE_REGISTRY";
+        case PvZ2DiagnosticMode::GateAScout:
+            return "GATE_A_SCOUT";
+        case PvZ2DiagnosticMode::FullMatrix:
+            return "FULL_MATRIX";
+        }
+
+        return "UNKNOWN";
+    }
+
+    bool V56ScoutEnabled() const {
+        return
+            diagnostic_mode ==
+                PvZ2DiagnosticMode::GateAScout ||
+            diagnostic_mode ==
+                PvZ2DiagnosticMode::FullMatrix;
+    }
+
+    bool V56FullMatrixEnabled() const {
+        return
+            diagnostic_mode ==
+                PvZ2DiagnosticMode::FullMatrix;
+    }
+
+    bool V56IsTargetLookupKey(
+        const std::string& key) const {
+
+        static constexpr std::array<const char*, 7>
+            kTargets = {
+                "AlwaysLoaded",
+                "DelayLoad_Dialog",
+                "UIImages",
+                "RenderEffects",
+                "StartupMusic",
+                "UI_MainMenu",
+                "MainMenu_Background"};
+
+        return std::find(
+                   kTargets.begin(),
+                   kTargets.end(),
+                   key) !=
+            kTargets.end();
+    }
+
+    std::string V56RegistrySnapshot(
+        const std::string& label) {
+
+        std::ostringstream out;
+        out
+            << label
+            << " manager=0x"
+            << JniProbeHex(
+                   v56_resource_manager);
+
+        if (v56_resource_manager == 0u ||
+            mem.Ptr(
+                v56_resource_manager +
+                    0x28u,
+                16u) == nullptr) {
+            out << " tables=UNAVAILABLE";
+            return out.str();
+        }
+
+        v56_table28_root =
+            mem.Read32Guest(
+                v56_resource_manager +
+                0x28u);
+        v56_table28_count =
+            mem.Read32Guest(
+                v56_resource_manager +
+                0x2cu);
+        v56_table30_root =
+            mem.Read32Guest(
+                v56_resource_manager +
+                0x30u);
+        v56_table30_count =
+            mem.Read32Guest(
+                v56_resource_manager +
+                0x34u);
+
+        out
+            << " table28{root=0x"
+            << JniProbeHex(
+                   v56_table28_root)
+            << ",count="
+            << v56_table28_count
+            << "} table30{root=0x"
+            << JniProbeHex(
+                   v56_table30_root)
+            << ",count="
+            << v56_table30_count
+            << "}";
+
+        v56_last_registry_snapshot =
+            out.str();
+        return out.str();
+    }
+
+    void V56AppendRegistrySnapshot(
+        const std::string& label) {
+
+        Append(
+            "V56 REGISTRY DIAGNOSIS " +
+            V56RegistrySnapshot(label));
+    }
+
+    void V56ObserveRegistryWrite(
+        std::uint32_t address,
+        std::uint32_t width,
+        std::uint64_t old_value,
+        std::uint64_t new_value) {
+
+        if (v56_resource_manager == 0u ||
+            old_value == new_value) {
+            return;
+        }
+
+        const std::uint32_t start =
+            v56_resource_manager +
+            0x28u;
+        const std::uint32_t end =
+            v56_resource_manager +
+            0x38u;
+
+        const std::uint64_t write_start =
+            address;
+        const std::uint64_t write_end =
+            write_start +
+            width;
+
+        if (write_end <= start ||
+            write_start >= end) {
+            return;
+        }
+
+        ++v56_registry_write_events;
+
+        if (write_start < 
+                v56_resource_manager +
+                    0x30u &&
+            write_end >
+                v56_resource_manager +
+                    0x28u) {
+            ++v56_table28_write_events;
+        }
+
+        if (write_start <
+                v56_resource_manager +
+                    0x38u &&
+            write_end >
+                v56_resource_manager +
+                    0x30u) {
+            ++v56_table30_write_events;
+        }
+
+        const std::uint32_t pc =
+            jit != nullptr
+                ? jit->Regs()[15]
+                : 0u;
+        const std::uint32_t lr =
+            jit != nullptr
+                ? jit->Regs()[14]
+                : 0u;
+
+        std::ostringstream line;
+        line
+            << "V56 REGISTRY WRITE #"
+            << v56_registry_write_events
+            << " address=0x"
+            << JniProbeHex(address)
+            << " width="
+            << width
+            << " old=0x"
+            << std::hex
+            << old_value
+            << " new=0x"
+            << new_value
+            << std::dec
+            << " pc="
+            << V46DescribeGuestAddress(pc)
+            << " lr="
+            << V46DescribeGuestAddress(lr);
+
+        Append(line.str());
+
+        V56AppendRegistrySnapshot(
+            "after-write");
+    }
+
+    bool V56GateAProofReady() const {
+        if (v54_gate_a_result_hits < 1u ||
+            v55_contribution_total != 0u) {
+            return false;
+        }
+
+        for (const auto& stat :
+             v55_group_stats) {
+            if (stat.lookup_hits == 0u ||
+                stat.lookup_misses == 0u) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    void V56RecordTrieResult(
+        const V56TrieContext& context,
+        bool found,
+        std::uint32_t result_pointer) {
+
+        if (!context.relevant) {
+            return;
+        }
+
+        auto& stat =
+            v56_target_lookups[
+                context.key];
+
+        ++stat.calls;
+        if (found) {
+            ++stat.found;
+        } else {
+            ++stat.misses;
+        }
+        stat.last_table =
+            context.table;
+        stat.last_caller =
+            context.caller_lr;
+
+        const char* table_kind =
+            context.table ==
+                v56_resource_manager +
+                    0x28u
+                ? "manager+0x28"
+                : context.table ==
+                      v56_resource_manager +
+                          0x30u
+                    ? "manager+0x30"
+                    : "other";
+
+        Append(
+            "V56 TARGET LOOKUP key=\"" +
+            context.key +
+            "\" table=" +
+            table_kind +
+            "@0x" +
+            JniProbeHex(
+                context.table) +
+            " result=" +
+            (found
+                ? "FOUND@0x" +
+                      JniProbeHex(
+                          result_pointer)
+                : std::string{"MISS"}) +
+            " caller=" +
+            V46DescribeGuestAddress(
+                context.caller_lr));
+    }
+
+    std::string V56DiagnosticMatrixSummary() {
+        V56RegistrySnapshot(
+            "final");
+
+        std::ostringstream out;
+        out
+            << "V56 DiagnosticMatrix"
+            << " mode="
+            << V56ModeName()
+            << " pipeline{calls="
+            << v56_registry_pipeline_calls
+            << ",returns="
+            << v56_registry_pipeline_returns
+            << ",lastResult="
+            << v56_pipeline_last_result
+            << ",src28=0x"
+            << JniProbeHex(
+                   v56_source28_ptr)
+            << ",src28Bytes="
+            << v56_source28_bytes
+            << ",src28Count="
+            << (v56_source28_bytes /
+                4u)
+            << ",src30=0x"
+            << JniProbeHex(
+                   v56_source30_ptr)
+            << ",src30Bytes="
+            << v56_source30_bytes
+            << ",src30Count="
+            << (v56_source30_bytes /
+                4u)
+            << "}"
+            << " registry{manager=0x"
+            << JniProbeHex(
+                   v56_resource_manager)
+            << ",table28Root=0x"
+            << JniProbeHex(
+                   v56_table28_root)
+            << ",table28Count="
+            << v56_table28_count
+            << ",table30Root=0x"
+            << JniProbeHex(
+                   v56_table30_root)
+            << ",table30Count="
+            << v56_table30_count
+            << ",writes="
+            << v56_registry_write_events
+            << ",writes28="
+            << v56_table28_write_events
+            << ",writes30="
+            << v56_table30_write_events
+            << "}"
+            << " scout{enabled="
+            << (V56ScoutEnabled()
+                    ? "YES"
+                    : "NO")
+            << ",activated="
+            << (v56_gate_a_scout_activated
+                    ? "YES"
+                    : "NO")
+            << ",forcedHits="
+            << v56_gate_a_forced_hits
+            << ",activationFrame="
+            << v56_gate_a_activation_frame
+            << "}"
+            << " downstream{state="
+            << V53CurrentGameState()
+            << ",requests="
+            << v53_state_request_calls
+            << ",applies="
+            << v53_state_apply_calls
+            << "}";
+
+        for (const auto& pair :
+             v56_target_lookups) {
+            out
+                << " | "
+                << pair.first
+                << "{calls="
+                << pair.second.calls
+                << ",found="
+                << pair.second.found
+                << ",misses="
+                << pair.second.misses
+                << ",lastTable=0x"
+                << JniProbeHex(
+                       pair.second.last_table)
+                << ",caller=0x"
+                << JniProbeHex(
+                       pair.second.last_caller)
+                << "}";
+        }
+
+        out << " | diagnosis=";
+
+        if (v56_registry_pipeline_calls == 0u) {
+            out
+                << "REGISTRY_PIPELINE_NEVER_EXECUTED";
+        } else if (
+            v56_source28_bytes == 0u &&
+            v56_source30_bytes == 0u) {
+            out
+                << "PIPELINE_EXECUTED_WITH_EMPTY_SOURCE_TABLES";
+        } else if (
+            v56_table28_count == 0u &&
+            v56_table30_count == 0u) {
+            out
+                << "SOURCE_NONEMPTY_BUT_MANAGER_TABLES_EMPTY";
+        } else if (
+            v55_contribution_total == 0u) {
+            out
+                << "MANAGER_TABLES_PRESENT_BUT_STARTUP_KEYS_MISS";
+        } else {
+            out
+                << "STARTUP_GROUP_LOOKUP_PROGRESS_OBSERVED";
+        }
+
+        return out.str();
+    }
+
     void V52ObserveJniCallsite(
         const std::string& method_name) {
 
