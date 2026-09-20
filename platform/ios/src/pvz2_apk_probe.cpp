@@ -6681,6 +6681,214 @@ public:
                         next64);
             };
 
+        if (swi == kJniProbeSvcStartupGroupsCtorSnapshot ||
+            swi == kJniProbeSvcStartupGroupsLookupResult ||
+            swi == kJniProbeSvcStartupGroupsContribution) {
+
+            switch (swi) {
+            case kJniProbeSvcStartupGroupsCtorSnapshot: {
+                // Original @ 0x100f66e4: ADD sp,sp,#0xb0.
+                regs[13] += 0xb0u;
+
+                ++v55_ctor_snapshot_hits;
+                const std::string snapshot =
+                    V55StartupGroupVectorState();
+                v55_ctor_vector_snapshot =
+                    snapshot;
+
+                Append(
+                    "V55 STARTUP GROUPS ctor-snapshot #" +
+                    std::to_string(
+                        v55_ctor_snapshot_hits) +
+                    " " +
+                    snapshot);
+                return;
+            }
+
+            case kJniProbeSvcStartupGroupsLookupResult: {
+                // Original @ 0x102c85cc: MOV r4,r0.
+                const std::uint32_t result_index =
+                    regs[0];
+                const std::uint32_t vector_object =
+                    regs[7];
+                const std::uint32_t byte_offset =
+                    regs[8];
+
+                regs[4] = regs[0];
+
+                if (vector_object !=
+                    kV55StartupGroupsVectorGuest) {
+                    return;
+                }
+
+                const std::string group =
+                    V55CurrentGateAGroup(
+                        vector_object,
+                        byte_offset);
+
+                ++v55_lookup_total;
+
+                const int slot =
+                    V55StartupGroupSlot(group);
+
+                bool should_log = false;
+
+                if (slot >= 0) {
+                    auto& stat =
+                        v55_group_stats[
+                            static_cast<std::size_t>(
+                                slot)];
+
+                    const std::uint32_t previous =
+                        stat.last_lookup;
+
+                    ++stat.lookup_hits;
+                    if (result_index ==
+                        0xffffffffu) {
+                        ++stat.lookup_misses;
+                    }
+
+                    stat.last_lookup =
+                        result_index;
+
+                    should_log =
+                        stat.lookup_hits <= 4u ||
+                        previous !=
+                            result_index ||
+                        (stat.lookup_hits %
+                            100u) == 0u;
+                } else {
+                    ++v55_lookup_unknown;
+                    should_log =
+                        v55_lookup_unknown <= 8u;
+                }
+
+                if (should_log) {
+                    std::string source;
+
+                    if (result_index ==
+                        0xffffffffu) {
+                        source = "MISS";
+                    } else if (
+                        (result_index &
+                         0x10000000u) != 0u) {
+                        source = "table+0x30";
+                    } else {
+                        source = "table+0x28";
+                    }
+
+                    Append(
+                        "V55 STARTUP GROUPS lookup group=\"" +
+                        group +
+                        "\" offset=" +
+                        std::to_string(
+                            byte_offset) +
+                        " result=0x" +
+                        JniProbeHex(
+                            result_index) +
+                        " source=" +
+                        source +
+                        " totalLookup#=" +
+                        std::to_string(
+                            v55_lookup_total));
+                }
+
+                return;
+            }
+
+            case kJniProbeSvcStartupGroupsContribution: {
+                // Original @ 0x102c85f4:
+                // ADD r10,r6,r10. At this point r6 is the first
+                // per-group value and r0 is the second.
+                const std::uint32_t vector_object =
+                    regs[7];
+                const std::uint32_t byte_offset =
+                    regs[8];
+                const std::uint32_t completed =
+                    regs[6];
+                const std::uint32_t total =
+                    regs[0];
+
+                regs[10] =
+                    regs[6] +
+                    regs[10];
+
+                if (vector_object !=
+                    kV55StartupGroupsVectorGuest) {
+                    return;
+                }
+
+                const std::string group =
+                    V55CurrentGateAGroup(
+                        vector_object,
+                        byte_offset);
+
+                ++v55_contribution_total;
+
+                const int slot =
+                    V55StartupGroupSlot(group);
+
+                bool should_log = false;
+
+                if (slot >= 0) {
+                    auto& stat =
+                        v55_group_stats[
+                            static_cast<std::size_t>(
+                                slot)];
+
+                    const bool changed =
+                        stat.last_completed !=
+                            completed ||
+                        stat.last_total !=
+                            total;
+
+                    ++stat.contribution_hits;
+                    stat.last_completed =
+                        completed;
+                    stat.last_total =
+                        total;
+
+                    should_log =
+                        stat.contribution_hits <=
+                            4u ||
+                        changed ||
+                        (stat.contribution_hits %
+                            100u) == 0u;
+                } else {
+                    should_log =
+                        v55_contribution_total <=
+                            8u;
+                }
+
+                if (should_log) {
+                    Append(
+                        "V55 STARTUP GROUPS contribution group=\"" +
+                        group +
+                        "\" index=0x" +
+                        JniProbeHex(
+                            regs[4]) +
+                        " completed+=" +
+                        std::to_string(
+                            completed) +
+                        " total+=" +
+                        std::to_string(
+                            total) +
+                        " runningCompleted=" +
+                        std::to_string(
+                            regs[10]) +
+                        " runningTotalBeforeAdd=" +
+                        std::to_string(
+                            regs[11]));
+                }
+
+                return;
+            }
+
+            default:
+                break;
+            }
+        }
+
         if (swi >= kJniProbeSvcStartupGateAResource &&
             swi <= kJniProbeSvcStartupMainMenuMarker) {
 
@@ -6706,6 +6914,24 @@ public:
                         base + 0x64cu);
                 ++v54_gate_a_resource_hits;
                 v54_gate_a_resource = regs[0];
+
+                if (logo_state) {
+                    const std::string snapshot =
+                        V55StartupGroupVectorState();
+
+                    if (snapshot !=
+                        v55_gate_vector_snapshot) {
+                        v55_gate_vector_snapshot =
+                            snapshot;
+
+                        Append(
+                            "V55 STARTUP GROUPS GateA-vector-change hit=" +
+                            std::to_string(
+                                v54_gate_a_resource_hits) +
+                            " " +
+                            snapshot);
+                    }
+                }
 
                 append_gate(
                     "GateA.resource hit=" +
