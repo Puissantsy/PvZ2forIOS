@@ -37,7 +37,8 @@ NSArray<NSURL *> *ExistingReportURLs() {
         @"summary.json",
         @"report.txt",
         @"addresses.csv",
-        @"annotated-log.txt"
+        @"annotated-log.txt",
+        @"startup-diagnosis.txt"
     ];
 
     NSMutableArray<NSURL *> *urls = [NSMutableArray array];
@@ -91,11 +92,11 @@ NSArray<NSURL *> *ExistingReportURLs() {
     [super viewDidLoad];
 
     self.view.backgroundColor = UIColor.systemBackgroundColor;
-    self.title = @"PvZ2 Inspector Lab v1.1";
+    self.title = @"PvZ2 Inspector Lab v1.2";
 
     UILabel *title = [[UILabel alloc] init];
     title.translatesAutoresizingMaskIntoConstraints = NO;
-    title.text = @"PvZ2 Inspector Lab v1.1";
+    title.text = @"PvZ2 Inspector Lab v1.2";
     title.font = [UIFont boldSystemFontOfSize:27.0];
     title.numberOfLines = 0;
 
@@ -107,8 +108,9 @@ NSArray<NSURL *> *ExistingReportURLs() {
         @"This auxiliary app does NOT launch PvZ2. It statically inspects the "
          "original ARMv7 libPVZ2.so inside the APK, parses its ELF layout, "
          "dynamic imports, relocations and .ARM.exidx function boundaries, "
-         "validates the exact GameStateMgr profile used by the v53 probe, "
-         "then resolves raw guest hex addresses from a full probe log. "
+         "validates the exact GameStateMgr v53 and StartupLogo v54 profiles, "
+         "classifies module addresses by ELF section, and turns v54 gate logs "
+         "into an automatic first-blocker diagnosis. "
          "No JIT or StikDebug is required.";
 
     UIButton *apkButton =
@@ -399,6 +401,12 @@ didPickDocumentsAtURLs:
                         [root stringByAppendingPathComponent:@"annotated-log.txt"],
                         result.annotated_log);
                 }
+
+                if (!result.startup_diagnosis.empty()) {
+                    WriteUtf8(
+                        [root stringByAppendingPathComponent:@"startup-diagnosis.txt"],
+                        result.startup_diagnosis);
+                }
             }
 
             dispatch_async(dispatch_get_main_queue(), ^{
@@ -413,12 +421,16 @@ didPickDocumentsAtURLs:
                              "• report.txt — full ELF/import/relocation/address report\n"
                              "• addresses.csv — every hex address from the log, ranked and classified\n"
                              "• summary.json — machine-readable summary\n"
+                             "%@"
                              "%@",
                             NSStringFromStd(result.summary),
                             root,
                             result.annotated_log.empty()
                                 ? @""
-                                : @"• annotated-log.txt — original log with resolved control-flow addresses\n"];
+                                : @"• annotated-log.txt — original log with resolved control-flow addresses\n",
+                            result.startup_diagnosis.empty()
+                                ? @""
+                                : @"• startup-diagnosis.txt — automatic v54 gate/NaN/object-correlation diagnosis\n"];
                 } else {
                     self.outputView.text =
                         [NSString stringWithFormat:
