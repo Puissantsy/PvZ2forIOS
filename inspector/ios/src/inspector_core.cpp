@@ -2620,6 +2620,886 @@ V56RuntimeDiagnosis DiagnoseV56Runtime(
     return d;
 }
 
+
+std::optional<std::uint64_t> ParseUnsignedAfterView(
+    std::string_view line,
+    std::string_view marker,
+    int base = 10) {
+
+    const std::size_t pos = line.find(marker);
+    if (pos == std::string_view::npos) {
+        return std::nullopt;
+    }
+
+    std::size_t p = pos + marker.size();
+    if (p >= line.size()) {
+        return std::nullopt;
+    }
+
+    std::uint64_t value = 0u;
+    bool any = false;
+
+    for (; p < line.size(); ++p) {
+        const unsigned char ch =
+            static_cast<unsigned char>(line[p]);
+
+        unsigned digit = 0u;
+        bool valid = false;
+
+        if (ch >= '0' && ch <= '9') {
+            digit = static_cast<unsigned>(ch - '0');
+            valid = true;
+        } else if (base == 16 &&
+                   ch >= 'a' && ch <= 'f') {
+            digit = 10u + static_cast<unsigned>(ch - 'a');
+            valid = true;
+        } else if (base == 16 &&
+                   ch >= 'A' && ch <= 'F') {
+            digit = 10u + static_cast<unsigned>(ch - 'A');
+            valid = true;
+        }
+
+        if (!valid || digit >= static_cast<unsigned>(base)) {
+            break;
+        }
+
+        any = true;
+        value =
+            value * static_cast<unsigned>(base) +
+            digit;
+    }
+
+    return any
+        ? std::optional<std::uint64_t>{value}
+        : std::nullopt;
+}
+
+std::string ExtractQuotedAfterView(
+    std::string_view line,
+    std::string_view marker) {
+
+    const std::size_t pos = line.find(marker);
+    if (pos == std::string_view::npos) {
+        return {};
+    }
+
+    const std::size_t begin =
+        pos + marker.size();
+    const std::size_t end =
+        line.find('"', begin);
+
+    if (end == std::string_view::npos) {
+        return {};
+    }
+
+    return std::string(
+        line.substr(
+            begin,
+            end - begin));
+}
+
+std::string ContextAroundNeedle(
+    const std::string& log,
+    const std::string& needle,
+    std::size_t before_lines,
+    std::size_t after_lines) {
+
+    const std::size_t hit = log.find(needle);
+    if (hit == std::string::npos) {
+        return {};
+    }
+
+    std::size_t begin = hit;
+    for (std::size_t i = 0u;
+         i < before_lines && begin > 0u;
+         ++i) {
+        const std::size_t search_from =
+            begin >= 2u ? begin - 2u : 0u;
+        const std::size_t nl =
+            log.rfind('\n', search_from);
+        if (nl == std::string::npos) {
+            begin = 0u;
+            break;
+        }
+        begin = nl + 1u;
+    }
+
+    std::size_t end = hit;
+    for (std::size_t i = 0u;
+         i <= after_lines && end < log.size();
+         ++i) {
+        const std::size_t nl =
+            log.find('\n', end);
+        if (nl == std::string::npos) {
+            end = log.size();
+            break;
+        }
+        end = nl + 1u;
+    }
+
+    return log.substr(
+        begin,
+        end - begin);
+}
+
+std::string TailLines(
+    const std::string& log,
+    std::size_t line_count) {
+
+    if (log.empty()) {
+        return {};
+    }
+
+    std::size_t begin = log.size();
+    for (std::size_t i = 0u;
+         i < line_count && begin > 0u;
+         ++i) {
+        const std::size_t search_from =
+            begin >= 2u ? begin - 2u : 0u;
+        const std::size_t nl =
+            log.rfind('\n', search_from);
+        if (nl == std::string::npos) {
+            begin = 0u;
+            break;
+        }
+        begin = nl + 1u;
+    }
+
+    return log.substr(begin);
+}
+
+std::string BuildLargeLogAddressSample(
+    const std::string& log) {
+
+    if (log.size() <= kLargeLogThreshold) {
+        return log;
+    }
+
+    const std::size_t head =
+        std::min<std::size_t>(
+            log.size(),
+            kLargeLogHeadBytes);
+    const std::size_t tail =
+        std::min<std::size_t>(
+            log.size() - head,
+            kLargeLogTailBytes);
+
+    std::string sample;
+    sample.reserve(
+        head + tail + 256u);
+
+    sample.append(
+        log.data(),
+        head);
+
+    sample +=
+        "\n[Inspector v1.4: middle of very large log omitted from generic "
+        "address ranking; v61 targeted scan still covers the complete log]\n";
+
+    if (tail != 0u) {
+        sample.append(
+            log.data() + log.size() - tail,
+            tail);
+    }
+
+    return sample;
+}
+
+struct V61WorkerRuntime {
+    std::uint32_t tid = 0u;
+    bool payload_present = false;
+    std::uint32_t entry = 0u;
+    std::uint32_t this_ptr = 0u;
+    std::uint32_t wrapper_arg = 0u;
+    std::uint64_t slices = 0u;
+    std::uint64_t slices_after_fault = 0u;
+    std::uint64_t max_total_ticks = 0u;
+    std::uint32_t last_pc = 0u;
+    bool failed = false;
+    bool returned = false;
+};
+
+struct V61CrashRuntime {
+    bool present = false;
+    std::uint32_t pc = 0u;
+    std::uint32_t lr = 0u;
+    std::uint32_t return_pc = 0u;
+    std::uint32_t sp = 0u;
+    std::uint32_t pthread_id = 0u;
+    std::array<std::uint32_t, 13> regs{};
+    std::string phase;
+    std::string last_log;
+    std::uint64_t line_number = 0u;
+};
+
+struct V61RuntimeDiagnosis {
+    bool present = false;
+    std::size_t source_log_bytes = 0u;
+    std::uint64_t source_log_lines = 0u;
+    std::uint64_t pump_boundaries = 0u;
+    std::uint64_t pump_boundaries_at_fault = 0u;
+    std::uint64_t pump_boundaries_after_fault = 0u;
+    std::uint64_t pseudo_future_boundary_lines = 0u;
+    std::uint64_t worker_slice_lines = 0u;
+    bool success_step_present = false;
+    bool dispatch_chain_consistent = false;
+    bool worker_payload_matches = false;
+    bool runaway_after_fault = false;
+    bool boundary_future_snapshot_invalid = false;
+    V61CrashRuntime crash;
+    std::map<std::uint32_t, V61WorkerRuntime> workers;
+    std::string text;
+    std::string critical_excerpt;
+};
+
+V61RuntimeDiagnosis DiagnoseV61Runtime(
+    const std::string& log,
+    const Elf32Arm& elf,
+    const V61ProfileValidation& static_profile,
+    const TaskResourceStaticAudit& task_audit) {
+
+    V61RuntimeDiagnosis d;
+    d.source_log_bytes = log.size();
+
+    if (log.find("V61 RES-STREAM") == std::string::npos &&
+        log.find("V61 WORKER PAYLOAD") == std::string::npos) {
+        return d;
+    }
+
+    d.present = true;
+    d.success_step_present =
+        log.find("SUCCESS STEP 3:") !=
+        std::string::npos;
+
+    bool fault_seen = false;
+
+    std::size_t line_begin = 0u;
+    std::uint64_t line_number = 0u;
+
+    while (line_begin < log.size()) {
+        std::size_t line_end =
+            log.find('\n', line_begin);
+        if (line_end == std::string::npos) {
+            line_end = log.size();
+        }
+
+        ++line_number;
+        const std::string_view line(
+            log.data() + line_begin,
+            line_end - line_begin);
+
+        if (line.find(
+                "kind=res-stream-pump-boundary") !=
+            std::string_view::npos) {
+
+            ++d.pump_boundaries;
+
+            if (line.find(
+                    "wait_object{future=") !=
+                std::string_view::npos) {
+                ++d.pseudo_future_boundary_lines;
+            }
+        }
+
+        if (line.find(
+                "V61 WORKER PAYLOAD tid=") !=
+            std::string_view::npos) {
+
+            const auto tid =
+                ParseUnsignedAfterView(
+                    line,
+                    "tid=");
+
+            if (tid) {
+                auto& w =
+                    d.workers[
+                        static_cast<std::uint32_t>(*tid)];
+                w.tid =
+                    static_cast<std::uint32_t>(*tid);
+                w.payload_present = true;
+
+                if (const auto v =
+                        ParseUnsignedAfterView(
+                            line,
+                            "entry=0x",
+                            16)) {
+                    w.entry =
+                        static_cast<std::uint32_t>(*v);
+                }
+                if (const auto v =
+                        ParseUnsignedAfterView(
+                            line,
+                            "this=0x",
+                            16)) {
+                    w.this_ptr =
+                        static_cast<std::uint32_t>(*v);
+                }
+                if (const auto v =
+                        ParseUnsignedAfterView(
+                            line,
+                            "wrapperArg=0x",
+                            16)) {
+                    w.wrapper_arg =
+                        static_cast<std::uint32_t>(*v);
+                }
+            }
+        }
+
+        if (line.find(
+                "V22 WORKER SLICE tid=") !=
+            std::string_view::npos) {
+
+            const auto tid =
+                ParseUnsignedAfterView(
+                    line,
+                    "tid=");
+
+            if (tid) {
+                auto& w =
+                    d.workers[
+                        static_cast<std::uint32_t>(*tid)];
+                w.tid =
+                    static_cast<std::uint32_t>(*tid);
+                ++w.slices;
+                ++d.worker_slice_lines;
+
+                if (fault_seen) {
+                    ++w.slices_after_fault;
+                }
+
+                if (const auto v =
+                        ParseUnsignedAfterView(
+                            line,
+                            "PC=0x",
+                            16)) {
+                    w.last_pc =
+                        static_cast<std::uint32_t>(*v);
+                }
+
+                if (const auto v =
+                        ParseUnsignedAfterView(
+                            line,
+                            "total_ticks=")) {
+                    w.max_total_ticks =
+                        std::max<std::uint64_t>(
+                            w.max_total_ticks,
+                            *v);
+                }
+
+                if (line.find("failed=YES") !=
+                    std::string_view::npos) {
+                    w.failed = true;
+                }
+                if (line.find("returned=YES") !=
+                    std::string_view::npos) {
+                    w.returned = true;
+                }
+            }
+        }
+
+        if (!d.crash.present &&
+            line.find(
+                "V23 EXCEPTION: Dynarmic exception NoExecuteFault") !=
+                std::string_view::npos) {
+
+            d.crash.present = true;
+            d.crash.line_number = line_number;
+            d.pump_boundaries_at_fault =
+                d.pump_boundaries;
+            fault_seen = true;
+
+            if (const auto v =
+                    ParseUnsignedAfterView(
+                        line,
+                        "PC=0x",
+                        16)) {
+                d.crash.pc =
+                    static_cast<std::uint32_t>(*v);
+            }
+            if (const auto v =
+                    ParseUnsignedAfterView(
+                        line,
+                        "LR=0x",
+                        16)) {
+                d.crash.lr =
+                    static_cast<std::uint32_t>(*v);
+            }
+            if (const auto v =
+                    ParseUnsignedAfterView(
+                        line,
+                        "returnPC=0x",
+                        16)) {
+                d.crash.return_pc =
+                    static_cast<std::uint32_t>(*v);
+            }
+            if (const auto v =
+                    ParseUnsignedAfterView(
+                        line,
+                        "SP=0x",
+                        16)) {
+                d.crash.sp =
+                    static_cast<std::uint32_t>(*v);
+            }
+            if (const auto v =
+                    ParseUnsignedAfterView(
+                        line,
+                        "pthread=")) {
+                d.crash.pthread_id =
+                    static_cast<std::uint32_t>(*v);
+            }
+
+            const std::size_t phase_pos =
+                line.find("phase=");
+            if (phase_pos !=
+                std::string_view::npos) {
+                const std::size_t begin =
+                    phase_pos + 6u;
+                std::size_t end = begin;
+                while (end < line.size() &&
+                       !std::isspace(
+                           static_cast<unsigned char>(
+                               line[end]))) {
+                    ++end;
+                }
+                d.crash.phase =
+                    std::string(
+                        line.substr(
+                            begin,
+                            end - begin));
+            }
+
+            for (std::size_t i = 0u;
+                 i < d.crash.regs.size();
+                 ++i) {
+                const std::string marker =
+                    "r" +
+                    std::to_string(i) +
+                    "=0x";
+                if (const auto v =
+                        ParseUnsignedAfterView(
+                            line,
+                            marker,
+                            16)) {
+                    d.crash.regs[i] =
+                        static_cast<std::uint32_t>(*v);
+                }
+            }
+
+            d.crash.last_log =
+                ExtractQuotedAfterView(
+                    line,
+                    "lastLog=\"");
+        }
+
+        if (line_end == log.size()) {
+            break;
+        }
+        line_begin = line_end + 1u;
+    }
+
+    d.source_log_lines = line_number;
+
+    if (d.crash.present &&
+        d.pump_boundaries >=
+            d.pump_boundaries_at_fault) {
+        d.pump_boundaries_after_fault =
+            d.pump_boundaries -
+            d.pump_boundaries_at_fault;
+    }
+
+    d.boundary_future_snapshot_invalid =
+        d.pseudo_future_boundary_lines != 0u;
+
+    if (d.crash.present) {
+        const auto& r = d.crash.regs;
+
+        d.dispatch_chain_consistent =
+            static_profile.exact_profile() &&
+            d.crash.pc == r[1] &&
+            d.crash.lr ==
+                kGuestBase + 0x00868cbcu &&
+            d.crash.return_pc ==
+                d.crash.lr &&
+            r[0] == r[7] &&
+            r[5] == r[6] + 4u &&
+            r[9] == r[4] + 0x5cu;
+
+        const auto it =
+            d.workers.find(
+                d.crash.pthread_id);
+        if (it != d.workers.end()) {
+            d.worker_payload_matches =
+                it->second.payload_present &&
+                it->second.entry ==
+                    kGuestBase + 0x00abd894u;
+        }
+    }
+
+    d.runaway_after_fault =
+        d.crash.present &&
+        d.pump_boundaries_after_fault >
+            10000u &&
+        !d.success_step_present;
+
+    std::ostringstream out;
+    out
+        << "PvZ2 Inspector Lab v1.4 - v61 crash/scheduler diagnosis\n"
+        << "========================================================\n"
+        << "Source: complete supplied log scan for v61-specific events.\n"
+        << "Log bytes: "
+        << d.source_log_bytes
+        << "\n"
+        << "Log lines scanned: "
+        << d.source_log_lines
+        << "\n"
+        << "v61 static pump/worker profile: "
+        << (static_profile.exact_profile()
+                ? "MATCH"
+                : "PARTIAL/MISMATCH")
+        << " ("
+        << static_profile.matched()
+        << "/"
+        << static_profile.checks.size()
+        << ")\n\n";
+
+    out
+        << "SCHEDULER OBSERVATION\n"
+        << "---------------------\n"
+        << "res-stream-pump-boundary lines: "
+        << d.pump_boundaries
+        << "\n"
+        << "boundaries already observed at first NoExecuteFault: "
+        << d.pump_boundaries_at_fault
+        << "\n"
+        << "boundaries after that fault: "
+        << d.pump_boundaries_after_fault
+        << "\n"
+        << "worker-slice lines: "
+        << d.worker_slice_lines
+        << "\n"
+        << "SUCCESS STEP 3 present: "
+        << (d.success_step_present ? "YES" : "NO")
+        << "\n"
+        << "runaway scheduling evidence after worker failure: "
+        << (d.runaway_after_fault ? "YES" : "NO")
+        << "\n\n";
+
+    out
+        << "WORKERS\n"
+        << "-------\n";
+    for (const auto& [tid, w] : d.workers) {
+        out
+            << "tid="
+            << tid
+            << " payload="
+            << (w.payload_present ? "YES" : "NO");
+
+        if (w.payload_present) {
+            out
+                << " entry="
+                << Hex(w.entry)
+                << " this="
+                << Hex(w.this_ptr)
+                << " wrapperArg="
+                << Hex(w.wrapper_arg);
+        }
+
+        out
+            << " slices="
+            << w.slices
+            << " slicesAfterFault="
+            << w.slices_after_fault
+            << " maxTotalTicks="
+            << w.max_total_ticks
+            << " lastPC="
+            << Hex(w.last_pc)
+            << " returned="
+            << (w.returned ? "YES" : "NO")
+            << " failed="
+            << (w.failed ? "YES" : "NO")
+            << "\n";
+    }
+
+    out
+        << "\nFIRST NoExecuteFault\n"
+        << "--------------------\n";
+
+    if (!d.crash.present) {
+        out
+            << "No NoExecuteFault found in the supplied v61 log.\n";
+    } else {
+        const auto& r = d.crash.regs;
+
+        out
+            << "log line: "
+            << d.crash.line_number
+            << "\n"
+            << "pthread/phase: "
+            << d.crash.pthread_id
+            << "/"
+            << d.crash.phase
+            << "\n"
+            << "PC invalid target: "
+            << Hex(d.crash.pc)
+            << "\n"
+            << "LR/returnPC: "
+            << Resolve(d.crash.lr, elf)
+            << " / "
+            << Resolve(d.crash.return_pc, elf)
+            << "\n"
+            << "manager r4: "
+            << Hex(r[4])
+            << "\n"
+            << "current vector slot r6: "
+            << Hex(r[6])
+            << "\n"
+            << "next vector slot r5: "
+            << Hex(r[5])
+            << "\n"
+            << "TaskResource object r7: "
+            << Hex(r[7])
+            << "\n"
+            << "BLX target r1: "
+            << Hex(r[1])
+            << "\n"
+            << "last guest log: "
+            << (d.crash.last_log.empty()
+                    ? "(not captured)"
+                    : d.crash.last_log)
+            << "\n"
+            << "verified register/callsite chain: "
+            << (d.dispatch_chain_consistent
+                    ? "MATCH"
+                    : "PARTIAL/MISMATCH")
+            << "\n"
+            << "worker payload matches resource worker entry "
+            << Hex(kGuestBase + 0x00abd894u)
+            << ": "
+            << (d.worker_payload_matches
+                    ? "YES"
+                    : "NO")
+            << "\n\n";
+
+        if (d.dispatch_chain_consistent) {
+            out
+                << "CONFIRMED MACHINE-LEVEL FAILURE\n"
+                << "-------------------------------\n"
+                << "The exact APK sequence is:\n"
+                << "  r7 = *r6                      @ "
+                << Hex(kGuestBase + 0x00868ca8u)
+                << "\n"
+                << "  vtable = *r7                  @ "
+                << Hex(kGuestBase + 0x00868cacu)
+                << "\n"
+                << "  r1 = *(vtable + 0x14)         @ "
+                << Hex(kGuestBase + 0x00868cb0u)
+                << "\n"
+                << "  r0 = r7; BLX r1               @ "
+                << Hex(kGuestBase + 0x00868cb8u)
+                << "\n"
+                << "The exception has r1=PC="
+                << Hex(d.crash.pc)
+                << ", so the +0x14 virtual slot used for this object "
+                << "resolved to an invalid executable target.\n"
+                << "The actual runtime value [r7] (the vtable pointer) is NOT "
+                << "present in v61's log, so this log alone cannot distinguish "
+                << "a stale/wrong object pointer from a corrupted/wrong "
+                << "vtable.\n\n";
+        }
+    }
+
+    out
+        << "STATIC TaskResource REFERENCE\n"
+        << "-----------------------------\n"
+        << "The APK exports a vector<IResStreamsDriver::TaskResource*> "
+        << "template helper at "
+        << Hex(kGuestBase + 0x00abe654u)
+        << ". Direct producer paths assign vtable "
+        << Hex(kGuestBase + task_audit.vtable_offset)
+        << ".\n"
+        << "For that verified vtable, the three pump slots are:\n"
+        << "  +0x14 -> "
+        << Hex(kGuestBase + task_audit.vfn14_raw)
+        << "\n"
+        << "  +0x18 -> "
+        << Hex(kGuestBase + task_audit.vfn18_raw)
+        << "\n"
+        << "  +0x3c -> "
+        << Hex(kGuestBase + task_audit.vfn3c_raw)
+        << "\n"
+        << "Runtime [r7] remains unknown; these values are reference "
+        << "expectations, not proof of the crashed object's dynamic type.\n\n";
+
+    out
+        << "DIAGNOSTIC-LABEL WARNING\n"
+        << "------------------------\n"
+        << "res-stream-pump-boundary lines containing a future-shaped "
+        << "wait_object snapshot: "
+        << d.pseudo_future_boundary_lines
+        << "\n";
+
+    if (d.boundary_future_snapshot_invalid) {
+        out
+            << "At this boundary r4 is the ResourceManager/pump object, not a "
+            << "future. Fields such as done/failed/vfn2C from that snapshot "
+            << "must not be interpreted as future state.\n";
+    }
+
+    d.text = out.str();
+
+    std::ostringstream excerpt;
+    excerpt
+        << "PvZ2 Inspector Lab v1.4 - critical v61 excerpts\n"
+        << "================================================\n\n"
+        << "WORKER 7 CREATION CONTEXT\n"
+        << "-------------------------\n"
+        << ContextAroundNeedle(
+               log,
+               "V61 WORKER PAYLOAD tid=7",
+               5u,
+               8u)
+        << "\n"
+        << "FIRST NoExecuteFault CONTEXT\n"
+        << "----------------------------\n"
+        << ContextAroundNeedle(
+               log,
+               "V23 EXCEPTION: Dynarmic exception NoExecuteFault",
+               7u,
+               10u)
+        << "\n"
+        << "END OF SUPPLIED PARTIAL LOG\n"
+        << "---------------------------\n"
+        << TailLines(
+               log,
+               24u);
+
+    d.critical_excerpt =
+        excerpt.str();
+
+    return d;
+}
+
+std::string BuildNextProbePlan(
+    const V61RuntimeDiagnosis& v61,
+    const V61ProfileValidation& profile,
+    const TaskResourceStaticAudit& task) {
+
+    std::ostringstream out;
+    out
+        << "PvZ2 Inspector Lab v1.4 - next high-information probe plan\n"
+        << "===========================================================\n"
+        << "Purpose: resolve the v61 TaskResource virtual-dispatch failure "
+        << "and prevent another 75 MiB scheduling-loop log. This is a plan "
+        << "only; Inspector v1.4 does not modify the main PvZ2 probe.\n\n"
+        << "CONFIRMED BASIS\n"
+        << "---------------\n"
+        << "- v61 pump/worker static profile: "
+        << (profile.exact_profile()
+                ? "MATCH"
+                : "PARTIAL/MISMATCH")
+        << " ("
+        << profile.matched()
+        << "/"
+        << profile.checks.size()
+        << ")\n";
+
+    if (v61.present) {
+        out
+            << "- observed pump boundaries: "
+            << v61.pump_boundaries
+            << "\n"
+            << "- first NoExecuteFault: "
+            << (v61.crash.present
+                    ? Hex(v61.crash.pc)
+                    : std::string{"none"})
+            << ", worker tid="
+            << v61.crash.pthread_id
+            << "\n"
+            << "- post-fault pump boundaries: "
+            << v61.pump_boundaries_after_fault
+            << "\n";
+    }
+
+    out
+        << "- reference TaskResource vtable: "
+        << Hex(kGuestBase + task.vtable_offset)
+        << ", expected +0x14="
+        << Hex(kGuestBase + task.vfn14_raw)
+        << ".\n\n"
+        << "ONE BUILD, BATCHED INSTRUMENTATION\n"
+        << "----------------------------------\n"
+        << "1. PRE-BLX TASK SNAPSHOT at "
+        << Hex(kGuestBase + 0x00868cb8u)
+        << "\n"
+        << "   Before executing the native virtual call, log manager=r4, "
+        << "vectorBegin=[r4+0x50], vectorEnd=[r4+0x54], slot=r6, "
+        << "nextSlot=r5, object=r7, and index=(r6-vectorBegin)/4 when "
+        << "bounds/alignment are valid.\n"
+        << "   Read and classify [r7] as vtable. Dump object bytes/words "
+        << "+0x00..+0x80 and vtable words +0x00..+0x60. Resolve every "
+        << "vtable entry as CODE/DATA/heap/invalid. Explicitly print +0x14, "
+        << "+0x18 and +0x3c.\n"
+        << "   Compare [r7] with the static reference vtable "
+        << Hex(kGuestBase + task.vtable_offset)
+        << " and +0x14 with "
+        << Hex(kGuestBase + task.vfn14_raw)
+        << ". Do not replace either value.\n\n"
+        << "2. TaskResource PROVENANCE REGISTRY\n"
+        << "   Observe the producer vptr stores at "
+        << Hex(kGuestBase + 0x00abd650u)
+        << " and "
+        << Hex(kGuestBase + 0x00abd700u)
+        << "; record object pointer, assigned vtable, frame/thread and "
+        << "nearby fields.\n"
+        << "   Observe fast-path TaskResource queue inserts at "
+        << Hex(kGuestBase + 0x00abd68cu)
+        << ", "
+        << Hex(kGuestBase + 0x00abd73cu)
+        << " and "
+        << Hex(kGuestBase + 0x00abdf44u)
+        << ", plus the virtual producer return at "
+        << Hex(kGuestBase + 0x00abdf24u)
+        << " and reallocation helper "
+        << Hex(kGuestBase + 0x00abe654u)
+        << ".\n"
+        << "   Keep a bounded pointer->provenance table so the crash report "
+        << "can answer whether r7 was ever created/queued as a real "
+        << "TaskResource, when, and with which original vtable.\n\n"
+        << "3. WRITE WATCH FOR THE CRASH OBJECT\n"
+        << "   Once the first pre-BLX snapshot identifies the object, watch "
+        << "changes to object+0x00 (vptr) and, if practical, +0x00..+0x20. "
+        << "Record old/new value, PC, LR, thread and lifecycle phase. This "
+        << "separates bad construction from later overwrite/use-after-free.\n\n"
+        << "4. SCHEDULER FAIL-FAST / LOG BOUND\n"
+        << "   res-stream-pump-boundary is a scheduling opportunity, not a "
+        << "future wait. Log wait_object=none and never format r4 through the "
+        << "future snapshot helper for this kind.\n"
+        << "   After the first worker NoExecuteFault, capture one complete "
+        << "diagnostic bundle and at most a small bounded number of additional "
+        << "round-robin slices, then stop with a final summary. Do not emit "
+        << "100k repeated boundary lines. Throttle ordinary pump lines "
+        << "aggressively (first few + periodic counters).\n\n"
+        << "5. PRESERVE WORKING PROGRESS\n"
+        << "   Keep the validated Bionic ctype compatibility, VFS/RSB paths, "
+        << "GLES texture uploads, v57-v61 diagnostics and real worker payload "
+        << "logging. Do not force a ResourceManager entry, GameState or "
+        << "transition target.\n\n"
+        << "DECISION TREE FROM ONE RUN\n"
+        << "--------------------------\n"
+        << "- [r7] != expected/known TaskResource vtable and provenance never "
+        << "registered r7: stale/wrong pointer entered manager+0x50 vector.\n"
+        << "- provenance registered r7 correctly, but object+0 changed later: "
+        << "vptr overwrite / lifetime corruption; writer watch identifies it.\n"
+        << "- [r7] is a legitimate alternative TaskResource subtype but "
+        << "[vtable+0x14] is 0x50: inspect that subtype's construction/vtable "
+        << "initialization rather than patching the BLX.\n"
+        << "- pre-BLX target is valid and v61 fault disappears under bounded "
+        << "run: compare scheduling/interleaving timing before changing "
+        << "resource semantics.\n";
+
+    return out.str();
+}
+
 std::string BuildV57Plan(
     const V55RuntimeDiagnosis& v55,
     const V56RuntimeDiagnosis& v56,
