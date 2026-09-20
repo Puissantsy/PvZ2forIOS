@@ -543,6 +543,16 @@ private:
 
 const std::map<std::uint32_t, std::string>& KnownLabels() {
     static const std::map<std::uint32_t, std::string> labels = {
+        {0x00133818u, "GameStateMgr factory (allocates 0x460 bytes)"},
+        {0x001492bcu, "GameStateMgr constructor"},
+        {0x002732c8u, "GameStateMgr current-state comparison helper"},
+        {0x002747d0u, "GameStateMgrState.ApplyState"},
+        {0x00274a1cu, "GameStateMgr current-state getter (+0x374)"},
+        {0x00274ab8u, "GameStateMgr transition-state getter (+0x3c4)"},
+        {0x00274b44u, "GameStateMgrState.RequestTransition"},
+        {0x00275478u, "GameStateMgr pending/current transition update"},
+        {0x002767b4u, "GameState.MainMenu.Enter(resources)"},
+        {0x00276970u, "GameState.StartupLogo.Update"},
         {0x005149c4u, "ImageRes.splash-null virtual-call site observed in v36"},
         {0x005149c8u, "ImageRes.splash-null virtual-call return observed in v36"},
         {0x0086f66cu, "ResourceRegistryLookup.function_start"},
@@ -564,6 +574,106 @@ const std::map<std::uint32_t, std::string>& KnownLabels() {
         {0x009f190cu, "Native_onDrawFrame"},
     };
     return labels;
+}
+
+struct GameStateProfileValidation {
+    bool request_hook_opcode = false;
+    bool apply_hook_opcode = false;
+    bool constructor_present = false;
+    bool factory_present = false;
+    bool main_menu_enter_present = false;
+    bool logo_update_present = false;
+
+    bool exact_profile() const {
+        return
+            request_hook_opcode &&
+            apply_hook_opcode &&
+            constructor_present &&
+            factory_present &&
+            main_menu_enter_present &&
+            logo_update_present;
+    }
+};
+
+bool HasCodeAt(
+    const Elf32Arm& elf,
+    std::uint32_t offset,
+    std::size_t bytes = 4u) {
+
+    const auto data =
+        elf.Read(offset, bytes);
+
+    return data.size() == bytes;
+}
+
+bool HasWordAt(
+    const Elf32Arm& elf,
+    std::uint32_t offset,
+    std::uint32_t expected) {
+
+    const auto data =
+        elf.Read(offset, 4u);
+
+    return
+        data.size() == 4u &&
+        U32(data.data()) == expected;
+}
+
+GameStateProfileValidation ValidateGameStateProfile(
+    const Elf32Arm& elf) {
+
+    GameStateProfileValidation v;
+
+    // These are the exact ARM instructions replaced by the v53 runtime
+    // observation traps. Both are MOV r4,r0 and the trap emulates that MOV.
+    v.apply_hook_opcode =
+        HasWordAt(
+            elf,
+            0x002747d8u,
+            0xe1a04000u);
+    v.request_hook_opcode =
+        HasWordAt(
+            elf,
+            0x00274b4cu,
+            0xe1a04000u);
+
+    v.constructor_present =
+        HasCodeAt(
+            elf,
+            0x001492bcu);
+    v.factory_present =
+        HasCodeAt(
+            elf,
+            0x00133818u);
+    v.main_menu_enter_present =
+        HasCodeAt(
+            elf,
+            0x002767b4u);
+    v.logo_update_present =
+        HasCodeAt(
+            elf,
+            0x00276970u);
+
+    return v;
+}
+
+std::string GameStateName(std::int32_t state) {
+    switch (state) {
+        case -1: return "NONE";
+        case 1: return "GAME_Initializing";
+        case 2: return "GAME_LogoScreen";
+        case 3: return "GAME_PatchScreen";
+        case 4: return "GAME_MainMenu";
+        case 5: return "GAME_Game";
+        case 6: return "GAME_WorldMap";
+        case 7: return "GAME_ContentUpdateScreen";
+        case 8: return "GAME_Almanac";
+        case 9: return "GAME_Store";
+        case 10: return "GAME_WaitForNetworkLoad";
+        default:
+            return "UNKNOWN_" +
+                std::to_string(state);
+    }
 }
 
 struct Classified {
@@ -1011,6 +1121,16 @@ PvZ2InspectorResult InspectPvZ2ApkAndLog(
             summary << "log: not supplied (static ELF analysis only)\n";
         }
 
+        const auto game_state_profile =
+            ValidateGameStateProfile(elf);
+
+        summary
+            << "GameState v53 static profile: "
+            << (game_state_profile.exact_profile()
+                    ? "MATCH"
+                    : "PARTIAL/MISMATCH")
+            << "\n";
+
         result.summary = summary.str();
 
         std::ostringstream report;
@@ -1073,6 +1193,63 @@ PvZ2InspectorResult InspectPvZ2ApkAndLog(
         for (const auto& name : imports) {
             report << "  " << name << "\n";
         }
+
+        report
+            << "\nExact GameState profile (PvZ2 1.5.252752)\n"
+            << "=========================================\n"
+            << "profile validation: "
+            << (game_state_profile.exact_profile()
+                    ? "MATCH"
+                    : "PARTIAL/MISMATCH")
+            << "\n"
+            << "GameStateMgr factory: "
+            << Hex(kGuestBase + 0x00133818u)
+            << " (allocates 0x460-byte object)\n"
+            << "GameStateMgr ctor: "
+            << Hex(kGuestBase + 0x001492bcu)
+            << "\n"
+            << "runtime object vtable expected: "
+            << Hex(kGuestBase + 0x00cdb7d8u)
+            << "\n"
+            << "current GameState field: +0x374\n"
+            << "GameStateMgrTransitionState field: +0x3c4\n"
+            << "pending/requested GameState field: +0x41c\n"
+            << "ApplyState: "
+            << Hex(kGuestBase + 0x002747d0u)
+            << " hook-word@+0x8="
+            << (game_state_profile.apply_hook_opcode
+                    ? "MATCH"
+                    : "MISMATCH")
+            << "\n"
+            << "RequestTransition: "
+            << Hex(kGuestBase + 0x00274b44u)
+            << " hook-word@+0x8="
+            << (game_state_profile.request_hook_opcode
+                    ? "MATCH"
+                    : "MISMATCH")
+            << "\n"
+            << "MainMenu Enter: "
+            << Hex(kGuestBase + 0x002767b4u)
+            << "\n"
+            << "StartupLogo Update: "
+            << Hex(kGuestBase + 0x00276970u)
+            << "\n"
+            << "GameState enum:\n";
+
+        for (std::int32_t state = 1;
+             state <= 10;
+             ++state) {
+            report
+                << "  "
+                << state
+                << " = "
+                << GameStateName(state)
+                << "\n";
+        }
+
+        report
+            << "\nThis profile is descriptive evidence from the exact 1.5.252752 ARM binary. "
+            << "The inspector does not execute or mutate the state machine.\n";
 
         report << "\nKnown port landmarks\n"
                << "====================\n";
@@ -1205,6 +1382,17 @@ PvZ2InspectorResult InspectPvZ2ApkAndLog(
             << "  \"exidxFunctionStarts\": "
             << result.exidx_function_starts << ",\n"
             << "  \"relocations\": " << result.relocations << ",\n"
+            << "  \"gameStateProfileExactMatch\": "
+            << (game_state_profile.exact_profile()
+                    ? "true"
+                    : "false")
+            << ",\n"
+            << "  \"gameStateManagerVtable\": \""
+            << Hex(kGuestBase + 0x00cdb7d8u)
+            << "\",\n"
+            << "  \"gameStateCurrentOffset\": \"0x374\",\n"
+            << "  \"gameStateTransitionOffset\": \"0x3c4\",\n"
+            << "  \"gameStatePendingOffset\": \"0x41c\",\n"
             << "  \"logHexOccurrences\": "
             << result.log_hex_occurrences << ",\n"
             << "  \"logUniqueAddresses\": "
