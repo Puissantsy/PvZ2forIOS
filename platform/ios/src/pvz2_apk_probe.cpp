@@ -20630,10 +20630,15 @@ bool JniProbePrepareRuntime(
           !patch_resource_native_miss(
               0x00a83b44u,
               0xe3a00000u,
-              kJniProbeSvcV56TrieMissZero)))) {
+              kJniProbeSvcV56TrieMissZero))) ||
+        (callbacks.V57CtypeEnabled() &&
+         !patch_resource_native_miss(
+              0x00a83af8u,
+              0xe6ef0075u,
+              kJniProbeSvcV57TrieCompare))) {
 
         error =
-            "v56 diagnostic-matrix resource/state/StartupLogo/registry instrumentation profile did not match the verified PvZ2 1.5.252752 ARM code.";
+            "v57 ctype/deep-scout resource/state/StartupLogo/registry/trie instrumentation profile did not match the verified PvZ2 1.5.252752 ARM code.";
         return false;
     }
 
@@ -20648,7 +20653,14 @@ bool JniProbePrepareRuntime(
     callbacks.Append(
         std::string{"V56 DIAGNOSTIC MATRIX installed mode="} +
         callbacks.V56ModeName() +
-        ": ResourceManager registry builder@0x10867708 is traced at entry/source28/post28/source30/post30/return; writes to manager+0x28..+0x37 are watched. Scout modes preserve the first native Gate-A cycle and only then may set comparison S2=1.0 after 4/4 MISS proof. Full Matrix additionally traces selected keys through compact-trie lookup@0x10a83ab0.");
+        ": ResourceManager registry builder@0x10867708 is traced at entry/source28/post28/source30/post30/return; writes to manager+0x28..+0x37 are watched. Gate-A Scout preserves the first native cycle and only then may set comparison S2=1.0 after 4/4 MISS proof. Matrix-capable modes trace selected keys through compact-trie lookup@0x10a83ab0.");
+
+    callbacks.Append(
+        std::string{"V57 CTYPE/DEEP-SCOUT profile: ctypeCompat="} +
+        (callbacks.V57CtypeEnabled() ? "YES" : "NO") +
+        " deepScout=" +
+        (callbacks.V57DeepScoutEnabled() ? "YES" : "NO") +
+        ". Ctype modes install Bionic-compatible imported data and exact trie-node compare tracing@0x10a83af8. Deep Scout may only override Gate-C loaded r1 after >=10 stable frames with no writes; object memory and GameState remain native.");
 
     return_trampoline =
         JniProbeMakeTrampoline(
@@ -23328,11 +23340,21 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                     "V56 DIAGNOSTIC MATRIX SUMMARY: " +
                     result.diagnostic_matrix_summary);
 
+                result.ctype_deep_scout_summary =
+                    callbacks.V57CtypeDeepScoutSummary();
+                result.ctype_self_check_passed =
+                    callbacks.v57_ctype_self_check_passed;
+                result.gate_c_scout_activated =
+                    callbacks.v57_gate_c_scout_activated;
+                callbacks.Append(
+                    "V57 SUMMARY: " +
+                    result.ctype_deep_scout_summary);
+
                 result.ok = true;
                 result.message =
-                    std::string{"PvZ2 completed v56 Diagnostic Matrix mode "} +
+                    std::string{"PvZ2 completed v57 mode "} +
                     callbacks.V56ModeName() +
-                    " on top of stable v52 rendering + v53/v54/v55 diagnostics. Registry observation remains passive; Scout/Matrix only alter Gate-A comparison S2 after a complete native 4/4-MISS proof. No resource table, resource index, GameState, or transition target is forced.";
+                    " on top of stable v52-v56 diagnostics. V56_BASELINE preserves the old import behavior. Ctype modes use ABI-correct Bionic ctype imported data. Deep Scout never fabricates registry entries or GameState transitions; Gate-A is only scouted after legacy 4/4-MISS proof and Gate-C only after a delayed no-write proof.";
                 return result;
             }
 
