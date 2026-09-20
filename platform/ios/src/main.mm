@@ -258,6 +258,9 @@ NSString *NSStringFromStd(
 @property(nonatomic, strong)
     UIButton *jniButton;
 
+@property(nonatomic, strong)
+    UISegmentedControl *diagnosticModeControl;
+
 @property(nonatomic, assign)
     BOOL dynarmicRunning;
 
@@ -315,7 +318,7 @@ NSString *NSStringFromStd(
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — Passive Exact GameState Probe v53";
+        @"PvZ2forIOS — v56 Diagnostic Matrix";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -324,7 +327,7 @@ NSString *NSStringFromStd(
         NO;
 
     title.text =
-        @"PvZ2forIOS — passive exact GameState probe v53";
+        @"PvZ2forIOS — v56 Diagnostic Matrix";
 
     title.font =
         [UIFont
@@ -340,8 +343,7 @@ NSString *NSStringFromStd(
         NO;
 
     explanation.text =
-        @"v52 is the known-good baseline: it completes startup, renders the EA sequence, then reaches a stable black framebuffer while preserving all VFS/JNI/GLES/resource diagnostics. "
-         @"The previous v53 experiment proved the exact GameState hooks work, but forced GAME_MainMenu while the engine was still GAME_Initializing before frame 1; that invalid early transition crashed in guest memcpy. This rebuilt v53 starts directly from the v52 commit and is observational only: it preserves the full v52 lifecycle/adaptive soak and passively logs the real GameState manager, current/pending state, RequestTransition calls and ApplyState calls. It never injects or forces a state transition.";
+        @"v56 keeps every validated v52-v55 diagnostic and adds a three-mode ResourceManager matrix. Passive Registry never changes guest behavior. Gate-A Scout records one complete native 4/4-MISS Gate-A cycle before forcing only the comparison input S2 to 1.0. Full Matrix does the same Scout plus targeted compact-trie tracing for startup groups/resources. Registry tables, resource indices and GameState transitions are never fabricated.";
 
     explanation.numberOfLines = 0;
 
@@ -386,6 +388,20 @@ NSString *NSStringFromStd(
                 @"3. Run PvZ2\nAPK + OBB"
             selector:
                 @selector(selectApkForJni)];
+
+    self.diagnosticModeControl =
+        [[UISegmentedControl alloc]
+            initWithItems:
+                @[
+                    @"Passive Registry",
+                    @"Gate-A Scout",
+                    @"Full Matrix"
+                ]];
+
+    self.diagnosticModeControl.translatesAutoresizingMaskIntoConstraints =
+        NO;
+    self.diagnosticModeControl.selectedSegmentIndex =
+        2;
 
     UIStackView *mainButtons =
         [[UIStackView alloc]
@@ -475,6 +491,7 @@ NSString *NSStringFromStd(
                     title,
                     explanation,
                     self.statusLabel,
+                    self.diagnosticModeControl,
                     mainButtons,
                     utilityButtons,
                     self.logView
@@ -520,6 +537,10 @@ NSString *NSStringFromStd(
                         guide.bottomAnchor
                     constant:
                         -16.0],
+
+                [self.diagnosticModeControl.heightAnchor
+                    constraintEqualToConstant:
+                        34.0],
 
                 [mainButtons.heightAnchor
                     constraintEqualToConstant:
@@ -1011,9 +1032,28 @@ NSString *NSStringFromStd(
     picker.modalPresentationStyle =
         UIModalPresentationFormSheet;
 
+    NSArray<NSString *> *modeNames =
+        @[
+            @"PASSIVE_REGISTRY",
+            @"GATE_A_SCOUT",
+            @"FULL_MATRIX"
+        ];
+
+    NSInteger modeIndex =
+        self.diagnosticModeControl.selectedSegmentIndex;
+
+    if (modeIndex < 0 ||
+        modeIndex >=
+            (NSInteger)modeNames.count) {
+        modeIndex = 0;
+    }
+
     [self
         appendUI:
-            @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v54 preserves the stable v52 startup/render path and v53 exact GameState tracing, then passively instruments StartupLogo.Update gates and late path depth. Key outputs are V54 STARTUPLOGO GateA/C/D/... lines, V54 STARTUPLOGO SUMMARY, V53 GAMESTATE MANAGER / REQUEST / APPLY / SNAPSHOT, plus all existing V52 diagnostics. No state, gate result, or transition is forced. The image shown at the end is the actual FINAL framebuffer."];
+            [NSString
+                stringWithFormat:
+                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v56 mode=%@. Passive Registry observes the ResourceManager registry pipeline; Scout/Matrix only bypass Gate A after one native 4/4-MISS proof. Full Matrix also traces targeted compact-trie keys. All v52-v55 diagnostics remain enabled.",
+                    modeNames[modeIndex]]];
 
     [self
         presentViewController:
@@ -1067,6 +1107,26 @@ NSString *NSStringFromStd(
         return;
     }
 
+    NSInteger selectedMode =
+        self.diagnosticModeControl.selectedSegmentIndex;
+
+    PvZ2DiagnosticMode diagnosticMode =
+        PvZ2DiagnosticMode::PassiveRegistry;
+    NSString *diagnosticModeName =
+        @"PASSIVE_REGISTRY";
+
+    if (selectedMode == 1) {
+        diagnosticMode =
+            PvZ2DiagnosticMode::GateAScout;
+        diagnosticModeName =
+            @"GATE_A_SCOUT";
+    } else if (selectedMode == 2) {
+        diagnosticMode =
+            PvZ2DiagnosticMode::FullMatrix;
+        diagnosticModeName =
+            @"FULL_MATRIX";
+    }
+
     ResetPersistentLog();
     self.logView.text = @"";
 
@@ -1074,7 +1134,8 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v55 passive Startup resource-group diagnosis started; PID=%d ===",
+                    @"=== PvZ2 v56 Diagnostic Matrix started mode=%@; PID=%d ===",
+                    diagnosticModeName,
                     getpid()]];
 
     self.jniRunning =
@@ -1193,7 +1254,8 @@ NSString *NSStringFromStd(
                                     @"[FULLLOAD] %@",
                                     nsLine]);
                         }
-                    });
+                    },
+                    diagnosticMode);
 
             dispatch_async(
                 dispatch_get_main_queue(),
@@ -1298,6 +1360,16 @@ NSString *NSStringFromStd(
                                             result.startup_resource_group_summary)]];
                     }
 
+                    if (!result.diagnostic_matrix_summary.empty()) {
+                        [selfRef
+                            appendUI:
+                                [NSString
+                                    stringWithFormat:
+                                        @"STEP 3C6: %@",
+                                        NSStringFromStd(
+                                            result.diagnostic_matrix_summary)]];
+                    }
+
                     [selfRef
                         appendUI:
                             [NSString
@@ -1355,7 +1427,7 @@ NSString *NSStringFromStd(
                     if (result.ok) {
                         [selfRef
                             appendUI:
-                                @"SUCCESS STEP 3: PvZ2 completed stable v52 rendering + v53 GameState + v54 StartupLogo + passive v55 Startup resource-group tracing; nothing was forced."];
+                                @"SUCCESS STEP 3: PvZ2 completed v56 Diagnostic Matrix on top of v52-v55 diagnostics. Check V56 REGISTRY DIAGNOSIS / WRITE / TARGET LOOKUP / SCOUT / SUMMARY lines."];
 
                         if (!result.final_frame_png_path.empty()) {
                             [selfRef
@@ -1383,11 +1455,11 @@ NSString *NSStringFromStd(
                         } else {
                             [selfRef
                                 showResult:
-                                    @"PvZ2 v55 passive Startup resource-group diagnostic returned"
+                                    @"PvZ2 v56 Diagnostic Matrix returned"
                                 message:
                                     [NSString
                                         stringWithFormat:
-                                            @"PvZ2 completed its native startup and v55 passive Startup resource-group diagnostic.\n\nGameAppInitialize: %u\nLifecycle calls completed: %u\nFrames returned: %u\nHost GLES active: %@\nRichest sampled frame: %u (%llu non-black pixels)\nConstructors: %u/%u\nJNI_OnLoad: 0x%08x\n\nNo final PNG capture was produced; inspect V55 STARTUP GROUPS / V55 STARTUP GROUP SUMMARY, V54 STARTUPLOGO, V53 GAMESTATE and preserved V52/V47 diagnostics in the full log.",
+                                            @"PvZ2 completed its v56 Diagnostic Matrix run.\n\nGameAppInitialize: %u\nLifecycle calls completed: %u\nFrames returned: %u\nHost GLES active: %@\nRichest sampled frame: %u (%llu non-black pixels)\nConstructors: %u/%u\nJNI_OnLoad: 0x%08x\n\nInspect V56 REGISTRY DIAGNOSIS / REGISTRY WRITE / TARGET LOOKUP / SCOUT / DIAGNOSTIC MATRIX SUMMARY plus preserved v55-v52 diagnostics in the full log.",
                                             result.game_app_initialize_return & 0xffu,
                                             result.lifecycle_calls_completed,
                                             result.draw_frames_completed,
