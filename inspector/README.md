@@ -3,105 +3,119 @@
 Auxiliary iOS/iPadOS application for the PvZ2forIOS reverse-engineering project.
 
 This target is deliberately separate from the main `platform/ios` port. Its job is
-**not** to launch Plants vs. Zombies 2. It turns raw values from probe logs into
-useful evidence without risking regressions in the main app.
+**not** to launch Plants vs. Zombies 2. It turns raw probe evidence into useful,
+repeatable diagnostics without risking regressions in the main app.
 
-## Lab v1.1.1
+## Lab v1.2
 
-Lab v1.1 accepts:
+Lab v1.2 accepts:
 
 1. the original PvZ2 1.5.252752 APK;
-2. optionally, a full `pvz2forios-probe.log` produced by the main port.
+2. optionally, a full `pvz2forios-probe.log` from the main port.
 
-It then:
+It retains the v1/v1.1 ELF/address analysis and adds three important capabilities.
+
+### 1. Section-aware ELF classification
+
+Addresses inside `libPVZ2.so` are now classified by their real ELF section.
+Only sections carrying `SHF_EXECINSTR` are treated as code and allowed to use
+`.ARM.exidx` function ranges or automatic disassembly.
+
+This fixes the v1/v1.1 failure mode where a vtable in `.data.rel.ro*` or a
+global in `.bss` could be incorrectly described as if it were inside the last
+stripped code function.
+
+Examples now distinguish:
+
+```
+libPVZ2.so+... section=.text CODE ARM
+libPVZ2.so+... section=.data.rel.ro.local DATA
+libPVZ2.so+... section=.bss DATA
+```
+
+### 2. Exact StartupLogo v54 static profile
+
+The inspector validates the exact ARM opcodes used by the passive v54
+instrumentation, including:
+
+- Gate A resource load;
+- Gate A completed/total capture;
+- Gate A VMOV / VCMPE / VMRS / BLT sequence;
+- Gate B/C/D branch instructions;
+- Gate C state load;
+- Gate D `manager+0x430` load;
+- after-A-D, E through J and late-flow markers;
+- PatchScreen and MainMenu request-path markers.
+
+This is tied to the exact PvZ2 1.5.252752 ARM binary. A mismatch is reported
+instead of silently applying labels to another build.
+
+### 3. Semantic v54 log diagnosis
+
+When a supplied log contains `V54 STARTUPLOGO` evidence, Lab v1.2 creates
+`startup-diagnosis.txt` and a structured `startupLogoRuntime` object in
+`summary.json`.
+
+For the reference v54 log from the real iPad, the expected diagnosis is:
+
+```
+GameState: GAME_LogoScreen
+Gate A resource: present
+Gate A completed/total: 0/0
+Gate A result bits: 0x7fc00000 (quiet NaN)
+Gate C: not reached
+Gate D: not reached
+PatchScreen marker: not reached
+MainMenu marker: not reached
+
+First observed blocker: Gate A
+```
+
+The report also explains the verified ARM floating-point sequence. A 0/0 result
+becomes an IEEE-754 qNaN; with the verified `VCMPE.F32 -> VMRS -> BLT` sequence,
+the comparison is unordered and the early-return branch is taken.
+
+That identifies the **immediate machine-level blocker**. It deliberately does
+not claim why the completed/total counters are zero.
+
+The report separately counts nearby resource-miss, wait-object and HTTP events
+under a **causality not established** heading.
+
+### 4. Object-pointer correlation
+
+If Gate A exposes a guest pointer, the inspector searches the supplied log for
+that same pointer and links it to the V52 object graph when available. This is
+the first step toward a generic runtime Object Inspector.
+
+## Existing analysis retained
+
+Lab v1.2 still:
 
 - extracts `lib/armeabi-v7a/libPVZ2.so` directly from the APK;
-- parses the ARM32 ELF program headers and section table;
-- lists `DT_NEEDED` libraries and the SONAME;
-- enumerates dynamic symbols and undefined/import symbols;
-- counts ELF REL relocations by ARM relocation type;
-- parses `.ARM.exidx` to recover neutral stripped-function boundaries;
-- recognizes the guest memory ranges already used by PvZ2forIOS:
-  - `0x10xxxxxx` libPVZ2.so,
-  - `0x20xxxxxx` guest stack,
-  - `0x30xxxxxx` guest heap,
-  - `0x40xxxxxx` host trampolines,
-  - `0x5000xxxx` synthetic JNI,
-  - `0x5100xxxx` synthetic Java/object area;
-- scans every 7–8 digit hexadecimal address in the supplied log;
-- separately ranks `PC`, `LR`, `returnPC`, `callerLR`, and `SP`;
-- resolves code addresses to:
-  - `libPVZ2.so+offset`,
-  - ARM/Thumb mode,
-  - nearest `.ARM.exidx` function start,
-  - surviving dynamic symbol when one is trustworthy,
-  - project landmarks already confirmed by earlier probes;
-- emits a small ARM/Thumb disassembly window around the highest-signal
-  control-flow addresses;
-- validates the exact PvZ2 1.5.252752 GameState profile used by the v53 runtime
-  probe and reports the confirmed landmarks:
-  - GameStateMgr factory/constructor;
-  - 0x460-byte manager object;
-  - runtime vtable 0x10cdb7d8;
-  - current GameState at +0x374;
-  - transition state at +0x3c4;
-  - pending/requested GameState at +0x41c;
-  - RequestTransition, ApplyState, StartupLogo.Update and MainMenu.Enter;
-  - exact GameState enum values 1 through 10.
+- parses ARM32 ELF program headers and sections;
+- lists `DT_NEEDED`, SONAME, dynamic/import symbols and REL relocations;
+- parses `.ARM.exidx` function starts;
+- recognizes the guest module/stack/heap/trampoline/JNI/object ranges;
+- ranks raw hexadecimal addresses and PC/LR/returnPC/callerLR/SP values;
+- validates the exact v53 GameState profile;
+- produces small ARM/Thumb disassembly windows for executable addresses only.
 
-No JIT, StikDebug, or guest execution is required for Lab v1.1.
+No JIT, StikDebug, or guest execution is required.
 
 ## Reports
-
-After analysis, the app creates this folder in its Documents directory:
 
 ```
 PvZ2InspectorReport/
   summary.json
   report.txt
   addresses.csv
-  annotated-log.txt   # only when a log was supplied
+  annotated-log.txt        # when a log is supplied
+  startup-diagnosis.txt    # when v54 StartupLogo evidence is present
 ```
 
-`UIFileSharingEnabled` and the in-app Share button make the reports easy to
-return to the project chat.
+## Current boundary
 
-## Why this exists
-
-A stripped production binary often gives runtime evidence such as:
-
-```
-PC=0x1086fa84
-LR=0x105149c8
-R0=0x51001234
-```
-
-Lab v1.1 converts that into stable, comparable facts such as:
-
-```
-0x1086fa84
-  -> libPVZ2.so+0x0086fa84
-  -> .ARM.exidx function start +0x0086f66c
-  -> +0x418 inside that stripped function
-  -> known project landmark: ResourceRegistryLookup.global found-value load
-```
-
-This does **not** invent original C++ symbol names. When the binary is stripped,
-the neutral function boundary remains the fallback.
-
-## Next lab directions
-
-The folder is intentionally isolated so later inspector versions can add
-runtime-only diagnostics without disturbing the playable-port branch:
-
-- controlled Dynarmic execution;
-- break-at-address;
-- register/stack snapshots;
-- object before/after diffs;
-- guest memory watchpoints;
-- call-edge collection;
-- JNI callsite cataloguing;
-- VFS/resource-ID correlation with the extracted RSB metadata.
-
-Those are future lab features; Lab v1.1 is intentionally a stable static-address
-baseline.
+Lab v1.2 can prove where StartupLogo first blocks, but it cannot yet explain
+why Gate A's two progress counters remain zero. The next useful Inspector work
+is to trace the resource object's fields/writers or compare object snapshots
+around the code that feeds those counters.
