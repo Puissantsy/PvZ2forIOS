@@ -318,7 +318,7 @@ NSString *NSStringFromStd(
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — v61 Res-Stream Pump Cooperation";
+        @"PvZ2forIOS — v62 TaskResource Provenance + Mutex A/B";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -327,7 +327,7 @@ NSString *NSStringFromStd(
         NO;
 
     title.text =
-        @"PvZ2forIOS — v61 Res-Stream Pump Cooperation";
+        @"PvZ2forIOS — v62 TaskResource Provenance + Mutex A/B";
 
     title.font =
         [UIFont
@@ -343,7 +343,7 @@ NSString *NSStringFromStd(
         NO;
 
     explanation.text =
-        @"v61 keeps the validated v57 ctype fix and v58-v60 async scheduling fixes, then adds a safe cooperative boundary for the resource-stream task pump reached during the first draw. The exact trylock/unlock/epilogue ARM signature is verified before startup; only after that pump releases its mutex may one deferred worker run round-robin. Ordinary CPU slices and in-pump container mutation remain main-only. Worker wrapper payloads are also logged for attribution.";
+        @"v62 targets the first-draw TaskResource corruption exposed by Inspector v1.4. Control A preserves the v61 interleaving but adds bounded pointer provenance and fail-fast. Mutex B additionally models ownership of the verified resource-pump mutex manager+0x68 and never restores main while a worker still owns it. No TaskResource pointer or vtable is repaired or forced.";
 
     explanation.numberOfLines = 0;
 
@@ -394,7 +394,8 @@ NSString *NSStringFromStd(
             initWithItems:
                 @[
                     @"V56 Baseline",
-                    @"Ctype Native",
+                    @"V62 Control A",
+                    @"V62 Mutex B",
                     @"Ctype Deep Scout"
                 ]];
 
@@ -1035,7 +1036,8 @@ NSString *NSStringFromStd(
     NSArray<NSString *> *modeNames =
         @[
             @"V56_BASELINE",
-            @"CTYPE_COMPAT_NATIVE_PATH",
+            @"V62_TASK_PROVENANCE_CONTROL_A",
+            @"V62_PUMP_MUTEX_COHERENT_B",
             @"CTYPE_COMPAT_DEEP_SCOUT"
         ];
 
@@ -1052,7 +1054,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v61 mode=%@. Ctype Native is the default clean run: Bionic ctype compatibility + stream-future/caller-poll recognition + fair verified-wait scheduling + safe resource-stream pump cooperation after the verified mutex unlock. Ctype Deep Scout keeps the diagnostic trie/Gate scouts available. Baseline preserves the v56 control path.",
+                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v62 mode=%@. Run V62 Control A first: it preserves v61 scheduling but should stop quickly with exact TaskResource/pointer provenance if the old corruption reproduces. Then run V62 Mutex B: it tests coherent ownership of the verified manager+0x68 mutex and continues naturally if the corruption disappears. Deep Scout and the v56 baseline remain available.",
                     modeNames[modeIndex]]];
 
     [self
@@ -1117,10 +1119,15 @@ NSString *NSStringFromStd(
 
     if (selectedMode == 1) {
         diagnosticMode =
-            PvZ2DiagnosticMode::CtypeCompatNativePath;
+            PvZ2DiagnosticMode::V62TaskProvenanceControlA;
         diagnosticModeName =
-            @"CTYPE_COMPAT_NATIVE_PATH";
+            @"V62_TASK_PROVENANCE_CONTROL_A";
     } else if (selectedMode == 2) {
+        diagnosticMode =
+            PvZ2DiagnosticMode::V62PumpMutexCoherentB;
+        diagnosticModeName =
+            @"V62_PUMP_MUTEX_COHERENT_B";
+    } else if (selectedMode == 3) {
         diagnosticMode =
             PvZ2DiagnosticMode::CtypeCompatDeepScout;
         diagnosticModeName =
@@ -1134,7 +1141,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v61 Res-Stream Pump Cooperation started mode=%@; PID=%d ===",
+                    @"=== PvZ2 v62 TaskResource Provenance + Mutex A/B started mode=%@; PID=%d ===",
                     diagnosticModeName,
                     getpid()]];
 
