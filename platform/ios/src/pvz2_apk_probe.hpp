@@ -44,6 +44,10 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     PassiveRegistry = 0u,
     GateAScout = 1u,
     FullMatrix = 2u,
+
+    // v57 modes. FullMatrix remains the exact v56 control path.
+    CtypeCompatNativePath = 3u,
+    CtypeCompatDeepScout = 4u,
 };
 
 struct PvZ2JniProbeResult {
@@ -82,6 +86,11 @@ struct PvZ2JniProbeResult {
     PvZ2DiagnosticMode diagnostic_mode =
         PvZ2DiagnosticMode::PassiveRegistry;
     bool gate_a_scout_activated = false;
+
+    // v57: Bionic ctype compatibility + deep Scout summary.
+    std::string ctype_deep_scout_summary;
+    bool ctype_self_check_passed = false;
+    bool gate_c_scout_activated = false;
 
     std::uint32_t return_value = 0;
     std::uint32_t game_app_initialize_address = 0;
