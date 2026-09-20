@@ -3327,12 +3327,13 @@ public:
                 PvZ2DiagnosticMode::CtypeCompatDeepScout;
     }
 
+    // v58: compact-trie SVC tracing is diagnostic-only. Keep it in the exact
+    // v56 baseline and in Deep Scout, but remove it from Ctype Native so the
+    // causal ctype+scheduler run leaves the guest trie hot path unpatched.
     bool V56FullMatrixEnabled() const {
         return
             diagnostic_mode ==
                 PvZ2DiagnosticMode::FullMatrix ||
-            diagnostic_mode ==
-                PvZ2DiagnosticMode::CtypeCompatNativePath ||
             diagnostic_mode ==
                 PvZ2DiagnosticMode::CtypeCompatDeepScout;
     }
@@ -20659,7 +20660,7 @@ bool JniProbePrepareRuntime(
               0x00a83b44u,
               0xe3a00000u,
               kJniProbeSvcV56TrieMissZero))) ||
-        (callbacks.V57CtypeEnabled() &&
+        (callbacks.V57DeepScoutEnabled() &&
          !patch_resource_native_miss(
               0x00a83af8u,
               0xe6ef0075u,
@@ -20688,7 +20689,11 @@ bool JniProbePrepareRuntime(
         (callbacks.V57CtypeEnabled() ? "YES" : "NO") +
         " deepScout=" +
         (callbacks.V57DeepScoutEnabled() ? "YES" : "NO") +
-        ". Ctype modes install Bionic-compatible imported data and exact trie-node compare tracing@0x10a83af8. Deep Scout may only override Gate-C loaded r1 after >=10 stable frames with no writes; object memory and GameState remain native.");
+        " trieHotPathTrace=" +
+        (callbacks.V56FullMatrixEnabled() ? "YES" : "NO") +
+        ". Ctype Native now leaves the compact-trie hot path unpatched; Deep Scout retains exact trie-node compare tracing@0x10a83af8. Gate-C scouting rules remain unchanged.");
+    callbacks.Append(
+        "V58 STREAM-FUTURE SCHEDULER: recognizes poll@0x109f7140..0x109f71a8 plus atomic helpers@0x109f9868..0x109f98d4 only when LR comes from a known future poll. Future snapshots include vfn+0x2c; ordinary main-thread CPU slices still never run workers.");
 
     return_trampoline =
         JniProbeMakeTrampoline(
@@ -21471,6 +21476,10 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                     << JniProbeHex(
                                         memory.Read32Guest(
                                             vtable + 0x10u))
+                                    << " vfn2C=0x"
+                                    << JniProbeHex(
+                                        memory.Read32Guest(
+                                            vtable + 0x2cu))
                                     << " done="
                                     << static_cast<unsigned>(
                                         memory.Read8(
@@ -21511,13 +21520,67 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                 return out.str();
                             };
 
-                        auto wait_kind =
-                            [&](std::uint32_t pc) -> const char* {
-                                if (pc >=
+                        auto is_legacy_future_poll_pc =
+                            [&](std::uint32_t pc) {
+                                return
+                                    pc >=
                                         kGuestBase + 0x009f6f24u &&
                                     pc <=
-                                        kGuestBase + 0x009f7050u) {
+                                        kGuestBase + 0x009f7050u;
+                            };
+
+                        auto is_stream_future_poll_pc =
+                            [&](std::uint32_t pc) {
+                                return
+                                    pc >=
+                                        kGuestBase + 0x009f7140u &&
+                                    pc <=
+                                        kGuestBase + 0x009f71a8u;
+                            };
+
+                        auto is_future_atomic_helper_pc =
+                            [&](std::uint32_t pc) {
+                                return
+                                    pc >=
+                                        kGuestBase + 0x009f9868u &&
+                                    pc <=
+                                        kGuestBase + 0x009f98d4u;
+                            };
+
+                        auto is_known_future_poll_lr =
+                            [&](std::uint32_t lr) {
+                                const std::uint32_t clean_lr =
+                                    lr & ~1u;
+
+                                return
+                                    is_legacy_future_poll_pc(
+                                        clean_lr) ||
+                                    is_stream_future_poll_pc(
+                                        clean_lr);
+                            };
+
+                        auto wait_kind =
+                            [&](std::uint32_t pc,
+                                std::uint32_t lr) -> const char* {
+                                if (is_legacy_future_poll_pc(pc)) {
                                     return "future-poll";
+                                }
+
+                                // v58: 0x9f7140 is the stream-future status
+                                // poll reached naturally after the ctype fix.
+                                // It returns pending while its atomic state
+                                // remains EINPROGRESS (115).
+                                if (is_stream_future_poll_pc(pc)) {
+                                    return "stream-future-poll";
+                                }
+
+                                // 0x9f9868 / 0x9f98a0 are generic atomic
+                                // helpers, so they are only a scheduler wait
+                                // when LR proves they were entered from one
+                                // of the already-known future poll routines.
+                                if (is_future_atomic_helper_pc(pc) &&
+                                    is_known_future_poll_lr(lr)) {
+                                    return "stream-future-poll";
                                 }
 
                                 // Verified by disassembly of 1.5.252752:
@@ -21539,9 +21602,12 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             };
 
                         auto wait_object_for_pc =
-                            [&](std::uint32_t pc) {
+                            [&](std::uint32_t pc,
+                                std::uint32_t lr) {
                                 const char* kind =
-                                    wait_kind(pc);
+                                    wait_kind(
+                                        pc,
+                                        lr);
 
                                 if (std::strcmp(
                                         kind,
@@ -21549,6 +21615,9 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                     return jit.Regs()[5];
                                 }
 
+                                // Both legacy and stream-future polls preserve
+                                // the outer async object in r4, including while
+                                // executing the atomic helpers.
                                 return jit.Regs()[4];
                             };
 
@@ -21757,8 +21826,13 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
 
                             ++async_round;
 
+                            const std::uint32_t wait_lr =
+                                jit.Regs()[14];
+
                             const char* current_wait_kind =
-                                wait_kind(result.final_pc);
+                                wait_kind(
+                                    result.final_pc,
+                                    wait_lr);
 
                             const bool concrete_wait =
                                 std::strcmp(
@@ -21768,7 +21842,8 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             const std::uint32_t future =
                                 concrete_wait
                                     ? wait_object_for_pc(
-                                          result.final_pc)
+                                          result.final_pc,
+                                          wait_lr)
                                     : 0u;
 
                             std::array<std::uint8_t, 64> future_before{};
@@ -21793,6 +21868,9 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                     " main PC=0x" +
                                     JniProbeHex(
                                         result.final_pc) +
+                                    " LR=0x" +
+                                    JniProbeHex(
+                                        wait_lr) +
                                     " wait_object{" +
                                     async_future_snapshot(
                                         future) +

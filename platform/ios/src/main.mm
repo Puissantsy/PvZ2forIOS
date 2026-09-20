@@ -318,7 +318,7 @@ NSString *NSStringFromStd(
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — v57 Ctype Deep Scout";
+        @"PvZ2forIOS — v58 Stream Future Scheduler";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -327,7 +327,7 @@ NSString *NSStringFromStd(
         NO;
 
     title.text =
-        @"PvZ2forIOS — v57 Ctype Deep Scout";
+        @"PvZ2forIOS — v58 Stream Future Scheduler";
 
     title.font =
         [UIFont
@@ -343,7 +343,7 @@ NSString *NSStringFromStd(
         NO;
 
     explanation.text =
-        @"v57 keeps the entire validated v52-v56 stack and tests the high-priority Bionic ctype ABI root-cause candidate. V56 Baseline preserves the old behavior exactly. Ctype Native installs ABI-correct _toupper_tab_/_tolower_tab_/_ctype_ and never scouts Gate A/C. Ctype Deep Scout adds the same ctype fix, character-by-character trie tracing, the existing proof-gated Gate-A scout, and a delayed proof-gated Gate-C scout. ResourceManager tables and GameState transitions are never fabricated.";
+        @"v58 keeps the validated v57 Bionic ctype fix and repairs the cooperative scheduler class exposed by the now-native resource path. Ctype Native is the clean causal run: ABI-correct ctype data, no compact-trie hot-path SVC tracing, no Gate A/C scout, and worker scheduling only on verified async waits including the 0x109f7140 stream future. Ctype Deep Scout retains trie tracing and proof-gated Gate-A/Gate-C exploration if the natural path still needs diagnosis. Ordinary CPU slices still never run workers.";
 
     explanation.numberOfLines = 0;
 
@@ -401,7 +401,7 @@ NSString *NSStringFromStd(
     self.diagnosticModeControl.translatesAutoresizingMaskIntoConstraints =
         NO;
     self.diagnosticModeControl.selectedSegmentIndex =
-        2;
+        1;
 
     UIStackView *mainButtons =
         [[UIStackView alloc]
@@ -1052,7 +1052,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v57 mode=%@. Baseline preserves v56 unchanged. Ctype Native repairs only the Bionic ctype imported-data ABI and remains natural. Ctype Deep Scout adds first-lookup trie paths plus proof-gated Gate-A/Gate-C exploration. All v52-v56 diagnostics remain enabled.",
+                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v58 mode=%@. Ctype Native is the default clean run: Bionic ctype compatibility + stream-future scheduler correction, with compact-trie hot-path tracing disabled. Ctype Deep Scout keeps the diagnostic trie/Gate scouts available. Baseline preserves the v56 control path.",
                     modeNames[modeIndex]]];
 
     [self
@@ -1134,7 +1134,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v57 Ctype Deep Scout started mode=%@; PID=%d ===",
+                    @"=== PvZ2 v58 Stream Future Scheduler started mode=%@; PID=%d ===",
                     diagnosticModeName,
                     getpid()]];
 
@@ -1437,7 +1437,7 @@ NSString *NSStringFromStd(
                     if (result.ok) {
                         [selfRef
                             appendUI:
-                                @"SUCCESS STEP 3: PvZ2 completed v57 Ctype Deep Scout on top of v52-v56 diagnostics. Check V57 CTYPE ABI / TRIE PATH / GATEC WRITE / V57 SUMMARY plus preserved V56 lines."];
+                                @"SUCCESS STEP 3: PvZ2 completed v58 Stream Future Scheduler. For Ctype Native, check V57 CTYPE ABI plus V58 STREAM-FUTURE SCHEDULER / V30 SCHED WAIT / V22 WORKER SLICE and preserved Gate/RSB diagnostics. Deep Scout additionally keeps V57 TRIE PATH / GATEC WRITE."];
 
                         if (!result.final_frame_png_path.empty()) {
                             [selfRef
@@ -1465,7 +1465,7 @@ NSString *NSStringFromStd(
                         } else {
                             [selfRef
                                 showResult:
-                                    @"PvZ2 v57 Ctype Deep Scout returned"
+                                    @"PvZ2 v58 Stream Future Scheduler returned"
                                 message:
                                     [NSString
                                         stringWithFormat:
