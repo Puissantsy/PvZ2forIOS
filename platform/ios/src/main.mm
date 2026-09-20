@@ -1074,7 +1074,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v54 passive StartupLogo gate run started; PID=%d ===",
+                    @"=== PvZ2 v55 passive Startup resource-group diagnosis started; PID=%d ===",
                     getpid()]];
 
     self.jniRunning =
@@ -1288,6 +1288,16 @@ NSString *NSStringFromStd(
                                             result.startup_logo_summary)]];
                     }
 
+                    if (!result.startup_resource_group_summary.empty()) {
+                        [selfRef
+                            appendUI:
+                                [NSString
+                                    stringWithFormat:
+                                        @"STEP 3C5: %@",
+                                        NSStringFromStd(
+                                            result.startup_resource_group_summary)]];
+                    }
+
                     [selfRef
                         appendUI:
                             [NSString
@@ -1345,7 +1355,7 @@ NSString *NSStringFromStd(
                     if (result.ok) {
                         [selfRef
                             appendUI:
-                                @"SUCCESS STEP 3: PvZ2 completed stable v52 rendering + v53 GameState + passive v54 StartupLogo gate/depth tracing; nothing was forced."];
+                                @"SUCCESS STEP 3: PvZ2 completed stable v52 rendering + v53 GameState + v54 StartupLogo + passive v55 Startup resource-group tracing; nothing was forced."];
 
                         if (!result.final_frame_png_path.empty()) {
                             [selfRef
@@ -1373,11 +1383,11 @@ NSString *NSStringFromStd(
                         } else {
                             [selfRef
                                 showResult:
-                                    @"PvZ2 v54 passive StartupLogo diagnostic returned"
+                                    @"PvZ2 v55 passive Startup resource-group diagnostic returned"
                                 message:
                                     [NSString
                                         stringWithFormat:
-                                            @"PvZ2 completed its native startup and v54 passive StartupLogo diagnostic.\n\nGameAppInitialize: %u\nLifecycle calls completed: %u\nFrames returned: %u\nHost GLES active: %@\nRichest sampled frame: %u (%llu non-black pixels)\nConstructors: %u/%u\nJNI_OnLoad: 0x%08x\n\nNo final PNG capture was produced; inspect V54 STARTUPLOGO, V53 GAMESTATE and preserved V52/V47 diagnostics in the full log.",
+                                            @"PvZ2 completed its native startup and v55 passive Startup resource-group diagnostic.\n\nGameAppInitialize: %u\nLifecycle calls completed: %u\nFrames returned: %u\nHost GLES active: %@\nRichest sampled frame: %u (%llu non-black pixels)\nConstructors: %u/%u\nJNI_OnLoad: 0x%08x\n\nNo final PNG capture was produced; inspect V55 STARTUP GROUPS / V55 STARTUP GROUP SUMMARY, V54 STARTUPLOGO, V53 GAMESTATE and preserved V52/V47 diagnostics in the full log.",
                                             result.game_app_initialize_return & 0xffu,
                                             result.lifecycle_calls_completed,
                                             result.draw_frames_completed,
