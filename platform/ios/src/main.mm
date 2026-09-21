@@ -318,7 +318,7 @@ NSString *NSStringFromStd(
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — v62 TaskResource Provenance + Mutex A/B";
+        @"PvZ2forIOS — v63 Critical-Section-Aware Scheduler";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -327,7 +327,7 @@ NSString *NSStringFromStd(
         NO;
 
     title.text =
-        @"PvZ2forIOS — v62 TaskResource Provenance + Mutex A/B";
+        @"PvZ2forIOS — v63 Critical-Section-Aware Scheduler";
 
     title.font =
         [UIFont
@@ -343,7 +343,7 @@ NSString *NSStringFromStd(
         NO;
 
     explanation.text =
-        @"v62 targets the first-draw TaskResource corruption exposed by Inspector v1.4. Control A preserves the v61 interleaving but adds bounded pointer provenance and fail-fast. Mutex B additionally models ownership of the verified resource-pump mutex manager+0x68 and never restores main while a worker still owns it. No TaskResource pointer or vtable is repaired or forced.";
+        @"v63 targets the scheduler class behind the v61 tid=7 crash. Every guest pthread mutex is ownership-tracked: if a deferred worker exhausts its quantum while holding any mutex, that same worker keeps running until a later safe quantum ends with no mutex held. The expensive v62 pointer-write provenance is removed from the ARM hot path; a lightweight TaskResource guard remains at the failing virtual dispatch.";
 
     explanation.numberOfLines = 0;
 
@@ -394,8 +394,7 @@ NSString *NSStringFromStd(
             initWithItems:
                 @[
                     @"V56 Baseline",
-                    @"V62 Control A",
-                    @"V62 Mutex B",
+                    @"V63 Critical",
                     @"Ctype Deep Scout"
                 ]];
 
@@ -1036,8 +1035,7 @@ NSString *NSStringFromStd(
     NSArray<NSString *> *modeNames =
         @[
             @"V56_BASELINE",
-            @"V62_TASK_PROVENANCE_CONTROL_A",
-            @"V62_PUMP_MUTEX_COHERENT_B",
+            @"V63_CRITICAL_SECTION_SCHEDULER",
             @"CTYPE_COMPAT_DEEP_SCOUT"
         ];
 
@@ -1054,7 +1052,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v62 mode=%@. Run V62 Control A first: it preserves v61 scheduling but should stop quickly with exact TaskResource/pointer provenance if the old corruption reproduces. Then run V62 Mutex B: it tests coherent ownership of the verified manager+0x68 mutex and continues naturally if the corruption disappears. Deep Scout and the v56 baseline remain available.",
+                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v63 mode=%@. V63 Critical is the default forward-progress run: it keeps the validated ctype/VFS/resource/future scheduler path, removes v62 global pointer-write tracing, tracks every guest pthread mutex, keeps a worker on-CPU while it owns a critical section, and continues toward the first real frame unless a concrete invariant or TaskResource guard fails.",
                     modeNames[modeIndex]]];
 
     [self
@@ -1119,15 +1117,10 @@ NSString *NSStringFromStd(
 
     if (selectedMode == 1) {
         diagnosticMode =
-            PvZ2DiagnosticMode::V62TaskProvenanceControlA;
+            PvZ2DiagnosticMode::V63CriticalSectionScheduler;
         diagnosticModeName =
-            @"V62_TASK_PROVENANCE_CONTROL_A";
+            @"V63_CRITICAL_SECTION_SCHEDULER";
     } else if (selectedMode == 2) {
-        diagnosticMode =
-            PvZ2DiagnosticMode::V62PumpMutexCoherentB;
-        diagnosticModeName =
-            @"V62_PUMP_MUTEX_COHERENT_B";
-    } else if (selectedMode == 3) {
         diagnosticMode =
             PvZ2DiagnosticMode::CtypeCompatDeepScout;
         diagnosticModeName =
@@ -1141,7 +1134,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v62 TaskResource Provenance + Mutex A/B started mode=%@; PID=%d ===",
+                    @"=== PvZ2 v63 Critical-Section-Aware Scheduler started mode=%@; PID=%d ===",
                     diagnosticModeName,
                     getpid()]];
 
