@@ -59,6 +59,11 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // path but makes deferred-worker scheduling aware of every guest pthread
     // mutex critical section instead of one resource-pump mutex.
     V63CriticalSectionScheduler = 7u,
+
+    // v64: preserves v63 ownership tracking, but once a worker quantum expires
+    // inside a guest critical section it stops at the first subsequent
+    // held-mutex transition to zero instead of sampling only at whole quanta.
+    V64ReleaseBoundaryScheduler = 8u,
 };
 
 struct PvZ2JniProbeResult {
