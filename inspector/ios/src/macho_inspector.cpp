@@ -39,6 +39,17 @@ std::string FixedName(const std::uint8_t* p, std::size_t n) {
     return std::string(reinterpret_cast<const char*>(p), len);
 }
 
+std::string CsvEscape(const std::string& s) {
+    if (s.find_first_of(",\"\n\r") == std::string::npos) return s;
+    std::string out = "\"";
+    for (char c : s) {
+        if (c == '\"') out += "\"\"";
+        else out += c;
+    }
+    out += "\"";
+    return out;
+}
+
 struct ZipEntry {
     std::string name;
     std::uint16_t method = 0;
@@ -224,7 +235,9 @@ std::vector<std::string> ExtractAsciiStrings(
 
 PvZ2IpaInspectorResult InspectPvZ2IpaReference(
     const std::uint8_t* ipa_data,
-    std::size_t ipa_size) {
+    std::size_t ipa_size,
+    const std::uint8_t* apk_data,
+    std::size_t apk_size) {
 
     PvZ2IpaInspectorResult result;
     result.ipa_size = ipa_size;
@@ -349,6 +362,39 @@ PvZ2IpaInspectorResult InspectPvZ2IpaReference(
                 function_datasize);
 
         const auto strings = ExtractAsciiStrings(macho);
+
+        std::vector<std::string> shared_strings;
+        if (apk_data != nullptr && apk_size > 0u) {
+            const auto apk_entries = ListZip(apk_data, apk_size);
+            auto it = std::find_if(
+                apk_entries.begin(),
+                apk_entries.end(),
+                [](const ZipEntry& e) {
+                    return e.name == "lib/armeabi-v7a/libPVZ2.so";
+                });
+            if (it != apk_entries.end()) {
+                const auto android_elf =
+                    Extract(apk_data, apk_size, *it);
+                const auto android_strings =
+                    ExtractAsciiStrings(android_elf);
+
+                std::set_intersection(
+                    strings.begin(),
+                    strings.end(),
+                    android_strings.begin(),
+                    android_strings.end(),
+                    std::back_inserter(shared_strings));
+
+                std::ostringstream csv;
+                csv << "string\n";
+                for (const auto& s : shared_strings) {
+                    csv << CsvEscape(s) << "\n";
+                }
+                result.shared_strings_csv = csv.str();
+                result.shared_string_count = shared_strings.size();
+            }
+        }
+
         const std::vector<std::string> markers = {
             "RESFILE_PACKAGES_UI_IPAD",
             "RESFILE_PACKAGES_UI_IPHONE",
@@ -411,6 +457,8 @@ PvZ2IpaInspectorResult InspectPvZ2IpaReference(
             << "symbols: " << nsyms << "\n"
             << "LC_FUNCTION_STARTS entries: " << function_starts << "\n"
             << "ASCII strings >=8 (unique): " << strings.size() << "\n"
+            << "Android/iOS shared strings >=8: "
+            << result.shared_string_count << "\n"
             << "segments: " << segments.size() << "\n"
             << "sections: " << sections.size() << "\n"
             << "dylibs: " << dylibs.size() << "\n\n";
@@ -428,6 +476,16 @@ PvZ2IpaInspectorResult InspectPvZ2IpaReference(
         report << "\nPvZ2 reference markers found\n----------------------------\n";
         for (const auto& marker : found_markers) report << marker << "\n";
 
+        if (!shared_strings.empty()) {
+            report
+                << "\nRepresentative Android/iOS shared anchors\n"
+                << "-----------------------------------------\n";
+            const std::size_t cap = std::min<std::size_t>(80u, shared_strings.size());
+            for (std::size_t i = 0; i < cap; ++i) {
+                report << shared_strings[i] << "\n";
+            }
+        }
+
         report
             << "\nNext Inspector v2 stages\n------------------------\n"
             << "1. Parse Objective-C class/selector/ivar metadata and IMP addresses.\n"
@@ -443,7 +501,9 @@ PvZ2IpaInspectorResult InspectPvZ2IpaReference(
             << (cryptid == 0xffffffffu ? -1 : static_cast<int>(cryptid))
             << ", " << function_starts
             << " function starts, " << dylibs.size()
-            << " dylibs, " << sections.size() << " sections.";
+            << " dylibs, " << sections.size() << " sections, "
+            << result.shared_string_count
+            << " Android/iOS shared string anchors.";
 
         result.ok = true;
         result.report = report.str();
