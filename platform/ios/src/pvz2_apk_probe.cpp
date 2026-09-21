@@ -1747,6 +1747,16 @@ public:
     std::uint64_t v63_task_dispatch_events = 0;
     std::uint64_t v63_task_guard_failures = 0;
 
+    // v64 release-boundary continuation. Once a worker exhausts its normal
+    // quantum while owning a guest mutex, the scheduler arms this boundary.
+    // The first later unlock that takes the worker's held-mutex count to zero
+    // halts Dynarmic with the ordinary soft-slice reason before guest code can
+    // reacquire and phase-lock with another fixed quantum.
+    bool v64_release_boundary_armed = false;
+    std::uint32_t v64_release_boundary_thread = 0xffffffffu;
+    std::uint64_t v64_release_boundary_arms = 0;
+    std::uint64_t v64_release_boundary_yields = 0;
+
     std::uint32_t next_pthread_key = 1;
     std::uint32_t next_synthetic_thread = 1;
     std::uint32_t next_synthetic_class = 1;
@@ -2905,6 +2915,36 @@ public:
                 : out.str();
     }
 
+    void V64ArmReleaseBoundary(
+        std::uint32_t thread_id) {
+
+        if (!V64Enabled()) {
+            return;
+        }
+
+        if (v64_release_boundary_armed &&
+            v64_release_boundary_thread == thread_id) {
+            return;
+        }
+
+        v64_release_boundary_armed = true;
+        v64_release_boundary_thread = thread_id;
+        ++v64_release_boundary_arms;
+    }
+
+    void V64DisarmReleaseBoundary(
+        std::uint32_t thread_id) {
+
+        if (!V64Enabled() ||
+            !v64_release_boundary_armed ||
+            v64_release_boundary_thread != thread_id) {
+            return;
+        }
+
+        v64_release_boundary_armed = false;
+        v64_release_boundary_thread = 0xffffffffu;
+    }
+
     bool V63AcquireMutex(
         std::uint32_t mutex,
         bool is_trylock) {
@@ -3068,11 +3108,17 @@ public:
             state.owner = 0xffffffffu;
         }
 
+        const std::uint32_t held_after =
+            V63HeldMutexCount(
+                current_probe_thread_id);
+
+        // v63 accidentally logged every hot-loop transition to held=0, which
+        // generated >50 MiB before first draw. Keep ownership diagnostics but
+        // sample ordinary releases aggressively; the meaningful v64 safe
+        // boundary has its own bounded log below.
         if (current_probe_thread_id != 0u &&
             (v63_mutex_releases <= 32u ||
-             (v63_mutex_releases % 512u) == 0u ||
-             V63HeldMutexCount(
-                 current_probe_thread_id) == 0u)) {
+             (v63_mutex_releases % 4096u) == 0u)) {
             Append(
                 "V63 MUTEX RELEASE #" +
                 std::to_string(v63_mutex_releases) +
@@ -3084,9 +3130,45 @@ public:
                 " depth=" +
                 std::to_string(state.depth) +
                 " held=" +
-                std::to_string(
-                    V63HeldMutexCount(
-                        current_probe_thread_id)));
+                std::to_string(held_after));
+        }
+
+        const bool v64_safe_release =
+            V64Enabled() &&
+            v64_release_boundary_armed &&
+            v64_release_boundary_thread ==
+                current_probe_thread_id &&
+            held_after == 0u;
+
+        if (v64_safe_release) {
+            ++v64_release_boundary_yields;
+            v64_release_boundary_armed = false;
+            v64_release_boundary_thread = 0xffffffffu;
+
+            if (v64_release_boundary_yields <= 24u ||
+                (v64_release_boundary_yields % 1000u) == 0u) {
+                Append(
+                    "V64 SAFE RELEASE #" +
+                    std::to_string(
+                        v64_release_boundary_yields) +
+                    " tid=" +
+                    std::to_string(
+                        current_probe_thread_id) +
+                    " mutex=" +
+                    V46DescribeGuestAddress(mutex) +
+                    " releaseCount=" +
+                    std::to_string(v63_mutex_releases) +
+                    " -> end worker continuation at heldMutexes=0");
+            }
+
+            // This is the same soft cooperative halt already proven by the
+            // v62 verified-pump unlock path. The import callback still
+            // returns pthread_mutex_unlock success before the worker state is
+            // snapshotted by the scheduler.
+            if (jit) {
+                jit->HaltExecution(
+                    Dynarmic::HaltReason::UserDefined4);
+            }
         }
 
         return true;
@@ -3767,14 +3849,23 @@ public:
             return "V62_PUMP_MUTEX_COHERENT_B";
         case PvZ2DiagnosticMode::V63CriticalSectionScheduler:
             return "V63_CRITICAL_SECTION_SCHEDULER";
+        case PvZ2DiagnosticMode::V64ReleaseBoundaryScheduler:
+            return "V64_RELEASE_BOUNDARY_SCHEDULER";
         }
         return "UNKNOWN";
+    }
+
+    bool V64Enabled() const {
+        return
+            diagnostic_mode ==
+                PvZ2DiagnosticMode::V64ReleaseBoundaryScheduler;
     }
 
     bool V63Enabled() const {
         return
             diagnostic_mode ==
-                PvZ2DiagnosticMode::V63CriticalSectionScheduler;
+                PvZ2DiagnosticMode::V63CriticalSectionScheduler ||
+            V64Enabled();
     }
 
     bool V62Enabled() const {
@@ -21679,7 +21770,12 @@ bool JniProbePrepareRuntime(
                 ? "ENABLED. Only verified manager+0x68 trylock/unlock ownership is modeled; a worker is not suspended while it owns that mutex."
                 : "CONTROL A. v61 synthetic trylock behavior is preserved for the causal A/B comparison."));
     }
-    if (callbacks.V63Enabled()) {
+    if (callbacks.V64Enabled()) {
+        callbacks.Append(
+            "V64 RELEASE-BOUNDARY SCHEDULER: v63 guest pthread mutex ownership tracking is preserved, but a worker whose quantum expires while holding a mutex is armed to stop at the first later unlock that makes heldMutexes=0. It no longer waits for another whole quantum to happen to sample zero.");
+        callbacks.Append(
+            "V64 WATCHDOG/LOGGING: the continuation guard advances only across consecutive continuation quanta with no guest mutex release at all; any unlock resets it. Ordinary mutex-release logs are sampled instead of logging every held=0 hot-loop transition. The v63 TaskResource dispatch guard remains fail-fast and observational.");
+    } else if (callbacks.V63Enabled()) {
         callbacks.Append(
             "V63 CRITICAL-SECTION-AWARE SCHEDULER: every guest pthread_mutex_lock/trylock/unlock is ownership-tracked. A deferred worker whose quantum expires while holding any guest mutex continues on the same worker until a later quantum ends with heldMutexes=0. Cross-owner blocking locks fail-fast instead of fabricating success.");
         callbacks.Append(
@@ -23349,6 +23445,9 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                 bool worker_returned = false;
                                 bool worker_fatal = false;
                                 std::uint32_t coherence_chunks = 0u;
+                                std::uint32_t no_unlock_chunks = 0u;
+                                std::uint64_t last_mutex_release_count =
+                                    callbacks.v63_mutex_releases;
 
                                 for (;;) {
                                     const Dynarmic::HaltReason worker_halt =
@@ -23413,46 +23512,106 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                             .v62_mutex_coherence_continuations;
                                     }
 
-                                    const std::uint32_t
-                                        continuation_limit =
-                                            callbacks.V63Enabled()
-                                                ? 128u
-                                                : 64u;
+                                    if (callbacks.V64Enabled()) {
+                                        const std::uint64_t releases_now =
+                                            callbacks.v63_mutex_releases;
+                                        if (releases_now ==
+                                            last_mutex_release_count) {
+                                            ++no_unlock_chunks;
+                                        } else {
+                                            no_unlock_chunks = 0u;
+                                            last_mutex_release_count =
+                                                releases_now;
+                                        }
 
-                                    if (coherence_chunks >
-                                        continuation_limit) {
-                                        worker_fatal = true;
-                                        worker_state.runtime_failed = true;
-
-                                        if (callbacks.V63Enabled()) {
+                                        // Unlike v63's sampled held-state
+                                        // watchdog, this can only fire after
+                                        // 128 whole continuation quanta with
+                                        // no guest mutex_unlock whatsoever.
+                                        if (no_unlock_chunks > 128u) {
+                                            worker_fatal = true;
+                                            worker_state.runtime_failed = true;
                                             result.message =
-                                                "v63 worker tid=" +
+                                                "v64 worker tid=" +
                                                 std::to_string(
                                                     worker_state.id) +
-                                                " remained inside guest critical sections for more than " +
-                                                std::to_string(
-                                                    continuation_limit) +
-                                                " continuation quanta; held={" +
+                                                " made no guest mutex-release progress for more than 128 continuation quanta while held={" +
                                                 callbacks.V63HeldMutexSummary(
                                                     worker_state.id) +
                                                 "}.";
                                             callbacks.Append(
-                                                "V63 CRITICAL CONTINUATION STOP: " +
+                                                "V64 NO-UNLOCK STOP: " +
                                                 result.message);
-                                        } else {
-                                            result.message =
-                                                "v62 worker tid=" +
-                                                std::to_string(
-                                                    worker_state.id) +
-                                                " held verified manager+0x68 for more than 64 continuation quanta; main was not restored.";
-                                            callbacks.Append(
-                                                "V62 MUTEX COHERENCE STOP: " +
-                                                result.message);
+                                            break;
                                         }
-                                        break;
+                                    } else {
+                                        const std::uint32_t
+                                            continuation_limit =
+                                                callbacks.V63Enabled()
+                                                    ? 128u
+                                                    : 64u;
+
+                                        if (coherence_chunks >
+                                            continuation_limit) {
+                                            worker_fatal = true;
+                                            worker_state.runtime_failed = true;
+
+                                            if (callbacks.V63Enabled()) {
+                                                result.message =
+                                                    "v63 worker tid=" +
+                                                    std::to_string(
+                                                        worker_state.id) +
+                                                    " remained inside guest critical sections for more than " +
+                                                    std::to_string(
+                                                        continuation_limit) +
+                                                    " continuation quanta; held={" +
+                                                    callbacks.V63HeldMutexSummary(
+                                                        worker_state.id) +
+                                                    "}.";
+                                                callbacks.Append(
+                                                    "V63 CRITICAL CONTINUATION STOP: " +
+                                                    result.message);
+                                            } else {
+                                                result.message =
+                                                    "v62 worker tid=" +
+                                                    std::to_string(
+                                                        worker_state.id) +
+                                                    " held verified manager+0x68 for more than 64 continuation quanta; main was not restored.";
+                                                callbacks.Append(
+                                                    "V62 MUTEX COHERENCE STOP: " +
+                                                    result.message);
+                                            }
+                                            break;
+                                        }
                                     }
 
-                                    if (callbacks.V63Enabled()) {
+                                    if (callbacks.V64Enabled()) {
+                                        if (coherence_chunks <= 4u ||
+                                            (coherence_chunks % 64u) == 0u) {
+                                            callbacks.Append(
+                                                "V64 RELEASE-BOUNDARY WAIT tid=" +
+                                                std::to_string(
+                                                    worker_state.id) +
+                                                " chunk=" +
+                                                std::to_string(
+                                                    coherence_chunks) +
+                                                " PC=" +
+                                                callbacks.V46DescribeGuestAddress(
+                                                    worker_state.regs[15]) +
+                                                " heldCount=" +
+                                                std::to_string(
+                                                    v63_held_mutexes) +
+                                                " noUnlockChunks=" +
+                                                std::to_string(
+                                                    no_unlock_chunks) +
+                                                " held={" +
+                                                callbacks.V63HeldMutexSummary(
+                                                    worker_state.id) +
+                                                "}");
+                                        }
+                                        callbacks.V64ArmReleaseBoundary(
+                                            worker_state.id);
+                                    } else if (callbacks.V63Enabled()) {
                                         if (coherence_chunks <= 8u ||
                                             (coherence_chunks % 16u) == 0u) {
                                             callbacks.Append(
@@ -23503,7 +23662,29 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                     clear_probe_halts();
                                 }
 
-                                if (callbacks.V63Enabled() &&
+                                if (callbacks.V64Enabled() &&
+                                    coherence_chunks != 0u &&
+                                    !worker_fatal &&
+                                    !worker_returned &&
+                                    callbacks.V63HeldMutexCount(
+                                        worker_state.id) == 0u) {
+                                    callbacks.Append(
+                                        "V64 SAFE SWITCH tid=" +
+                                        std::to_string(
+                                            worker_state.id) +
+                                        " afterChunks=" +
+                                        std::to_string(
+                                            coherence_chunks) +
+                                        " safeReleaseYields=" +
+                                        std::to_string(
+                                            callbacks
+                                                .v64_release_boundary_yields) +
+                                        " PC=" +
+                                        callbacks.V46DescribeGuestAddress(
+                                            worker_state.regs[15]) +
+                                        " heldMutexes=0");
+                                } else if (
+                                    callbacks.V63Enabled() &&
                                     coherence_chunks != 0u &&
                                     !worker_fatal &&
                                     !worker_returned &&
@@ -23521,6 +23702,9 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                             worker_state.regs[15]) +
                                         " heldMutexes=0");
                                 }
+
+                                callbacks.V64DisarmReleaseBoundary(
+                                    worker_state.id);
 
                                 // Re-acquire by index after jit.Run(): guest
                                 // pthread_create may have appended more
@@ -23976,6 +24160,9 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             bool worker_returned = false;
                             bool worker_fatal = false;
                             std::uint32_t critical_chunks = 0u;
+                            std::uint32_t no_unlock_chunks = 0u;
+                            std::uint64_t last_mutex_release_count =
+                                callbacks.v63_mutex_releases;
 
                             for (;;) {
                                 const Dynarmic::HaltReason worker_halt =
@@ -24032,7 +24219,35 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                 ++critical_chunks;
                                 ++callbacks.v63_critical_continuations;
 
-                                if (critical_chunks > 128u) {
+                                if (callbacks.V64Enabled()) {
+                                    const std::uint64_t releases_now =
+                                        callbacks.v63_mutex_releases;
+                                    if (releases_now ==
+                                        last_mutex_release_count) {
+                                        ++no_unlock_chunks;
+                                    } else {
+                                        no_unlock_chunks = 0u;
+                                        last_mutex_release_count =
+                                            releases_now;
+                                    }
+
+                                    if (no_unlock_chunks > 128u) {
+                                        worker_fatal = true;
+                                        worker_state.runtime_failed = true;
+                                        result.message =
+                                            "v64 boundary worker tid=" +
+                                            std::to_string(
+                                                worker_state.id) +
+                                            " made no guest mutex-release progress for more than 128 continuation quanta while held={" +
+                                            callbacks.V63HeldMutexSummary(
+                                                worker_state.id) +
+                                            "}.";
+                                        callbacks.Append(
+                                            "V64 BOUNDARY NO-UNLOCK STOP: " +
+                                            result.message);
+                                        break;
+                                    }
+                                } else if (critical_chunks > 128u) {
                                     worker_fatal = true;
                                     worker_state.runtime_failed = true;
                                     result.message =
@@ -24049,7 +24264,38 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                     break;
                                 }
 
-                                if (critical_chunks <= 8u ||
+                                if (callbacks.V64Enabled()) {
+                                    if (critical_chunks <= 4u ||
+                                        (critical_chunks % 64u) == 0u) {
+                                        callbacks.Append(
+                                            "V64 BOUNDARY RELEASE-WAIT tid=" +
+                                            std::to_string(
+                                                worker_state.id) +
+                                            " chunk=" +
+                                            std::to_string(
+                                                critical_chunks) +
+                                            " phase=" +
+                                            std::string{
+                                                phase != nullptr
+                                                    ? phase
+                                                    : "n/a"} +
+                                            " PC=" +
+                                            callbacks.V46DescribeGuestAddress(
+                                                worker_state.regs[15]) +
+                                            " heldCount=" +
+                                            std::to_string(held) +
+                                            " noUnlockChunks=" +
+                                            std::to_string(
+                                                no_unlock_chunks) +
+                                            " held={" +
+                                            callbacks.V63HeldMutexSummary(
+                                                worker_state.id) +
+                                            "}");
+                                    }
+                                    callbacks.V64ArmReleaseBoundary(
+                                        worker_state.id);
+                                } else if (
+                                    critical_chunks <= 8u ||
                                     (critical_chunks % 16u) == 0u) {
                                     callbacks.Append(
                                         "V63 BOUNDARY CRITICAL CONTINUE tid=" +
@@ -24086,7 +24332,34 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                 clear_boundary_halts();
                             }
 
-                            if (callbacks.V63Enabled() &&
+                            if (callbacks.V64Enabled() &&
+                                critical_chunks != 0u &&
+                                !worker_fatal &&
+                                !worker_returned &&
+                                callbacks.V63HeldMutexCount(
+                                    worker_state.id) == 0u) {
+                                callbacks.Append(
+                                    "V64 BOUNDARY SAFE SWITCH tid=" +
+                                    std::to_string(
+                                        worker_state.id) +
+                                    " afterChunks=" +
+                                    std::to_string(
+                                        critical_chunks) +
+                                    " phase=" +
+                                    std::string{
+                                        phase != nullptr
+                                            ? phase
+                                            : "n/a"} +
+                                    " safeReleaseYields=" +
+                                    std::to_string(
+                                        callbacks
+                                            .v64_release_boundary_yields) +
+                                    " PC=" +
+                                    callbacks.V46DescribeGuestAddress(
+                                        worker_state.regs[15]) +
+                                    " heldMutexes=0");
+                            } else if (
+                                callbacks.V63Enabled() &&
                                 critical_chunks != 0u &&
                                 !worker_fatal &&
                                 !worker_returned &&
@@ -24109,6 +24382,9 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                         worker_state.regs[15]) +
                                     " heldMutexes=0");
                             }
+
+                            callbacks.V64DisarmReleaseBoundary(
+                                worker_state.id);
 
                             if (wi <
                                 callbacks
