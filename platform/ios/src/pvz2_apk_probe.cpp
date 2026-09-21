@@ -23723,6 +23723,25 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                     continue;
                                 }
 
+                                if (callbacks.V65Enabled() &&
+                                    worker_state.runtime_started) {
+
+                                    bool cond_resumed = false;
+                                    std::uint32_t cond_result = 0u;
+
+                                    if (!callbacks.V65PrepareCondResume(
+                                            worker_state.id,
+                                            cond_resumed,
+                                            cond_result)) {
+                                        continue;
+                                    }
+
+                                    if (cond_resumed) {
+                                        worker_state.regs[0] =
+                                            cond_result;
+                                    }
+                                }
+
                                 if (!worker_state.runtime_started) {
                                     const std::uint32_t stack_base =
                                         memory.AllocateHeap(
@@ -24435,6 +24454,25 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             if (worker_state.runtime_completed ||
                                 worker_state.runtime_failed) {
                                 continue;
+                            }
+
+                            if (callbacks.V65Enabled() &&
+                                worker_state.runtime_started) {
+
+                                bool cond_resumed = false;
+                                std::uint32_t cond_result = 0u;
+
+                                if (!callbacks.V65PrepareCondResume(
+                                        worker_state.id,
+                                        cond_resumed,
+                                        cond_result)) {
+                                    continue;
+                                }
+
+                                if (cond_resumed) {
+                                    worker_state.regs[0] =
+                                        cond_result;
+                                }
                             }
 
                             if (!worker_state.runtime_started) {
