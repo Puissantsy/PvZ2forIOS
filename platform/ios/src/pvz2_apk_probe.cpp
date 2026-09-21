@@ -8631,20 +8631,133 @@ public:
                 mem.Read32Guest(vtable + 0x14u);
             regs[1] = target;
 
+            const std::uint32_t plain_target =
+                target & ~1u;
+            const bool executable =
+                plain_target >= kGuestBase &&
+                static_cast<std::uint64_t>(
+                    plain_target) <
+                    static_cast<std::uint64_t>(
+                        kGuestBase) +
+                    mem.image.size();
+
+            if (V63Enabled()) {
+                ++v63_task_dispatch_events;
+
+                const bool object_readable =
+                    mem.Ptr(object, 4u) != nullptr;
+                const bool vtable_readable =
+                    mem.Ptr(vtable, 0x18u) != nullptr;
+                const bool anomaly =
+                    !object_readable ||
+                    !vtable_readable ||
+                    !executable;
+
+                if (anomaly ||
+                    v63_task_dispatch_events <= 8u ||
+                    (v63_task_dispatch_events % 256u) == 0u) {
+
+                    std::ostringstream out;
+                    out
+                        << "V63 TASK GUARD #"
+                        << v63_task_dispatch_events
+                        << (anomaly ? " ANOMALY" : "")
+                        << " tid="
+                        << current_probe_thread_id
+                        << " slot="
+                        << V46DescribeGuestAddress(slot)
+                        << " object="
+                        << V46DescribeGuestAddress(object)
+                        << " objectClass="
+                        << V62HeapPointerClass(object)
+                        << " vtable="
+                        << V46DescribeGuestAddress(vtable)
+                        << " vfn14="
+                        << V46DescribeGuestAddress(target)
+                        << " executable="
+                        << (executable ? "YES" : "NO")
+                        << " heldMutexes="
+                        << V63HeldMutexCount(
+                               current_probe_thread_id)
+                        << " held={"
+                        << V63HeldMutexSummary(
+                               current_probe_thread_id)
+                        << "}";
+
+                    if (anomaly) {
+                        out
+                            << " objectWords={";
+                        for (std::uint32_t off = 0u;
+                             off < 0x30u;
+                             off += 4u) {
+                            if (off != 0u) {
+                                out << ",";
+                            }
+                            out
+                                << "+0x"
+                                << JniProbeHex(off)
+                                << ":0x"
+                                << JniProbeHex(
+                                       mem.Read32Guest(
+                                           object + off));
+                        }
+
+                        out
+                            << "} vtableWords={";
+                        for (std::uint32_t off = 0u;
+                             off < 0x34u;
+                             off += 4u) {
+                            if (off != 0u) {
+                                out << ",";
+                            }
+                            out
+                                << "+0x"
+                                << JniProbeHex(off)
+                                << ":0x"
+                                << JniProbeHex(
+                                       mem.Read32Guest(
+                                           vtable + off));
+                        }
+                        out << "}";
+                    }
+
+                    Append(out.str());
+                }
+
+                if (anomaly) {
+                    ++v63_task_guard_failures;
+                    Append(
+                        "V63 TASK GUARD FAIL-FAST #" +
+                        std::to_string(
+                            v63_task_guard_failures) +
+                        " tid=" +
+                        std::to_string(
+                            current_probe_thread_id) +
+                        " target=" +
+                        V46DescribeGuestAddress(target));
+
+                    if (jit) {
+                        jit->HaltExecution(
+                            Dynarmic::HaltReason::UserDefined3);
+                    }
+                }
+
+                return;
+            }
+
             ++v62_task_dispatch_events;
             V62RefreshPumpVector();
 
-            const std::string alias = V62WorkerAlias(object);
-            const std::uint32_t plain_target = target & ~1u;
-            const bool executable =
-                plain_target >= kGuestBase &&
-                static_cast<std::uint64_t>(plain_target) <
-                    static_cast<std::uint64_t>(kGuestBase) + mem.image.size();
+            const std::string alias =
+                V62WorkerAlias(object);
             const bool slot_in_vector =
                 v62_pump_vector_begin != 0u &&
                 slot >= v62_pump_vector_begin &&
-                slot + 4u <= v62_pump_vector_end;
-            const bool anomaly = !executable || !alias.empty();
+                slot + 4u <=
+                    v62_pump_vector_end;
+            const bool anomaly =
+                !executable ||
+                !alias.empty();
 
             if (anomaly ||
                 v62_task_dispatch_events <= 16u ||
@@ -21515,13 +21628,14 @@ bool JniProbePrepareRuntime(
         return false;
     }
 
-    if (callbacks.V62Enabled() &&
+    if ((callbacks.V62Enabled() ||
+         callbacks.V63Enabled()) &&
         !patch_resource_native_miss(
             0x00868cb0u,
             0xe5901014u,
             kJniProbeSvcV62TaskDispatch)) {
         error =
-            "v62 TaskResource dispatch probe did not match LDR r1,[r0,#0x14] at 0x10868cb0.";
+            "v63 TaskResource guard did not match LDR r1,[r0,#0x14] at 0x10868cb0.";
         return false;
     }
 
@@ -21564,6 +21678,12 @@ bool JniProbePrepareRuntime(
             (callbacks.V62MutexCoherentEnabled()
                 ? "ENABLED. Only verified manager+0x68 trylock/unlock ownership is modeled; a worker is not suspended while it owns that mutex."
                 : "CONTROL A. v61 synthetic trylock behavior is preserved for the causal A/B comparison."));
+    }
+    if (callbacks.V63Enabled()) {
+        callbacks.Append(
+            "V63 CRITICAL-SECTION-AWARE SCHEDULER: every guest pthread_mutex_lock/trylock/unlock is ownership-tracked. A deferred worker whose quantum expires while holding any guest mutex continues on the same worker until a later quantum ends with heldMutexes=0. Cross-owner blocking locks fail-fast instead of fabricating success.");
+        callbacks.Append(
+            "V63 TASKRESOURCE GUARD: dispatch@0x10868cb0 is observational except for fail-fast on unreadable object/vtable or non-executable vfn+0x14. No TaskResource pointer, vtable, GameState, resource, or UI package is repaired or forced. v62 global pointer-write provenance is disabled from the ARM hot path.");
     }
 
     return_trampoline =
