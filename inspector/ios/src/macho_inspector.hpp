@@ -13,6 +13,12 @@ struct PvZ2IpaInspectorResult {
     std::string report;
     std::string shared_strings_csv;
     std::size_t shared_string_count = 0;
+    std::string objc_classes_csv;
+    std::string objc_methods_csv;
+    std::string objc_ivars_csv;
+    std::size_t objc_class_count = 0;
+    std::size_t objc_method_count = 0;
+    std::size_t objc_ivar_count = 0;
     std::string message;
 };
 
