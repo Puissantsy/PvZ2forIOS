@@ -70,6 +70,12 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // sleeps the worker, and resumes only after signal/broadcast/timeout plus
     // successful mutex reacquisition.
     V65ConditionVariableScheduler = 9u,
+
+    // v66: preserves v65 and models the other blocking primitives reached by
+    // permanent Wwise workers. Empty sem_wait/sem_timedwait sleep until post
+    // (or timeout), while usleep/nanosleep suspend the worker until a host
+    // steady-clock deadline instead of becoming hot CPU loops.
+    V66BlockingWaitScheduler = 10u,
 };
 
 struct PvZ2JniProbeResult {
