@@ -45,7 +45,8 @@ NSArray<NSURL *> *ExistingReportURLs() {
         @"v61-crash-diagnosis.txt",
         @"next-probe-plan.txt",
         @"critical-log-excerpt.txt",
-        @"ios-reference-report.txt"
+        @"ios-reference-report.txt",
+        @"android-ios-shared-strings.csv"
     ];
 
     NSMutableArray<NSURL *> *urls = [NSMutableArray array];
@@ -415,7 +416,9 @@ didPickDocumentsAtURLs:
                 ipaResult =
                     InspectPvZ2IpaReference(
                         static_cast<const std::uint8_t *>(ipa.bytes),
-                        static_cast<std::size_t>(ipa.length));
+                        static_cast<std::size_t>(ipa.length),
+                        static_cast<const std::uint8_t *>(apk.bytes),
+                        static_cast<std::size_t>(apk.length));
             }
 
             NSString *root = ReportDirectoryPath();
@@ -486,6 +489,12 @@ didPickDocumentsAtURLs:
                     WriteUtf8(
                         [root stringByAppendingPathComponent:@"ios-reference-report.txt"],
                         ipaResult.report);
+
+                    if (!ipaResult.shared_strings_csv.empty()) {
+                        WriteUtf8(
+                            [root stringByAppendingPathComponent:@"android-ios-shared-strings.csv"],
+                            ipaResult.shared_strings_csv);
+                    }
                 }
             }
 
@@ -502,6 +511,7 @@ didPickDocumentsAtURLs:
                              "• report.txt — full ELF/import/relocation/address report\n"
                              "• addresses.csv — every hex address from the log, ranked and classified\n"
                              "• summary.json — machine-readable summary\n"
+                             "%@"
                              "%@"
                              "%@"
                              "%@"
@@ -540,6 +550,9 @@ didPickDocumentsAtURLs:
                                 : @"• critical-log-excerpt.txt — compact worker-7/crash/tail evidence from huge logs\n",
                             (ipa.length > 0 && ipaResult.ok)
                                 ? @"• ios-reference-report.txt — ARMv7 Mach-O/load-command/framework/reference-marker report\n"
+                                : @"",
+                            (ipa.length > 0 && ipaResult.ok && !ipaResult.shared_strings_csv.empty())
+                                ? @"• android-ios-shared-strings.csv — exact strings shared by libPVZ2.so and the iOS Mach-O\n"
                                 : @""];
                 } else {
                     self.outputView.text =
