@@ -14881,6 +14881,17 @@ public:
             const std::uint32_t mutex_arg = regs[0];
             const std::uint32_t clean_lr = regs[14] & ~1u;
 
+            if (V63Enabled() &&
+                !V63ReleaseMutex(mutex_arg)) {
+                regs[0] = 1u; // EPERM-like diagnostic failure.
+                ++supported_calls;
+                if (jit) {
+                    jit->HaltExecution(
+                        Dynarmic::HaltReason::UserDefined3);
+                }
+                return;
+            }
+
             if (V62Enabled() &&
                 clean_lr == kV61ResStreamsPumpUnlockReturnGuest &&
                 v62_pump_mutex == 0u) {
@@ -14922,7 +14933,8 @@ public:
             regs[0] = 0;
             ++supported_calls;
 
-            // In coherent mode a worker's verified unlock is a safe slice end.
+            // Legacy v62 B: the verified pump unlock is an explicit safe
+            // worker slice end.
             if (V62MutexCoherentEnabled() &&
                 current_probe_thread_id != 0u &&
                 clean_lr == kV61ResStreamsPumpUnlockReturnGuest &&
@@ -14945,7 +14957,10 @@ public:
 
                 v61_res_stream_pump_boundary_pending = true;
                 ++v61_res_stream_pump_yields;
-                const std::uint64_t interval = V62Enabled() ? 1000u : 100u;
+                const std::uint64_t interval =
+                    V63Enabled()
+                        ? 5000u
+                        : (V62Enabled() ? 1000u : 100u);
 
                 if (v61_res_stream_pump_yields <= 12u ||
                     (v61_res_stream_pump_yields % interval) == 0u) {
@@ -14964,10 +14979,60 @@ public:
         if (name == "pthread_mutexattr_init" ||
             name == "pthread_mutexattr_settype" ||
             name == "pthread_mutexattr_setpshared" ||
-            name == "pthread_mutexattr_destroy" ||
-            name == "pthread_mutex_init" ||
-            name == "pthread_mutex_destroy" ||
-            name == "pthread_mutex_lock") {
+            name == "pthread_mutexattr_destroy") {
+            regs[0] = 0;
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "pthread_mutex_init") {
+            if (V63Enabled()) {
+                v63_mutexes.erase(regs[0]);
+            }
+            regs[0] = 0;
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "pthread_mutex_destroy") {
+            if (V63Enabled()) {
+                const auto found =
+                    v63_mutexes.find(regs[0]);
+                if (found != v63_mutexes.end() &&
+                    found->second.depth != 0u) {
+                    Append(
+                        "V63 MUTEX DESTROY WHILE OWNED mutex=" +
+                        V46DescribeGuestAddress(regs[0]) +
+                        " ownerTid=" +
+                        std::to_string(found->second.owner) +
+                        " depth=" +
+                        std::to_string(found->second.depth));
+                } else if (found != v63_mutexes.end()) {
+                    v63_mutexes.erase(found);
+                }
+            }
+            regs[0] = 0;
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "pthread_mutex_lock") {
+            if (V63Enabled()) {
+                const std::uint32_t mutex_arg = regs[0];
+                const bool acquired =
+                    V63AcquireMutex(
+                        mutex_arg,
+                        false);
+                regs[0] = acquired ? 0u : 16u;
+                ++supported_calls;
+
+                if (!acquired && jit) {
+                    jit->HaltExecution(
+                        Dynarmic::HaltReason::UserDefined3);
+                }
+                return;
+            }
+
             regs[0] = 0;
             ++supported_calls;
             return;
@@ -15017,7 +15082,7 @@ public:
                         }
                     } else {
                         ++v62_pump_mutex_contentions;
-                        regs[0] = 16u; // Linux/Bionic EBUSY.
+                        regs[0] = 16u;
                         Append(
                             "V62 PUMP MUTEX BUSY #" +
                             std::to_string(v62_pump_mutex_contentions) +
@@ -15031,7 +15096,17 @@ public:
                 }
             }
 
-            // Control A and all legacy modes preserve v61's synthetic success.
+            if (V63Enabled()) {
+                const bool acquired =
+                    V63AcquireMutex(
+                        mutex_arg,
+                        true);
+                regs[0] = acquired ? 0u : 16u;
+                ++supported_calls;
+                return;
+            }
+
+            // Legacy modes preserve v61's synthetic success.
             regs[0] = 0;
             ++supported_calls;
             return;
