@@ -232,6 +232,356 @@ std::vector<std::string> ExtractAsciiStrings(
     return {unique.begin(), unique.end()};
 }
 
+
+struct MachSegmentRecord {
+    std::string name;
+    std::uint32_t vmaddr = 0;
+    std::uint32_t vmsize = 0;
+    std::uint32_t fileoff = 0;
+    std::uint32_t filesize = 0;
+};
+
+struct MachSectionRecord {
+    std::string segname;
+    std::string sectname;
+    std::uint32_t addr = 0;
+    std::uint32_t size = 0;
+    std::uint32_t offset = 0;
+};
+
+std::optional<std::size_t> MachVaddrToFile(
+    const std::vector<MachSegmentRecord>& segments,
+    const std::vector<std::uint8_t>& macho,
+    std::uint32_t vaddr,
+    std::size_t need = 1u) {
+
+    for (const auto& seg : segments) {
+        if (vaddr < seg.vmaddr) continue;
+        const std::uint64_t delta =
+            static_cast<std::uint64_t>(vaddr) - seg.vmaddr;
+        if (delta + need > seg.filesize) continue;
+        const std::uint64_t off =
+            static_cast<std::uint64_t>(seg.fileoff) + delta;
+        if (off + need <= macho.size()) {
+            return static_cast<std::size_t>(off);
+        }
+    }
+    return std::nullopt;
+}
+
+std::optional<std::uint32_t> MachRead32(
+    const std::vector<MachSegmentRecord>& segments,
+    const std::vector<std::uint8_t>& macho,
+    std::uint32_t vaddr) {
+
+    const auto off = MachVaddrToFile(segments, macho, vaddr, 4u);
+    if (!off) return std::nullopt;
+    return U32(macho.data() + *off);
+}
+
+std::string MachCString(
+    const std::vector<MachSegmentRecord>& segments,
+    const std::vector<std::uint8_t>& macho,
+    std::uint32_t vaddr,
+    std::size_t max_len = 4096u) {
+
+    const auto off = MachVaddrToFile(segments, macho, vaddr, 1u);
+    if (!off) return {};
+
+    std::string out;
+    for (std::size_t i = *off;
+         i < macho.size() && out.size() < max_len;
+         ++i) {
+        const char ch = static_cast<char>(macho[i]);
+        if (ch == '\0') break;
+        out.push_back(ch);
+    }
+    return out;
+}
+
+const MachSectionRecord* FindMachSection(
+    const std::vector<MachSectionRecord>& sections,
+    const std::string& segname,
+    const std::string& sectname) {
+
+    for (const auto& s : sections) {
+        if (s.segname == segname && s.sectname == sectname) {
+            return &s;
+        }
+    }
+    return nullptr;
+}
+
+struct ObjcMetadataReport {
+    std::string classes_csv;
+    std::string methods_csv;
+    std::string ivars_csv;
+    std::size_t class_count = 0;
+    std::size_t method_count = 0;
+    std::size_t ivar_count = 0;
+};
+
+ObjcMetadataReport ParseObjcMetadata(
+    const std::vector<std::uint8_t>& macho,
+    const std::vector<MachSegmentRecord>& segments,
+    const std::vector<MachSectionRecord>& sections) {
+
+    ObjcMetadataReport out;
+    std::ostringstream classes;
+    std::ostringstream methods;
+    std::ostringstream ivars;
+
+    classes
+        << "class,class_ptr,superclass,superclass_ptr,instance_start,instance_size\n";
+    methods
+        << "class,kind,selector,types,imp\n";
+    ivars
+        << "class,ivar,type,offset,size,alignment\n";
+
+    const auto* classlist =
+        FindMachSection(sections, "__DATA", "__objc_classlist");
+    if (classlist == nullptr || classlist->size < 4u) {
+        out.classes_csv = classes.str();
+        out.methods_csv = methods.str();
+        out.ivars_csv = ivars.str();
+        return out;
+    }
+
+    auto className = [&](std::uint32_t class_ptr) -> std::string {
+        if (class_ptr == 0u) return {};
+        const auto data_bits =
+            MachRead32(segments, macho, class_ptr + 16u);
+        if (!data_bits) return {};
+        const std::uint32_t ro = *data_bits & ~3u;
+        const auto name_ptr =
+            MachRead32(segments, macho, ro + 16u);
+        if (!name_ptr) return {};
+        return MachCString(segments, macho, *name_ptr);
+    };
+
+    std::set<std::uint32_t> seen_classes;
+
+    const std::size_t count = classlist->size / 4u;
+    for (std::size_t i = 0; i < count; ++i) {
+        const std::size_t ptr_off =
+            static_cast<std::size_t>(classlist->offset) + i * 4u;
+        if (ptr_off + 4u > macho.size()) break;
+
+        const std::uint32_t class_ptr =
+            U32(macho.data() + ptr_off);
+        if (class_ptr == 0u || !seen_classes.insert(class_ptr).second) {
+            continue;
+        }
+
+        const auto isa =
+            MachRead32(segments, macho, class_ptr + 0u);
+        const auto superclass =
+            MachRead32(segments, macho, class_ptr + 4u);
+        const auto data_bits =
+            MachRead32(segments, macho, class_ptr + 16u);
+        if (!data_bits) continue;
+
+        const std::uint32_t ro = *data_bits & ~3u;
+        const auto flags = MachRead32(segments, macho, ro + 0u);
+        const auto instance_start =
+            MachRead32(segments, macho, ro + 4u);
+        const auto instance_size =
+            MachRead32(segments, macho, ro + 8u);
+        const auto name_ptr =
+            MachRead32(segments, macho, ro + 16u);
+        if (!name_ptr) continue;
+
+        const std::string name =
+            MachCString(segments, macho, *name_ptr);
+        if (name.empty()) continue;
+
+        const std::string super_name =
+            superclass ? className(*superclass) : std::string{};
+
+        classes
+            << CsvEscape(name) << ","
+            << Hex(class_ptr) << ","
+            << CsvEscape(super_name) << ","
+            << Hex(superclass.value_or(0u)) << ","
+            << instance_start.value_or(0u) << ","
+            << instance_size.value_or(0u)
+            << "\n";
+        ++out.class_count;
+
+        auto emitMethods =
+            [&](std::uint32_t target_class_ptr,
+                const char* kind) {
+
+                if (target_class_ptr == 0u) return;
+
+                const auto target_data =
+                    MachRead32(
+                        segments,
+                        macho,
+                        target_class_ptr + 16u);
+                if (!target_data) return;
+
+                const std::uint32_t target_ro =
+                    *target_data & ~3u;
+                const auto list_ptr =
+                    MachRead32(
+                        segments,
+                        macho,
+                        target_ro + 20u);
+                if (!list_ptr || *list_ptr == 0u) return;
+
+                const auto entsize_flags =
+                    MachRead32(segments, macho, *list_ptr + 0u);
+                const auto method_count =
+                    MachRead32(segments, macho, *list_ptr + 4u);
+                if (!entsize_flags || !method_count) return;
+
+                std::uint32_t entsize =
+                    *entsize_flags & 0xfffffffcU;
+                if (entsize < 12u || entsize > 64u) {
+                    entsize = 12u;
+                }
+
+                const std::uint32_t capped =
+                    std::min<std::uint32_t>(
+                        *method_count,
+                        10000u);
+
+                for (std::uint32_t m = 0; m < capped; ++m) {
+                    const std::uint32_t method_va =
+                        *list_ptr + 8u + m * entsize;
+                    const auto selector_ptr =
+                        MachRead32(
+                            segments,
+                            macho,
+                            method_va + 0u);
+                    const auto types_ptr =
+                        MachRead32(
+                            segments,
+                            macho,
+                            method_va + 4u);
+                    const auto imp =
+                        MachRead32(
+                            segments,
+                            macho,
+                            method_va + 8u);
+                    if (!selector_ptr || !types_ptr || !imp) continue;
+
+                    const std::string selector =
+                        MachCString(
+                            segments,
+                            macho,
+                            *selector_ptr);
+                    const std::string types =
+                        MachCString(
+                            segments,
+                            macho,
+                            *types_ptr);
+                    if (selector.empty()) continue;
+
+                    methods
+                        << CsvEscape(name) << ","
+                        << kind << ","
+                        << CsvEscape(selector) << ","
+                        << CsvEscape(types) << ","
+                        << Hex(*imp)
+                        << "\n";
+                    ++out.method_count;
+                }
+            };
+
+        emitMethods(class_ptr, "instance");
+        if (isa && *isa != 0u && *isa != class_ptr) {
+            emitMethods(*isa, "class");
+        }
+
+        const auto ivar_list_ptr =
+            MachRead32(segments, macho, ro + 28u);
+        if (ivar_list_ptr && *ivar_list_ptr != 0u) {
+            const auto entsize =
+                MachRead32(
+                    segments,
+                    macho,
+                    *ivar_list_ptr + 0u);
+            const auto ivar_count =
+                MachRead32(
+                    segments,
+                    macho,
+                    *ivar_list_ptr + 4u);
+
+            if (entsize && ivar_count) {
+                std::uint32_t ivar_entsize =
+                    *entsize & 0xfffffffcU;
+                if (ivar_entsize < 20u || ivar_entsize > 64u) {
+                    ivar_entsize = 20u;
+                }
+
+                const std::uint32_t capped =
+                    std::min<std::uint32_t>(
+                        *ivar_count,
+                        10000u);
+
+                for (std::uint32_t v = 0; v < capped; ++v) {
+                    const std::uint32_t ivar_va =
+                        *ivar_list_ptr + 8u + v * ivar_entsize;
+
+                    const auto offset_ptr =
+                        MachRead32(segments, macho, ivar_va + 0u);
+                    const auto ivar_name_ptr =
+                        MachRead32(segments, macho, ivar_va + 4u);
+                    const auto type_ptr =
+                        MachRead32(segments, macho, ivar_va + 8u);
+                    const auto alignment =
+                        MachRead32(segments, macho, ivar_va + 12u);
+                    const auto size =
+                        MachRead32(segments, macho, ivar_va + 16u);
+
+                    if (!ivar_name_ptr || !type_ptr) continue;
+
+                    const std::string ivar_name =
+                        MachCString(
+                            segments,
+                            macho,
+                            *ivar_name_ptr);
+                    const std::string type =
+                        MachCString(
+                            segments,
+                            macho,
+                            *type_ptr);
+                    if (ivar_name.empty()) continue;
+
+                    std::uint32_t offset_value = 0u;
+                    if (offset_ptr && *offset_ptr != 0u) {
+                        const auto stored =
+                            MachRead32(
+                                segments,
+                                macho,
+                                *offset_ptr);
+                        if (stored) offset_value = *stored;
+                    }
+
+                    ivars
+                        << CsvEscape(name) << ","
+                        << CsvEscape(ivar_name) << ","
+                        << CsvEscape(type) << ","
+                        << offset_value << ","
+                        << size.value_or(0u) << ","
+                        << alignment.value_or(0u)
+                        << "\n";
+                    ++out.ivar_count;
+                }
+            }
+        }
+
+        (void)flags;
+    }
+
+    out.classes_csv = classes.str();
+    out.methods_csv = methods.str();
+    out.ivars_csv = ivars.str();
+    return out;
+}
+
 } // namespace
 
 PvZ2IpaInspectorResult InspectPvZ2IpaReference(
@@ -283,6 +633,8 @@ PvZ2IpaInspectorResult InspectPvZ2IpaReference(
         std::vector<std::string> dylibs;
         std::vector<std::string> segments;
         std::vector<std::string> sections;
+        std::vector<MachSegmentRecord> segment_records;
+        std::vector<MachSectionRecord> section_records;
         std::set<std::string> objc_sections;
         std::uint32_t cryptid = 0xffffffffu;
         std::uint32_t minos = 0u;
@@ -312,6 +664,15 @@ PvZ2IpaInspectorResult InspectPvZ2IpaReference(
                 const std::string seg =
                     FixedName(macho.data() + pos + 8, 16);
                 segments.push_back(seg);
+
+                MachSegmentRecord segment;
+                segment.name = seg;
+                segment.vmaddr = U32(macho.data() + pos + 24);
+                segment.vmsize = U32(macho.data() + pos + 28);
+                segment.fileoff = U32(macho.data() + pos + 32);
+                segment.filesize = U32(macho.data() + pos + 36);
+                segment_records.push_back(segment);
+
                 const std::uint32_t nsects = U32(macho.data() + pos + 48);
                 std::size_t sp = pos + 56u;
                 for (std::uint32_t s = 0; s < nsects; ++s) {
@@ -321,6 +682,15 @@ PvZ2IpaInspectorResult InspectPvZ2IpaReference(
                     const std::string sect_seg =
                         FixedName(macho.data() + sp + 16, 16);
                     sections.push_back(sect_seg + ":" + sect);
+
+                    MachSectionRecord section;
+                    section.segname = sect_seg;
+                    section.sectname = sect;
+                    section.addr = U32(macho.data() + sp + 32);
+                    section.size = U32(macho.data() + sp + 36);
+                    section.offset = U32(macho.data() + sp + 40);
+                    section_records.push_back(section);
+
                     if (sect.rfind("__objc_", 0) == 0 ||
                         sect == "__cstring") {
                         objc_sections.insert(sect);
@@ -361,6 +731,18 @@ PvZ2IpaInspectorResult InspectPvZ2IpaReference(
                 macho,
                 function_dataoff,
                 function_datasize);
+
+        const ObjcMetadataReport objc =
+            ParseObjcMetadata(
+                macho,
+                segment_records,
+                section_records);
+        result.objc_classes_csv = objc.classes_csv;
+        result.objc_methods_csv = objc.methods_csv;
+        result.objc_ivars_csv = objc.ivars_csv;
+        result.objc_class_count = objc.class_count;
+        result.objc_method_count = objc.method_count;
+        result.objc_ivar_count = objc.ivar_count;
 
         const auto strings = ExtractAsciiStrings(macho);
 
@@ -460,6 +842,9 @@ PvZ2IpaInspectorResult InspectPvZ2IpaReference(
             << "ASCII strings >=8 (unique): " << strings.size() << "\n"
             << "Android/iOS shared strings >=8: "
             << result.shared_string_count << "\n"
+            << "Objective-C classes: " << result.objc_class_count << "\n"
+            << "Objective-C methods: " << result.objc_method_count << "\n"
+            << "Objective-C ivars: " << result.objc_ivar_count << "\n"
             << "segments: " << segments.size() << "\n"
             << "sections: " << sections.size() << "\n"
             << "dylibs: " << dylibs.size() << "\n\n";
@@ -504,7 +889,9 @@ PvZ2IpaInspectorResult InspectPvZ2IpaReference(
             << " function starts, " << dylibs.size()
             << " dylibs, " << sections.size() << " sections, "
             << result.shared_string_count
-            << " Android/iOS shared string anchors.";
+            << " Android/iOS shared string anchors, "
+            << result.objc_class_count << " ObjC classes, "
+            << result.objc_method_count << " ObjC methods.";
 
         result.ok = true;
         result.report = report.str();
