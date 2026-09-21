@@ -1774,6 +1774,28 @@ public:
     std::uint64_t v65_cond_resumes = 0u;
     std::uint64_t v65_cond_timeouts = 0u;
 
+    struct V66SemaphoreWaitState {
+        std::uint32_t sem = 0u;
+        bool timed = false;
+        bool notified = false;
+        std::uint64_t deadline_realtime_ns = 0u;
+    };
+    struct V66SleepState {
+        std::uint64_t deadline_steady_ns = 0u;
+    };
+    std::unordered_map<std::uint32_t, V66SemaphoreWaitState>
+        v66_sem_waits;
+    std::unordered_map<std::uint32_t, std::vector<std::uint32_t>>
+        v66_sem_waiters;
+    std::unordered_map<std::uint32_t, V66SleepState>
+        v66_sleeps;
+    std::uint64_t v66_sem_wait_calls = 0u;
+    std::uint64_t v66_sem_posts = 0u;
+    std::uint64_t v66_sem_resumes = 0u;
+    std::uint64_t v66_sem_timeouts = 0u;
+    std::uint64_t v66_sleep_calls = 0u;
+    std::uint64_t v66_sleep_resumes = 0u;
+
     std::uint32_t next_pthread_key = 1;
     std::uint32_t next_synthetic_thread = 1;
     std::uint32_t next_synthetic_class = 1;
@@ -3253,6 +3275,343 @@ public:
                 " rc=" +
                 std::to_string(result_code) +
                 " -> mutex reacquired");
+        }
+
+        return true;
+    }
+
+
+    std::uint64_t V66SteadyNowNs() const {
+        const auto now =
+            std::chrono::steady_clock::now()
+                .time_since_epoch();
+        const auto nanos =
+            std::chrono::duration_cast<
+                std::chrono::nanoseconds>(now)
+                .count();
+        return
+            nanos > 0
+                ? static_cast<std::uint64_t>(nanos)
+                : 0u;
+    }
+
+    bool V66ThreadBlocked(
+        std::uint32_t thread_id) const {
+
+        if (!V66Enabled()) {
+            return false;
+        }
+
+        return
+            v66_sem_waits.find(thread_id) !=
+                v66_sem_waits.end() ||
+            v66_sleeps.find(thread_id) !=
+                v66_sleeps.end();
+    }
+
+    bool V66HasTimedSleeper() const {
+        if (!V66Enabled()) {
+            return false;
+        }
+
+        if (!v66_sleeps.empty()) {
+            return true;
+        }
+
+        for (const auto& entry : v66_sem_waits) {
+            if (entry.second.timed &&
+                entry.second.deadline_realtime_ns != 0u) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    bool V66BeginSemaphoreWait(
+        std::uint32_t sem,
+        bool timed,
+        std::uint32_t abstime) {
+
+        if (!V66Enabled() ||
+            current_probe_thread_id == 0u) {
+            return false;
+        }
+
+        V66SemaphoreWaitState wait;
+        wait.sem = sem;
+        wait.timed = timed;
+
+        if (timed && abstime != 0u) {
+            const std::uint64_t sec =
+                mem.Read32Guest(abstime + 0u);
+            const std::uint64_t nsec =
+                mem.Read32Guest(abstime + 4u);
+
+            wait.deadline_realtime_ns =
+                nsec < 1000000000ull
+                    ? sec * 1000000000ull + nsec
+                    : V65RealtimeNowNs();
+        }
+
+        v66_sem_waits[current_probe_thread_id] =
+            wait;
+
+        auto& waiters =
+            v66_sem_waiters[sem];
+
+        if (std::find(
+                waiters.begin(),
+                waiters.end(),
+                current_probe_thread_id) ==
+            waiters.end()) {
+            waiters.push_back(
+                current_probe_thread_id);
+        }
+
+        ++v66_sem_wait_calls;
+
+        if (v66_sem_wait_calls <= 32u ||
+            (v66_sem_wait_calls % 256u) == 0u) {
+            Append(
+                "V66 SEM WAIT #" +
+                std::to_string(v66_sem_wait_calls) +
+                " tid=" +
+                std::to_string(current_probe_thread_id) +
+                " sem=" +
+                V46DescribeGuestAddress(sem) +
+                (timed
+                    ? " timed=YES"
+                    : " timed=NO") +
+                " -> worker sleeping");
+        }
+
+        return true;
+    }
+
+    std::uint32_t V66NotifySemaphore(
+        std::uint32_t sem) {
+
+        if (!V66Enabled()) {
+            return 0u;
+        }
+
+        auto found =
+            v66_sem_waiters.find(sem);
+
+        if (found == v66_sem_waiters.end()) {
+            return 0u;
+        }
+
+        for (const std::uint32_t tid :
+             found->second) {
+            auto wait =
+                v66_sem_waits.find(tid);
+
+            if (wait ==
+                    v66_sem_waits.end() ||
+                wait->second.sem != sem ||
+                wait->second.notified) {
+                continue;
+            }
+
+            wait->second.notified = true;
+            return 1u;
+        }
+
+        return 0u;
+    }
+
+    bool V66BeginSleep(
+        std::uint64_t duration_ns,
+        const char* kind) {
+
+        if (!V66Enabled() ||
+            current_probe_thread_id == 0u) {
+            return false;
+        }
+
+        if (duration_ns == 0u) {
+            return false;
+        }
+
+        V66SleepState sleep;
+        const std::uint64_t now =
+            V66SteadyNowNs();
+
+        sleep.deadline_steady_ns =
+            std::numeric_limits<std::uint64_t>::max() -
+                    now < duration_ns
+                ? std::numeric_limits<std::uint64_t>::max()
+                : now + duration_ns;
+
+        v66_sleeps[current_probe_thread_id] =
+            sleep;
+        ++v66_sleep_calls;
+
+        if (v66_sleep_calls <= 32u ||
+            (v66_sleep_calls % 256u) == 0u) {
+            Append(
+                "V66 SLEEP #" +
+                std::to_string(v66_sleep_calls) +
+                " tid=" +
+                std::to_string(current_probe_thread_id) +
+                " kind=" +
+                std::string{kind != nullptr ? kind : "sleep"} +
+                " durationNs=" +
+                std::to_string(duration_ns));
+        }
+
+        return true;
+    }
+
+    void V66EraseSemaphoreWait(
+        std::uint32_t thread_id,
+        std::uint32_t sem) {
+
+        auto waiters =
+            v66_sem_waiters.find(sem);
+
+        if (waiters != v66_sem_waiters.end()) {
+            auto& ids =
+                waiters->second;
+            ids.erase(
+                std::remove(
+                    ids.begin(),
+                    ids.end(),
+                    thread_id),
+                ids.end());
+
+            if (ids.empty()) {
+                v66_sem_waiters.erase(waiters);
+            }
+        }
+
+        v66_sem_waits.erase(thread_id);
+    }
+
+    bool V66PrepareBlockingResume(
+        std::uint32_t thread_id,
+        bool& did_resume,
+        std::uint32_t& result_code) {
+
+        did_resume = false;
+        result_code = 0u;
+
+        if (!V66Enabled()) {
+            return true;
+        }
+
+        auto sleep =
+            v66_sleeps.find(thread_id);
+
+        if (sleep != v66_sleeps.end()) {
+            if (V66SteadyNowNs() <
+                sleep->second.deadline_steady_ns) {
+                return false;
+            }
+
+            v66_sleeps.erase(sleep);
+            did_resume = true;
+            result_code = 0u;
+            ++v66_sleep_resumes;
+
+            if (v66_sleep_resumes <= 32u ||
+                (v66_sleep_resumes % 256u) == 0u) {
+                Append(
+                    "V66 SLEEP RESUME #" +
+                    std::to_string(v66_sleep_resumes) +
+                    " tid=" +
+                    std::to_string(thread_id));
+            }
+
+            return true;
+        }
+
+        auto found =
+            v66_sem_waits.find(thread_id);
+
+        if (found == v66_sem_waits.end()) {
+            return true;
+        }
+
+        V66SemaphoreWaitState& wait =
+            found->second;
+
+        if (!wait.notified &&
+            wait.timed &&
+            wait.deadline_realtime_ns != 0u &&
+            V65RealtimeNowNs() >=
+                wait.deadline_realtime_ns) {
+
+            const std::uint32_t sem =
+                wait.sem;
+            V66EraseSemaphoreWait(
+                thread_id,
+                sem);
+
+            if (guest_errno_address == 0u) {
+                guest_errno_address =
+                    mem.AllocateObject(4u, 4u);
+            }
+            if (guest_errno_address != 0u) {
+                mem.Write32Guest(
+                    guest_errno_address,
+                    110u); // ETIMEDOUT
+            }
+
+            did_resume = true;
+            result_code = 0xffffffffu;
+            ++v66_sem_timeouts;
+
+            Append(
+                "V66 SEM TIMEOUT tid=" +
+                std::to_string(thread_id) +
+                " sem=" +
+                V46DescribeGuestAddress(sem));
+            return true;
+        }
+
+        if (!wait.notified) {
+            return false;
+        }
+
+        const std::uint32_t count =
+            mem.Read32Guest(wait.sem);
+
+        if (count == 0u) {
+            // Another successful waiter/trywait consumed the posted token
+            // before this cooperative worker was scheduled. Return to sleep
+            // and wait for the next post.
+            wait.notified = false;
+            return false;
+        }
+
+        mem.Write32Guest(
+            wait.sem,
+            count - 1u);
+
+        const std::uint32_t sem =
+            wait.sem;
+
+        V66EraseSemaphoreWait(
+            thread_id,
+            sem);
+
+        did_resume = true;
+        result_code = 0u;
+        ++v66_sem_resumes;
+
+        if (v66_sem_resumes <= 32u ||
+            (v66_sem_resumes % 256u) == 0u) {
+            Append(
+                "V66 SEM RESUME #" +
+                std::to_string(v66_sem_resumes) +
+                " tid=" +
+                std::to_string(thread_id) +
+                " sem=" +
+                V46DescribeGuestAddress(sem) +
+                " -> token consumed");
         }
 
         return true;
