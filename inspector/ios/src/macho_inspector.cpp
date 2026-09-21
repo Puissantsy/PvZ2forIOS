@@ -247,6 +247,9 @@ struct MachSectionRecord {
     std::uint32_t addr = 0;
     std::uint32_t size = 0;
     std::uint32_t offset = 0;
+    std::uint32_t flags = 0;
+    std::uint32_t reserved1 = 0;
+    std::uint32_t reserved2 = 0;
 };
 
 std::optional<std::size_t> MachVaddrToFile(
@@ -310,6 +313,394 @@ const MachSectionRecord* FindMachSection(
         }
     }
     return nullptr;
+}
+
+
+std::vector<std::uint32_t> DecodeFunctionStarts(
+    const std::vector<std::uint8_t>& macho,
+    std::uint32_t dataoff,
+    std::uint32_t datasize,
+    std::uint32_t text_vmaddr) {
+
+    std::vector<std::uint32_t> out;
+    if (static_cast<std::uint64_t>(dataoff) + datasize > macho.size()) {
+        return out;
+    }
+
+    std::size_t p = dataoff;
+    const std::size_t end =
+        static_cast<std::size_t>(dataoff) + datasize;
+    std::uint32_t current = text_vmaddr;
+
+    while (p < end) {
+        std::uint64_t delta = 0;
+        unsigned shift = 0;
+        bool complete = false;
+
+        while (p < end && shift < 64u) {
+            const std::uint8_t byte = macho[p++];
+            delta |=
+                static_cast<std::uint64_t>(byte & 0x7fu) << shift;
+            if ((byte & 0x80u) == 0u) {
+                complete = true;
+                break;
+            }
+            shift += 7u;
+        }
+
+        if (!complete || delta == 0u) break;
+        current += static_cast<std::uint32_t>(delta);
+        out.push_back(current);
+    }
+
+    return out;
+}
+
+std::uint32_t NearestFunctionStart(
+    const std::vector<std::uint32_t>& starts,
+    std::uint32_t address) {
+
+    const auto it =
+        std::upper_bound(
+            starts.begin(),
+            starts.end(),
+            address);
+
+    if (it == starts.begin()) return 0u;
+    return *std::prev(it);
+}
+
+std::optional<std::uint32_t> DecodeThumbCallTarget(
+    std::uint32_t address,
+    std::uint16_t h1,
+    std::uint16_t h2) {
+
+    if ((h1 & 0xf800u) != 0xf000u ||
+        (h2 & 0xc000u) != 0xc000u) {
+        return std::nullopt;
+    }
+
+    const std::uint32_t s = (h1 >> 10) & 1u;
+    const std::uint32_t j1 = (h2 >> 13) & 1u;
+    const std::uint32_t j2 = (h2 >> 11) & 1u;
+    const std::uint32_t i1 = (~(j1 ^ s)) & 1u;
+    const std::uint32_t i2 = (~(j2 ^ s)) & 1u;
+    const std::uint32_t imm10h = h1 & 0x03ffu;
+
+    std::int32_t imm = 0;
+    std::uint32_t pc = address + 4u;
+
+    if ((h2 & 0x1000u) != 0u) {
+        const std::uint32_t imm11 = h2 & 0x07ffu;
+        std::uint32_t raw =
+            (s << 24) |
+            (i1 << 23) |
+            (i2 << 22) |
+            (imm10h << 12) |
+            (imm11 << 1);
+
+        if (s != 0u) raw |= 0xfe000000u;
+        imm = static_cast<std::int32_t>(raw);
+    } else {
+        if ((h2 & 1u) != 0u) return std::nullopt;
+
+        const std::uint32_t imm10l =
+            (h2 >> 1) & 0x03ffu;
+        std::uint32_t raw =
+            (s << 24) |
+            (i1 << 23) |
+            (i2 << 22) |
+            (imm10h << 12) |
+            (imm10l << 2);
+
+        if (s != 0u) raw |= 0xfe000000u;
+        imm = static_cast<std::int32_t>(raw);
+        pc &= ~3u;
+    }
+
+    return pc + static_cast<std::uint32_t>(imm);
+}
+
+std::optional<std::uint32_t> DecodeArmCallTarget(
+    std::uint32_t address,
+    std::uint32_t word) {
+
+    if ((word & 0x0f000000u) == 0x0b000000u) {
+        std::int32_t imm =
+            static_cast<std::int32_t>(
+                (word & 0x00ffffffu) << 2);
+        if ((imm & 0x02000000) != 0) {
+            imm |= static_cast<std::int32_t>(0xfc000000u);
+        }
+        return address + 8u + static_cast<std::uint32_t>(imm);
+    }
+
+    if ((word & 0xfe000000u) == 0xfa000000u) {
+        std::uint32_t raw =
+            ((word & 0x00ffffffu) << 2) |
+            ((word >> 23) & 0x2u);
+
+        if ((raw & 0x02000000u) != 0u) {
+            raw |= 0xfc000000u;
+        }
+
+        const auto imm =
+            static_cast<std::int32_t>(raw);
+        return
+            (address + 8u) +
+            static_cast<std::uint32_t>(imm);
+    }
+
+    return std::nullopt;
+}
+
+struct ImportCallReport {
+    std::string csv;
+    std::string pthread_report;
+    std::size_t stub_count = 0;
+    std::size_t call_count = 0;
+    std::size_t pthread_call_count = 0;
+};
+
+ImportCallReport ParseImportCalls(
+    const std::vector<std::uint8_t>& macho,
+    const std::vector<MachSectionRecord>& sections,
+    std::uint32_t symoff,
+    std::uint32_t nsyms,
+    std::uint32_t stroff,
+    std::uint32_t strsize,
+    std::uint32_t indirectsymoff,
+    std::uint32_t nindirectsyms,
+    const std::vector<std::uint32_t>& function_starts) {
+
+    ImportCallReport out;
+
+    if (symoff == 0u ||
+        stroff == 0u ||
+        indirectsymoff == 0u ||
+        static_cast<std::uint64_t>(symoff) +
+                static_cast<std::uint64_t>(nsyms) * 12u >
+            macho.size() ||
+        static_cast<std::uint64_t>(stroff) + strsize >
+            macho.size() ||
+        static_cast<std::uint64_t>(indirectsymoff) +
+                static_cast<std::uint64_t>(nindirectsyms) * 4u >
+            macho.size()) {
+        return out;
+    }
+
+    auto symbolName =
+        [&](std::uint32_t symbol_index) -> std::string {
+
+            if (symbol_index >= nsyms) return {};
+
+            const std::size_t nlist =
+                static_cast<std::size_t>(symoff) +
+                static_cast<std::size_t>(symbol_index) * 12u;
+
+            const std::uint32_t strx =
+                U32(macho.data() + nlist);
+            if (strx >= strsize) return {};
+
+            const std::size_t start =
+                static_cast<std::size_t>(stroff) + strx;
+            std::size_t end = start;
+            while (end < macho.size() &&
+                   end < static_cast<std::size_t>(stroff) + strsize &&
+                   macho[end] != 0u) {
+                ++end;
+            }
+
+            return std::string(
+                reinterpret_cast<const char*>(
+                    macho.data() + start),
+                end - start);
+        };
+
+    std::map<std::uint32_t, std::string> stubs;
+
+    for (const auto& section : sections) {
+        const std::uint32_t section_type =
+            section.flags & 0xffu;
+        if (section_type != 0x8u ||
+            section.reserved2 == 0u) {
+            continue;
+        }
+
+        const std::uint32_t stub_size =
+            section.reserved2;
+        const std::uint32_t stub_count =
+            section.size / stub_size;
+
+        for (std::uint32_t i = 0; i < stub_count; ++i) {
+            const std::uint64_t indirect_index64 =
+                static_cast<std::uint64_t>(section.reserved1) + i;
+            if (indirect_index64 >= nindirectsyms) break;
+
+            const std::size_t indirect_off =
+                static_cast<std::size_t>(indirectsymoff) +
+                static_cast<std::size_t>(indirect_index64) * 4u;
+
+            const std::uint32_t symbol_index =
+                U32(macho.data() + indirect_off);
+
+            if ((symbol_index & 0xc0000000u) != 0u) {
+                continue;
+            }
+
+            const std::string symbol =
+                symbolName(symbol_index);
+            if (symbol.empty()) continue;
+
+            stubs[
+                section.addr + i * stub_size] =
+                    symbol;
+        }
+    }
+
+    out.stub_count = stubs.size();
+
+    struct Call {
+        std::string symbol;
+        std::uint32_t stub = 0;
+        std::uint32_t callsite = 0;
+        std::uint32_t caller = 0;
+        std::string isa;
+    };
+
+    std::vector<Call> calls;
+    std::set<std::pair<std::uint32_t, std::string>> seen;
+
+    const auto* text =
+        FindMachSection(sections, "__TEXT", "__text");
+    if (text != nullptr &&
+        static_cast<std::uint64_t>(text->offset) + text->size <=
+            macho.size()) {
+
+        for (std::uint32_t rel = 0;
+             rel + 4u <= text->size;
+             rel += 2u) {
+
+            const std::size_t file_off =
+                static_cast<std::size_t>(text->offset) + rel;
+            const std::uint16_t h1 =
+                U16(macho.data() + file_off);
+            const std::uint16_t h2 =
+                U16(macho.data() + file_off + 2u);
+            const std::uint32_t callsite =
+                text->addr + rel;
+
+            const auto target =
+                DecodeThumbCallTarget(
+                    callsite,
+                    h1,
+                    h2);
+            if (!target) continue;
+
+            const auto found = stubs.find(*target);
+            if (found == stubs.end()) continue;
+
+            if (!seen.insert({callsite, found->second}).second) {
+                continue;
+            }
+
+            calls.push_back(
+                Call{
+                    found->second,
+                    *target,
+                    callsite,
+                    NearestFunctionStart(
+                        function_starts,
+                        callsite),
+                    "thumb"
+                });
+        }
+
+        for (std::uint32_t rel = 0;
+             rel + 4u <= text->size;
+             rel += 4u) {
+
+            const std::size_t file_off =
+                static_cast<std::size_t>(text->offset) + rel;
+            const std::uint32_t word =
+                U32(macho.data() + file_off);
+            const std::uint32_t callsite =
+                text->addr + rel;
+
+            const auto target =
+                DecodeArmCallTarget(
+                    callsite,
+                    word);
+            if (!target) continue;
+
+            const auto found = stubs.find(*target);
+            if (found == stubs.end()) continue;
+
+            if (!seen.insert({callsite, found->second}).second) {
+                continue;
+            }
+
+            calls.push_back(
+                Call{
+                    found->second,
+                    *target,
+                    callsite,
+                    NearestFunctionStart(
+                        function_starts,
+                        callsite),
+                    "arm"
+                });
+        }
+    }
+
+    std::sort(
+        calls.begin(),
+        calls.end(),
+        [](const Call& a, const Call& b) {
+            if (a.callsite != b.callsite) {
+                return a.callsite < b.callsite;
+            }
+            return a.symbol < b.symbol;
+        });
+
+    out.call_count = calls.size();
+
+    std::ostringstream csv;
+    csv << "symbol,stub,callsite,caller_start,isa\n";
+
+    std::ostringstream pthread;
+    pthread
+        << "PvZ2 iOS pthread import-call reference\n"
+        << "=====================================\n\n";
+
+    for (const auto& call : calls) {
+        csv
+            << CsvEscape(call.symbol) << ","
+            << Hex(call.stub) << ","
+            << Hex(call.callsite) << ","
+            << Hex(call.caller) << ","
+            << call.isa
+            << "\n";
+
+        if (call.symbol.find("_pthread_cond_") !=
+                std::string::npos ||
+            call.symbol.find("_pthread_mutex_") !=
+                std::string::npos) {
+
+            ++out.pthread_call_count;
+            pthread
+                << call.symbol
+                << " stub=" << Hex(call.stub)
+                << " callsite=" << Hex(call.callsite)
+                << " caller=" << Hex(call.caller)
+                << " isa=" << call.isa
+                << "\n";
+        }
+    }
+
+    out.csv = csv.str();
+    out.pthread_report = pthread.str();
+    return out;
 }
 
 struct ObjcMetadataReport {
@@ -639,7 +1030,12 @@ PvZ2IpaInspectorResult InspectPvZ2IpaReference(
         std::uint32_t cryptid = 0xffffffffu;
         std::uint32_t minos = 0u;
         std::uint32_t sdk = 0u;
+        std::uint32_t symoff = 0u;
         std::uint32_t nsyms = 0u;
+        std::uint32_t stroff = 0u;
+        std::uint32_t strsize = 0u;
+        std::uint32_t indirectsymoff = 0u;
+        std::uint32_t nindirectsyms = 0u;
         std::uint32_t function_dataoff = 0u;
         std::uint32_t function_datasize = 0u;
 
@@ -689,6 +1085,9 @@ PvZ2IpaInspectorResult InspectPvZ2IpaReference(
                     section.addr = U32(macho.data() + sp + 32);
                     section.size = U32(macho.data() + sp + 36);
                     section.offset = U32(macho.data() + sp + 40);
+                    section.flags = U32(macho.data() + sp + 56);
+                    section.reserved1 = U32(macho.data() + sp + 60);
+                    section.reserved2 = U32(macho.data() + sp + 64);
                     section_records.push_back(section);
 
                     if (sect.rfind("__objc_", 0) == 0 ||
@@ -698,7 +1097,15 @@ PvZ2IpaInspectorResult InspectPvZ2IpaReference(
                     sp += 68u;
                 }
             } else if (base_cmd == 0x2u && cmdsize >= 24u) { // LC_SYMTAB
+                symoff = U32(macho.data() + pos + 8);
                 nsyms = U32(macho.data() + pos + 12);
+                stroff = U32(macho.data() + pos + 16);
+                strsize = U32(macho.data() + pos + 20);
+            } else if (base_cmd == 0xbu && cmdsize >= 80u) { // LC_DYSYMTAB
+                indirectsymoff =
+                    U32(macho.data() + pos + 56);
+                nindirectsyms =
+                    U32(macho.data() + pos + 60);
             } else if ((base_cmd == 0xcu ||
                         base_cmd == 0x18u ||
                         base_cmd == 0x1fu ||
@@ -731,6 +1138,38 @@ PvZ2IpaInspectorResult InspectPvZ2IpaReference(
                 macho,
                 function_dataoff,
                 function_datasize);
+
+        std::uint32_t text_vmaddr = 0u;
+        for (const auto& segment : segment_records) {
+            if (segment.name == "__TEXT") {
+                text_vmaddr = segment.vmaddr;
+                break;
+            }
+        }
+
+        const auto function_start_addresses =
+            DecodeFunctionStarts(
+                macho,
+                function_dataoff,
+                function_datasize,
+                text_vmaddr);
+
+        const ImportCallReport import_calls =
+            ParseImportCalls(
+                macho,
+                section_records,
+                symoff,
+                nsyms,
+                stroff,
+                strsize,
+                indirectsymoff,
+                nindirectsyms,
+                function_start_addresses);
+
+        result.ios_import_calls_csv =
+            import_calls.csv;
+        result.pthread_reference =
+            import_calls.pthread_report;
 
         const ObjcMetadataReport objc =
             ParseObjcMetadata(
@@ -845,6 +1284,9 @@ PvZ2IpaInspectorResult InspectPvZ2IpaReference(
             << "Objective-C classes: " << result.objc_class_count << "\n"
             << "Objective-C methods: " << result.objc_method_count << "\n"
             << "Objective-C ivars: " << result.objc_ivar_count << "\n"
+            << "Import stubs resolved: " << import_calls.stub_count << "\n"
+            << "Import calls resolved: " << import_calls.call_count << "\n"
+            << "pthread mutex/cond calls: " << import_calls.pthread_call_count << "\n"
             << "segments: " << segments.size() << "\n"
             << "sections: " << sections.size() << "\n"
             << "dylibs: " << dylibs.size() << "\n\n";
