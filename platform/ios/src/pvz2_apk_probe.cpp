@@ -15693,8 +15693,6 @@ public:
             name == "pthread_condattr_destroy" ||
             name == "pthread_cond_init" ||
             name == "pthread_cond_destroy" ||
-            name == "pthread_cond_signal" ||
-            name == "pthread_cond_broadcast" ||
             name == "pthread_detach" ||
             name == "pthread_join" ||
             name == "pthread_setschedparam" ||
@@ -15766,11 +15764,69 @@ public:
             return;
         }
 
+        if (name == "pthread_cond_signal" ||
+            name == "pthread_cond_broadcast") {
+
+            if (V65Enabled()) {
+                V65NotifyCond(
+                    regs[0],
+                    name == "pthread_cond_broadcast");
+            }
+
+            regs[0] = 0u;
+            ++supported_calls;
+            return;
+        }
+
         if (name == "pthread_cond_wait" ||
             name == "pthread_cond_timedwait") {
 
-            // No competing guest thread exists during constructor probing.
-            // Returning success prevents a fake single-thread deadlock.
+            const bool timed =
+                name == "pthread_cond_timedwait";
+
+            if (V65Enabled() &&
+                current_probe_thread_id != 0u) {
+
+                const std::uint32_t cond =
+                    regs[0];
+                const std::uint32_t mutex =
+                    regs[1];
+                const std::uint32_t abstime =
+                    timed
+                        ? regs[2]
+                        : 0u;
+
+                if (!V65BeginCondWait(
+                        cond,
+                        mutex,
+                        timed,
+                        abstime)) {
+
+                    regs[0] = 22u; // EINVAL-like diagnostic failure.
+                    ++supported_calls;
+
+                    if (jit) {
+                        jit->HaltExecution(
+                            Dynarmic::HaltReason::UserDefined3);
+                    }
+                    return;
+                }
+
+                // The SVC itself is complete. Save the worker immediately
+                // after the atomic mutex release; the scheduler will not run
+                // it again until signal/broadcast/timeout and mutex reacquire.
+                regs[0] = 0u;
+                ++supported_calls;
+
+                if (jit) {
+                    jit->HaltExecution(
+                        Dynarmic::HaltReason::UserDefined4);
+                }
+                return;
+            }
+
+            // Constructor/main-thread compatibility path retained for phases
+            // that do not yet participate in the deferred-worker scheduler.
             regs[0] = 0;
             ++supported_calls;
             return;
