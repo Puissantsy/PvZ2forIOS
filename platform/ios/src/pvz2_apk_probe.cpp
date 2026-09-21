@@ -23844,6 +23844,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
 
                         std::size_t ran = 0u;
                         std::size_t inspected = 0u;
+                        bool v63_boundary_fatal = false;
 
                         while (ran < max_slices &&
                                inspected <
@@ -23972,42 +23973,141 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             const std::uint64_t calls_before =
                                 callbacks.supported_calls;
 
-                            const Dynarmic::HaltReason worker_halt =
-                                jit.Run();
+                            bool worker_returned = false;
+                            bool worker_fatal = false;
+                            std::uint32_t critical_chunks = 0u;
 
-                            worker_state.regs =
-                                jit.Regs();
-                            worker_state.ext_regs =
-                                jit.ExtRegs();
-                            worker_state.cpsr =
-                                jit.Cpsr();
-                            worker_state.fpscr =
-                                jit.Fpscr();
-                            worker_state.runtime_ticks +=
-                                callbacks.ticks_consumed;
+                            for (;;) {
+                                const Dynarmic::HaltReason worker_halt =
+                                    jit.Run();
 
-                            const bool worker_returned =
-                                callbacks.control_returned &&
-                                Dynarmic::Has(
-                                    worker_halt,
-                                    Dynarmic::HaltReason::UserDefined1);
+                                worker_state.regs =
+                                    jit.Regs();
+                                worker_state.ext_regs =
+                                    jit.ExtRegs();
+                                worker_state.cpsr =
+                                    jit.Cpsr();
+                                worker_state.fpscr =
+                                    jit.Fpscr();
+                                worker_state.runtime_ticks +=
+                                    callbacks.ticks_consumed;
 
-                            const bool worker_fatal =
-                                Dynarmic::Has(
-                                    worker_halt,
-                                    Dynarmic::HaltReason::UserDefined2) ||
-                                Dynarmic::Has(
-                                    worker_halt,
-                                    Dynarmic::HaltReason::UserDefined3);
+                                worker_returned =
+                                    callbacks.control_returned &&
+                                    Dynarmic::Has(
+                                        worker_halt,
+                                        Dynarmic::HaltReason::UserDefined1);
 
-                            if (worker_returned) {
-                                worker_state.runtime_completed =
-                                    true;
+                                worker_fatal =
+                                    Dynarmic::Has(
+                                        worker_halt,
+                                        Dynarmic::HaltReason::UserDefined2) ||
+                                    Dynarmic::Has(
+                                        worker_halt,
+                                        Dynarmic::HaltReason::UserDefined3);
+
+                                if (worker_returned) {
+                                    worker_state.runtime_completed =
+                                        true;
+                                }
+
+                                if (worker_fatal) {
+                                    worker_state.runtime_failed =
+                                        true;
+                                }
+
+                                const std::uint32_t held =
+                                    callbacks.V63Enabled()
+                                        ? callbacks.V63HeldMutexCount(
+                                              worker_state.id)
+                                        : 0u;
+
+                                if (!callbacks.V63Enabled() ||
+                                    held == 0u ||
+                                    worker_returned ||
+                                    worker_fatal) {
+                                    break;
+                                }
+
+                                ++critical_chunks;
+                                ++callbacks.v63_critical_continuations;
+
+                                if (critical_chunks > 128u) {
+                                    worker_fatal = true;
+                                    worker_state.runtime_failed = true;
+                                    result.message =
+                                        "v63 boundary worker tid=" +
+                                        std::to_string(
+                                            worker_state.id) +
+                                        " remained inside guest critical sections for more than 128 continuation quanta; held={" +
+                                        callbacks.V63HeldMutexSummary(
+                                            worker_state.id) +
+                                        "}.";
+                                    callbacks.Append(
+                                        "V63 BOUNDARY CRITICAL STOP: " +
+                                        result.message);
+                                    break;
+                                }
+
+                                if (critical_chunks <= 8u ||
+                                    (critical_chunks % 16u) == 0u) {
+                                    callbacks.Append(
+                                        "V63 BOUNDARY CRITICAL CONTINUE tid=" +
+                                        std::to_string(
+                                            worker_state.id) +
+                                        " chunk=" +
+                                        std::to_string(
+                                            critical_chunks) +
+                                        " phase=" +
+                                        std::string{
+                                            phase != nullptr
+                                                ? phase
+                                                : "n/a"} +
+                                        " PC=" +
+                                        callbacks.V46DescribeGuestAddress(
+                                            worker_state.regs[15]) +
+                                        " heldCount=" +
+                                        std::to_string(held) +
+                                        " held={" +
+                                        callbacks.V63HeldMutexSummary(
+                                            worker_state.id) +
+                                        "}");
+                                }
+
+                                callbacks.control_returned = false;
+                                callbacks.soft_slice_timeout = true;
+                                callbacks.ticks_left =
+                                    kBoundaryWorkerSliceTicks;
+                                callbacks.ticks_consumed = 0u;
+                                callbacks.next_tick_report =
+                                    std::numeric_limits<
+                                        std::uint64_t>::max();
+                                result.message.clear();
+                                clear_boundary_halts();
                             }
 
-                            if (worker_fatal) {
-                                worker_state.runtime_failed =
-                                    true;
+                            if (callbacks.V63Enabled() &&
+                                critical_chunks != 0u &&
+                                !worker_fatal &&
+                                !worker_returned &&
+                                callbacks.V63HeldMutexCount(
+                                    worker_state.id) == 0u) {
+                                callbacks.Append(
+                                    "V63 BOUNDARY SAFE SWITCH tid=" +
+                                    std::to_string(
+                                        worker_state.id) +
+                                    " afterChunks=" +
+                                    std::to_string(
+                                        critical_chunks) +
+                                    " phase=" +
+                                    std::string{
+                                        phase != nullptr
+                                            ? phase
+                                            : "n/a"} +
+                                    " PC=" +
+                                    callbacks.V46DescribeGuestAddress(
+                                        worker_state.regs[15]) +
+                                    " heldMutexes=0");
                             }
 
                             if (wi <
@@ -24062,10 +24162,20 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
 
                             if (worker_fatal) {
                                 callbacks.Append(
-                                    "V38 BOUNDARY WORKER STOP: tid=" +
+                                    std::string{
+                                        callbacks.V63Enabled()
+                                            ? "V63 BOUNDARY WORKER FAIL-FAST: tid="
+                                            : "V38 BOUNDARY WORKER STOP: tid="} +
                                     std::to_string(
                                         worker_state.id) +
-                                    " halted fatally; preserving main runtime and continuing other diagnostics.");
+                                    (callbacks.V63Enabled()
+                                        ? " halted fatally; restoring main runtime before aborting boundary drain."
+                                        : " halted fatally; preserving main runtime and continuing other diagnostics."));
+
+                                if (callbacks.V63Enabled()) {
+                                    v63_boundary_fatal = true;
+                                    break;
+                                }
                             }
                         }
 
@@ -24086,6 +24196,16 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                         callbacks.current_probe_thread_id = 0u;
                         callbacks.control_returned = false;
                         callbacks.soft_slice_timeout = true;
+
+                        if (v63_boundary_fatal) {
+                            result.trace =
+                                callbacks.Trace();
+                            if (result.message.empty()) {
+                                result.message =
+                                    "v63 fail-fast after fatal boundary worker.";
+                            }
+                            return false;
+                        }
 
                         return true;
                     };
