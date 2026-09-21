@@ -822,6 +822,12 @@ constexpr std::uint32_t kJniProbeSvcV66TaskAChild84Result = 0x00f084u;
 constexpr std::uint32_t kJniProbeSvcV66TaskBDepResult = 0x00f085u;
 constexpr std::uint32_t kJniProbeSvcV66TaskBChildResult = 0x00f086u;
 
+// v67: exact STR r1,[r0,#4] stores in the shared completion-token
+// increment/decrement methods. CallSVC logs provenance, then performs the
+// original store without changing any counter semantics.
+constexpr std::uint32_t kJniProbeSvcV67TokenIncrementStore = 0x00f087u;
+constexpr std::uint32_t kJniProbeSvcV67TokenDecrementStore = 0x00f088u;
+
 constexpr std::uint32_t kJniProbeSvcUnsupportedJniBase = 0x00e000u;
 constexpr std::uint32_t kJniProbeJniSlotCount = 256u;
 
@@ -1812,6 +1818,28 @@ public:
     std::string v66_failure_message;
     std::unordered_map<std::uint64_t, std::uint64_t>
         v66_task_substate_hits;
+
+    struct V67AllocationProvenance {
+        std::uint32_t size = 0u;
+        std::uint32_t tid = 0u;
+        std::uint32_t import_lr = 0u;
+        std::uint32_t creator_lr = 0u;
+        std::uint64_t malloc_index = 0u;
+        bool via_operator_new = false;
+    };
+    struct V67TokenHistory {
+        std::uint64_t increments = 0u;
+        std::uint64_t decrements = 0u;
+        std::uint32_t last_tid = 0u;
+        std::uint32_t last_lr = 0u;
+        std::uint32_t last_old = 0u;
+        std::uint32_t last_new = 0u;
+    };
+    std::unordered_map<std::uint32_t, V67AllocationProvenance>
+        v67_small_allocations;
+    std::unordered_map<std::uint32_t, V67TokenHistory>
+        v67_token_history;
+    std::uint64_t v67_token_events = 0u;
 
     std::uint32_t next_pthread_key = 1;
     std::uint32_t next_synthetic_thread = 1;
@@ -4790,14 +4818,23 @@ public:
             return "V65_CONDITION_VARIABLE_SCHEDULER";
         case PvZ2DiagnosticMode::V66BlockingWaitScheduler:
             return "V66_BLOCKING_WAIT_SCHEDULER";
+        case PvZ2DiagnosticMode::V67CompletionTokenProvenance:
+            return "V67_COMPLETION_TOKEN_PROVENANCE";
         }
         return "UNKNOWN";
+    }
+
+    bool V67Enabled() const {
+        return
+            diagnostic_mode ==
+                PvZ2DiagnosticMode::V67CompletionTokenProvenance;
     }
 
     bool V66Enabled() const {
         return
             diagnostic_mode ==
-                PvZ2DiagnosticMode::V66BlockingWaitScheduler;
+                PvZ2DiagnosticMode::V66BlockingWaitScheduler ||
+            V67Enabled();
     }
 
     bool V65Enabled() const {
