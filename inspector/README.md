@@ -1,5 +1,17 @@
 # PvZ2 Inspector Lab
 
+## Lab v2.1-alpha — v68 post-LogoScreen TaskResource lifecycle
+
+v2.1 adds a complete-log analyzer for the current v68 run. It scans huge logs for the natural `GAME_LogoScreen` transition, real GLES texture uploads, worker-7 lifetime, pump/TaskResource growth, `IDLE_NOT_STALL` observations and the stable Task A/B substate cycle. It correlates those runtime facts with the already-verified resource worker/pump and TaskResource addresses and emits:
+
+```
+v68-resource-stall-diagnosis.txt
+v68-critical-excerpt.txt
+v69-plan.txt
+```
+
+The generated v69 plan batches the next missing lifecycle class in one probe: TaskResource vfn14 result, active→completed movement, vfn18 start-work, completed-task state and vfn24 finalization. It deliberately avoids restoring v67's per-token hot logging or forcing counters/readiness.
+
 Auxiliary iOS/iPadOS application for the PvZ2forIOS reverse-engineering project.
 
 ## Lab v2.0-alpha — Dual Binary Android ↔ iOS

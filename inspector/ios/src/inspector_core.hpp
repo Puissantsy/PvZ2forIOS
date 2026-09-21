@@ -32,6 +32,9 @@ struct PvZ2InspectorResult {
     std::string v61_crash_diagnosis;
     std::string next_probe_plan;
     std::string critical_log_excerpt;
+    std::string v68_resource_stall_diagnosis;
+    std::string v69_plan;
+    std::string v68_critical_excerpt;
     std::string message;
 };
 

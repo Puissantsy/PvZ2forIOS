@@ -9,6 +9,7 @@ endif()
 add_executable(PvZ2Inspector MACOSX_BUNDLE
     src/main.mm
     src/inspector_core.cpp
+    src/v68_analyzer.cpp
     src/macho_inspector.cpp
 )
 

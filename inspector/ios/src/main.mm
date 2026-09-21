@@ -45,6 +45,9 @@ NSArray<NSURL *> *ExistingReportURLs() {
         @"v61-crash-diagnosis.txt",
         @"next-probe-plan.txt",
         @"critical-log-excerpt.txt",
+        @"v68-resource-stall-diagnosis.txt",
+        @"v69-plan.txt",
+        @"v68-critical-excerpt.txt",
         @"ios-reference-report.txt",
         @"android-ios-shared-strings.csv",
         @"objc-classes.csv",
@@ -107,11 +110,11 @@ NSArray<NSURL *> *ExistingReportURLs() {
     [super viewDidLoad];
 
     self.view.backgroundColor = UIColor.systemBackgroundColor;
-    self.title = @"PvZ2 Inspector Lab v2.0-alpha";
+    self.title = @"PvZ2 Inspector Lab v2.1-alpha";
 
     UILabel *title = [[UILabel alloc] init];
     title.translatesAutoresizingMaskIntoConstraints = NO;
-    title.text = @"PvZ2 Inspector Lab v2.0-alpha";
+    title.text = @"PvZ2 Inspector Lab v2.1-alpha";
     title.font = [UIFont boldSystemFontOfSize:27.0];
     title.numberOfLines = 0;
 
@@ -358,7 +361,8 @@ didPickDocumentsAtURLs:
                 [NSString stringWithFormat:
                     @"Selected log: %@\n%llu bytes.\n\n"
                      "Large logs are scanned completely for v61 worker/pump/crash "
-                     "events. Generic address ranking is sampled above 24 MiB and "
+                     "and v68 TaskResource lifecycle events. Generic address ranking "
+                     "is sampled above 24 MiB and "
                      "the full annotated-log copy is skipped to avoid duplicating "
                      "a 75 MiB scheduling loop in memory and on disk.",
                     self.logName,
@@ -488,6 +492,24 @@ didPickDocumentsAtURLs:
                     WriteUtf8(
                         [root stringByAppendingPathComponent:@"critical-log-excerpt.txt"],
                         result.critical_log_excerpt);
+                }
+
+                if (!result.v68_resource_stall_diagnosis.empty()) {
+                    WriteUtf8(
+                        [root stringByAppendingPathComponent:@"v68-resource-stall-diagnosis.txt"],
+                        result.v68_resource_stall_diagnosis);
+                }
+
+                if (!result.v69_plan.empty()) {
+                    WriteUtf8(
+                        [root stringByAppendingPathComponent:@"v69-plan.txt"],
+                        result.v69_plan);
+                }
+
+                if (!result.v68_critical_excerpt.empty()) {
+                    WriteUtf8(
+                        [root stringByAppendingPathComponent:@"v68-critical-excerpt.txt"],
+                        result.v68_critical_excerpt);
                 }
 
                 if (ipa.length > 0 && ipaResult.ok) {

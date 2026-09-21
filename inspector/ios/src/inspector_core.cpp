@@ -1,4 +1,5 @@
 #include "inspector_core.hpp"
+#include "v68_analyzer.hpp"
 
 #include <zlib.h>
 
@@ -3766,6 +3767,8 @@ PvZ2InspectorResult InspectPvZ2ApkAndLog(
                 startup_runtime,
                 ctype_audit,
                 v56_profile);
+        const PvZ2V68RuntimeAnalysis v68_analysis =
+            AnalyzeV68RuntimeLog(log_text);
 
         std::ostringstream summary;
         summary
@@ -4170,6 +4173,17 @@ PvZ2InspectorResult InspectPvZ2ApkAndLog(
                 << "\n";
         }
 
+        if (v68_analysis.present) {
+            report
+                << "\n"
+                << v68_analysis.diagnosis
+                << "\n"
+                << "\nv69 one-build lifecycle plan\n"
+                << "============================\n"
+                << v68_analysis.v69_plan
+                << "\n";
+        }
+
         report
             << "\nv57 high-information plan (historical compatibility)\n"
             << "=========================\n"
@@ -4336,6 +4350,18 @@ PvZ2InspectorResult InspectPvZ2ApkAndLog(
         result.critical_log_excerpt =
             v61_runtime.present
                 ? v61_runtime.critical_excerpt
+                : std::string{};
+        result.v68_resource_stall_diagnosis =
+            v68_analysis.present
+                ? v68_analysis.diagnosis
+                : std::string{};
+        result.v69_plan =
+            v68_analysis.present
+                ? v68_analysis.v69_plan
+                : std::string{};
+        result.v68_critical_excerpt =
+            v68_analysis.present
+                ? v68_analysis.critical_excerpt
                 : std::string{};
 
         std::ostringstream json;
