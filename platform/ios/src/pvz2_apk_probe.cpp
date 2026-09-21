@@ -23130,11 +23130,14 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             }
 
                             if (concrete_wait) {
+                                const bool compact_probe =
+                                    callbacks.V62Enabled() ||
+                                    callbacks.V63Enabled();
                                 const bool log_wait =
                                     !res_stream_pump_boundary ||
-                                    !callbacks.V62Enabled() ||
+                                    !compact_probe ||
                                     async_round <= 32u ||
-                                    (async_round % 1000u) == 0u;
+                                    (async_round % 5000u) == 0u;
 
                                 if (log_wait) {
                                     callbacks.Append(
@@ -23330,7 +23333,8 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                     kWorkerSliceTicks;
                                 callbacks.ticks_consumed = 0;
                                 callbacks.next_tick_report =
-                                    callbacks.V62Enabled() &&
+                                    (callbacks.V62Enabled() ||
+                                     callbacks.V63Enabled()) &&
                                     res_stream_pump_boundary
                                         ? std::numeric_limits<
                                               std::uint64_t>::max()
@@ -23381,41 +23385,111 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                         callbacks.v62_pump_mutex_owner ==
                                             worker_state.id;
 
-                                    if (!owns_pump_mutex ||
+                                    const std::uint32_t
+                                        v63_held_mutexes =
+                                            callbacks.V63Enabled()
+                                                ? callbacks.V63HeldMutexCount(
+                                                      worker_state.id)
+                                                : 0u;
+                                    const bool
+                                        owns_any_v63_mutex =
+                                            callbacks.V63Enabled() &&
+                                            v63_held_mutexes != 0u;
+
+                                    if ((!owns_pump_mutex &&
+                                         !owns_any_v63_mutex) ||
                                         worker_returned ||
                                         worker_fatal) {
                                         break;
                                     }
 
                                     ++coherence_chunks;
-                                    ++callbacks.v62_mutex_coherence_continuations;
 
-                                    if (coherence_chunks > 64u) {
+                                    if (owns_any_v63_mutex) {
+                                        ++callbacks
+                                            .v63_critical_continuations;
+                                    } else {
+                                        ++callbacks
+                                            .v62_mutex_coherence_continuations;
+                                    }
+
+                                    const std::uint32_t
+                                        continuation_limit =
+                                            callbacks.V63Enabled()
+                                                ? 128u
+                                                : 64u;
+
+                                    if (coherence_chunks >
+                                        continuation_limit) {
                                         worker_fatal = true;
                                         worker_state.runtime_failed = true;
-                                        result.message =
-                                            "v62 worker tid=" +
-                                            std::to_string(worker_state.id) +
-                                            " held verified manager+0x68 for more than 64 continuation quanta; main was not restored.";
-                                        callbacks.Append(
-                                            "V62 MUTEX COHERENCE STOP: " +
-                                            result.message);
+
+                                        if (callbacks.V63Enabled()) {
+                                            result.message =
+                                                "v63 worker tid=" +
+                                                std::to_string(
+                                                    worker_state.id) +
+                                                " remained inside guest critical sections for more than " +
+                                                std::to_string(
+                                                    continuation_limit) +
+                                                " continuation quanta; held={" +
+                                                callbacks.V63HeldMutexSummary(
+                                                    worker_state.id) +
+                                                "}.";
+                                            callbacks.Append(
+                                                "V63 CRITICAL CONTINUATION STOP: " +
+                                                result.message);
+                                        } else {
+                                            result.message =
+                                                "v62 worker tid=" +
+                                                std::to_string(
+                                                    worker_state.id) +
+                                                " held verified manager+0x68 for more than 64 continuation quanta; main was not restored.";
+                                            callbacks.Append(
+                                                "V62 MUTEX COHERENCE STOP: " +
+                                                result.message);
+                                        }
                                         break;
                                     }
 
-                                    if (coherence_chunks <= 8u ||
+                                    if (callbacks.V63Enabled()) {
+                                        if (coherence_chunks <= 8u ||
+                                            (coherence_chunks % 16u) == 0u) {
+                                            callbacks.Append(
+                                                "V63 CRITICAL CONTINUE tid=" +
+                                                std::to_string(
+                                                    worker_state.id) +
+                                                " chunk=" +
+                                                std::to_string(
+                                                    coherence_chunks) +
+                                                " PC=" +
+                                                callbacks.V46DescribeGuestAddress(
+                                                    worker_state.regs[15]) +
+                                                " heldCount=" +
+                                                std::to_string(
+                                                    v63_held_mutexes) +
+                                                " held={" +
+                                                callbacks.V63HeldMutexSummary(
+                                                    worker_state.id) +
+                                                "}");
+                                        }
+                                    } else if (
+                                        coherence_chunks <= 8u ||
                                         (coherence_chunks % 8u) == 0u) {
                                         callbacks.Append(
                                             "V62 MUTEX CONTINUE tid=" +
-                                            std::to_string(worker_state.id) +
+                                            std::to_string(
+                                                worker_state.id) +
                                             " chunk=" +
-                                            std::to_string(coherence_chunks) +
+                                            std::to_string(
+                                                coherence_chunks) +
                                             " PC=" +
                                             callbacks.V46DescribeGuestAddress(
                                                 worker_state.regs[15]) +
                                             " mutexOwner=" +
                                             std::to_string(
-                                                callbacks.v62_pump_mutex_owner));
+                                                callbacks
+                                                    .v62_pump_mutex_owner));
                                     }
 
                                     callbacks.control_returned = false;
@@ -23427,6 +23501,25 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                             std::uint64_t>::max();
                                     result.message.clear();
                                     clear_probe_halts();
+                                }
+
+                                if (callbacks.V63Enabled() &&
+                                    coherence_chunks != 0u &&
+                                    !worker_fatal &&
+                                    !worker_returned &&
+                                    callbacks.V63HeldMutexCount(
+                                        worker_state.id) == 0u) {
+                                    callbacks.Append(
+                                        "V63 SAFE SWITCH tid=" +
+                                        std::to_string(
+                                            worker_state.id) +
+                                        " afterChunks=" +
+                                        std::to_string(
+                                            coherence_chunks) +
+                                        " PC=" +
+                                        callbacks.V46DescribeGuestAddress(
+                                            worker_state.regs[15]) +
+                                        " heldMutexes=0");
                                 }
 
                                 // Re-acquire by index after jit.Run(): guest
@@ -23449,13 +23542,16 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                         callbacks.deferred_threads.size();
                                 }
 
+                                const bool compact_worker_log =
+                                    callbacks.V62Enabled() ||
+                                    callbacks.V63Enabled();
                                 const bool log_worker_slice =
-                                    !callbacks.V62Enabled() ||
+                                    !compact_worker_log ||
                                     !res_stream_pump_boundary ||
                                     worker_state.runtime_completed ||
                                     worker_state.runtime_failed ||
                                     async_round <= 32u ||
-                                    (async_round % 1000u) == 0u;
+                                    (async_round % 5000u) == 0u;
 
                                 if (log_worker_slice) {
                                     callbacks.Append(
@@ -23474,33 +23570,73 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                             ? "YES" : "NO"));
                                 }
 
-                                if (callbacks.V62Enabled() && worker_fatal) {
-                                    callbacks.Append(
-                                        "V62 FAIL-FAST: first fatal deferred worker tid=" +
-                                        std::to_string(worker_state.id) +
-                                        " PC=" +
-                                        callbacks.V46DescribeGuestAddress(
-                                            worker_state.regs[15]) +
-                                        " pumpMutexLocked=" +
-                                        (callbacks.v62_pump_mutex_locked
-                                            ? "YES" : "NO") +
-                                        " pumpMutexOwner=" +
-                                        std::to_string(
-                                            callbacks.v62_pump_mutex_owner) +
-                                        " firstBadWriterSeen=" +
-                                        (callbacks.v62_first_bad_pointer_writer_seen
-                                            ? "YES" : "NO"));
+                                if ((callbacks.V62Enabled() ||
+                                     callbacks.V63Enabled()) &&
+                                    worker_fatal) {
+
+                                    if (callbacks.V63Enabled()) {
+                                        callbacks.Append(
+                                            "V63 FAIL-FAST: fatal deferred worker tid=" +
+                                            std::to_string(
+                                                worker_state.id) +
+                                            " PC=" +
+                                            callbacks.V46DescribeGuestAddress(
+                                                worker_state.regs[15]) +
+                                            " heldCount=" +
+                                            std::to_string(
+                                                callbacks.V63HeldMutexCount(
+                                                    worker_state.id)) +
+                                            " held={" +
+                                            callbacks.V63HeldMutexSummary(
+                                                worker_state.id) +
+                                            "} taskGuardFailures=" +
+                                            std::to_string(
+                                                callbacks
+                                                    .v63_task_guard_failures) +
+                                            " mutexConflicts=" +
+                                            std::to_string(
+                                                callbacks
+                                                    .v63_mutex_conflicts));
+                                    } else {
+                                        callbacks.Append(
+                                            "V62 FAIL-FAST: first fatal deferred worker tid=" +
+                                            std::to_string(
+                                                worker_state.id) +
+                                            " PC=" +
+                                            callbacks.V46DescribeGuestAddress(
+                                                worker_state.regs[15]) +
+                                            " pumpMutexLocked=" +
+                                            (callbacks.v62_pump_mutex_locked
+                                                ? "YES"
+                                                : "NO") +
+                                            " pumpMutexOwner=" +
+                                            std::to_string(
+                                                callbacks
+                                                    .v62_pump_mutex_owner) +
+                                            " firstBadWriterSeen=" +
+                                            (callbacks
+                                                 .v62_first_bad_pointer_writer_seen
+                                                ? "YES"
+                                                : "NO"));
+                                    }
 
                                     callbacks.soft_slice_timeout = false;
                                     callbacks.current_probe_thread_id = 0u;
                                     result.lifecycle_failure_name =
                                         std::string{name} +
                                         "/worker_tid_" +
-                                        std::to_string(worker_state.id);
+                                        std::to_string(
+                                            worker_state.id);
                                     if (result.message.empty()) {
                                         result.message =
-                                            "v62 fail-fast after fatal worker tid=" +
-                                            std::to_string(worker_state.id) + ".";
+                                            std::string{
+                                                callbacks.V63Enabled()
+                                                    ? "v63"
+                                                    : "v62"} +
+                                            " fail-fast after fatal worker tid=" +
+                                            std::to_string(
+                                                worker_state.id) +
+                                            ".";
                                     }
                                     result.trace = callbacks.Trace();
                                     return false;
@@ -23539,9 +23675,10 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
 
                                 if (res_stream_pump_boundary &&
                                     worker_slices_this_round >= 1u) {
-                                    if (!callbacks.V62Enabled() ||
+                                    if (!(callbacks.V62Enabled() ||
+                                          callbacks.V63Enabled()) ||
                                         async_round <= 32u ||
-                                        (async_round % 1000u) == 0u) {
+                                        (async_round % 5000u) == 0u) {
                                         callbacks.Append(
                                             "V61 RES-STREAM PUMP SLICE tid=" +
                                             std::to_string(worker_state.id) +
