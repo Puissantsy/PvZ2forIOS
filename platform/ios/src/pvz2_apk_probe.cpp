@@ -4525,14 +4525,23 @@ public:
             return "V64_RELEASE_BOUNDARY_SCHEDULER";
         case PvZ2DiagnosticMode::V65ConditionVariableScheduler:
             return "V65_CONDITION_VARIABLE_SCHEDULER";
+        case PvZ2DiagnosticMode::V66BlockingWaitScheduler:
+            return "V66_BLOCKING_WAIT_SCHEDULER";
         }
         return "UNKNOWN";
+    }
+
+    bool V66Enabled() const {
+        return
+            diagnostic_mode ==
+                PvZ2DiagnosticMode::V66BlockingWaitScheduler;
     }
 
     bool V65Enabled() const {
         return
             diagnostic_mode ==
-                PvZ2DiagnosticMode::V65ConditionVariableScheduler;
+                PvZ2DiagnosticMode::V65ConditionVariableScheduler ||
+            V66Enabled();
     }
 
     bool V64Enabled() const {
