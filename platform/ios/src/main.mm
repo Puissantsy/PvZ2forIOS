@@ -318,7 +318,7 @@ NSString *NSStringFromStd(
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — v63 Critical-Section-Aware Scheduler";
+        @"PvZ2forIOS — v64 Release-Boundary Scheduler";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -327,7 +327,7 @@ NSString *NSStringFromStd(
         NO;
 
     title.text =
-        @"PvZ2forIOS — v63 Critical-Section-Aware Scheduler";
+        @"PvZ2forIOS — v64 Release-Boundary Scheduler";
 
     title.font =
         [UIFont
@@ -343,7 +343,7 @@ NSString *NSStringFromStd(
         NO;
 
     explanation.text =
-        @"v63 targets the scheduler class behind the v61 tid=7 crash. Every guest pthread mutex is ownership-tracked: if a deferred worker exhausts its quantum while holding any mutex, that same worker keeps running until a later safe quantum ends with no mutex held. The expensive v62 pointer-write provenance is removed from the ARM hot path; a lightweight TaskResource guard remains at the failing virtual dispatch.";
+        @"v64 fixes the v63 quantum-phase lock seen on tid=1. Mutex ownership tracking and the TaskResource guard stay intact, but after a worker exhausts its quantum while holding a guest mutex, Dynarmic now stops at the first later unlock that makes heldMutexes=0 — before the worker can reacquire the hot mutex. Release logging is heavily sampled so a short probe no longer produces tens of megabytes.";
 
     explanation.numberOfLines = 0;
 
@@ -394,7 +394,7 @@ NSString *NSStringFromStd(
             initWithItems:
                 @[
                     @"V56 Baseline",
-                    @"V63 Critical",
+                    @"V64 Release Boundary",
                     @"Ctype Deep Scout"
                 ]];
 
@@ -1035,7 +1035,7 @@ NSString *NSStringFromStd(
     NSArray<NSString *> *modeNames =
         @[
             @"V56_BASELINE",
-            @"V63_CRITICAL_SECTION_SCHEDULER",
+            @"V64_RELEASE_BOUNDARY_SCHEDULER",
             @"CTYPE_COMPAT_DEEP_SCOUT"
         ];
 
@@ -1052,7 +1052,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v63 mode=%@. V63 Critical is the default forward-progress run: it keeps the validated ctype/VFS/resource/future scheduler path, removes v62 global pointer-write tracing, tracks every guest pthread mutex, keeps a worker on-CPU while it owns a critical section, and continues toward the first real frame unless a concrete invariant or TaskResource guard fails.",
+                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v64 mode=%@. V64 Release Boundary is the default forward-progress run: it preserves the validated ctype/VFS/resource/future path and v63 mutex ownership, but once a worker quantum expires inside a critical section it yields exactly on the first subsequent heldMutexes=0 unlock. The TaskResource guard remains observational/fail-fast.",
                     modeNames[modeIndex]]];
 
     [self
@@ -1117,9 +1117,9 @@ NSString *NSStringFromStd(
 
     if (selectedMode == 1) {
         diagnosticMode =
-            PvZ2DiagnosticMode::V63CriticalSectionScheduler;
+            PvZ2DiagnosticMode::V64ReleaseBoundaryScheduler;
         diagnosticModeName =
-            @"V63_CRITICAL_SECTION_SCHEDULER";
+            @"V64_RELEASE_BOUNDARY_SCHEDULER";
     } else if (selectedMode == 2) {
         diagnosticMode =
             PvZ2DiagnosticMode::CtypeCompatDeepScout;
@@ -1134,7 +1134,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v63 Critical-Section-Aware Scheduler started mode=%@; PID=%d ===",
+                    @"=== PvZ2 v64 Release-Boundary Scheduler started mode=%@; PID=%d ===",
                     diagnosticModeName,
                     getpid()]];
 
@@ -1437,7 +1437,7 @@ NSString *NSStringFromStd(
                     if (result.ok) {
                         [selfRef
                             appendUI:
-                                @"SUCCESS STEP 3: PvZ2 completed v61 Res-Stream Pump Cooperation. For Ctype Native, check V57 CTYPE ABI plus V58 STREAM-FUTURE / V59 ASYNC CALLER-POLL / V60 FAIR ASYNC-WAIT / V61 RES-STREAM PUMP / V30 SCHED WAIT / V22 WORKER SLICE and preserved Gate/RSB diagnostics. Deep Scout additionally keeps V57 TRIE PATH / GATEC WRITE."];
+                                @"SUCCESS STEP 3: PvZ2 completed v64 Release-Boundary Scheduler. For Ctype Native, check V57 CTYPE ABI plus V58 STREAM-FUTURE / V59 ASYNC CALLER-POLL / V60 FAIR ASYNC-WAIT / V61 RES-STREAM PUMP / V30 SCHED WAIT / V22 WORKER SLICE and preserved Gate/RSB diagnostics. Deep Scout additionally keeps V57 TRIE PATH / GATEC WRITE."];
 
                         if (!result.final_frame_png_path.empty()) {
                             [selfRef
@@ -1465,7 +1465,7 @@ NSString *NSStringFromStd(
                         } else {
                             [selfRef
                                 showResult:
-                                    @"PvZ2 v61 Res-Stream Pump Cooperation returned"
+                                    @"PvZ2 v64 Release-Boundary Scheduler returned"
                                 message:
                                     [NSString
                                         stringWithFormat:
