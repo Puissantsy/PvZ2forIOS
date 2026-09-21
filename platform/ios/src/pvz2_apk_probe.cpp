@@ -1808,6 +1808,7 @@ public:
     std::uint64_t v66_sched_yields = 0u;
     std::uint64_t v66_task_substate_events = 0u;
     std::uint64_t v66_task_substate_zeroes = 0u;
+    std::uint64_t v66_task_stagnation_failures = 0u;
     std::unordered_map<std::uint64_t, std::uint64_t>
         v66_task_substate_hits;
 
@@ -3367,7 +3368,14 @@ public:
             (hits & (hits - 1u)) == 0u ||
             (hits % 65536u) == 0u;
 
-        if (!sample) {
+        constexpr std::uint64_t kTaskStagnationLimit =
+            65536u;
+
+        const bool stagnant =
+            result_value == 0u &&
+            hits >= kTaskStagnationLimit;
+
+        if (!sample && !stagnant) {
             return;
         }
 
@@ -3419,6 +3427,39 @@ public:
             << "}";
 
         Append(out.str());
+
+        if (stagnant) {
+            ++v66_task_stagnation_failures;
+
+            Append(
+                "V66 TASK STAGNATION STOP #" +
+                std::to_string(
+                    v66_task_stagnation_failures) +
+                " tid=" +
+                std::to_string(
+                    current_probe_thread_id) +
+                " kind=" +
+                std::string{
+                    kind != nullptr
+                        ? kind
+                        : "unknown"} +
+                " task=" +
+                V46DescribeGuestAddress(task) +
+                " child=" +
+                V46DescribeGuestAddress(child) +
+                " childVtable=" +
+                V46DescribeGuestAddress(child_vtable) +
+                " childVfnC=" +
+                V46DescribeGuestAddress(child_vfn_c) +
+                " repeatedZeroHits=" +
+                std::to_string(hits) +
+                " -> fail-fast without modifying guest state");
+
+            if (jit) {
+                jit->HaltExecution(
+                    Dynarmic::HaltReason::UserDefined3);
+            }
+        }
     }
 
     void V66EmulateCmpR0Zero() {
@@ -22901,7 +22942,7 @@ bool JniProbePrepareRuntime(
         callbacks.Append(
             "V66 BLOCKING-WAIT SCHEDULER: v65 condition variables are preserved; worker sem_wait/sem_timedwait, nanosleep/usleep and sched_yield are scheduler-visible instead of immediate-success hot loops. TaskResource vfnC readiness is observed at the verified post-call CMP sites without forcing any result.");
         callbacks.Append(
-            "V66 LOOP SAFETY: hot mutex/TaskResource logs are heavily sampled and the continuation watchdog additionally stops if at least one specific guest mutex remains continuously held across more than 128 continuation quanta, even when nested mutexes are released.");
+            "V66 LOOP SAFETY: hot mutex/TaskResource logs are heavily sampled. The continuation watchdog stops if one specific guest mutex remains continuously held across more than 128 continuation quanta; an independent TaskResource stagnation watchdog fail-fast stops an unchanged task/child vfnC==0 pair after 65536 observations. Neither path forces guest readiness.");
     }
 
     if (callbacks.V64Enabled()) {
