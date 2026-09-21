@@ -1809,6 +1809,7 @@ public:
     std::uint64_t v66_task_substate_events = 0u;
     std::uint64_t v66_task_substate_zeroes = 0u;
     std::uint64_t v66_task_stagnation_failures = 0u;
+    std::string v66_failure_message;
     std::unordered_map<std::uint64_t, std::uint64_t>
         v66_task_substate_hits;
 
@@ -3470,11 +3471,8 @@ public:
         if (stagnant) {
             ++v66_task_stagnation_failures;
 
-            Append(
-                "V66 TASK STAGNATION STOP #" +
-                std::to_string(
-                    v66_task_stagnation_failures) +
-                " tid=" +
+            v66_failure_message =
+                "v66 TaskResource stagnation: tid=" +
                 std::to_string(
                     current_probe_thread_id) +
                 " kind=" +
@@ -3492,7 +3490,15 @@ public:
                 V46DescribeGuestAddress(child_vfn_c) +
                 " repeatedZeroHits=" +
                 std::to_string(hits) +
-                " -> fail-fast without modifying guest state");
+                ".";
+
+            Append(
+                "V66 TASK STAGNATION STOP #" +
+                std::to_string(
+                    v66_task_stagnation_failures) +
+                " " +
+                v66_failure_message +
+                " fail-fast without modifying guest state");
 
             if (jit) {
                 jit->HaltExecution(
@@ -25115,15 +25121,21 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                         std::to_string(
                                             worker_state.id);
                                     if (result.message.empty()) {
-                                        result.message =
-                                            std::string{
-                                                callbacks.V63Enabled()
-                                                    ? "v63"
-                                                    : "v62"} +
-                                            " fail-fast after fatal worker tid=" +
-                                            std::to_string(
-                                                worker_state.id) +
-                                            ".";
+                                        if (callbacks.V66Enabled() &&
+                                            !callbacks.v66_failure_message.empty()) {
+                                            result.message =
+                                                callbacks.v66_failure_message;
+                                        } else {
+                                            result.message =
+                                                std::string{
+                                                    callbacks.V63Enabled()
+                                                        ? "v63"
+                                                        : "v62"} +
+                                                " fail-fast after fatal worker tid=" +
+                                                std::to_string(
+                                                    worker_state.id) +
+                                                ".";
+                                        }
                                     }
                                     result.trace = callbacks.Trace();
                                     return false;
@@ -25879,8 +25891,14 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             result.trace =
                                 callbacks.Trace();
                             if (result.message.empty()) {
-                                result.message =
-                                    "v63 fail-fast after fatal boundary worker.";
+                                if (callbacks.V66Enabled() &&
+                                    !callbacks.v66_failure_message.empty()) {
+                                    result.message =
+                                        callbacks.v66_failure_message;
+                                } else {
+                                    result.message =
+                                        "v63 fail-fast after fatal boundary worker.";
+                                }
                             }
                             return false;
                         }
