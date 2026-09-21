@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstring>
 #include <iomanip>
+#include <iterator>
 #include <optional>
 #include <set>
 #include <sstream>
