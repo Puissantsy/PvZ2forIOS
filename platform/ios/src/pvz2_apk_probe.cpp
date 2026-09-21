@@ -2985,6 +2985,21 @@ public:
         return out;
     }
 
+    std::string V63DescribeMutexAddresses(
+        const std::vector<std::uint32_t>& mutexes) const {
+
+        if (mutexes.empty()) {
+            return "none";
+        }
+
+        std::ostringstream out;
+        for (std::size_t i = 0; i < mutexes.size(); ++i) {
+            if (i != 0u) out << ",";
+            out << V46DescribeGuestAddress(mutexes[i]);
+        }
+        return out.str();
+    }
+
     void V64ArmReleaseBoundary(
         std::uint32_t thread_id) {
 
@@ -14218,8 +14233,48 @@ public:
 
         if (name == "nanosleep" ||
             name == "usleep") {
-            // Constructor probing must not stall the host. These startup
-            // sleeps are treated as completed.
+
+            if (V66Enabled() &&
+                current_probe_thread_id != 0u) {
+
+                std::uint64_t duration_ns = 0u;
+
+                if (name == "usleep") {
+                    duration_ns =
+                        static_cast<std::uint64_t>(
+                            regs[0]) *
+                        1000ull;
+                } else if (regs[0] != 0u) {
+                    const std::uint64_t sec =
+                        mem.Read32Guest(regs[0] + 0u);
+                    const std::uint64_t nsec =
+                        mem.Read32Guest(regs[0] + 4u);
+
+                    if (nsec < 1000000000ull) {
+                        duration_ns =
+                            sec * 1000000000ull +
+                            nsec;
+                    }
+                }
+
+                if (duration_ns != 0u &&
+                    V66BeginSleep(
+                        duration_ns,
+                        name.c_str())) {
+
+                    regs[0] = 0u;
+                    ++supported_calls;
+
+                    if (jit) {
+                        jit->HaltExecution(
+                            Dynarmic::HaltReason::UserDefined4);
+                    }
+                    return;
+                }
+            }
+
+            // Constructor/main-thread compatibility path: never stall the
+            // host while there is no cooperative worker context to resume.
             regs[0] = 0;
             ++supported_calls;
             return;
@@ -16261,9 +16316,33 @@ public:
             return;
         }
 
-        // Bulk single-process pthread/semaphore compatibility. This is
-        // intentionally sufficient for static construction; real concurrent
-        // guest threads will be introduced as a separate runtime subsystem.
+        if (name == "sched_yield" &&
+            V66Enabled() &&
+            current_probe_thread_id != 0u) {
+
+            regs[0] = 0u;
+            ++supported_calls;
+            ++v66_sched_yields;
+
+            if (v66_sched_yields <= 16u ||
+                (v66_sched_yields % 1024u) == 0u) {
+                Append(
+                    "V66 SCHED YIELD #" +
+                    std::to_string(v66_sched_yields) +
+                    " tid=" +
+                    std::to_string(current_probe_thread_id));
+            }
+
+            if (jit) {
+                jit->HaltExecution(
+                    Dynarmic::HaltReason::UserDefined4);
+            }
+            return;
+        }
+
+        // Bulk single-process pthread/semaphore compatibility. Constructors
+        // still use these immediate-success shims; v65/v66 override the real
+        // blocking primitives above/below for deferred guest workers.
         if (name == "pthread_attr_init" ||
             name == "pthread_attr_destroy" ||
             name == "pthread_attr_setdetachstate" ||
@@ -16460,6 +16539,27 @@ public:
                 sem,
                 mem.Read32Guest(sem) + 1u);
 
+            if (V66Enabled()) {
+                const std::uint32_t woke =
+                    V66NotifySemaphore(sem);
+                ++v66_sem_posts;
+
+                if (woke != 0u ||
+                    v66_sem_posts <= 16u ||
+                    (v66_sem_posts % 1024u) == 0u) {
+                    Append(
+                        "V66 SEM POST #" +
+                        std::to_string(v66_sem_posts) +
+                        " sem=" +
+                        V46DescribeGuestAddress(sem) +
+                        " woke=" +
+                        std::to_string(woke) +
+                        " count=" +
+                        std::to_string(
+                            mem.Read32Guest(sem)));
+                }
+            }
+
             regs[0] = 0;
             ++supported_calls;
             return;
@@ -16473,20 +16573,60 @@ public:
             const std::uint32_t count =
                 mem.Read32Guest(sem);
 
-            if (count > 0) {
+            if (count > 0u) {
                 mem.Write32Guest(
                     sem,
                     count - 1u);
-                regs[0] = 0;
-            } else {
-                // During constructor bring-up there is no other guest thread
-                // capable of posting, so do not block the host forever.
-                regs[0] =
-                    name == "sem_wait"
-                        ? 0u
-                        : 0xffffffffu;
+                regs[0] = 0u;
+                ++supported_calls;
+                return;
             }
 
+            if (name == "sem_trywait") {
+                if (guest_errno_address == 0u) {
+                    guest_errno_address =
+                        mem.AllocateObject(4u, 4u);
+                }
+                if (guest_errno_address != 0u) {
+                    mem.Write32Guest(
+                        guest_errno_address,
+                        11u); // EAGAIN
+                }
+                regs[0] = 0xffffffffu;
+                ++supported_calls;
+                return;
+            }
+
+            if (V66Enabled() &&
+                current_probe_thread_id != 0u) {
+
+                const bool timed =
+                    name == "sem_timedwait";
+                const std::uint32_t abstime =
+                    timed ? regs[1] : 0u;
+
+                if (V66BeginSemaphoreWait(
+                        sem,
+                        timed,
+                        abstime)) {
+
+                    regs[0] = 0u;
+                    ++supported_calls;
+
+                    if (jit) {
+                        jit->HaltExecution(
+                            Dynarmic::HaltReason::UserDefined4);
+                    }
+                    return;
+                }
+            }
+
+            // Constructor/main-thread compatibility: there is no scheduler
+            // context that could wake this call yet.
+            regs[0] =
+                name == "sem_wait"
+                    ? 0u
+                    : 0xffffffffu;
             ++supported_calls;
             return;
         }
@@ -22690,6 +22830,32 @@ bool JniProbePrepareRuntime(
         return false;
     }
 
+    if (callbacks.V66Enabled() &&
+        (!patch_resource_native_miss(
+             0x00abe79cu,
+             0xe3500000u,
+             kJniProbeSvcV66TaskADepResult) ||
+         !patch_resource_native_miss(
+             0x00abe7e8u,
+             0xe3500000u,
+             kJniProbeSvcV66TaskAChild78Result) ||
+         !patch_resource_native_miss(
+             0x00abe81cu,
+             0xe3500000u,
+             kJniProbeSvcV66TaskAChild84Result) ||
+         !patch_resource_native_miss(
+             0x00abebccu,
+             0xe3500000u,
+             kJniProbeSvcV66TaskBDepResult) ||
+         !patch_resource_native_miss(
+             0x00abec00u,
+             0xe3500000u,
+             kJniProbeSvcV66TaskBChildResult))) {
+        error =
+            "v66 TaskResource child-state instrumentation did not match the verified CMP r0,#0 sites in 0x10abe774/0x10abebb0.";
+        return false;
+    }
+
     callbacks.Append(
         "V48 RESFILE WRAPPER-FINAL BRIDGE: v45 internal hooks preserved; direct-group null returns are observed at 0x1087a708 and all-groups-exhausted nulls at 0x1087a76c with the exact wrapper ID still in r6.");
     callbacks.Append(
@@ -22730,6 +22896,13 @@ bool JniProbePrepareRuntime(
                 ? "ENABLED. Only verified manager+0x68 trylock/unlock ownership is modeled; a worker is not suspended while it owns that mutex."
                 : "CONTROL A. v61 synthetic trylock behavior is preserved for the causal A/B comparison."));
     }
+    if (callbacks.V66Enabled()) {
+        callbacks.Append(
+            "V66 BLOCKING-WAIT SCHEDULER: v65 condition variables are preserved; worker sem_wait/sem_timedwait, nanosleep/usleep and sched_yield are scheduler-visible instead of immediate-success hot loops. TaskResource vfnC readiness is observed at the verified post-call CMP sites without forcing any result.");
+        callbacks.Append(
+            "V66 LOOP SAFETY: hot mutex/TaskResource logs are heavily sampled and the continuation watchdog additionally stops if at least one specific guest mutex remains continuously held across more than 128 continuation quanta, even when nested mutexes are released.");
+    }
+
     if (callbacks.V64Enabled()) {
         callbacks.Append(
             "V64 RELEASE-BOUNDARY SCHEDULER: v63 guest pthread mutex ownership tracking is preserved, but a worker whose quantum expires while holding a mutex is armed to stop at the first later unlock that makes heldMutexes=0. It no longer waits for another whole quantum to happen to sample zero.");
@@ -24305,6 +24478,25 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                     continue;
                                 }
 
+                                if (callbacks.V66Enabled() &&
+                                    worker_state.runtime_started) {
+
+                                    bool blocking_resumed = false;
+                                    std::uint32_t blocking_result = 0u;
+
+                                    if (!callbacks.V66PrepareBlockingResume(
+                                            worker_state.id,
+                                            blocking_resumed,
+                                            blocking_result)) {
+                                        continue;
+                                    }
+
+                                    if (blocking_resumed) {
+                                        worker_state.regs[0] =
+                                            blocking_result;
+                                    }
+                                }
+
                                 if (callbacks.V65Enabled() &&
                                     worker_state.runtime_started) {
 
@@ -24427,6 +24619,13 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                 std::uint32_t no_unlock_chunks = 0u;
                                 std::uint64_t last_mutex_release_count =
                                     callbacks.v63_mutex_releases;
+                                std::vector<std::uint32_t>
+                                    persistent_held_mutexes =
+                                        callbacks.V66Enabled()
+                                            ? callbacks.V63HeldMutexAddresses(
+                                                  worker_state.id)
+                                            : std::vector<std::uint32_t>{};
+                                std::uint32_t persistent_held_chunks = 0u;
 
                                 for (;;) {
                                     const Dynarmic::HaltReason worker_halt =
@@ -24489,6 +24688,50 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                     } else {
                                         ++callbacks
                                             .v62_mutex_coherence_continuations;
+                                    }
+
+                                    if (callbacks.V66Enabled() &&
+                                        owns_any_v63_mutex) {
+
+                                        const auto held_now =
+                                            callbacks.V63HeldMutexAddresses(
+                                                worker_state.id);
+
+                                        std::vector<std::uint32_t> intersection;
+                                        std::set_intersection(
+                                            persistent_held_mutexes.begin(),
+                                            persistent_held_mutexes.end(),
+                                            held_now.begin(),
+                                            held_now.end(),
+                                            std::back_inserter(intersection));
+
+                                        if (intersection.empty()) {
+                                            persistent_held_mutexes =
+                                                held_now;
+                                            persistent_held_chunks = 0u;
+                                        } else {
+                                            persistent_held_mutexes =
+                                                std::move(intersection);
+                                            ++persistent_held_chunks;
+                                        }
+
+                                        if (!persistent_held_mutexes.empty() &&
+                                            persistent_held_chunks > 128u) {
+                                            worker_fatal = true;
+                                            worker_state.runtime_failed = true;
+                                            result.message =
+                                                "v66 worker tid=" +
+                                                std::to_string(
+                                                    worker_state.id) +
+                                                " continuously held the same guest mutex(es) for more than 128 continuation quanta: {" +
+                                                callbacks.V63DescribeMutexAddresses(
+                                                    persistent_held_mutexes) +
+                                                "}.";
+                                            callbacks.Append(
+                                                "V66 STICKY-MUTEX STOP: " +
+                                                result.message);
+                                            break;
+                                        }
                                     }
 
                                     if (callbacks.V64Enabled()) {
@@ -25038,6 +25281,25 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                 continue;
                             }
 
+                            if (callbacks.V66Enabled() &&
+                                worker_state.runtime_started) {
+
+                                bool blocking_resumed = false;
+                                std::uint32_t blocking_result = 0u;
+
+                                if (!callbacks.V66PrepareBlockingResume(
+                                        worker_state.id,
+                                        blocking_resumed,
+                                        blocking_result)) {
+                                    continue;
+                                }
+
+                                if (blocking_resumed) {
+                                    worker_state.regs[0] =
+                                        blocking_result;
+                                }
+                            }
+
                             if (callbacks.V65Enabled() &&
                                 worker_state.runtime_started) {
 
@@ -25161,6 +25423,13 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             std::uint32_t no_unlock_chunks = 0u;
                             std::uint64_t last_mutex_release_count =
                                 callbacks.v63_mutex_releases;
+                            std::vector<std::uint32_t>
+                                persistent_held_mutexes =
+                                    callbacks.V66Enabled()
+                                        ? callbacks.V63HeldMutexAddresses(
+                                              worker_state.id)
+                                        : std::vector<std::uint32_t>{};
+                            std::uint32_t persistent_held_chunks = 0u;
 
                             for (;;) {
                                 const Dynarmic::HaltReason worker_halt =
@@ -25216,6 +25485,48 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
 
                                 ++critical_chunks;
                                 ++callbacks.v63_critical_continuations;
+
+                                if (callbacks.V66Enabled()) {
+                                    const auto held_now =
+                                        callbacks.V63HeldMutexAddresses(
+                                            worker_state.id);
+
+                                    std::vector<std::uint32_t> intersection;
+                                    std::set_intersection(
+                                        persistent_held_mutexes.begin(),
+                                        persistent_held_mutexes.end(),
+                                        held_now.begin(),
+                                        held_now.end(),
+                                        std::back_inserter(intersection));
+
+                                    if (intersection.empty()) {
+                                        persistent_held_mutexes =
+                                            held_now;
+                                        persistent_held_chunks = 0u;
+                                    } else {
+                                        persistent_held_mutexes =
+                                            std::move(intersection);
+                                        ++persistent_held_chunks;
+                                    }
+
+                                    if (!persistent_held_mutexes.empty() &&
+                                        persistent_held_chunks > 128u) {
+                                        worker_fatal = true;
+                                        worker_state.runtime_failed = true;
+                                        result.message =
+                                            "v66 boundary worker tid=" +
+                                            std::to_string(
+                                                worker_state.id) +
+                                            " continuously held the same guest mutex(es) for more than 128 continuation quanta: {" +
+                                            callbacks.V63DescribeMutexAddresses(
+                                                persistent_held_mutexes) +
+                                            "}.";
+                                        callbacks.Append(
+                                            "V66 BOUNDARY STICKY-MUTEX STOP: " +
+                                            result.message);
+                                        break;
+                                    }
+                                }
 
                                 if (callbacks.V64Enabled()) {
                                     const std::uint64_t releases_now =
