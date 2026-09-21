@@ -318,7 +318,7 @@ NSString *NSStringFromStd(
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — v66 Blocking-Wait / TaskResource Probe";
+        @"PvZ2forIOS — v67 Completion-Token Provenance";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -327,7 +327,7 @@ NSString *NSStringFromStd(
         NO;
 
     title.text =
-        @"PvZ2forIOS — v66 Blocking-Wait / TaskResource Probe";
+        @"PvZ2forIOS — v67 Completion-Token Provenance";
 
     title.font =
         [UIFont
@@ -343,7 +343,7 @@ NSString *NSStringFromStd(
         NO;
 
     explanation.text =
-        @"v66 keeps the validated v65 condition-variable scheduler and investigates the post-LogoScreen TaskResource hot loop. Worker sem_wait/sem_timedwait, nanosleep/usleep and sched_yield are scheduler-visible; the verified TaskResource child vfnC readiness checks are observed without forcing a result; hot mutex/task logs are heavily sampled and a sticky-mutex watchdog stops a true critical-section loop before another 200 MB log.";
+        @"v67 keeps the validated v66 blocking scheduler and traces the completion-token class that still blocks tid=7 after LogoScreen. Counter increment/decrement stores are observed exactly with caller and allocation provenance; no token, TaskResource, readiness result, GameState or resource is forced.";
 
     explanation.numberOfLines = 0;
 
@@ -394,6 +394,7 @@ NSString *NSStringFromStd(
             initWithItems:
                 @[
                     @"V56 Baseline",
+                    @"V67 Token Provenance",
                     @"V66 Blocking Waits",
                     @"V65 Cond Scheduler",
                     @"Ctype Deep Scout"
@@ -1036,6 +1037,7 @@ NSString *NSStringFromStd(
     NSArray<NSString *> *modeNames =
         @[
             @"V56_BASELINE",
+            @"V67_COMPLETION_TOKEN_PROVENANCE",
             @"V66_BLOCKING_WAIT_SCHEDULER",
             @"V65_CONDITION_VARIABLE_SCHEDULER",
             @"CTYPE_COMPAT_DEEP_SCOUT"
@@ -1054,7 +1056,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. mode=%@. V66 keeps v65 condition variables, adds scheduler-visible semaphore/sleep/yield behavior, observes TaskResource child readiness without forcing it, and stops sticky-mutex hot loops with compact logging.",
+                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. mode=%@. V67 keeps v66 intact and adds class-wide completion-token provenance: creator allocation, increment/decrement caller, counter history and bounded TaskResource child snapshots. No readiness state is forced.",
                     modeNames[modeIndex]]];
 
     [self
@@ -1119,15 +1121,20 @@ NSString *NSStringFromStd(
 
     if (selectedMode == 1) {
         diagnosticMode =
+            PvZ2DiagnosticMode::V67CompletionTokenProvenance;
+        diagnosticModeName =
+            @"V67_COMPLETION_TOKEN_PROVENANCE";
+    } else if (selectedMode == 2) {
+        diagnosticMode =
             PvZ2DiagnosticMode::V66BlockingWaitScheduler;
         diagnosticModeName =
             @"V66_BLOCKING_WAIT_SCHEDULER";
-    } else if (selectedMode == 2) {
+    } else if (selectedMode == 3) {
         diagnosticMode =
             PvZ2DiagnosticMode::V65ConditionVariableScheduler;
         diagnosticModeName =
             @"V65_CONDITION_VARIABLE_SCHEDULER";
-    } else if (selectedMode == 3) {
+    } else if (selectedMode == 4) {
         diagnosticMode =
             PvZ2DiagnosticMode::CtypeCompatDeepScout;
         diagnosticModeName =
@@ -1141,7 +1148,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v66 Blocking-Wait / TaskResource State Probe started mode=%@; PID=%d ===",
+                    @"=== PvZ2 v67 Completion-Token Provenance Probe started mode=%@; PID=%d ===",
                     diagnosticModeName,
                     getpid()]];
 
