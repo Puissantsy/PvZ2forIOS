@@ -3426,6 +3426,45 @@ public:
                        : 0u)
             << "}";
 
+        if ((hits <= 2u || stagnant) &&
+            child != 0u &&
+            mem.Ptr(child, 0x40u) != nullptr) {
+
+            out << " childWords={";
+            for (std::uint32_t off = 0u;
+                 off < 0x40u;
+                 off += 4u) {
+                if (off != 0u) {
+                    out << ",";
+                }
+                out
+                    << "+0x" << JniProbeHex(off)
+                    << ":0x"
+                    << JniProbeHex(
+                           mem.Read32Guest(child + off));
+            }
+            out << "}";
+
+            if (child_vtable != 0u &&
+                mem.Ptr(child_vtable, 0x28u) != nullptr) {
+                out << " childVtableWords={";
+                for (std::uint32_t off = 0u;
+                     off < 0x28u;
+                     off += 4u) {
+                    if (off != 0u) {
+                        out << ",";
+                    }
+                    out
+                        << "+0x" << JniProbeHex(off)
+                        << ":"
+                        << V46DescribeGuestAddress(
+                               mem.Read32Guest(
+                                   child_vtable + off));
+                }
+                out << "}";
+            }
+        }
+
         Append(out.str());
 
         if (stagnant) {
