@@ -3650,7 +3650,20 @@ public:
             << V46DescribeGuestAddress(child_vtable)
             << " childVfnC="
             << V46DescribeGuestAddress(child_vfn_c)
-            << " vfnCResult=" << result_value
+            << " vfnCResult=" << result_value;
+
+        if (V67Enabled()) {
+            std::uint32_t token_vtable = 0u;
+            if (V67IsCompletionToken(child, token_vtable)) {
+                out
+                    << " "
+                    << V67AllocationDescription(child)
+                    << " "
+                    << V67TokenHistoryDescription(child);
+            }
+        }
+
+        out
             << " taskState={+18:0x"
             << JniProbeHex(
                    task != 0u
@@ -3678,13 +3691,26 @@ public:
                        : 0u)
             << "}";
 
+        const std::uint32_t tracked_child_size =
+            V67HeapAllocationSize(child);
+        const std::uint32_t child_snapshot_size =
+            tracked_child_size != 0u
+                ? std::min<std::uint32_t>(
+                      tracked_child_size,
+                      0x40u)
+                : 0x40u;
+
         if ((hits <= 2u || stagnant) &&
             child != 0u &&
-            mem.Ptr(child, 0x40u) != nullptr) {
+            child_snapshot_size >= 4u &&
+            mem.Ptr(child, child_snapshot_size) != nullptr) {
 
-            out << " childWords={";
+            out
+                << " childSnapshotBytes="
+                << child_snapshot_size
+                << " childWords={";
             for (std::uint32_t off = 0u;
-                 off < 0x40u;
+                 off + 4u <= child_snapshot_size;
                  off += 4u) {
                 if (off != 0u) {
                     out << ",";
@@ -3741,6 +3767,12 @@ public:
                 V46DescribeGuestAddress(child_vfn_c) +
                 " repeatedZeroHits=" +
                 std::to_string(hits) +
+                (V67Enabled()
+                    ? " " +
+                      V67AllocationDescription(child) +
+                      " " +
+                      V67TokenHistoryDescription(child)
+                    : std::string{}) +
                 ".";
 
             Append(
