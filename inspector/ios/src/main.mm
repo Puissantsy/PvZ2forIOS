@@ -5,6 +5,7 @@
 #include <string>
 
 #include "inspector_core.hpp"
+#include "macho_inspector.hpp"
 
 namespace {
 
@@ -43,7 +44,8 @@ NSArray<NSURL *> *ExistingReportURLs() {
         @"v57-plan.txt",
         @"v61-crash-diagnosis.txt",
         @"next-probe-plan.txt",
-        @"critical-log-excerpt.txt"
+        @"critical-log-excerpt.txt",
+        @"ios-reference-report.txt"
     ];
 
     NSMutableArray<NSURL *> *urls = [NSMutableArray array];
@@ -70,6 +72,8 @@ NSArray<NSURL *> *ExistingReportURLs() {
 
 @property(nonatomic, strong) NSData *apkData;
 @property(nonatomic, copy) NSString *apkName;
+@property(nonatomic, strong) NSData *ipaData;
+@property(nonatomic, copy) NSString *ipaName;
 @property(nonatomic, strong) NSData *logData;
 @property(nonatomic, copy) NSString *logName;
 
@@ -97,11 +101,11 @@ NSArray<NSURL *> *ExistingReportURLs() {
     [super viewDidLoad];
 
     self.view.backgroundColor = UIColor.systemBackgroundColor;
-    self.title = @"PvZ2 Inspector Lab v1.4";
+    self.title = @"PvZ2 Inspector Lab v2.0-alpha";
 
     UILabel *title = [[UILabel alloc] init];
     title.translatesAutoresizingMaskIntoConstraints = NO;
-    title.text = @"PvZ2 Inspector Lab v1.4";
+    title.text = @"PvZ2 Inspector Lab v2.0-alpha";
     title.font = [UIFont boldSystemFontOfSize:27.0];
     title.numberOfLines = 0;
 
@@ -110,31 +114,34 @@ NSArray<NSURL *> *ExistingReportURLs() {
     explanation.numberOfLines = 0;
     explanation.font = [UIFont systemFontOfSize:14.5];
     explanation.text =
-        @"This auxiliary app does NOT launch PvZ2. It statically inspects the "
-         "original ARMv7 libPVZ2.so inside the APK, parses its ELF layout, "
-         "dynamic imports, relocations and .ARM.exidx function boundaries, "
-         "validates the v53-v61 state/registry/trie/resource-pump profiles, "
-         "classifies module addresses by ELF section, diagnoses worker virtual "
-         "dispatch faults, and uses a memory-safe large-log path for huge partial "
-         "runs. v61 logs get a dedicated TaskResource crash/provenance plan. "
-         "No JIT or StikDebug is required.";
+        @"Inspector v2 keeps the complete Android ELF/log analysis from v1.4 "
+         "and adds a static iOS-reference path for the historical PvZ2 IPA. "
+         "Select the Android APK, optionally the decrypted iOS 1.5.252123 IPA "
+         "and a runtime log. The IPA analyzer discovers the Payload Mach-O, "
+         "parses ARMv7 load commands, encryption state, dylibs, segments, "
+         "sections and LC_FUNCTION_STARTS. No JIT or StikDebug is required.";
 
     UIButton *apkButton =
         [self makeButton:@"1. Select PvZ2 APK"
                 selector:@selector(selectApk)];
 
+    UIButton *ipaButton =
+        [self makeButton:@"2. Select iOS IPA\n(optional)"
+                selector:@selector(selectIpa)];
+
     UIButton *logButton =
-        [self makeButton:@"2. Select full log\n(optional)"
+        [self makeButton:@"3. Select full log\n(optional)"
                 selector:@selector(selectLog)];
 
     self.analyseButton =
-        [self makeButton:@"3. Analyse"
+        [self makeButton:@"4. Analyse"
                 selector:@selector(analyse)];
 
     UIStackView *mainButtons =
         [[UIStackView alloc]
             initWithArrangedSubviews:@[
                 apkButton,
+                ipaButton,
                 logButton,
                 self.analyseButton
             ]];
@@ -218,6 +225,13 @@ NSArray<NSURL *> *ExistingReportURLs() {
                 (unsigned long long)self.apkData.length]
             : @"not selected";
 
+    NSString *ipa =
+        self.ipaData != nil
+            ? [NSString stringWithFormat:@"%@ (%llu bytes)",
+                self.ipaName ?: @"IPA",
+                (unsigned long long)self.ipaData.length]
+            : @"not selected";
+
     NSString *log =
         self.logData.length > 0
             ? [NSString stringWithFormat:@"%@ (%llu bytes)",
@@ -233,8 +247,9 @@ NSArray<NSURL *> *ExistingReportURLs() {
 
     self.statusLabel.text =
         [NSString stringWithFormat:
-            @"APK: %@\nLog: %@\nReports: %@",
+            @"APK: %@\niOS IPA: %@\nLog: %@\nReports: %@",
             apk,
+            ipa,
             log,
             reports];
 
@@ -249,7 +264,7 @@ NSArray<NSURL *> *ExistingReportURLs() {
     self.pickerMode = mode;
 
     NSArray<UTType *> *types =
-        mode == 1
+        (mode == 1 || mode == 3)
             ? @[UTTypeData]
             : @[UTTypePlainText, UTTypeData];
 
@@ -268,6 +283,10 @@ NSArray<NSURL *> *ExistingReportURLs() {
 
 - (void)selectApk {
     [self openPickerWithMode:1];
+}
+
+- (void)selectIpa {
+    [self openPickerWithMode:3];
 }
 
 - (void)selectLog {
@@ -299,9 +318,26 @@ didPickDocumentsAtURLs:
             self.outputView.text =
                 [NSString stringWithFormat:
                     @"Selected APK: %@\n\n"
-                     "Select a full probe log if you want raw PC/LR/"
-                     "returnPC/callerLR addresses resolved too, then tap Analyse.",
+                     "Optionally select the historical iOS IPA and/or a full "
+                     "probe log, then tap Analyse.",
                     self.apkName];
+        }
+    } else if (self.pickerMode == 3) {
+        NSData *data =
+            [NSData dataWithContentsOfURL:url
+                                  options:NSDataReadingMappedIfSafe
+                                    error:&error];
+
+        if (data != nil) {
+            self.ipaData = data;
+            self.ipaName = url.lastPathComponent;
+            self.outputView.text =
+                [NSString stringWithFormat:
+                    @"Selected iOS reference IPA: %@\n%llu bytes.\n\n"
+                     "Inspector v2 will locate the direct Payload/*.app ARMv7 "
+                     "Mach-O and write ios-reference-report.txt.",
+                    self.ipaName,
+                    (unsigned long long)self.ipaData.length];
         }
     } else {
         NSData *data =
@@ -352,6 +388,7 @@ didPickDocumentsAtURLs:
          "cross-referencing the runtime log.";
 
     NSData *apk = self.apkData;
+    NSData *ipa = self.ipaData;
     NSData *logData = self.logData;
 
     dispatch_async(
@@ -372,6 +409,14 @@ didPickDocumentsAtURLs:
                     bytes,
                     apk.length,
                     logStd);
+
+            PvZ2IpaInspectorResult ipaResult;
+            if (ipa.length > 0) {
+                ipaResult =
+                    InspectPvZ2IpaReference(
+                        static_cast<const std::uint8_t *>(ipa.bytes),
+                        static_cast<std::size_t>(ipa.length));
+            }
 
             NSString *root = ReportDirectoryPath();
 
@@ -436,6 +481,12 @@ didPickDocumentsAtURLs:
                         [root stringByAppendingPathComponent:@"critical-log-excerpt.txt"],
                         result.critical_log_excerpt);
                 }
+
+                if (ipa.length > 0 && ipaResult.ok) {
+                    WriteUtf8(
+                        [root stringByAppendingPathComponent:@"ios-reference-report.txt"],
+                        ipaResult.report);
+                }
             }
 
             dispatch_async(dispatch_get_main_queue(), ^{
@@ -445,6 +496,7 @@ didPickDocumentsAtURLs:
                     self.outputView.text =
                         [NSString stringWithFormat:
                             @"%@\n"
+                             "%@"
                              "Reports written to:\n%@\n\n"
                              "Files:\n"
                              "• report.txt — full ELF/import/relocation/address report\n"
@@ -456,8 +508,14 @@ didPickDocumentsAtURLs:
                              "%@"
                              "%@"
                              "%@"
+                             "%@"
                              "%@",
                             NSStringFromStd(result.summary),
+                            ipa.length == 0
+                                ? @""
+                                : (ipaResult.ok
+                                    ? [NSString stringWithFormat:@"iOS reference: %@\n", NSStringFromStd(ipaResult.summary)]
+                                    : [NSString stringWithFormat:@"iOS reference analysis failed: %@\n", NSStringFromStd(ipaResult.message)]),
                             root,
                             result.annotated_log.empty()
                                 ? @""
@@ -479,7 +537,10 @@ didPickDocumentsAtURLs:
                                 : @"• next-probe-plan.txt — batched TaskResource provenance + bounded scheduler plan\n",
                             result.critical_log_excerpt.empty()
                                 ? @""
-                                : @"• critical-log-excerpt.txt — compact worker-7/crash/tail evidence from huge logs\n"];
+                                : @"• critical-log-excerpt.txt — compact worker-7/crash/tail evidence from huge logs\n",
+                            (ipa.length > 0 && ipaResult.ok)
+                                ? @"• ios-reference-report.txt — ARMv7 Mach-O/load-command/framework/reference-marker report\n"
+                                : @""];
                 } else {
                     self.outputView.text =
                         [NSString stringWithFormat:
