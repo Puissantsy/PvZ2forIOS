@@ -1488,13 +1488,6 @@ public:
         const std::uint32_t size =
             it->second;
 
-        heap_retired_allocations.emplace_back(address, size);
-        if (heap_retired_allocations.size() > 1024u) {
-            heap_retired_allocations.erase(
-                heap_retired_allocations.begin(),
-                heap_retired_allocations.begin() + 256);
-        }
-
         heap_allocations.erase(it);
 
         if (heap_live_bytes >= size) {
@@ -1739,6 +1732,20 @@ public:
     std::uint32_t v62_first_bad_pointer_writer_pc = 0;
     std::uint32_t v62_first_bad_pointer_writer_lr = 0;
     std::uint32_t v62_first_bad_pointer_writer_dst = 0;
+
+    struct V63MutexState {
+        std::uint32_t owner = 0xffffffffu;
+        std::uint32_t depth = 0u;
+    };
+    std::unordered_map<std::uint32_t, V63MutexState> v63_mutexes;
+    std::unordered_map<std::uint32_t, std::uint32_t> v63_thread_held_mutexes;
+    std::uint64_t v63_mutex_acquires = 0;
+    std::uint64_t v63_mutex_releases = 0;
+    std::uint64_t v63_mutex_busy = 0;
+    std::uint64_t v63_mutex_conflicts = 0;
+    std::uint64_t v63_critical_continuations = 0;
+    std::uint64_t v63_task_dispatch_events = 0;
+    std::uint64_t v63_task_guard_failures = 0;
 
     std::uint32_t next_pthread_key = 1;
     std::uint32_t next_synthetic_thread = 1;
@@ -2858,6 +2865,233 @@ public:
             V46DescribeGuestAddress(sp));
     }
 
+    std::uint32_t V63HeldMutexCount(
+        std::uint32_t thread_id) const {
+
+        const auto it =
+            v63_thread_held_mutexes.find(thread_id);
+        return
+            it == v63_thread_held_mutexes.end()
+                ? 0u
+                : it->second;
+    }
+
+    std::string V63HeldMutexSummary(
+        std::uint32_t thread_id) const {
+
+        std::ostringstream out;
+        bool first = true;
+
+        for (const auto& item : v63_mutexes) {
+            if (item.second.depth == 0u ||
+                item.second.owner != thread_id) {
+                continue;
+            }
+
+            if (!first) {
+                out << ",";
+            }
+            first = false;
+            out
+                << "0x"
+                << JniProbeHex(item.first)
+                << "x"
+                << item.second.depth;
+        }
+
+        return
+            first
+                ? std::string{"none"}
+                : out.str();
+    }
+
+    bool V63AcquireMutex(
+        std::uint32_t mutex,
+        bool is_trylock) {
+
+        if (!V63Enabled()) {
+            return true;
+        }
+
+        V63MutexState& state =
+            v63_mutexes[mutex];
+
+        if (state.depth == 0u) {
+            state.owner =
+                current_probe_thread_id;
+            state.depth = 1u;
+            ++v63_thread_held_mutexes[
+                current_probe_thread_id];
+            ++v63_mutex_acquires;
+
+            if (current_probe_thread_id != 0u &&
+                (v63_mutex_acquires <= 32u ||
+                 (v63_mutex_acquires % 512u) == 0u)) {
+                Append(
+                    "V63 MUTEX ACQUIRE #" +
+                    std::to_string(v63_mutex_acquires) +
+                    " tid=" +
+                    std::to_string(
+                        current_probe_thread_id) +
+                    " mutex=" +
+                    V46DescribeGuestAddress(mutex) +
+                    " held=" +
+                    std::to_string(
+                        V63HeldMutexCount(
+                            current_probe_thread_id)));
+            }
+
+            return true;
+        }
+
+        if (state.owner ==
+            current_probe_thread_id) {
+            ++state.depth;
+            ++v63_mutex_acquires;
+
+            if (current_probe_thread_id != 0u &&
+                state.depth <= 4u) {
+                Append(
+                    "V63 MUTEX REENTER tid=" +
+                    std::to_string(
+                        current_probe_thread_id) +
+                    " mutex=" +
+                    V46DescribeGuestAddress(mutex) +
+                    " depth=" +
+                    std::to_string(state.depth));
+            }
+
+            return true;
+        }
+
+        ++v63_mutex_busy;
+
+        if (is_trylock) {
+            if (v63_mutex_busy <= 16u ||
+                (v63_mutex_busy % 256u) == 0u) {
+                Append(
+                    "V63 MUTEX BUSY #" +
+                    std::to_string(v63_mutex_busy) +
+                    " requesterTid=" +
+                    std::to_string(
+                        current_probe_thread_id) +
+                    " ownerTid=" +
+                    std::to_string(state.owner) +
+                    " mutex=" +
+                    V46DescribeGuestAddress(mutex));
+            }
+            return false;
+        }
+
+        ++v63_mutex_conflicts;
+        Append(
+            "V63 MUTEX OWNERSHIP CONFLICT #" +
+            std::to_string(v63_mutex_conflicts) +
+            " blockingLock requesterTid=" +
+            std::to_string(
+                current_probe_thread_id) +
+            " ownerTid=" +
+            std::to_string(state.owner) +
+            " mutex=" +
+            V46DescribeGuestAddress(mutex) +
+            " ownerHeld={" +
+            V63HeldMutexSummary(state.owner) +
+            "} requesterHeld={" +
+            V63HeldMutexSummary(
+                current_probe_thread_id) +
+            "}");
+        return false;
+    }
+
+    bool V63ReleaseMutex(
+        std::uint32_t mutex) {
+
+        if (!V63Enabled()) {
+            return true;
+        }
+
+        const auto found =
+            v63_mutexes.find(mutex);
+
+        if (found ==
+                v63_mutexes.end() ||
+            found->second.depth == 0u) {
+
+            if (v63_mutex_releases < 16u) {
+                Append(
+                    "V63 MUTEX UNTRACKED UNLOCK tid=" +
+                    std::to_string(
+                        current_probe_thread_id) +
+                    " mutex=" +
+                    V46DescribeGuestAddress(mutex));
+            }
+
+            ++v63_mutex_releases;
+            return true;
+        }
+
+        V63MutexState& state =
+            found->second;
+
+        if (state.owner !=
+            current_probe_thread_id) {
+            ++v63_mutex_conflicts;
+            Append(
+                "V63 MUTEX OWNERSHIP CONFLICT #" +
+                std::to_string(v63_mutex_conflicts) +
+                " unlockerTid=" +
+                std::to_string(
+                    current_probe_thread_id) +
+                " ownerTid=" +
+                std::to_string(state.owner) +
+                " mutex=" +
+                V46DescribeGuestAddress(mutex));
+            return false;
+        }
+
+        --state.depth;
+        ++v63_mutex_releases;
+
+        if (state.depth == 0u) {
+            auto held =
+                v63_thread_held_mutexes.find(
+                    current_probe_thread_id);
+            if (held !=
+                v63_thread_held_mutexes.end()) {
+                if (held->second > 1u) {
+                    --held->second;
+                } else {
+                    v63_thread_held_mutexes.erase(held);
+                }
+            }
+
+            state.owner = 0xffffffffu;
+        }
+
+        if (current_probe_thread_id != 0u &&
+            (v63_mutex_releases <= 32u ||
+             (v63_mutex_releases % 512u) == 0u ||
+             V63HeldMutexCount(
+                 current_probe_thread_id) == 0u)) {
+            Append(
+                "V63 MUTEX RELEASE #" +
+                std::to_string(v63_mutex_releases) +
+                " tid=" +
+                std::to_string(
+                    current_probe_thread_id) +
+                " mutex=" +
+                V46DescribeGuestAddress(mutex) +
+                " depth=" +
+                std::to_string(state.depth) +
+                " held=" +
+                std::to_string(
+                    V63HeldMutexCount(
+                        current_probe_thread_id)));
+        }
+
+        return true;
+    }
+
     std::string V62HeapPointerClass(std::uint32_t address) const {
         for (const auto& item : mem.heap_allocations) {
             const std::uint32_t base = item.first;
@@ -3531,8 +3765,16 @@ public:
             return "V62_TASK_PROVENANCE_CONTROL_A";
         case PvZ2DiagnosticMode::V62PumpMutexCoherentB:
             return "V62_PUMP_MUTEX_COHERENT_B";
+        case PvZ2DiagnosticMode::V63CriticalSectionScheduler:
+            return "V63_CRITICAL_SECTION_SCHEDULER";
         }
         return "UNKNOWN";
+    }
+
+    bool V63Enabled() const {
+        return
+            diagnostic_mode ==
+                PvZ2DiagnosticMode::V63CriticalSectionScheduler;
     }
 
     bool V62Enabled() const {
@@ -3548,7 +3790,8 @@ public:
         return
             diagnostic_mode == PvZ2DiagnosticMode::CtypeCompatNativePath ||
             diagnostic_mode == PvZ2DiagnosticMode::CtypeCompatDeepScout ||
-            V62Enabled();
+            V62Enabled() ||
+            V63Enabled();
     }
 
     bool V57DeepScoutEnabled() const {
@@ -5255,7 +5498,6 @@ public:
             4u,
             old,
             value);
-        V62ObserveWrite(address, 4u, old, value);
     }
 
     void MemoryWrite64(
@@ -5339,7 +5581,6 @@ public:
             4u,
             old,
             value);
-        V62ObserveWrite(address, 4u, old, value, "guest-strex");
         return true;
     }
 
@@ -12623,49 +12864,7 @@ public:
                 return;
             }
 
-            struct V62BulkPointerCopy {
-                std::uint32_t destination;
-                std::uint32_t old_value;
-                std::uint32_t value;
-            };
-            std::vector<V62BulkPointerCopy> v62_copies;
-            if (V62Enabled() && size <= 0x00010000u &&
-                !v62_worker_payloads.empty()) {
-                for (std::uint32_t off = 0u;
-                     off + 4u <= size && v62_copies.size() < 32u;
-                     off += 4u) {
-                    const std::uint32_t value = mem.Read32Guest(source + off);
-                    if (V62WorkerAlias(value).empty()) continue;
-                    v62_copies.push_back({
-                        destination + off,
-                        mem.Read32Guest(destination + off),
-                        value});
-                }
-            }
-
             std::memmove(dst, src, size);
-
-            // A host-side bulk move bypasses MemoryWrite32. Refresh once if it
-            // could have touched the cached manager vector metadata.
-            if (V62Enabled() &&
-                v62_pump_manager != 0u) {
-                const std::uint64_t dst_begin = destination;
-                const std::uint64_t dst_end =
-                    dst_begin + static_cast<std::uint64_t>(size);
-                const std::uint64_t meta_begin =
-                    static_cast<std::uint64_t>(v62_pump_manager) + 0x50u;
-                const std::uint64_t meta_end =
-                    static_cast<std::uint64_t>(v62_pump_manager) + 0x5cu;
-
-                if (dst_begin < meta_end && dst_end > meta_begin)
-                    V62RefreshPumpVector();
-            }
-
-            for (const auto& copy : v62_copies) {
-                V62ObserveWrite(
-                    copy.destination, 4u, copy.old_value, copy.value,
-                    name.c_str());
-            }
             regs[0] = destination;
             ++supported_calls;
             return;
