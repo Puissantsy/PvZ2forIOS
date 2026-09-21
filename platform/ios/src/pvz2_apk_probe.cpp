@@ -14094,6 +14094,12 @@ public:
             ++supported_calls;
             ++malloc_calls;
 
+            V67TrackSmallAllocation(
+                address,
+                requested,
+                regs[14],
+                regs[13]);
+
             result.malloc_calls =
                 malloc_calls;
             result.heap_high_water =
@@ -14132,6 +14138,13 @@ public:
         }
 
         if (name == "free") {
+            if (V67Enabled()) {
+                v67_small_allocations.erase(
+                    regs[0]);
+                v67_token_history.erase(
+                    regs[0]);
+            }
+
             mem.FreeHeap(regs[0]);
             regs[0] = 0;
             ++supported_calls;
@@ -14149,10 +14162,32 @@ public:
         }
 
         if (name == "realloc") {
+            const std::uint32_t old_address =
+                regs[0];
+            const std::uint32_t new_size =
+                regs[1];
+
             const std::uint32_t address =
                 mem.ReallocateHeap(
-                    regs[0],
-                    regs[1]);
+                    old_address,
+                    new_size);
+
+            if (V67Enabled()) {
+                v67_small_allocations.erase(
+                    old_address);
+                v67_token_history.erase(
+                    old_address);
+
+                if (address != 0u &&
+                    (new_size == 16u ||
+                     new_size == 24u)) {
+                    V67TrackSmallAllocation(
+                        address,
+                        new_size,
+                        regs[14],
+                        regs[13]);
+                }
+            }
 
             regs[0] = address;
             ++supported_calls;
