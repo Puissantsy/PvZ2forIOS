@@ -23283,6 +23283,21 @@ bool JniProbePrepareRuntime(
         return false;
     }
 
+    if (callbacks.V67Enabled() &&
+        (!patch_resource_native_miss(
+             0x00abedd4u,
+             0xe5801004u,
+             kJniProbeSvcV67TokenIncrementStore) ||
+         !patch_resource_native_miss(
+             0x00abede8u,
+             0xe5801004u,
+             kJniProbeSvcV67TokenDecrementStore))) {
+
+        error =
+            "v67 completion-token provenance did not match STR r1,[r0,#4] at 0x10abedd4/0x10abede8.";
+        return false;
+    }
+
     callbacks.Append(
         "V48 RESFILE WRAPPER-FINAL BRIDGE: v45 internal hooks preserved; direct-group null returns are observed at 0x1087a708 and all-groups-exhausted nulls at 0x1087a76c with the exact wrapper ID still in r6.");
     callbacks.Append(
@@ -23328,6 +23343,10 @@ bool JniProbePrepareRuntime(
             "V66 BLOCKING-WAIT SCHEDULER: v65 condition variables are preserved; worker sem_wait/sem_timedwait, nanosleep/usleep and sched_yield are scheduler-visible instead of immediate-success hot loops. TaskResource vfnC readiness is observed at the verified post-call CMP sites without forcing any result.");
         callbacks.Append(
             "V66 LOOP SAFETY: hot mutex/TaskResource logs are heavily sampled. The continuation watchdog stops if one specific guest mutex remains continuously held across more than 128 continuation quanta; an independent TaskResource stagnation watchdog fail-fast stops an unchanged task/child vfnC==0 pair after 65536 observations. Neither path forces guest readiness.");
+    }
+    if (callbacks.V67Enabled()) {
+        callbacks.Append(
+            "V67 COMPLETION-TOKEN PROVENANCE: exact counter stores at 0x10abedd4/0x10abede8 are observed and emulated unchanged. Token logs include old/new counter, caller LR, tid, live 16/24-byte allocation creator provenance and inc/dec history. Child snapshots are capped to the tracked allocation size.");
     }
 
     if (callbacks.V64Enabled()) {
