@@ -81,6 +81,13 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // family. Counter increment/decrement stores are observed with caller and
     // allocation provenance; no readiness result or counter is forced.
     V67CompletionTokenProvenance = 11u,
+
+    // v68: preserves the validated v66 scheduler, but uses the v67 result to
+    // correct the watchdog semantics. The shared token vfnC reports
+    // counter > 0 (busy), so counter==0 is an idle/available state rather than
+    // intrinsic evidence of a stalled TaskResource. The v67 store traps are
+    // intentionally not inherited so the hot worker path runs at normal speed.
+    V68CompletionTokenSemantics = 12u,
 };
 
 struct PvZ2JniProbeResult {

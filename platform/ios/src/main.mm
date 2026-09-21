@@ -318,7 +318,7 @@ NSString *NSStringFromStd(
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — v67 Completion-Token Provenance";
+        @"PvZ2forIOS — v68 Completion-Token Semantics";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -327,7 +327,7 @@ NSString *NSStringFromStd(
         NO;
 
     title.text =
-        @"PvZ2forIOS — v67 Completion-Token Provenance";
+        @"PvZ2forIOS — v68 Completion-Token Semantics";
 
     title.font =
         [UIFont
@@ -343,7 +343,7 @@ NSString *NSStringFromStd(
         NO;
 
     explanation.text =
-        @"v67 keeps the validated v66 blocking scheduler and traces the completion-token class that still blocks tid=7 after LogoScreen. Counter increment/decrement stores are observed exactly with caller and allocation provenance; no token, TaskResource, readiness result, GameState or resource is forced.";
+        @"v68 uses the v67 provenance result to correct the TaskResource watchdog: the shared completion-token vfnC is a busy-counter query (counter > 0), so zero is an idle/available state rather than intrinsic stagnation. The expensive v67 counter-store traps are off again; no token, readiness result, GameState or resource is forced.";
 
     explanation.numberOfLines = 0;
 
@@ -394,7 +394,7 @@ NSString *NSStringFromStd(
             initWithItems:
                 @[
                     @"V56 Baseline",
-                    @"V67 Token Provenance",
+                    @"V68 Token Semantics",
                     @"V66 Blocking Waits",
                     @"V65 Cond Scheduler",
                     @"Ctype Deep Scout"
@@ -1037,7 +1037,7 @@ NSString *NSStringFromStd(
     NSArray<NSString *> *modeNames =
         @[
             @"V56_BASELINE",
-            @"V67_COMPLETION_TOKEN_PROVENANCE",
+            @"V68_COMPLETION_TOKEN_SEMANTICS",
             @"V66_BLOCKING_WAIT_SCHEDULER",
             @"V65_CONDITION_VARIABLE_SCHEDULER",
             @"CTYPE_COMPAT_DEEP_SCOUT"
@@ -1056,7 +1056,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. mode=%@. V67 keeps v66 intact and adds class-wide completion-token provenance: creator allocation, increment/decrement caller, counter history and bounded TaskResource child snapshots. No readiness state is forced.",
+                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. mode=%@. V68 keeps the validated v66 scheduler, corrects completion-token watchdog semantics, and disables the v67 counter-store hot-path probes. No guest readiness state or counter is forced.",
                     modeNames[modeIndex]]];
 
     [self
@@ -1121,9 +1121,9 @@ NSString *NSStringFromStd(
 
     if (selectedMode == 1) {
         diagnosticMode =
-            PvZ2DiagnosticMode::V67CompletionTokenProvenance;
+            PvZ2DiagnosticMode::V68CompletionTokenSemantics;
         diagnosticModeName =
-            @"V67_COMPLETION_TOKEN_PROVENANCE";
+            @"V68_COMPLETION_TOKEN_SEMANTICS";
     } else if (selectedMode == 2) {
         diagnosticMode =
             PvZ2DiagnosticMode::V66BlockingWaitScheduler;
@@ -1148,7 +1148,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v67 Completion-Token Provenance Probe started mode=%@; PID=%d ===",
+                    @"=== PvZ2 v68 Completion-Token Semantics Probe started mode=%@; PID=%d ===",
                     diagnosticModeName,
                     getpid()]];
 

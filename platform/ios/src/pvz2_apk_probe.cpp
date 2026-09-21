@@ -3623,8 +3623,23 @@ public:
         constexpr std::uint64_t kTaskStagnationLimit =
             65536u;
 
+        std::uint32_t completion_token_vtable = 0u;
+        const bool v68_completion_token_zero =
+            V68Enabled() &&
+            result_value == 0u &&
+            V67IsCompletionToken(
+                child,
+                completion_token_vtable);
+
+        // v67 proved that this shared vfnC is not a readiness predicate:
+        // it is exactly (token->counter > 0). A zero result therefore means
+        // idle/available and is intentionally used by Task B to enter its
+        // resource-vector scan. Treating repeated zeroes as stagnation kills
+        // a live worker loop. Keep the legacy guard for every other child
+        // class, but never infer a stall from this completion-token family.
         const bool stagnant =
             result_value == 0u &&
+            !v68_completion_token_zero &&
             hits >= kTaskStagnationLimit;
 
         if (!sample && !stagnant) {
@@ -3651,6 +3666,11 @@ public:
             << " childVfnC="
             << V46DescribeGuestAddress(child_vfn_c)
             << " vfnCResult=" << result_value;
+
+        if (v68_completion_token_zero) {
+            out
+                << " v68TokenState=IDLE_NOT_STALL";
+        }
 
         if (V67Enabled()) {
             std::uint32_t token_vtable = 0u;
@@ -5075,8 +5095,16 @@ public:
             return "V66_BLOCKING_WAIT_SCHEDULER";
         case PvZ2DiagnosticMode::V67CompletionTokenProvenance:
             return "V67_COMPLETION_TOKEN_PROVENANCE";
+        case PvZ2DiagnosticMode::V68CompletionTokenSemantics:
+            return "V68_COMPLETION_TOKEN_SEMANTICS";
         }
         return "UNKNOWN";
+    }
+
+    bool V68Enabled() const {
+        return
+            diagnostic_mode ==
+                PvZ2DiagnosticMode::V68CompletionTokenSemantics;
     }
 
     bool V67Enabled() const {
@@ -5089,7 +5117,8 @@ public:
         return
             diagnostic_mode ==
                 PvZ2DiagnosticMode::V66BlockingWaitScheduler ||
-            V67Enabled();
+            V67Enabled() ||
+            V68Enabled();
     }
 
     bool V65Enabled() const {
@@ -23347,6 +23376,10 @@ bool JniProbePrepareRuntime(
     if (callbacks.V67Enabled()) {
         callbacks.Append(
             "V67 COMPLETION-TOKEN PROVENANCE: exact counter stores at 0x10abedd4/0x10abede8 are observed and emulated unchanged. Token logs include old/new counter, caller LR, tid, live 16/24-byte allocation creator provenance and inc/dec history. Child snapshots are capped to the tracked allocation size.");
+    }
+    if (callbacks.V68Enabled()) {
+        callbacks.Append(
+            "V68 COMPLETION-TOKEN SEMANTICS: v67 proved vfnC@0x10abedb8 is exactly counter>0 (busy), not a readiness predicate. Repeated zero results for this verified token class are logged as IDLE_NOT_STALL and cannot trip the v66 TaskResource stagnation fail-fast. The v67 increment/decrement hot-path traps are disabled in v68; all other v66/v65/v64 safety and blocking semantics remain active.");
     }
 
     if (callbacks.V64Enabled()) {
