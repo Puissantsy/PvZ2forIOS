@@ -76,6 +76,11 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // (or timeout), while usleep/nanosleep suspend the worker until a host
     // steady-clock deadline instead of becoming hot CPU loops.
     V66BlockingWaitScheduler = 10u,
+
+    // v67: preserves v66 and traces the resource-stream completion-token
+    // family. Counter increment/decrement stores are observed with caller and
+    // allocation provenance; no readiness result or counter is forced.
+    V67CompletionTokenProvenance = 11u,
 };
 
 struct PvZ2JniProbeResult {
