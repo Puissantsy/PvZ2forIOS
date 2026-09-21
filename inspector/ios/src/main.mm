@@ -46,7 +46,10 @@ NSArray<NSURL *> *ExistingReportURLs() {
         @"next-probe-plan.txt",
         @"critical-log-excerpt.txt",
         @"ios-reference-report.txt",
-        @"android-ios-shared-strings.csv"
+        @"android-ios-shared-strings.csv",
+        @"objc-classes.csv",
+        @"objc-methods.csv",
+        @"objc-ivars.csv"
     ];
 
     NSMutableArray<NSURL *> *urls = [NSMutableArray array];
@@ -495,6 +498,24 @@ didPickDocumentsAtURLs:
                             [root stringByAppendingPathComponent:@"android-ios-shared-strings.csv"],
                             ipaResult.shared_strings_csv);
                     }
+
+                    if (!ipaResult.objc_classes_csv.empty()) {
+                        WriteUtf8(
+                            [root stringByAppendingPathComponent:@"objc-classes.csv"],
+                            ipaResult.objc_classes_csv);
+                    }
+
+                    if (!ipaResult.objc_methods_csv.empty()) {
+                        WriteUtf8(
+                            [root stringByAppendingPathComponent:@"objc-methods.csv"],
+                            ipaResult.objc_methods_csv);
+                    }
+
+                    if (!ipaResult.objc_ivars_csv.empty()) {
+                        WriteUtf8(
+                            [root stringByAppendingPathComponent:@"objc-ivars.csv"],
+                            ipaResult.objc_ivars_csv);
+                    }
                 }
             }
 
@@ -511,6 +532,7 @@ didPickDocumentsAtURLs:
                              "• report.txt — full ELF/import/relocation/address report\n"
                              "• addresses.csv — every hex address from the log, ranked and classified\n"
                              "• summary.json — machine-readable summary\n"
+                             "%@"
                              "%@"
                              "%@"
                              "%@"
@@ -553,6 +575,9 @@ didPickDocumentsAtURLs:
                                 : @"",
                             (ipa.length > 0 && ipaResult.ok && !ipaResult.shared_strings_csv.empty())
                                 ? @"• android-ios-shared-strings.csv — exact strings shared by libPVZ2.so and the iOS Mach-O\n"
+                                : @"",
+                            (ipa.length > 0 && ipaResult.ok && !ipaResult.objc_classes_csv.empty())
+                                ? @"• objc-classes.csv / objc-methods.csv / objc-ivars.csv — iOS Objective-C layout, selectors, IMPs and ivar offsets\n"
                                 : @""];
                 } else {
                     self.outputView.text =
