@@ -64,6 +64,12 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // inside a guest critical section it stops at the first subsequent
     // held-mutex transition to zero instead of sampling only at whole quanta.
     V64ReleaseBoundaryScheduler = 8u,
+
+    // v65: preserves v64 and adds scheduler-visible pthread condition-variable
+    // semantics for deferred workers: cond_wait atomically releases its mutex,
+    // sleeps the worker, and resumes only after signal/broadcast/timeout plus
+    // successful mutex reacquisition.
+    V65ConditionVariableScheduler = 9u,
 };
 
 struct PvZ2JniProbeResult {
