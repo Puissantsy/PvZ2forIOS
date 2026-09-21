@@ -394,6 +394,7 @@ NSString *NSStringFromStd(
             initWithItems:
                 @[
                     @"V56 Baseline",
+                    @"V66 Blocking Waits",
                     @"V65 Cond Scheduler",
                     @"Ctype Deep Scout"
                 ]];
@@ -1117,10 +1118,15 @@ NSString *NSStringFromStd(
 
     if (selectedMode == 1) {
         diagnosticMode =
+            PvZ2DiagnosticMode::V66BlockingWaitScheduler;
+        diagnosticModeName =
+            @"V66_BLOCKING_WAIT_SCHEDULER";
+    } else if (selectedMode == 2) {
+        diagnosticMode =
             PvZ2DiagnosticMode::V65ConditionVariableScheduler;
         diagnosticModeName =
             @"V65_CONDITION_VARIABLE_SCHEDULER";
-    } else if (selectedMode == 2) {
+    } else if (selectedMode == 3) {
         diagnosticMode =
             PvZ2DiagnosticMode::CtypeCompatDeepScout;
         diagnosticModeName =
@@ -1134,7 +1140,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v65 Condition-Variable Scheduler started mode=%@; PID=%d ===",
+                    @"=== PvZ2 v66 Blocking-Wait / TaskResource State Probe started mode=%@; PID=%d ===",
                     diagnosticModeName,
                     getpid()]];
 
