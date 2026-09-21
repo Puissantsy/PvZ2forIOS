@@ -18,6 +18,7 @@
 #include <fnmatch.h>
 #include <limits>
 #include <iomanip>
+#include <iterator>
 #include <sstream>
 #include <string>
 #include <thread>
