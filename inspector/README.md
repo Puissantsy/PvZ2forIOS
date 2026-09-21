@@ -2,6 +2,35 @@
 
 Auxiliary iOS/iPadOS application for the PvZ2forIOS reverse-engineering project.
 
+## Lab v2.0-alpha — Dual Binary Android ↔ iOS
+
+v2 starts using the historical decrypted PvZ2 iOS 1.5.252123 IPA as a
+static reference alongside the Android 1.5.252752 APK.
+
+Current implemented slice:
+
+- select an optional iOS IPA next to the Android APK and runtime log;
+- discover the direct `Payload/*.app` ARMv7 Mach-O executable automatically;
+- parse Mach-O header/load commands, ARM subtype, dylibs/frameworks, segments,
+  sections, `LC_ENCRYPTION_INFO`, minimum iOS/SDK, symbol count and
+  `LC_FUNCTION_STARTS`;
+- report Objective-C/string-bearing sections and important PvZ2 reference
+  markers such as `RESFILE_PACKAGES_UI_IPAD`, ResStreams and iOS driver names;
+- extract exact ASCII strings (>=8 bytes) from both `libPVZ2.so` and the
+  Mach-O and export their intersection as `android-ios-shared-strings.csv`.
+  These shared strings are the first automated anchors for future function
+  matching.
+
+Generated v2 files:
+
+```
+ios-reference-report.txt
+android-ios-shared-strings.csv
+```
+
+This path is static and free: no JIT, StikDebug, IDA Pro, Hopper or external
+service is required. The real iPad remains the runtime source of truth.
+
 The inspector does **not** launch PvZ2. It consumes the original PvZ2
 1.5.252752 APK plus an optional probe log and turns static ARM/ELF facts and
 real-iPad traces into repeatable diagnostics.
