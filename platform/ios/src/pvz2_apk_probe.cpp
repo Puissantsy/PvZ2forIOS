@@ -9926,6 +9926,19 @@ public:
             }
         }
 
+        if (swi == kJniProbeSvcV67TokenIncrementStore ||
+            swi == kJniProbeSvcV67TokenDecrementStore) {
+
+            V67RecordTokenStore(
+                swi == kJniProbeSvcV67TokenIncrementStore
+                    ? "INC"
+                    : "DEC",
+                regs[0],
+                regs[1],
+                regs[14]);
+            return;
+        }
+
         if (swi == kJniProbeSvcV66TaskADepResult ||
             swi == kJniProbeSvcV66TaskAChild78Result ||
             swi == kJniProbeSvcV66TaskAChild84Result ||
