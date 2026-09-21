@@ -49,7 +49,9 @@ NSArray<NSURL *> *ExistingReportURLs() {
         @"android-ios-shared-strings.csv",
         @"objc-classes.csv",
         @"objc-methods.csv",
-        @"objc-ivars.csv"
+        @"objc-ivars.csv",
+        @"ios-import-calls.csv",
+        @"pthread-reference.txt"
     ];
 
     NSMutableArray<NSURL *> *urls = [NSMutableArray array];
@@ -516,6 +518,18 @@ didPickDocumentsAtURLs:
                             [root stringByAppendingPathComponent:@"objc-ivars.csv"],
                             ipaResult.objc_ivars_csv);
                     }
+
+                    if (!ipaResult.ios_import_calls_csv.empty()) {
+                        WriteUtf8(
+                            [root stringByAppendingPathComponent:@"ios-import-calls.csv"],
+                            ipaResult.ios_import_calls_csv);
+                    }
+
+                    if (!ipaResult.pthread_reference.empty()) {
+                        WriteUtf8(
+                            [root stringByAppendingPathComponent:@"pthread-reference.txt"],
+                            ipaResult.pthread_reference);
+                    }
                 }
             }
 
@@ -532,6 +546,7 @@ didPickDocumentsAtURLs:
                              "• report.txt — full ELF/import/relocation/address report\n"
                              "• addresses.csv — every hex address from the log, ranked and classified\n"
                              "• summary.json — machine-readable summary\n"
+                             "%@"
                              "%@"
                              "%@"
                              "%@"
@@ -578,6 +593,9 @@ didPickDocumentsAtURLs:
                                 : @"",
                             (ipa.length > 0 && ipaResult.ok && !ipaResult.objc_classes_csv.empty())
                                 ? @"• objc-classes.csv / objc-methods.csv / objc-ivars.csv — iOS Objective-C layout, selectors, IMPs and ivar offsets\n"
+                                : @"",
+                            (ipa.length > 0 && ipaResult.ok && !ipaResult.ios_import_calls_csv.empty())
+                                ? @"• ios-import-calls.csv / pthread-reference.txt — resolved Mach-O import stubs, call-sites and caller function starts\n"
                                 : @""];
                 } else {
                     self.outputView.text =
