@@ -25118,6 +25118,18 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             callbacks.soft_slice_timeout = true;
 
                             if (!any_worker_ran) {
+                                if (callbacks.V66Enabled() &&
+                                    callbacks.V66HasTimedSleeper()) {
+                                    // All runnable workers may legitimately be
+                                    // sleeping until a short host deadline.
+                                    // Give steady/realtime clocks a chance to
+                                    // advance, then rescan before declaring a
+                                    // concrete-wait deadlock.
+                                    std::this_thread::sleep_for(
+                                        std::chrono::milliseconds(1));
+                                    continue;
+                                }
+
                                 if (res_stream_pump_boundary) {
                                     // This boundary is an opportunity to run a
                                     // worker, not a dependency. If every worker
