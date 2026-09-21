@@ -1757,6 +1757,23 @@ public:
     std::uint64_t v64_release_boundary_arms = 0;
     std::uint64_t v64_release_boundary_yields = 0;
 
+    struct V65CondWaitState {
+        std::uint32_t cond = 0u;
+        std::uint32_t mutex = 0u;
+        bool timed = false;
+        bool notified = false;
+        std::uint64_t deadline_realtime_ns = 0u;
+        std::uint32_t result_code = 0u;
+    };
+    std::unordered_map<std::uint32_t, V65CondWaitState>
+        v65_cond_waits;
+    std::unordered_map<std::uint32_t, std::vector<std::uint32_t>>
+        v65_cond_waiters;
+    std::uint64_t v65_cond_wait_calls = 0u;
+    std::uint64_t v65_cond_wake_calls = 0u;
+    std::uint64_t v65_cond_resumes = 0u;
+    std::uint64_t v65_cond_timeouts = 0u;
+
     std::uint32_t next_pthread_key = 1;
     std::uint32_t next_synthetic_thread = 1;
     std::uint32_t next_synthetic_class = 1;
@@ -2945,6 +2962,302 @@ public:
         v64_release_boundary_thread = 0xffffffffu;
     }
 
+    std::uint64_t V65RealtimeNowNs() const {
+        const auto now =
+            std::chrono::system_clock::now()
+                .time_since_epoch();
+        const auto nanos =
+            std::chrono::duration_cast<
+                std::chrono::nanoseconds>(now)
+                .count();
+        return
+            nanos > 0
+                ? static_cast<std::uint64_t>(nanos)
+                : 0u;
+    }
+
+    bool V65BeginCondWait(
+        std::uint32_t cond,
+        std::uint32_t mutex,
+        bool timed,
+        std::uint32_t abstime) {
+
+        if (!V65Enabled() ||
+            current_probe_thread_id == 0u) {
+            return false;
+        }
+
+        const auto found =
+            v63_mutexes.find(mutex);
+
+        if (found == v63_mutexes.end() ||
+            found->second.depth == 0u ||
+            found->second.owner !=
+                current_probe_thread_id) {
+
+            Append(
+                "V65 COND WAIT INVALID MUTEX tid=" +
+                std::to_string(
+                    current_probe_thread_id) +
+                " cond=" +
+                V46DescribeGuestAddress(cond) +
+                " mutex=" +
+                V46DescribeGuestAddress(mutex));
+            return false;
+        }
+
+        if (found->second.depth != 1u) {
+            Append(
+                "V65 COND WAIT RECURSIVE DEPTH UNSUPPORTED tid=" +
+                std::to_string(
+                    current_probe_thread_id) +
+                " mutex=" +
+                V46DescribeGuestAddress(mutex) +
+                " depth=" +
+                std::to_string(found->second.depth));
+            return false;
+        }
+
+        // In this cooperative guest scheduler this callback is atomic with
+        // respect to all other guest threads. Releasing the tracked mutex and
+        // registering the waiter before yielding therefore reproduces the
+        // atomic unlock+sleep contract of pthread_cond_wait.
+        if (!V63ReleaseMutex(mutex)) {
+            return false;
+        }
+
+        V65CondWaitState wait;
+        wait.cond = cond;
+        wait.mutex = mutex;
+        wait.timed = timed;
+
+        if (timed && abstime != 0u) {
+            const std::uint64_t sec =
+                mem.Read32Guest(abstime + 0u);
+            const std::uint64_t nsec =
+                mem.Read32Guest(abstime + 4u);
+
+            if (nsec < 1000000000ull) {
+                wait.deadline_realtime_ns =
+                    sec * 1000000000ull + nsec;
+            } else {
+                wait.deadline_realtime_ns =
+                    V65RealtimeNowNs();
+            }
+        }
+
+        v65_cond_waits[
+            current_probe_thread_id] =
+                wait;
+
+        auto& waiters =
+            v65_cond_waiters[cond];
+
+        if (std::find(
+                waiters.begin(),
+                waiters.end(),
+                current_probe_thread_id) ==
+            waiters.end()) {
+            waiters.push_back(
+                current_probe_thread_id);
+        }
+
+        ++v65_cond_wait_calls;
+
+        if (v65_cond_wait_calls <= 32u ||
+            (v65_cond_wait_calls % 256u) == 0u) {
+            Append(
+                "V65 COND WAIT #" +
+                std::to_string(
+                    v65_cond_wait_calls) +
+                " tid=" +
+                std::to_string(
+                    current_probe_thread_id) +
+                " cond=" +
+                V46DescribeGuestAddress(cond) +
+                " mutex=" +
+                V46DescribeGuestAddress(mutex) +
+                (timed
+                    ? " timed=YES"
+                    : " timed=NO") +
+                " -> mutex released, worker sleeping");
+        }
+
+        return true;
+    }
+
+    std::uint32_t V65NotifyCond(
+        std::uint32_t cond,
+        bool broadcast) {
+
+        if (!V65Enabled()) {
+            return 0u;
+        }
+
+        auto found =
+            v65_cond_waiters.find(cond);
+
+        if (found ==
+            v65_cond_waiters.end()) {
+            return 0u;
+        }
+
+        std::uint32_t woke = 0u;
+
+        for (const std::uint32_t tid :
+             found->second) {
+
+            auto wait =
+                v65_cond_waits.find(tid);
+
+            if (wait ==
+                    v65_cond_waits.end() ||
+                wait->second.cond != cond ||
+                wait->second.notified) {
+                continue;
+            }
+
+            wait->second.notified = true;
+            wait->second.result_code = 0u;
+            ++woke;
+
+            if (!broadcast) {
+                break;
+            }
+        }
+
+        ++v65_cond_wake_calls;
+
+        if (woke != 0u ||
+            v65_cond_wake_calls <= 16u) {
+            Append(
+                std::string{
+                    broadcast
+                        ? "V65 COND BROADCAST"
+                        : "V65 COND SIGNAL"} +
+                " cond=" +
+                V46DescribeGuestAddress(cond) +
+                " woke=" +
+                std::to_string(woke));
+        }
+
+        return woke;
+    }
+
+    bool V65PrepareCondResume(
+        std::uint32_t thread_id,
+        bool& did_resume,
+        std::uint32_t& result_code) {
+
+        did_resume = false;
+        result_code = 0u;
+
+        if (!V65Enabled()) {
+            return true;
+        }
+
+        auto found =
+            v65_cond_waits.find(
+                thread_id);
+
+        if (found ==
+            v65_cond_waits.end()) {
+            return true;
+        }
+
+        V65CondWaitState& wait =
+            found->second;
+
+        if (!wait.notified &&
+            wait.timed &&
+            wait.deadline_realtime_ns != 0u &&
+            V65RealtimeNowNs() >=
+                wait.deadline_realtime_ns) {
+
+            wait.notified = true;
+            wait.result_code = 110u; // ETIMEDOUT on Android/Bionic.
+            ++v65_cond_timeouts;
+
+            Append(
+                "V65 COND TIMEOUT tid=" +
+                std::to_string(thread_id) +
+                " cond=" +
+                V46DescribeGuestAddress(
+                    wait.cond));
+        }
+
+        if (!wait.notified) {
+            return false;
+        }
+
+        V63MutexState& mutex_state =
+            v63_mutexes[wait.mutex];
+
+        if (mutex_state.depth != 0u &&
+            mutex_state.owner !=
+                thread_id) {
+            return false;
+        }
+
+        if (mutex_state.depth == 0u) {
+            mutex_state.owner = thread_id;
+            mutex_state.depth = 1u;
+            ++v63_thread_held_mutexes[
+                thread_id];
+            ++v63_mutex_acquires;
+        }
+
+        const std::uint32_t cond =
+            wait.cond;
+        const std::uint32_t mutex =
+            wait.mutex;
+        result_code =
+            wait.result_code;
+
+        auto waiters =
+            v65_cond_waiters.find(cond);
+        if (waiters !=
+            v65_cond_waiters.end()) {
+
+            auto& ids =
+                waiters->second;
+            ids.erase(
+                std::remove(
+                    ids.begin(),
+                    ids.end(),
+                    thread_id),
+                ids.end());
+
+            if (ids.empty()) {
+                v65_cond_waiters.erase(
+                    waiters);
+            }
+        }
+
+        v65_cond_waits.erase(found);
+        did_resume = true;
+        ++v65_cond_resumes;
+
+        if (v65_cond_resumes <= 32u ||
+            (v65_cond_resumes % 256u) == 0u) {
+            Append(
+                "V65 COND RESUME #" +
+                std::to_string(
+                    v65_cond_resumes) +
+                " tid=" +
+                std::to_string(thread_id) +
+                " cond=" +
+                V46DescribeGuestAddress(cond) +
+                " mutex=" +
+                V46DescribeGuestAddress(mutex) +
+                " rc=" +
+                std::to_string(result_code) +
+                " -> mutex reacquired");
+        }
+
+        return true;
+    }
+
     bool V63AcquireMutex(
         std::uint32_t mutex,
         bool is_trylock) {
@@ -3851,14 +4164,23 @@ public:
             return "V63_CRITICAL_SECTION_SCHEDULER";
         case PvZ2DiagnosticMode::V64ReleaseBoundaryScheduler:
             return "V64_RELEASE_BOUNDARY_SCHEDULER";
+        case PvZ2DiagnosticMode::V65ConditionVariableScheduler:
+            return "V65_CONDITION_VARIABLE_SCHEDULER";
         }
         return "UNKNOWN";
+    }
+
+    bool V65Enabled() const {
+        return
+            diagnostic_mode ==
+                PvZ2DiagnosticMode::V65ConditionVariableScheduler;
     }
 
     bool V64Enabled() const {
         return
             diagnostic_mode ==
-                PvZ2DiagnosticMode::V64ReleaseBoundaryScheduler;
+                PvZ2DiagnosticMode::V64ReleaseBoundaryScheduler ||
+            V65Enabled();
     }
 
     bool V63Enabled() const {
