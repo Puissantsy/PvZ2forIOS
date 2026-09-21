@@ -11,9 +11,13 @@ struct PvZ2IpaInspectorResult {
     std::string executable_path;
     std::string summary;
     std::string report;
+    std::string shared_strings_csv;
+    std::size_t shared_string_count = 0;
     std::string message;
 };
 
 PvZ2IpaInspectorResult InspectPvZ2IpaReference(
     const std::uint8_t* ipa_data,
-    std::size_t ipa_size);
+    std::size_t ipa_size,
+    const std::uint8_t* apk_data,
+    std::size_t apk_size);
