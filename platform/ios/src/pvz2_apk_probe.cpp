@@ -812,6 +812,15 @@ constexpr std::uint32_t kV62ResStreamsPumpTrylockReturnGuest =
     kGuestBase + 0x00868ba4u;
 constexpr std::uint32_t kJniProbeSvcV62TaskDispatch = 0x00f081u;
 
+// v66: observational traps immediately after the TaskResource dependency/
+// child vfnC calls. Each replaces only CMP r0,#0 and reproduces that compare
+// in CallSVC after recording the returned readiness value.
+constexpr std::uint32_t kJniProbeSvcV66TaskADepResult = 0x00f082u;
+constexpr std::uint32_t kJniProbeSvcV66TaskAChild78Result = 0x00f083u;
+constexpr std::uint32_t kJniProbeSvcV66TaskAChild84Result = 0x00f084u;
+constexpr std::uint32_t kJniProbeSvcV66TaskBDepResult = 0x00f085u;
+constexpr std::uint32_t kJniProbeSvcV66TaskBChildResult = 0x00f086u;
+
 constexpr std::uint32_t kJniProbeSvcUnsupportedJniBase = 0x00e000u;
 constexpr std::uint32_t kJniProbeJniSlotCount = 256u;
 
@@ -1795,6 +1804,11 @@ public:
     std::uint64_t v66_sem_timeouts = 0u;
     std::uint64_t v66_sleep_calls = 0u;
     std::uint64_t v66_sleep_resumes = 0u;
+    std::uint64_t v66_sched_yields = 0u;
+    std::uint64_t v66_task_substate_events = 0u;
+    std::uint64_t v66_task_substate_zeroes = 0u;
+    std::unordered_map<std::uint64_t, std::uint64_t>
+        v66_task_substate_hits;
 
     std::uint32_t next_pthread_key = 1;
     std::uint32_t next_synthetic_thread = 1;
@@ -2954,6 +2968,23 @@ public:
                 : out.str();
     }
 
+    std::vector<std::uint32_t> V63HeldMutexAddresses(
+        std::uint32_t thread_id) const {
+
+        std::vector<std::uint32_t> out;
+        out.reserve(V63HeldMutexCount(thread_id));
+
+        for (const auto& item : v63_mutexes) {
+            if (item.second.depth != 0u &&
+                item.second.owner == thread_id) {
+                out.push_back(item.first);
+            }
+        }
+
+        std::sort(out.begin(), out.end());
+        return out;
+    }
+
     void V64ArmReleaseBoundary(
         std::uint32_t thread_id) {
 
@@ -3280,6 +3311,124 @@ public:
         return true;
     }
 
+
+    void V66RecordTaskSubstate(
+        const char* kind,
+        std::uint32_t task,
+        std::uint32_t child,
+        std::uint32_t result_value) {
+
+        if (!V66Enabled()) {
+            return;
+        }
+
+        ++v66_task_substate_events;
+        if (result_value == 0u) {
+            ++v66_task_substate_zeroes;
+        }
+
+        const std::uint32_t child_vtable =
+            child != 0u
+                ? mem.Read32Guest(child)
+                : 0u;
+        const std::uint32_t child_vfn_c =
+            child_vtable != 0u
+                ? mem.Read32Guest(child_vtable + 0x0cu)
+                : 0u;
+
+        const std::uint64_t key =
+            (static_cast<std::uint64_t>(task) << 32) ^
+            (static_cast<std::uint64_t>(child) << 1) ^
+            static_cast<std::uint64_t>(
+                result_value == 0u ? 1u : 0u);
+
+        std::uint64_t& hits =
+            v66_task_substate_hits[key];
+        ++hits;
+
+        const bool sample =
+            hits <= 8u ||
+            (hits & (hits - 1u)) == 0u ||
+            (hits % 65536u) == 0u;
+
+        if (!sample) {
+            return;
+        }
+
+        std::ostringstream out;
+        out
+            << "V66 TASK SUBSTATE "
+            << (kind != nullptr ? kind : "unknown")
+            << " hit=" << hits
+            << " tid=" << current_probe_thread_id
+            << " task=" << V46DescribeGuestAddress(task)
+            << " taskVtable="
+            << V46DescribeGuestAddress(
+                   task != 0u ? mem.Read32Guest(task) : 0u)
+            << " child=" << V46DescribeGuestAddress(child)
+            << " childClass="
+            << (child != 0u
+                    ? V62HeapPointerClass(child)
+                    : std::string{"null"})
+            << " childVtable="
+            << V46DescribeGuestAddress(child_vtable)
+            << " childVfnC="
+            << V46DescribeGuestAddress(child_vfn_c)
+            << " vfnCResult=" << result_value
+            << " taskState={+18:0x"
+            << JniProbeHex(
+                   task != 0u
+                       ? mem.Read32Guest(task + 0x18u)
+                       : 0u)
+            << ",+1c:0x"
+            << JniProbeHex(
+                   task != 0u
+                       ? mem.Read32Guest(task + 0x1cu)
+                       : 0u)
+            << ",+20:"
+            << V46DescribeGuestAddress(
+                   task != 0u
+                       ? mem.Read32Guest(task + 0x20u)
+                       : 0u)
+            << ",+24:"
+            << V46DescribeGuestAddress(
+                   task != 0u
+                       ? mem.Read32Guest(task + 0x24u)
+                       : 0u)
+            << ",+28:"
+            << V46DescribeGuestAddress(
+                   task != 0u
+                       ? mem.Read32Guest(task + 0x28u)
+                       : 0u)
+            << "}";
+
+        Append(out.str());
+    }
+
+    void V66EmulateCmpR0Zero() {
+        if (!jit) {
+            return;
+        }
+
+        const std::uint32_t value =
+            jit->Regs()[0];
+
+        std::uint32_t cpsr =
+            jit->Cpsr();
+
+        // CMP r0,#0 == SUBS without storing the result.
+        // Preserve the non-NZCV CPSR bits.
+        cpsr &= ~0xf0000000u;
+        if ((value & 0x80000000u) != 0u) {
+            cpsr |= 0x80000000u; // N
+        }
+        if (value == 0u) {
+            cpsr |= 0x40000000u; // Z
+        }
+        cpsr |= 0x20000000u;     // C: subtracting zero never borrows.
+        // V remains clear.
+        jit->SetCpsr(cpsr);
+    }
 
     std::uint64_t V66SteadyNowNs() const {
         const auto now =
@@ -3636,9 +3785,15 @@ public:
                 current_probe_thread_id];
             ++v63_mutex_acquires;
 
+            const std::uint64_t acquire_interval =
+                V66Enabled()
+                    ? 65536u
+                    : 512u;
+
             if (current_probe_thread_id != 0u &&
                 (v63_mutex_acquires <= 32u ||
-                 (v63_mutex_acquires % 512u) == 0u)) {
+                 (v63_mutex_acquires %
+                  acquire_interval) == 0u)) {
                 Append(
                     "V63 MUTEX ACQUIRE #" +
                     std::to_string(v63_mutex_acquires) +
@@ -3788,9 +3943,15 @@ public:
         // generated >50 MiB before first draw. Keep ownership diagnostics but
         // sample ordinary releases aggressively; the meaningful v64 safe
         // boundary has its own bounded log below.
+        const std::uint64_t release_interval =
+            V66Enabled()
+                ? 65536u
+                : 4096u;
+
         if (current_probe_thread_id != 0u &&
             (v63_mutex_releases <= 32u ||
-             (v63_mutex_releases % 4096u) == 0u)) {
+             (v63_mutex_releases %
+              release_interval) == 0u)) {
             Append(
                 "V63 MUTEX RELEASE #" +
                 std::to_string(v63_mutex_releases) +
@@ -9403,6 +9564,53 @@ public:
             }
         }
 
+        if (swi == kJniProbeSvcV66TaskADepResult ||
+            swi == kJniProbeSvcV66TaskAChild78Result ||
+            swi == kJniProbeSvcV66TaskAChild84Result ||
+            swi == kJniProbeSvcV66TaskBDepResult ||
+            swi == kJniProbeSvcV66TaskBChildResult) {
+
+            const std::uint32_t task = regs[4];
+            std::uint32_t child = 0u;
+            const char* kind = "unknown";
+
+            switch (swi) {
+            case kJniProbeSvcV66TaskADepResult:
+                child = mem.Read32Guest(task + 0x20u);
+                kind = "A.dep+20";
+                break;
+            case kJniProbeSvcV66TaskAChild78Result:
+                child = regs[6];
+                kind = "A.vector78";
+                break;
+            case kJniProbeSvcV66TaskAChild84Result:
+                child = regs[6];
+                kind = "A.vector84";
+                break;
+            case kJniProbeSvcV66TaskBDepResult:
+                child = mem.Read32Guest(task + 0x20u);
+                kind = "B.dep+20";
+                break;
+            case kJniProbeSvcV66TaskBChildResult:
+                child = regs[5];
+                kind = "B.vector78";
+                break;
+            default:
+                break;
+            }
+
+            V66RecordTaskSubstate(
+                kind,
+                task,
+                child,
+                regs[0]);
+
+            // Reproduce the exact overwritten ARM instruction:
+            // CMP r0,#0.
+            V66EmulateCmpR0Zero();
+            return;
+        }
+
         if (swi == kJniProbeSvcV62TaskDispatch) {
             // Original @ 0x10868cb0: LDR r1,[r0,#0x14].
             const std::uint32_t slot = regs[6];
@@ -9434,9 +9642,15 @@ public:
                     !vtable_readable ||
                     !executable;
 
+                const std::uint64_t task_log_interval =
+                    V66Enabled()
+                        ? 65536u
+                        : 256u;
+
                 if (anomaly ||
                     v63_task_dispatch_events <= 8u ||
-                    (v63_task_dispatch_events % 256u) == 0u) {
+                    (v63_task_dispatch_events %
+                     task_log_interval) == 0u) {
 
                     std::ostringstream out;
                     out
