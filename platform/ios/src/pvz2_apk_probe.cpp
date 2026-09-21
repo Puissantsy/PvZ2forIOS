@@ -3358,6 +3358,229 @@ public:
     }
 
 
+    std::uint32_t V67HeapAllocationSize(
+        std::uint32_t address) const {
+
+        const auto it =
+            mem.heap_allocations.find(address);
+        return it != mem.heap_allocations.end()
+            ? it->second
+            : 0u;
+    }
+
+    bool V67IsCompletionToken(
+        std::uint32_t token,
+        std::uint32_t& vtable) const {
+
+        vtable =
+            token != 0u
+                ? mem.Read32Guest(token)
+                : 0u;
+
+        if (vtable == 0u ||
+            mem.Ptr(vtable, 0x18u) == nullptr) {
+            return false;
+        }
+
+        return
+            mem.Read32Guest(vtable + 0x0cu) ==
+                kGuestBase + 0x00abedb8u &&
+            mem.Read32Guest(vtable + 0x10u) ==
+                kGuestBase + 0x00abedccu &&
+            mem.Read32Guest(vtable + 0x14u) ==
+                kGuestBase + 0x00abede0u;
+    }
+
+    std::string V67AllocationDescription(
+        std::uint32_t address) const {
+
+        const auto it =
+            v67_small_allocations.find(address);
+        if (it == v67_small_allocations.end()) {
+            return "allocProvenance=untracked";
+        }
+
+        const auto& p = it->second;
+        return
+            "allocProvenance={size=" +
+            std::to_string(p.size) +
+            ",malloc#=" +
+            std::to_string(p.malloc_index) +
+            ",tid=" +
+            std::to_string(p.tid) +
+            ",viaNew=" +
+            std::string{p.via_operator_new ? "YES" : "NO"} +
+            ",importLR=" +
+            V46DescribeGuestAddress(p.import_lr) +
+            ",creatorLR=" +
+            V46DescribeGuestAddress(p.creator_lr) +
+            "}";
+    }
+
+    std::string V67TokenHistoryDescription(
+        std::uint32_t token) const {
+
+        const auto it =
+            v67_token_history.find(token);
+        if (it == v67_token_history.end()) {
+            return "tokenHistory={inc=0,dec=0,last=NONE}";
+        }
+
+        const auto& h = it->second;
+        return
+            "tokenHistory={inc=" +
+            std::to_string(h.increments) +
+            ",dec=" +
+            std::to_string(h.decrements) +
+            ",lastTid=" +
+            std::to_string(h.last_tid) +
+            ",lastLR=" +
+            V46DescribeGuestAddress(h.last_lr) +
+            ",last=" +
+            std::to_string(h.last_old) +
+            "->" +
+            std::to_string(h.last_new) +
+            "}";
+    }
+
+    void V67TrackSmallAllocation(
+        std::uint32_t address,
+        std::uint32_t size,
+        std::uint32_t import_lr,
+        std::uint32_t sp) {
+
+        if (!V67Enabled() ||
+            address == 0u ||
+            (size != 16u && size != 24u)) {
+            return;
+        }
+
+        V67AllocationProvenance p;
+        p.size = size;
+        p.tid = current_probe_thread_id;
+        p.import_lr = import_lr;
+        p.creator_lr = import_lr;
+        p.malloc_index = malloc_calls;
+
+        const std::uint32_t plain_lr =
+            import_lr & ~1u;
+
+        const std::uint32_t operator_new_begin =
+            kGuestBase + 0x00b363a4u;
+        const std::uint32_t operator_new_end =
+            kGuestBase + 0x00b36448u;
+
+        if (plain_lr >= operator_new_begin &&
+            plain_lr < operator_new_end &&
+            mem.Ptr(sp + 12u, 4u) != nullptr) {
+
+            const std::uint32_t saved_lr =
+                mem.Read32Guest(sp + 12u);
+
+            if (saved_lr >= kGuestBase &&
+                static_cast<std::uint64_t>(
+                    saved_lr & ~1u) <
+                    static_cast<std::uint64_t>(
+                        kGuestBase) +
+                    mem.image.size()) {
+                p.creator_lr = saved_lr;
+                p.via_operator_new = true;
+            }
+        }
+
+        v67_small_allocations[address] = p;
+    }
+
+    void V67RecordTokenStore(
+        const char* kind,
+        std::uint32_t token,
+        std::uint32_t new_value,
+        std::uint32_t caller_lr) {
+
+        const std::uint32_t old_value =
+            token != 0u
+                ? mem.Read32Guest(token + 4u)
+                : 0u;
+
+        std::uint32_t vtable = 0u;
+        const bool token_family =
+            V67IsCompletionToken(
+                token,
+                vtable);
+
+        if (token_family) {
+            ++v67_token_events;
+
+            auto& history =
+                v67_token_history[token];
+
+            const bool increment =
+                kind != nullptr &&
+                std::string{kind} == "INC";
+
+            if (increment) {
+                ++history.increments;
+            } else {
+                ++history.decrements;
+            }
+
+            history.last_tid =
+                current_probe_thread_id;
+            history.last_lr =
+                caller_lr;
+            history.last_old =
+                old_value;
+            history.last_new =
+                new_value;
+
+            const std::uint64_t token_events =
+                history.increments +
+                history.decrements;
+
+            const bool sample =
+                token_events <= 8u ||
+                (token_events &
+                 (token_events - 1u)) == 0u ||
+                (v67_token_events % 4096u) == 0u;
+
+            if (sample) {
+                Append(
+                    "V67 TOKEN " +
+                    std::string{
+                        kind != nullptr
+                            ? kind
+                            : "STORE"} +
+                    " event=" +
+                    std::to_string(v67_token_events) +
+                    " token=" +
+                    V46DescribeGuestAddress(token) +
+                    " vtable=" +
+                    V46DescribeGuestAddress(vtable) +
+                    " counter=" +
+                    std::to_string(old_value) +
+                    "->" +
+                    std::to_string(new_value) +
+                    " tid=" +
+                    std::to_string(
+                        current_probe_thread_id) +
+                    " callerLR=" +
+                    V46DescribeGuestAddress(caller_lr) +
+                    " " +
+                    V67AllocationDescription(token) +
+                    " " +
+                    V67TokenHistoryDescription(token));
+            }
+        }
+
+        // Exact emulation of the replaced ARM instruction:
+        // STR r1,[r0,#4].
+        if (token != 0u) {
+            mem.Write32Guest(
+                token + 4u,
+                new_value);
+        }
+    }
+
     void V66RecordTaskSubstate(
         const char* kind,
         std::uint32_t task,
