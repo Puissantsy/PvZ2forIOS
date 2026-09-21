@@ -54,6 +54,11 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // collecting provenance; B adds coherent ownership for manager+0x68.
     V62TaskProvenanceControlA = 5u,
     V62PumpMutexCoherentB = 6u,
+
+    // v63: single forward-progress mode. It keeps the validated ctype/native
+    // path but makes deferred-worker scheduling aware of every guest pthread
+    // mutex critical section instead of one resource-pump mutex.
+    V63CriticalSectionScheduler = 7u,
 };
 
 struct PvZ2JniProbeResult {
