@@ -318,7 +318,7 @@ NSString *NSStringFromStd(
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — v64 Release-Boundary Scheduler";
+        @"PvZ2forIOS — v66 Blocking-Wait / TaskResource Probe";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -327,7 +327,7 @@ NSString *NSStringFromStd(
         NO;
 
     title.text =
-        @"PvZ2forIOS — v64 Release-Boundary Scheduler";
+        @"PvZ2forIOS — v66 Blocking-Wait / TaskResource Probe";
 
     title.font =
         [UIFont
@@ -343,7 +343,7 @@ NSString *NSStringFromStd(
         NO;
 
     explanation.text =
-        @"v64 fixes the v63 quantum-phase lock seen on tid=1. Mutex ownership tracking and the TaskResource guard stay intact, but after a worker exhausts its quantum while holding a guest mutex, Dynarmic now stops at the first later unlock that makes heldMutexes=0 — before the worker can reacquire the hot mutex. Release logging is heavily sampled so a short probe no longer produces tens of megabytes.";
+        @"v66 keeps the validated v65 condition-variable scheduler and investigates the post-LogoScreen TaskResource hot loop. Worker sem_wait/sem_timedwait, nanosleep/usleep and sched_yield are scheduler-visible; the verified TaskResource child vfnC readiness checks are observed without forcing a result; hot mutex/task logs are heavily sampled and a sticky-mutex watchdog stops a true critical-section loop before another 200 MB log.";
 
     explanation.numberOfLines = 0;
 
@@ -1036,6 +1036,7 @@ NSString *NSStringFromStd(
     NSArray<NSString *> *modeNames =
         @[
             @"V56_BASELINE",
+            @"V66_BLOCKING_WAIT_SCHEDULER",
             @"V65_CONDITION_VARIABLE_SCHEDULER",
             @"CTYPE_COMPAT_DEEP_SCOUT"
         ];
@@ -1053,7 +1054,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v65 mode=%@. V65 keeps the validated v64 release-boundary scheduler and adds scheduler-visible pthread condition variables: worker cond_wait/timedwait atomically release their mutex, sleep, and resume only after signal/broadcast/timeout plus mutex reacquisition. The TaskResource guard remains observational/fail-fast.",
+                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. mode=%@. V66 keeps v65 condition variables, adds scheduler-visible semaphore/sleep/yield behavior, observes TaskResource child readiness without forcing it, and stops sticky-mutex hot loops with compact logging.",
                     modeNames[modeIndex]]];
 
     [self
@@ -1443,7 +1444,7 @@ NSString *NSStringFromStd(
                     if (result.ok) {
                         [selfRef
                             appendUI:
-                                @"SUCCESS STEP 3: PvZ2 completed v64 Release-Boundary Scheduler. For Ctype Native, check V57 CTYPE ABI plus V58 STREAM-FUTURE / V59 ASYNC CALLER-POLL / V60 FAIR ASYNC-WAIT / V61 RES-STREAM PUMP / V30 SCHED WAIT / V22 WORKER SLICE and preserved Gate/RSB diagnostics. Deep Scout additionally keeps V57 TRIE PATH / GATEC WRITE."];
+                                @"SUCCESS STEP 3: PvZ2 completed the selected diagnostic run. For V66, inspect V66 TASK SUBSTATE / SEM WAIT / SLEEP / STICKY-MUTEX plus V65 COND and preserved V64/V63/RSB/GLES diagnostics."];
 
                         if (!result.final_frame_png_path.empty()) {
                             [selfRef
@@ -1471,7 +1472,7 @@ NSString *NSStringFromStd(
                         } else {
                             [selfRef
                                 showResult:
-                                    @"PvZ2 v64 Release-Boundary Scheduler returned"
+                                    @"PvZ2 v66 diagnostic run returned"
                                 message:
                                     [NSString
                                         stringWithFormat:
