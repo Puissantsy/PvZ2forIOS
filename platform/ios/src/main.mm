@@ -394,7 +394,7 @@ NSString *NSStringFromStd(
             initWithItems:
                 @[
                     @"V56 Baseline",
-                    @"V64 Release Boundary",
+                    @"V65 Cond Scheduler",
                     @"Ctype Deep Scout"
                 ]];
 
@@ -1035,7 +1035,7 @@ NSString *NSStringFromStd(
     NSArray<NSString *> *modeNames =
         @[
             @"V56_BASELINE",
-            @"V64_RELEASE_BOUNDARY_SCHEDULER",
+            @"V65_CONDITION_VARIABLE_SCHEDULER",
             @"CTYPE_COMPAT_DEEP_SCOUT"
         ];
 
@@ -1052,7 +1052,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v64 mode=%@. V64 Release Boundary is the default forward-progress run: it preserves the validated ctype/VFS/resource/future path and v63 mutex ownership, but once a worker quantum expires inside a critical section it yields exactly on the first subsequent heldMutexes=0 unlock. The TaskResource guard remains observational/fail-fast.",
+                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v65 mode=%@. V65 keeps the validated v64 release-boundary scheduler and adds scheduler-visible pthread condition variables: worker cond_wait/timedwait atomically release their mutex, sleep, and resume only after signal/broadcast/timeout plus mutex reacquisition. The TaskResource guard remains observational/fail-fast.",
                     modeNames[modeIndex]]];
 
     [self
@@ -1117,9 +1117,9 @@ NSString *NSStringFromStd(
 
     if (selectedMode == 1) {
         diagnosticMode =
-            PvZ2DiagnosticMode::V64ReleaseBoundaryScheduler;
+            PvZ2DiagnosticMode::V65ConditionVariableScheduler;
         diagnosticModeName =
-            @"V64_RELEASE_BOUNDARY_SCHEDULER";
+            @"V65_CONDITION_VARIABLE_SCHEDULER";
     } else if (selectedMode == 2) {
         diagnosticMode =
             PvZ2DiagnosticMode::CtypeCompatDeepScout;
@@ -1134,7 +1134,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v64 Release-Boundary Scheduler started mode=%@; PID=%d ===",
+                    @"=== PvZ2 v65 Condition-Variable Scheduler started mode=%@; PID=%d ===",
                     diagnosticModeName,
                     getpid()]];
 
