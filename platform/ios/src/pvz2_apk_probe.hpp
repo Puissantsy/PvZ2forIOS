@@ -198,6 +198,12 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // 1024x768 space while logging both pixel and point candidates. The v39
     // Native_onSurfaceChanged height,width ABI fix is intentionally untouched.
     V81HitTestLogicalPoints = 23u,
+
+    // v82: keep the v81 logical-touch experiment and add an observation-only
+    // Profile widget/action radar. Candidate button objects are named by the
+    // constructor IDs seen statically (5/6/7) until runtime proves semantics.
+    // No rendering, widget, touch or GameState value is forced.
+    V82ProfileLayoutRadar = 24u,
 };
 
 struct PvZ2JniProbeResult {

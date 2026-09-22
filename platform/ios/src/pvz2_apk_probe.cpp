@@ -1217,6 +1217,14 @@ constexpr std::uint32_t kJniProbeSvcV79TextRectB = 0x00f0aau;
 constexpr std::uint32_t kJniProbeSvcV79GenericEntry = 0x00f0abu;
 constexpr std::uint32_t kJniProbeSvcV79GenericRect = 0x00f0acu;
 
+// v82: Profile candidate widget provenance. Static analysis of the broad
+// first-run Profile constructor identifies button-constructor IDs 5/7/6, but
+// their semantic labels are intentionally left unresolved until runtime.
+constexpr std::uint32_t kJniProbeSvcV82Candidate5Post = 0x00f0b0u;
+constexpr std::uint32_t kJniProbeSvcV82Candidate7Post = 0x00f0b1u;
+constexpr std::uint32_t kJniProbeSvcV82Candidate6Pre = 0x00f0b2u;
+constexpr std::uint32_t kJniProbeSvcV82Candidate6Post = 0x00f0b3u;
+
 constexpr std::uint32_t kJniProbeSvcUnsupportedJniBase = 0x00e000u;
 constexpr std::uint32_t kJniProbeJniSlotCount = 256u;
 
@@ -3367,6 +3375,33 @@ public:
     std::unordered_map<std::uint32_t, std::uint64_t>
         v79_profile_hits;
     std::uint64_t v79_profile_total_events = 0u;
+
+    // v82 Profile widget/action radar. The common-widget offsets are logged
+    // as raw XYWH candidates; runtime correlation decides semantics.
+    std::uint32_t v82_profile_object = 0u;
+    std::uint32_t v82_candidate5 = 0u;
+    std::uint32_t v82_candidate6 = 0u;
+    std::uint32_t v82_candidate7 = 0u;
+    std::uint64_t v82_candidate5_hits = 0u;
+    std::uint64_t v82_candidate6_pre_hits = 0u;
+    std::uint64_t v82_candidate6_post_hits = 0u;
+    std::uint64_t v82_candidate7_hits = 0u;
+    std::uint64_t v82_touch_serial = 0u;
+    std::uint64_t v82_touch_radar_logs = 0u;
+    std::uint64_t v82_keyboard_correlations = 0u;
+    std::uint64_t v82_gamestate_correlations = 0u;
+    std::uint64_t v82_profile_state_changes = 0u;
+    std::int32_t v82_last_touch_x = 0;
+    std::int32_t v82_last_touch_y = 0;
+    std::int32_t v82_last_touch_previous_x = 0;
+    std::int32_t v82_last_touch_previous_y = 0;
+    std::uint32_t v82_last_touch_phase = 0xffffffffu;
+    std::uint32_t v82_last_touch_frame = 0u;
+    std::uint32_t v82_last_profile_c8 = 0xffffffffu;
+    std::uint32_t v82_last_profile_a0 = 0u;
+    std::uint32_t v82_last_profile_a4 = 0u;
+    std::uint32_t v82_last_profile_a8 = 0u;
+    bool v82_profile_state_initialized = false;
 
     std::uint32_t v56_resource_manager = 0u;
     std::uint64_t v56_registry_pipeline_calls = 0u;
@@ -6348,6 +6383,8 @@ public:
             return "V80_GLOBAL_TRANSFORM_PROBE";
         case PvZ2DiagnosticMode::V81HitTestLogicalPoints:
             return "V81_HITTEST_LOGICAL_POINTS";
+        case PvZ2DiagnosticMode::V82ProfileLayoutRadar:
+            return "V82_PROFILE_LAYOUT_RADAR";
         }
         return "UNKNOWN";
     }
@@ -6361,7 +6398,9 @@ public:
             diagnostic_mode ==
                 PvZ2DiagnosticMode::V80GlobalTransformProbe ||
             diagnostic_mode ==
-                PvZ2DiagnosticMode::V81HitTestLogicalPoints;
+                PvZ2DiagnosticMode::V81HitTestLogicalPoints ||
+            diagnostic_mode ==
+                PvZ2DiagnosticMode::V82ProfileLayoutRadar;
     }
 
     const char* V79ProfileSiteName(
@@ -6424,10 +6463,151 @@ public:
         return out.str();
     }
 
+    bool V82Enabled() const {
+        return
+            diagnostic_mode ==
+                PvZ2DiagnosticMode::V82ProfileLayoutRadar;
+    }
+
+    std::string V82TouchContext() const {
+        std::ostringstream out;
+        out << "touch#" << v82_touch_serial
+            << "{frame=" << v82_last_touch_frame
+            << ",phase=" << v82_last_touch_phase
+            << ",xy=" << v82_last_touch_x << "," << v82_last_touch_y
+            << ",prev=" << v82_last_touch_previous_x << ","
+            << v82_last_touch_previous_y << "}";
+        return out.str();
+    }
+
+    std::string V82WidgetRaw(
+        const char* label,
+        std::uint32_t object,
+        std::int32_t test_x,
+        std::int32_t test_y) {
+
+        std::ostringstream out;
+        out << label << "{ptr=0x" << JniProbeHex(object);
+
+        if (object == 0u || mem.Ptr(object, 0x38u) == nullptr) {
+            out << ",invalid}";
+            return out.str();
+        }
+
+        const std::int32_t x =
+            static_cast<std::int32_t>(mem.Read32Guest(object + 0x28u));
+        const std::int32_t y =
+            static_cast<std::int32_t>(mem.Read32Guest(object + 0x2cu));
+        const std::int32_t w =
+            static_cast<std::int32_t>(mem.Read32Guest(object + 0x30u));
+        const std::int32_t h =
+            static_cast<std::int32_t>(mem.Read32Guest(object + 0x34u));
+
+        const bool inside =
+            w > 0 && h > 0 &&
+            test_x >= x && test_y >= y &&
+            static_cast<std::int64_t>(test_x) <
+                static_cast<std::int64_t>(x) + w &&
+            static_cast<std::int64_t>(test_y) <
+                static_cast<std::int64_t>(y) + h;
+
+        out << ",vtable=0x" << JniProbeHex(mem.Read32Guest(object))
+            << ",rawXYWH=" << x << "," << y << "," << w << "," << h
+            << ",containsTouch=" << (inside ? "YES" : "NO") << "}";
+        return out.str();
+    }
+
+    std::string V82RadarSnapshot(
+        std::int32_t test_x,
+        std::int32_t test_y) {
+
+        std::ostringstream out;
+        out << V82WidgetRaw("profile", v82_profile_object, test_x, test_y)
+            << " " << V82WidgetRaw("candidate5", v82_candidate5, test_x, test_y)
+            << " " << V82WidgetRaw("candidate6", v82_candidate6, test_x, test_y)
+            << " " << V82WidgetRaw("candidate7", v82_candidate7, test_x, test_y);
+
+        if (v82_profile_object != 0u &&
+            mem.Ptr(v82_profile_object, 0xccu) != nullptr) {
+            out << " profileFields{c8=0x"
+                << JniProbeHex(mem.Read32Guest(v82_profile_object + 0xc8u))
+                << ",a0=0x"
+                << JniProbeHex(mem.Read32Guest(v82_profile_object + 0xa0u))
+                << ",a4=0x"
+                << JniProbeHex(mem.Read32Guest(v82_profile_object + 0xa4u))
+                << ",a8=0x"
+                << JniProbeHex(mem.Read32Guest(v82_profile_object + 0xa8u))
+                << "}";
+        }
+        return out.str();
+    }
+
+    void V82ObserveProfileState(const char* reason) {
+        if (!V82Enabled() ||
+            v82_profile_object == 0u ||
+            mem.Ptr(v82_profile_object, 0xccu) == nullptr) {
+            return;
+        }
+
+        const std::uint32_t c8 = mem.Read32Guest(v82_profile_object + 0xc8u);
+        const std::uint32_t a0 = mem.Read32Guest(v82_profile_object + 0xa0u);
+        const std::uint32_t a4 = mem.Read32Guest(v82_profile_object + 0xa4u);
+        const std::uint32_t a8 = mem.Read32Guest(v82_profile_object + 0xa8u);
+
+        const bool changed =
+            !v82_profile_state_initialized ||
+            c8 != v82_last_profile_c8 ||
+            a0 != v82_last_profile_a0 ||
+            a4 != v82_last_profile_a4 ||
+            a8 != v82_last_profile_a8;
+
+        if (!changed) return;
+
+        ++v82_profile_state_changes;
+        Append(
+            std::string{"V82 PROFILE STATE #"} +
+            std::to_string(v82_profile_state_changes) +
+            " frame=" + std::to_string(current_frame_number) +
+            " reason=" + (reason != nullptr ? reason : "?") +
+            " c8=0x" + JniProbeHex(c8) +
+            " a0=0x" + JniProbeHex(a0) +
+            " a4=0x" + JniProbeHex(a4) +
+            " a8=0x" + JniProbeHex(a8) +
+            " " + V82TouchContext());
+
+        v82_profile_state_initialized = true;
+        v82_last_profile_c8 = c8;
+        v82_last_profile_a0 = a0;
+        v82_last_profile_a4 = a4;
+        v82_last_profile_a8 = a8;
+    }
+
+    std::string V82RadarSummary() {
+        std::ostringstream out;
+        out << "V82 PROFILE RADAR SUMMARY"
+            << " profile=0x" << JniProbeHex(v82_profile_object)
+            << " candidate5=0x" << JniProbeHex(v82_candidate5)
+            << " candidate6=0x" << JniProbeHex(v82_candidate6)
+            << " candidate7=0x" << JniProbeHex(v82_candidate7)
+            << " candidateHits{5=" << v82_candidate5_hits
+            << ",6pre=" << v82_candidate6_pre_hits
+            << ",6post=" << v82_candidate6_post_hits
+            << ",7=" << v82_candidate7_hits << "}"
+            << " touches=" << v82_touch_serial
+            << " radarLogs=" << v82_touch_radar_logs
+            << " keyboardActions=" << v82_keyboard_correlations
+            << " gameStateActions=" << v82_gamestate_correlations
+            << " profileStateChanges=" << v82_profile_state_changes
+            << " last=" << V82TouchContext()
+            << " " << V82RadarSnapshot(v82_last_touch_x, v82_last_touch_y);
+        return out.str();
+    }
+
     bool V81Enabled() const {
         return
             diagnostic_mode ==
-                PvZ2DiagnosticMode::V81HitTestLogicalPoints;
+                PvZ2DiagnosticMode::V81HitTestLogicalPoints ||
+            V82Enabled();
     }
 
     bool V80Enabled() const {
@@ -10723,6 +10903,10 @@ public:
             case kJniProbeSvcV79ProfileEntry:
                 // Original @0x103095b4: MOV r11,r0.
                 regs[11] = regs[0];
+                if (V82Enabled()) {
+                    v82_profile_object = regs[0];
+                    V82ObserveProfileState("Profile.entry");
+                }
                 append_snapshot(
                     "Profile.entry",
                     regs[0],
@@ -10861,6 +11045,12 @@ public:
             case kJniProbeSvcV79TextEntry:
                 // Original @0x1030aea8: MOV r10,r0.
                 regs[10] = regs[0];
+                if (V82Enabled()) {
+                    if (v82_profile_object == 0u) {
+                        v82_profile_object = regs[0];
+                    }
+                    V82ObserveProfileState("TextEntry.entry");
+                }
                 append_snapshot(
                     "TextEntry.entry",
                     regs[0],
@@ -10979,6 +11169,88 @@ public:
                     detail.str());
                 return;
             }
+
+            default:
+                break;
+            }
+        }
+
+        // v82: candidate widget layout radar. Each trap first emulates the
+        // exact verified ARM instruction and then observes memory.
+        if (V82Enabled() &&
+            swi >= kJniProbeSvcV82Candidate5Post &&
+            swi <= kJniProbeSvcV82Candidate6Post) {
+
+            const std::uint32_t sp = regs[13];
+
+            switch (swi) {
+            case kJniProbeSvcV82Candidate5Post:
+                // Original @0x10309f94: LDR r0,[r11,#0xa0].
+                regs[0] = mem.Read32Guest(regs[11] + 0xa0u);
+                v82_candidate5 = regs[0];
+                ++v82_candidate5_hits;
+                Append(
+                    "V82 WIDGET candidate5 post#" +
+                    std::to_string(v82_candidate5_hits) +
+                    " frame=" + std::to_string(current_frame_number) + " " +
+                    V82WidgetRaw(
+                        "candidate5", v82_candidate5,
+                        v82_last_touch_x, v82_last_touch_y));
+                return;
+
+            case kJniProbeSvcV82Candidate7Post:
+                // Original @0x1030a558: LDR r0,[r11].
+                regs[0] = mem.Read32Guest(regs[11]);
+                v82_candidate7 = regs[6];
+                ++v82_candidate7_hits;
+                Append(
+                    "V82 WIDGET candidate7 post#" +
+                    std::to_string(v82_candidate7_hits) +
+                    " frame=" + std::to_string(current_frame_number) + " " +
+                    V82WidgetRaw(
+                        "candidate7", v82_candidate7,
+                        v82_last_touch_x, v82_last_touch_y));
+                return;
+
+            case kJniProbeSvcV82Candidate6Pre: {
+                // Original @0x1030a68c: MOV r0,r9.
+                regs[0] = regs[9];
+                v82_candidate6 = regs[9];
+                ++v82_candidate6_pre_hits;
+
+                std::ostringstream line;
+                line << "V82 WIDGET candidate6 pre#"
+                     << v82_candidate6_pre_hits
+                     << " frame=" << current_frame_number
+                     << " plannedRect{"
+                     << static_cast<std::int32_t>(mem.Read32Guest(sp + 0x50u))
+                     << ","
+                     << static_cast<std::int32_t>(mem.Read32Guest(sp + 0x54u))
+                     << ","
+                     << static_cast<std::int32_t>(mem.Read32Guest(sp + 0x58u))
+                     << ","
+                     << static_cast<std::int32_t>(mem.Read32Guest(sp + 0x5cu))
+                     << "} "
+                     << V82WidgetRaw(
+                            "candidate6", v82_candidate6,
+                            v82_last_touch_x, v82_last_touch_y);
+                Append(line.str());
+                return;
+            }
+
+            case kJniProbeSvcV82Candidate6Post:
+                // Original @0x1030a694: ADD r8,sp,#56.
+                regs[8] = sp + 56u;
+                v82_candidate6 = regs[9];
+                ++v82_candidate6_post_hits;
+                Append(
+                    "V82 WIDGET candidate6 post#" +
+                    std::to_string(v82_candidate6_post_hits) +
+                    " frame=" + std::to_string(current_frame_number) + " " +
+                    V82WidgetRaw(
+                        "candidate6", v82_candidate6,
+                        v82_last_touch_x, v82_last_touch_y));
+                return;
 
             default:
                 break;
@@ -13012,6 +13284,21 @@ public:
             result.game_state_apply_calls =
                 v53_state_apply_calls;
 
+            if (V82Enabled()) {
+                ++v82_gamestate_correlations;
+                Append(
+                    "V82 ACTION GAMESTATE #" +
+                    std::to_string(v82_gamestate_correlations) +
+                    " frame=" + std::to_string(current_frame_number) +
+                    " kind=" +
+                    (request ? std::string{"REQUEST"} : std::string{"APPLY"}) +
+                    " current=" + std::to_string(current) +
+                    " target=" + std::to_string(target) +
+                    " " + V82TouchContext() + " " +
+                    V82RadarSnapshot(
+                        v82_last_touch_x, v82_last_touch_y));
+            }
+
             Append(
                 std::string{
                     request
@@ -14689,6 +14976,28 @@ public:
                             for (const V72TouchEvent& event :
                                  events) {
 
+                                if (V82Enabled()) {
+                                    ++v82_touch_serial;
+                                    v82_last_touch_x = event.x;
+                                    v82_last_touch_y = event.y;
+                                    v82_last_touch_previous_x = event.previous_x;
+                                    v82_last_touch_previous_y = event.previous_y;
+                                    v82_last_touch_phase = event.phase;
+                                    v82_last_touch_frame = current_frame_number;
+
+                                    if ((event.phase == 0u ||
+                                         event.phase == 3u ||
+                                         event.phase == 4u) &&
+                                        v82_touch_radar_logs < 256u) {
+                                        ++v82_touch_radar_logs;
+                                        Append(
+                                            "V82 TOUCH RADAR #" +
+                                            std::to_string(v82_touch_radar_logs) +
+                                            " " + V82TouchContext() + " " +
+                                            V82RadarSnapshot(event.x, event.y));
+                                    }
+                                }
+
                                 std::uint8_t* record =
                                     buffer +
                                     write_offset;
@@ -15459,6 +15768,19 @@ public:
                                     ? v73_keyboard_show_calls
                                     : v73_keyboard_hide_calls) +
                             " -> UIKit UITextField");
+
+                        if (V82Enabled()) {
+                            ++v82_keyboard_correlations;
+                            Append(
+                                "V82 ACTION KEYBOARD #" +
+                                std::to_string(v82_keyboard_correlations) +
+                                " frame=" + std::to_string(current_frame_number) +
+                                " action=" +
+                                (show ? std::string{"SHOW"} : std::string{"HIDE"}) +
+                                " " + V82TouchContext() + " " +
+                                V82RadarSnapshot(
+                                    v82_last_touch_x, v82_last_touch_y));
+                        }
 
                         if (V80Enabled()) {
                             Append(
@@ -26325,6 +26647,25 @@ bool JniProbePrepareRuntime(
         return false;
     }
 
+    if (callbacks.V82Enabled() &&
+        (!patch_resource_native_miss(
+             0x00309f94u, 0xe59b00a0u,
+             kJniProbeSvcV82Candidate5Post) ||
+         !patch_resource_native_miss(
+             0x0030a558u, 0xe59b0000u,
+             kJniProbeSvcV82Candidate7Post) ||
+         !patch_resource_native_miss(
+             0x0030a68cu, 0xe1a00009u,
+             kJniProbeSvcV82Candidate6Pre) ||
+         !patch_resource_native_miss(
+             0x0030a694u, 0xe28d8038u,
+             kJniProbeSvcV82Candidate6Post))) {
+
+        error =
+            "v82 Profile widget radar signature mismatch: refusing to patch an unverified Android 1.5.252752 instruction.";
+        return false;
+    }
+
     callbacks.Append(
         "V48 RESFILE WRAPPER-FINAL BRIDGE: v45 internal hooks preserved; direct-group null returns are observed at 0x1087a708 and all-groups-exhausted nulls at 0x1087a76c with the exact wrapper ID still in r6.");
     callbacks.Append(
@@ -26423,7 +26764,7 @@ bool JniProbePrepareRuntime(
     }
     if (callbacks.V79ProfileProbeEnabled()) {
         callbacks.Append(
-            "V79 FIRST-RUN PROFILE PROVENANCE: observation-only traps are active in this V75/V77/V80/V81 control. Static v2.5 matched the Android and historical-iOS Profile/Facebook/EULA layout paths and found only a localized text-entry constant difference. v79 records live parent +0x30/+0x34 dimensions, LawnApp +0x6a8 scale, branch state and bounded final geometry at the matched paths. No scale, rectangle, resource, GameState or widget state is modified.");
+            "V79 FIRST-RUN PROFILE PROVENANCE: observation-only traps are active in this V75/V77/V80/V81/V82 control. Static v2.5 matched the Android and historical-iOS Profile/Facebook/EULA layout paths and found only a localized text-entry constant difference. v79 records live parent +0x30/+0x34 dimensions, LawnApp +0x6a8 scale, branch state and bounded final geometry at the matched paths. No scale, rectangle, resource, GameState or widget state is modified.");
     }
     if (callbacks.V80Enabled()) {
         callbacks.Append(
@@ -26432,6 +26773,10 @@ bool JniProbePrepareRuntime(
     if (callbacks.V81Enabled()) {
         callbacks.Append(
             "V81 HIT-TEST PROVENANCE: v72 touch mapping was validated while framebuffer and logical coordinates were both 1180x820. v74 then introduced 2360x1640 Retina pixels while keeping 1180x820 points without changing mapTouch; v77 now uses 2048x1536 pixels / 1024x768 points. V81 keeps v39 height,width surface ordering and all v77/v80 rendering unchanged, but delivers touches in 1024x768 logical point space. V80 remains the same-IPA pixel-coordinate control.");
+    }
+    if (callbacks.V82Enabled()) {
+        callbacks.Append(
+            "V82 PROFILE WIDGET/ACTION RADAR: v81 moved the physical tap needed to hit the TextEntry exactly as expected from the /2 input experiment, rejecting /2 as a final fix. v82 keeps that logical-touch mode only as a coordinate probe and observes Profile candidate button IDs 5/6/7 after their verified layout calls. Raw +0x28/+0x2c/+0x30/+0x34 fields are correlated with every began/ended tap, keyboard request, Profile pointer/state change and GameState transition. Candidate semantics are not guessed and no action is forced.");
     }
 
     if (callbacks.V64Enabled()) {
@@ -30519,6 +30864,11 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                         std::to_string(callbacks.v81_touch_events_logged) +
                         " totalDelivered=" +
                         std::to_string(callbacks.v72_touch_events_delivered));
+
+                    if (callbacks.V82Enabled()) {
+                        callbacks.Append(
+                            callbacks.V82RadarSummary());
+                    }
                 }
 
                 if (callbacks.V73Enabled()) {

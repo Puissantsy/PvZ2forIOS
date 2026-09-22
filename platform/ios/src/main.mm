@@ -414,7 +414,7 @@ bool PvZ2HostKeyboardFirstResponder() {
     self.captionLabel.clipsToBounds =
         YES;
     self.captionLabel.text =
-        @"PvZ2 v81 — starting…\nHit-test pixels/points probe";
+        @"PvZ2 v82 — starting…\nProfile widget/action radar";
 
     self.stopButton =
         [UIButton
@@ -619,7 +619,7 @@ bool PvZ2HostKeyboardFirstResponder() {
 
         if (became) {
             self.captionLabel.text =
-                @"v80 — iOS keyboard active\nUITextInputEvent → Android guest";
+                @"PvZ2 LIVE — iOS keyboard active\nUITextInputEvent → Android guest";
         }
     } else {
         [self.keyboardField
@@ -1339,7 +1339,7 @@ bool PvZ2HostKeyboardFirstResponder() {
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — v81 Hit-Test Provenance";
+        @"PvZ2forIOS — v82 Profile Widget Radar";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -1348,7 +1348,7 @@ bool PvZ2HostKeyboardFirstResponder() {
         NO;
 
     title.text =
-        @"PvZ2forIOS — v81 Hit-Test Provenance";
+        @"PvZ2forIOS — v82 Profile Widget Radar";
 
     title.font =
         [UIFont
@@ -1364,7 +1364,7 @@ bool PvZ2HostKeyboardFirstResponder() {
         NO;
 
     explanation.text =
-        @"v81 follows the v80 result back to input space. V80 remains selectable as the exact pixel-coordinate control. V81 keeps the same V77 1024×768 pt / 2048×1536 px geometry, UI_IPAD, screenMatrix/FBO and v39 Native_onSurfaceChanged height,width order, but maps UIKit touches to 1024×768 logical points instead of 2048×1536 framebuffer pixels. Both candidate coordinate spaces are logged and inherited V79/V80 rendering + keyboard probes stay active.";
+        @"v82 keeps the v81 logical 1024×768 touch path and turns the first-run Profile into an action radar. It records raw widget geometry for the statically identified button candidates 5/6/7, tells which candidate rectangle contains each delivered tap, and correlates taps with ShowKeyboard, Profile-state changes and GameState transitions. V80/V81 remain selectable controls. Rendering, UI_IPAD, screenMatrix/FBO and the v39 height,width surface order are unchanged.";
 
     explanation.numberOfLines = 0;
 
@@ -1421,6 +1421,7 @@ bool PvZ2HostKeyboardFirstResponder() {
                     @"V77 Legacy iPad",
                     @"V80 Transform",
                     @"V81 HitTest",
+                    @"V82 Radar",
                     @"V66 Waits",
                     @"V65 Cond",
                     @"Ctype Scout"
@@ -1429,7 +1430,7 @@ bool PvZ2HostKeyboardFirstResponder() {
     self.diagnosticModeControl.translatesAutoresizingMaskIntoConstraints =
         NO;
     self.diagnosticModeControl.selectedSegmentIndex =
-        6;
+        7;
 
     UIStackView *mainButtons =
         [[UIStackView alloc]
@@ -2069,6 +2070,7 @@ bool PvZ2HostKeyboardFirstResponder() {
             @"V77_LEGACY_IPAD_GEOMETRY",
             @"V80_GLOBAL_TRANSFORM_PROBE",
             @"V81_HITTEST_LOGICAL_POINTS",
+            @"V82_PROFILE_LAYOUT_RADAR",
             @"V66_BLOCKING_WAIT_SCHEDULER",
             @"V65_CONDITION_VARIABLE_SCHEDULER",
             @"CTYPE_COMPAT_DEEP_SCOUT"
@@ -2087,7 +2089,7 @@ bool PvZ2HostKeyboardFirstResponder() {
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. mode=%@. Leave V81 HitTest selected for logical 1024x768 touch delivery. V80 Transform remains the pixel-coordinate control in the same IPA. Rendering geometry and the v39 height,width surface callback are unchanged.",
+                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. mode=%@. Leave V82 Radar selected. It keeps V81 logical touch delivery and logs which raw Profile candidate geometry each tap intersects plus any keyboard/Profile/GameState action. Tap around freely; rendering and v39 surface geometry are unchanged.",
                     modeNames[modeIndex]]];
 
     [self
@@ -2182,15 +2184,20 @@ bool PvZ2HostKeyboardFirstResponder() {
             @"V81_HITTEST_LOGICAL_POINTS";
     } else if (selectedMode == 7) {
         diagnosticMode =
+            PvZ2DiagnosticMode::V82ProfileLayoutRadar;
+        diagnosticModeName =
+            @"V82_PROFILE_LAYOUT_RADAR";
+    } else if (selectedMode == 8) {
+        diagnosticMode =
             PvZ2DiagnosticMode::V66BlockingWaitScheduler;
         diagnosticModeName =
             @"V66_BLOCKING_WAIT_SCHEDULER";
-    } else if (selectedMode == 8) {
+    } else if (selectedMode == 9) {
         diagnosticMode =
             PvZ2DiagnosticMode::V65ConditionVariableScheduler;
         diagnosticModeName =
             @"V65_CONDITION_VARIABLE_SCHEDULER";
-    } else if (selectedMode == 9) {
+    } else if (selectedMode == 10) {
         diagnosticMode =
             PvZ2DiagnosticMode::CtypeCompatDeepScout;
         diagnosticModeName =
@@ -2204,7 +2211,7 @@ bool PvZ2HostKeyboardFirstResponder() {
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v81 Hit-Test Provenance Probe started mode=%@; PID=%d ===",
+                    @"=== PvZ2 v82 Profile Widget/Action Radar started mode=%@; PID=%d ===",
                     diagnosticModeName,
                     getpid()]];
 
@@ -2215,17 +2222,23 @@ bool PvZ2HostKeyboardFirstResponder() {
         diagnosticMode ==
             PvZ2DiagnosticMode::V80GlobalTransformProbe ||
         diagnosticMode ==
-            PvZ2DiagnosticMode::V81HitTestLogicalPoints,
+            PvZ2DiagnosticMode::V81HitTestLogicalPoints ||
+        diagnosticMode ==
+            PvZ2DiagnosticMode::V82ProfileLayoutRadar,
         std::memory_order_release);
     gV81HitTestTraceActive.store(
         diagnosticMode ==
             PvZ2DiagnosticMode::V80GlobalTransformProbe ||
         diagnosticMode ==
-            PvZ2DiagnosticMode::V81HitTestLogicalPoints,
+            PvZ2DiagnosticMode::V81HitTestLogicalPoints ||
+        diagnosticMode ==
+            PvZ2DiagnosticMode::V82ProfileLayoutRadar,
         std::memory_order_release);
     gV81LogicalTouchActive.store(
         diagnosticMode ==
-            PvZ2DiagnosticMode::V81HitTestLogicalPoints,
+            PvZ2DiagnosticMode::V81HitTestLogicalPoints ||
+        diagnosticMode ==
+            PvZ2DiagnosticMode::V82ProfileLayoutRadar,
         std::memory_order_release);
     gV81TouchMapTraceCount.store(
         0u,
@@ -2247,7 +2260,9 @@ bool PvZ2HostKeyboardFirstResponder() {
       diagnosticMode ==
          PvZ2DiagnosticMode::V80GlobalTransformProbe ||
       diagnosticMode ==
-         PvZ2DiagnosticMode::V81HitTestLogicalPoints)) {
+         PvZ2DiagnosticMode::V81HitTestLogicalPoints ||
+      diagnosticMode ==
+         PvZ2DiagnosticMode::V82ProfileLayoutRadar)) {
 
         PvZ2ResetInteractiveInput();
         gPvZ2KeyboardHostReady.store(
@@ -2372,7 +2387,9 @@ bool PvZ2HostKeyboardFirstResponder() {
                               diagnosticMode ==
                                   PvZ2DiagnosticMode::V80GlobalTransformProbe ||
                               diagnosticMode ==
-                                  PvZ2DiagnosticMode::V81HitTestLogicalPoints) &&
+                                  PvZ2DiagnosticMode::V81HitTestLogicalPoints ||
+                              diagnosticMode ==
+                                  PvZ2DiagnosticMode::V82ProfileLayoutRadar) &&
                             selfRef.liveController != nil) {
 
                             [selfRef.liveController
@@ -2399,7 +2416,9 @@ bool PvZ2HostKeyboardFirstResponder() {
       diagnosticMode ==
          PvZ2DiagnosticMode::V80GlobalTransformProbe ||
       diagnosticMode ==
-         PvZ2DiagnosticMode::V81HitTestLogicalPoints)) {
+         PvZ2DiagnosticMode::V81HitTestLogicalPoints ||
+      diagnosticMode ==
+         PvZ2DiagnosticMode::V82ProfileLayoutRadar)) {
 
                 liveFrameCallback =
                     [](
@@ -2692,14 +2711,16 @@ bool PvZ2HostKeyboardFirstResponder() {
                               diagnosticMode ==
                                   PvZ2DiagnosticMode::V80GlobalTransformProbe ||
                               diagnosticMode ==
-                                  PvZ2DiagnosticMode::V81HitTestLogicalPoints) &&
+                                  PvZ2DiagnosticMode::V81HitTestLogicalPoints ||
+                              diagnosticMode ==
+                                  PvZ2DiagnosticMode::V82ProfileLayoutRadar) &&
                             selfRef.liveController != nil) {
 
                             [selfRef.liveController
                                 finishRunWithMessage:
                                     [NSString
                                         stringWithFormat:
-                                            @"PvZ2 v81 LIVE — run finished after %u guest frames.\nClose to inspect the log. Hit-test coordinates plus inherited v79/v80 rendering and keyboard provenance are recorded.",
+                                            @"PvZ2 v82 LIVE — run finished after %u guest frames.\nClose to inspect the log. Profile widget geometry, random-tap correlations and inherited v79-v81 provenance are recorded.",
                                             result.draw_frames_completed]];
 
                         } else if (!result.final_frame_png_path.empty()) {
@@ -2759,14 +2780,16 @@ bool PvZ2HostKeyboardFirstResponder() {
                               diagnosticMode ==
                                   PvZ2DiagnosticMode::V80GlobalTransformProbe ||
                               diagnosticMode ==
-                                  PvZ2DiagnosticMode::V81HitTestLogicalPoints) &&
+                                  PvZ2DiagnosticMode::V81HitTestLogicalPoints ||
+                              diagnosticMode ==
+                                  PvZ2DiagnosticMode::V82ProfileLayoutRadar) &&
                             selfRef.liveController != nil) {
 
                             [selfRef.liveController
                                 finishRunWithMessage:
                                     [NSString
                                         stringWithFormat:
-                                            @"PvZ2 v81 LIVE — guest run stopped.\n%@\nClose to inspect the full log.",
+                                            @"PvZ2 v82 LIVE — guest run stopped.\n%@\nClose to inspect the full log.",
                                             message]];
 
                         } else {
