@@ -1155,7 +1155,7 @@ bool PvZ2HostKeyboardVisible() {
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — v74 Retina + Input";
+        @"PvZ2forIOS — v75 Retina + iPad UI A/B";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -1164,7 +1164,7 @@ bool PvZ2HostKeyboardVisible() {
         NO;
 
     title.text =
-        @"PvZ2forIOS — v74 Retina + Input";
+        @"PvZ2forIOS — v75 Retina + iPad UI A/B";
 
     title.font =
         [UIFont
@@ -1180,7 +1180,7 @@ bool PvZ2HostKeyboardVisible() {
         NO;
 
     explanation.text =
-        @"v74 keeps the validated scheduler/zlib/ETC1/touch/keyboard path, but fixes the three issues proven by the v73 iPad run: the final host FBO now matches the 2360×1640 Retina pixel surface, the transient startup Show/Hide keyboard pair is hidden until real frames are interactive, and a frame is published as soon as the guest consumes text. No GameState, resource readiness, UI package, or action is forced.";
+        @"v75 keeps the validated v74 Retina/scheduler/zlib/ETC1/touch/keyboard path and adds one isolated A/B mode: use the historical iOS UI_IPAD package instead of Android UI_ANDROID. Inspector v2.2 proved the host surface is already coherent and that the 2210×1536 guest target is created by PvZ2 itself. No GameState, readiness, FBO size or input action is forced.";
 
     explanation.numberOfLines = 0;
 
@@ -1231,7 +1231,8 @@ bool PvZ2HostKeyboardVisible() {
             initWithItems:
                 @[
                     @"V56 Baseline",
-                    @"V74 Retina/Input",
+                    @"V74 Baseline",
+                    @"V75 iPad UI",
                     @"V66 Blocking Waits",
                     @"V65 Cond Scheduler",
                     @"Ctype Deep Scout"
@@ -1240,7 +1241,7 @@ bool PvZ2HostKeyboardVisible() {
     self.diagnosticModeControl.translatesAutoresizingMaskIntoConstraints =
         NO;
     self.diagnosticModeControl.selectedSegmentIndex =
-        1;
+        2;
 
     UIStackView *mainButtons =
         [[UIStackView alloc]
@@ -1875,6 +1876,7 @@ bool PvZ2HostKeyboardVisible() {
         @[
             @"V56_BASELINE",
             @"V74_RETINA_INPUT_POLISH",
+            @"V75_IPAD_UI_PACKAGE",
             @"V66_BLOCKING_WAIT_SCHEDULER",
             @"V65_CONDITION_VARIABLE_SCHEDULER",
             @"CTYPE_COMPAT_DEEP_SCOUT"
@@ -1893,7 +1895,7 @@ bool PvZ2HostKeyboardVisible() {
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. mode=%@. V74 keeps the validated touch/zlib/ETC1/keyboard path, uses the iPad's native 2360×1640 Retina surface, suppresses the pre-frame keyboard flash, and refreshes live output on consumed text. No GameState, resource readiness, UI package, or action is forced.",
+                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. mode=%@. V74 is the unchanged Retina/input control. V75 inherits it and changes only the single UI package ID from UI_ANDROID to UI_IPAD before constructors, matching the historical iOS platform selection.",
                     modeNames[modeIndex]]];
 
     [self
@@ -1963,15 +1965,20 @@ bool PvZ2HostKeyboardVisible() {
             @"V74_RETINA_INPUT_POLISH";
     } else if (selectedMode == 2) {
         diagnosticMode =
+            PvZ2DiagnosticMode::V75IpadUiPackage;
+        diagnosticModeName =
+            @"V75_IPAD_UI_PACKAGE";
+    } else if (selectedMode == 3) {
+        diagnosticMode =
             PvZ2DiagnosticMode::V66BlockingWaitScheduler;
         diagnosticModeName =
             @"V66_BLOCKING_WAIT_SCHEDULER";
-    } else if (selectedMode == 3) {
+    } else if (selectedMode == 4) {
         diagnosticMode =
             PvZ2DiagnosticMode::V65ConditionVariableScheduler;
         diagnosticModeName =
             @"V65_CONDITION_VARIABLE_SCHEDULER";
-    } else if (selectedMode == 4) {
+    } else if (selectedMode == 5) {
         diagnosticMode =
             PvZ2DiagnosticMode::CtypeCompatDeepScout;
         diagnosticModeName =
@@ -1985,7 +1992,7 @@ bool PvZ2HostKeyboardVisible() {
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v74 Retina + Input Probe started mode=%@; PID=%d ===",
+                    @"=== PvZ2 v75 Retina + iPad UI A/B Probe started mode=%@; PID=%d ===",
                     diagnosticModeName,
                     getpid()]];
 
@@ -1994,8 +2001,10 @@ bool PvZ2HostKeyboardVisible() {
 
     [self refreshStatus];
 
-    if (diagnosticMode ==
-        PvZ2DiagnosticMode::V74RetinaInputPolish) {
+    if ((diagnosticMode ==
+         PvZ2DiagnosticMode::V74RetinaInputPolish ||
+     diagnosticMode ==
+         PvZ2DiagnosticMode::V75IpadUiPackage)) {
 
         PvZ2ResetInteractiveInput();
         gPvZ2KeyboardHostReady.store(
@@ -2109,8 +2118,10 @@ bool PvZ2HostKeyboardVisible() {
                                             : (obbError.localizedDescription
                                                 ?: @"failed")]];
 
-                        if (diagnosticMode ==
-                                PvZ2DiagnosticMode::V74RetinaInputPolish &&
+                        if ((diagnosticMode ==
+                                 PvZ2DiagnosticMode::V74RetinaInputPolish ||
+                             diagnosticMode ==
+                                 PvZ2DiagnosticMode::V75IpadUiPackage) &&
                             selfRef.liveController != nil) {
 
                             [selfRef.liveController
@@ -2126,8 +2137,10 @@ bool PvZ2HostKeyboardVisible() {
 
             PvZ2LiveFrameCallback liveFrameCallback;
 
-            if (diagnosticMode ==
-                PvZ2DiagnosticMode::V74RetinaInputPolish) {
+            if ((diagnosticMode ==
+                 PvZ2DiagnosticMode::V74RetinaInputPolish ||
+             diagnosticMode ==
+                 PvZ2DiagnosticMode::V75IpadUiPackage)) {
 
                 liveFrameCallback =
                     [](
@@ -2371,17 +2384,19 @@ bool PvZ2HostKeyboardVisible() {
                     if (result.ok) {
                         [selfRef
                             appendUI:
-                                @"SUCCESS STEP 3: PvZ2 completed the selected diagnostic run. v74 preserves scheduler/zlib/ETC1/touch/keyboard behavior while using the Retina host surface and fixing startup-keyboard/text-presentation timing without forcing guest state."];
+                                @"SUCCESS STEP 3: PvZ2 completed the selected diagnostic run. V74 remains the control; V75 changes only UI_ANDROID → UI_IPAD on top of the same Retina/scheduler/zlib/ETC1/touch/keyboard path."];
 
-                        if (diagnosticMode ==
-                                PvZ2DiagnosticMode::V74RetinaInputPolish &&
+                        if ((diagnosticMode ==
+                                 PvZ2DiagnosticMode::V74RetinaInputPolish ||
+                             diagnosticMode ==
+                                 PvZ2DiagnosticMode::V75IpadUiPackage) &&
                             selfRef.liveController != nil) {
 
                             [selfRef.liveController
                                 finishRunWithMessage:
                                     [NSString
                                         stringWithFormat:
-                                            @"v74 LIVE — run finished after %u guest frames.\nClose to inspect the log. Touch/text delivery is recorded in V72/V73 event summaries.",
+                                            @"v74/v75 LIVE — run finished after %u guest frames.\nClose to inspect the log. V75 UI-package selection is recorded by V50/V75 markers.",
                                             result.draw_frames_completed]];
 
                         } else if (!result.final_frame_png_path.empty()) {
@@ -2430,15 +2445,17 @@ bool PvZ2HostKeyboardVisible() {
                             NSStringFromStd(
                                 result.message);
 
-                        if (diagnosticMode ==
-                                PvZ2DiagnosticMode::V74RetinaInputPolish &&
+                        if ((diagnosticMode ==
+                                 PvZ2DiagnosticMode::V74RetinaInputPolish ||
+                             diagnosticMode ==
+                                 PvZ2DiagnosticMode::V75IpadUiPackage) &&
                             selfRef.liveController != nil) {
 
                             [selfRef.liveController
                                 finishRunWithMessage:
                                     [NSString
                                         stringWithFormat:
-                                            @"v74 LIVE — guest run stopped.\n%@\nClose to inspect the full log.",
+                                            @"v74/v75 LIVE — guest run stopped.\n%@\nClose to inspect the full log.",
                                             message]];
 
                         } else {

@@ -160,6 +160,13 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // after the guest consumes it. Keep guest behavior intact while fixing the
     // host surface/presentation bridge.
     V74RetinaInputPolish = 18u,
+
+    // v75: v74 proves the host Retina surface is correct, while Inspector v2.2
+    // shows the guest still selects RESFILE_PACKAGES_UI_ANDROID. The historical
+    // iOS 1.5 binary selects UI_IPAD. Keep every v74 scheduler/render/input
+    // behavior and change only this one package-selection literal for a clean
+    // causal A/B test of the oversized/cropped UI.
+    V75IpadUiPackage = 19u,
 };
 
 struct PvZ2JniProbeResult {

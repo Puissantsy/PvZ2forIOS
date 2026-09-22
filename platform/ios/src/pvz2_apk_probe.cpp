@@ -5977,14 +5977,23 @@ public:
             return "V73_KEYBOARD_FULLSCREEN_BRIDGE";
         case PvZ2DiagnosticMode::V74RetinaInputPolish:
             return "V74_RETINA_INPUT_POLISH";
+        case PvZ2DiagnosticMode::V75IpadUiPackage:
+            return "V75_IPAD_UI_PACKAGE";
         }
         return "UNKNOWN";
+    }
+
+    bool V75Enabled() const {
+        return
+            diagnostic_mode ==
+                PvZ2DiagnosticMode::V75IpadUiPackage;
     }
 
     bool V74Enabled() const {
         return
             diagnostic_mode ==
-                PvZ2DiagnosticMode::V74RetinaInputPolish;
+                PvZ2DiagnosticMode::V74RetinaInputPolish ||
+            V75Enabled();
     }
 
     bool V73Enabled() const {
@@ -25158,7 +25167,11 @@ bool JniProbePrepareRuntime(
     }
     if (callbacks.V74Enabled()) {
         callbacks.Append(
-            "V74 RETINA/INPUT POLISH: v73 proved text delivery lossless (10/10) while its host default FBO remained 1180x820 although the JNI bridge reports 2360x1640 native pixels. v74 makes the final host surface truly 2360x1640, keeps 1180x820 logical points, and publishes a live frame in the same completed guest frame that consumes text. No UI package, GameState, resource readiness, or guest input is forced.");
+            "V74 RETINA/INPUT POLISH: v73 proved text delivery lossless (10/10) while its host default FBO remained 1180x820 although the JNI bridge reports 2360x1640 native pixels. v74 makes the final host surface truly 2360x1640, keeps 1180x820 logical points, and publishes a live frame in the same completed guest frame that consumes text.");
+    }
+    if (callbacks.V75Enabled()) {
+        callbacks.Append(
+            "V75 IPAD UI PACKAGE A/B: Inspector v2.2 proves host/JNI geometry is coherent (2360x1640 pixels, 1180x820 points) and the guest intentionally renders through a 2210x1536 internal target, while RESFILE_PACKAGES_UI_ANDROID is selected and UI_IPAD is not. v75 keeps v74 rendering/input/scheduler behavior byte-for-byte except for replacing the single libPVZ2.so UI_ANDROID resource-ID literal with UI_IPAD before constructors run. No GameState, readiness, FBO size, touch or keyboard action is forced.");
     }
 
     if (callbacks.V64Enabled()) {
@@ -25686,6 +25699,48 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                 error)) {
             result.message = error;
             return result;
+        }
+
+        if (callbacks.V75Enabled()) {
+            // Exact PvZ2 1.5.252752 .rodata literal. The APK contains exactly
+            // one occurrence at ELF file/vaddr 0x00c73f0a. The iPad ID is
+            // shorter, so clear the complete original C string then write the
+            // replacement. This changes package selection only; the RSB bytes
+            // and ResourceManager logic remain native.
+            constexpr std::uint32_t kUiAndroidIdGuest =
+                kGuestBase + 0x00c73f0au;
+            constexpr char kUiAndroidId[] =
+                "RESFILE_PACKAGES_UI_ANDROID";
+            constexpr char kUiIpadId[] =
+                "RESFILE_PACKAGES_UI_IPAD";
+
+            std::uint8_t* literal =
+                memory.Ptr(
+                    kUiAndroidIdGuest,
+                    sizeof(kUiAndroidId));
+
+            if (literal == nullptr ||
+                std::memcmp(
+                    literal,
+                    kUiAndroidId,
+                    sizeof(kUiAndroidId)) != 0) {
+
+                result.message =
+                    "V75 refused UI package remap: exact UI_ANDROID literal was not present at guest 0x10c73f0a.";
+                return result;
+            }
+
+            std::memset(
+                literal,
+                0,
+                sizeof(kUiAndroidId));
+            std::memcpy(
+                literal,
+                kUiIpadId,
+                sizeof(kUiIpadId) - 1u);
+
+            callbacks.Append(
+                "V75 UI PACKAGE REMAP: guest literal 0x10c73f0a RESFILE_PACKAGES_UI_ANDROID -> RESFILE_PACKAGES_UI_IPAD (single exact .rodata patch before constructors).");
         }
 
         result.init_array_slots =
