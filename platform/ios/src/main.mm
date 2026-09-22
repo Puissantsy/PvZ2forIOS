@@ -293,12 +293,25 @@ static __weak PvZ2LiveViewController *
 static std::atomic<bool>
     gPvZ2KeyboardRequested{false};
 
+// v74: the guest emits a transient ShowKeyboard -> HideKeyboard pair while
+// Native_onSurfaceCreated is still on the black startup surface. Keep the
+// requested state observable to the guest, but do not summon UIKit until a
+// real interactive frame has reached the live view.
+static std::atomic<bool>
+    gPvZ2KeyboardHostReady{false};
+
 void PvZ2HostSetKeyboardVisible(
     bool visible) {
 
     gPvZ2KeyboardRequested.store(
         visible,
         std::memory_order_release);
+
+    if (visible &&
+        !gPvZ2KeyboardHostReady.load(
+            std::memory_order_acquire)) {
+        return;
+    }
 
     dispatch_async(
         dispatch_get_main_queue(),
@@ -381,7 +394,7 @@ bool PvZ2HostKeyboardVisible() {
     self.captionLabel.clipsToBounds =
         YES;
     self.captionLabel.text =
-        @"v73 — starting PvZ2…\nfirst frame can take several minutes";
+        @"v74 — starting PvZ2…\nRetina surface + input bridge";
 
     self.stopButton =
         [UIButton
@@ -509,7 +522,9 @@ bool PvZ2HostKeyboardVisible() {
         viewDidAppear:
             animated];
 
-    if (gPvZ2KeyboardRequested.load(
+    if (gPvZ2KeyboardHostReady.load(
+            std::memory_order_acquire) &&
+        gPvZ2KeyboardRequested.load(
             std::memory_order_acquire)) {
         [self
             setHostKeyboardVisible:
@@ -523,6 +538,10 @@ bool PvZ2HostKeyboardVisible() {
     [self
         setHostKeyboardVisible:
             NO];
+
+    gPvZ2KeyboardHostReady.store(
+        false,
+        std::memory_order_release);
 
     [super
         viewWillDisappear:
@@ -543,7 +562,7 @@ bool PvZ2HostKeyboardVisible() {
 
     self.inputEnabled = NO;
     self.captionLabel.text =
-        @"v72 LIVE — stop requested; finishing the current guest frame…";
+        @"v74 LIVE — stop requested; finishing the current guest frame…";
     self.stopButton.enabled = NO;
     PvZ2RequestInteractiveStop();
 }
@@ -562,7 +581,7 @@ bool PvZ2HostKeyboardVisible() {
 
         if (became) {
             self.captionLabel.text =
-                @"v73 — iOS keyboard active\nUITextInputEvent → Android guest";
+                @"v74 — iOS keyboard active\nUITextInputEvent → Android guest";
         }
     } else {
         [self.keyboardField
@@ -1009,6 +1028,17 @@ bool PvZ2HostKeyboardVisible() {
     self.sourceWidth = width;
     self.sourceHeight = height;
 
+    if (frame >= 3u &&
+        !gPvZ2KeyboardHostReady.exchange(
+            true,
+            std::memory_order_acq_rel) &&
+        gPvZ2KeyboardRequested.load(
+            std::memory_order_acquire)) {
+        [self
+            setHostKeyboardVisible:
+                YES];
+    }
+
     if (!self.runFinished) {
         // v71 established useful pixels by frame 3. Avoid accepting an
         // accidental tap on the initial black startup buffers.
@@ -1018,7 +1048,7 @@ bool PvZ2HostKeyboardVisible() {
         self.captionLabel.text =
             [NSString
                 stringWithFormat:
-                    @"v73 • frame %lu • %@\n1180×820 logical • touch + iOS keyboard",
+                    @"v74 • frame %lu • %@\n2360×1640 native / 1180×820 pt • touch + keyboard",
                     (unsigned long)frame,
                     self.inputEnabled
                         ? @"TOUCH ENABLED"
@@ -1036,7 +1066,7 @@ bool PvZ2HostKeyboardVisible() {
     self.runFinished = YES;
     self.inputEnabled = NO;
     self.captionLabel.text =
-        message ?: @"v72 LIVE — run finished.";
+        message ?: @"v74 LIVE — run finished.";
     self.stopButton.enabled = YES;
 
     [self.stopButton
@@ -1125,7 +1155,7 @@ bool PvZ2HostKeyboardVisible() {
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — v73 Keyboard + Fullscreen";
+        @"PvZ2forIOS — v74 Retina + Input";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -1134,7 +1164,7 @@ bool PvZ2HostKeyboardVisible() {
         NO;
 
     title.text =
-        @"PvZ2forIOS — v73 Keyboard + Fullscreen";
+        @"PvZ2forIOS — v74 Retina + Input";
 
     title.font =
         [UIFont
@@ -1150,7 +1180,7 @@ bool PvZ2HostKeyboardVisible() {
         NO;
 
     explanation.text =
-        @"v73 builds on the validated v72 touch bridge (162/162 events, zero drops). The guest now reaches the first-run name field and calls Device_ShowKeyboard, so v73 bridges that Android request to a host UITextField and serializes exact type-6 UTF-8 text events. The live game view is edge-to-edge; debug controls float above it. No GameState, resource readiness or UI action is forced.";
+        @"v74 keeps the validated scheduler/zlib/ETC1/touch/keyboard path, but fixes the three issues proven by the v73 iPad run: the final host FBO now matches the 2360×1640 Retina pixel surface, the transient startup Show/Hide keyboard pair is hidden until real frames are interactive, and a frame is published as soon as the guest consumes text. No GameState, resource readiness, UI package, or action is forced.";
 
     explanation.numberOfLines = 0;
 
@@ -1201,7 +1231,7 @@ bool PvZ2HostKeyboardVisible() {
             initWithItems:
                 @[
                     @"V56 Baseline",
-                    @"V73 Keyboard",
+                    @"V74 Retina/Input",
                     @"V66 Blocking Waits",
                     @"V65 Cond Scheduler",
                     @"Ctype Deep Scout"
@@ -1844,7 +1874,7 @@ bool PvZ2HostKeyboardVisible() {
     NSArray<NSString *> *modeNames =
         @[
             @"V56_BASELINE",
-            @"V73_KEYBOARD_FULLSCREEN_BRIDGE",
+            @"V74_RETINA_INPUT_POLISH",
             @"V66_BLOCKING_WAIT_SCHEDULER",
             @"V65_CONDITION_VARIABLE_SCHEDULER",
             @"CTYPE_COMPAT_DEEP_SCOUT"
@@ -1863,7 +1893,7 @@ bool PvZ2HostKeyboardVisible() {
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. mode=%@. V73 keeps the validated touch/zlib/ETC1 path, presents PvZ2 edge-to-edge, and bridges Android keyboard requests plus exact UTF-8 UITextInputEvent records. No GameState, resource readiness or UI action is forced.",
+                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. mode=%@. V74 keeps the validated touch/zlib/ETC1/keyboard path, uses the iPad's native 2360×1640 Retina surface, suppresses the pre-frame keyboard flash, and refreshes live output on consumed text. No GameState, resource readiness, UI package, or action is forced.",
                     modeNames[modeIndex]]];
 
     [self
@@ -1928,9 +1958,9 @@ bool PvZ2HostKeyboardVisible() {
 
     if (selectedMode == 1) {
         diagnosticMode =
-            PvZ2DiagnosticMode::V73KeyboardFullscreenBridge;
+            PvZ2DiagnosticMode::V74RetinaInputPolish;
         diagnosticModeName =
-            @"V73_KEYBOARD_FULLSCREEN_BRIDGE";
+            @"V74_RETINA_INPUT_POLISH";
     } else if (selectedMode == 2) {
         diagnosticMode =
             PvZ2DiagnosticMode::V66BlockingWaitScheduler;
@@ -1955,7 +1985,7 @@ bool PvZ2HostKeyboardVisible() {
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v73 Keyboard + Fullscreen Probe started mode=%@; PID=%d ===",
+                    @"=== PvZ2 v74 Retina + Input Probe started mode=%@; PID=%d ===",
                     diagnosticModeName,
                     getpid()]];
 
@@ -1965,9 +1995,12 @@ bool PvZ2HostKeyboardVisible() {
     [self refreshStatus];
 
     if (diagnosticMode ==
-        PvZ2DiagnosticMode::V73KeyboardFullscreenBridge) {
+        PvZ2DiagnosticMode::V74RetinaInputPolish) {
 
         PvZ2ResetInteractiveInput();
+        gPvZ2KeyboardHostReady.store(
+            false,
+            std::memory_order_release);
         PvZ2HostSetKeyboardVisible(false);
 
         PvZ2LiveViewController *liveController =
@@ -2077,12 +2110,12 @@ bool PvZ2HostKeyboardVisible() {
                                                 ?: @"failed")]];
 
                         if (diagnosticMode ==
-                                PvZ2DiagnosticMode::V73KeyboardFullscreenBridge &&
+                                PvZ2DiagnosticMode::V74RetinaInputPolish &&
                             selfRef.liveController != nil) {
 
                             [selfRef.liveController
                                 finishRunWithMessage:
-                                    @"v72 LIVE — APK/OBB read failed. Close this view and inspect the log."];
+                                    @"v74 LIVE — APK/OBB read failed. Close this view and inspect the log."];
                         }
 
                         [selfRef refreshStatus];
@@ -2094,7 +2127,7 @@ bool PvZ2HostKeyboardVisible() {
             PvZ2LiveFrameCallback liveFrameCallback;
 
             if (diagnosticMode ==
-                PvZ2DiagnosticMode::V73KeyboardFullscreenBridge) {
+                PvZ2DiagnosticMode::V74RetinaInputPolish) {
 
                 liveFrameCallback =
                     [](
@@ -2338,17 +2371,17 @@ bool PvZ2HostKeyboardVisible() {
                     if (result.ok) {
                         [selfRef
                             appendUI:
-                                @"SUCCESS STEP 3: PvZ2 completed the selected diagnostic run. v73 preserves scheduler/zlib/ETC1/touch fixes and adds the iOS keyboard + fullscreen presentation bridge without forcing guest state."];
+                                @"SUCCESS STEP 3: PvZ2 completed the selected diagnostic run. v74 preserves scheduler/zlib/ETC1/touch/keyboard behavior while using the Retina host surface and fixing startup-keyboard/text-presentation timing without forcing guest state."];
 
                         if (diagnosticMode ==
-                                PvZ2DiagnosticMode::V73KeyboardFullscreenBridge &&
+                                PvZ2DiagnosticMode::V74RetinaInputPolish &&
                             selfRef.liveController != nil) {
 
                             [selfRef.liveController
                                 finishRunWithMessage:
                                     [NSString
                                         stringWithFormat:
-                                            @"v72 LIVE — run finished after %u guest frames.\nClose to inspect the log. Touch delivery is recorded as V72 UI EVENTS.",
+                                            @"v74 LIVE — run finished after %u guest frames.\nClose to inspect the log. Touch/text delivery is recorded in V72/V73 event summaries.",
                                             result.draw_frames_completed]];
 
                         } else if (!result.final_frame_png_path.empty()) {
@@ -2398,14 +2431,14 @@ bool PvZ2HostKeyboardVisible() {
                                 result.message);
 
                         if (diagnosticMode ==
-                                PvZ2DiagnosticMode::V73KeyboardFullscreenBridge &&
+                                PvZ2DiagnosticMode::V74RetinaInputPolish &&
                             selfRef.liveController != nil) {
 
                             [selfRef.liveController
                                 finishRunWithMessage:
                                     [NSString
                                         stringWithFormat:
-                                            @"v72 LIVE — guest run stopped.\n%@\nClose to inspect the full log.",
+                                            @"v74 LIVE — guest run stopped.\n%@\nClose to inspect the full log.",
                                             message]];
 
                         } else {

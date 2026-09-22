@@ -2272,6 +2272,8 @@ public:
     std::uint32_t next_gl_object = 1;
     bool host_gles_ready = false;
     std::uint32_t host_default_framebuffer = 0;
+    std::uint32_t host_surface_width = 1180u;
+    std::uint32_t host_surface_height = 820u;
     std::uint32_t guest_errno_address = 0;
     const std::uint8_t* obb_data = nullptr;
     std::size_t obb_size = 0;
@@ -5973,14 +5975,23 @@ public:
             return "V72_LIVE_TOUCH_BRIDGE";
         case PvZ2DiagnosticMode::V73KeyboardFullscreenBridge:
             return "V73_KEYBOARD_FULLSCREEN_BRIDGE";
+        case PvZ2DiagnosticMode::V74RetinaInputPolish:
+            return "V74_RETINA_INPUT_POLISH";
         }
         return "UNKNOWN";
+    }
+
+    bool V74Enabled() const {
+        return
+            diagnostic_mode ==
+                PvZ2DiagnosticMode::V74RetinaInputPolish;
     }
 
     bool V73Enabled() const {
         return
             diagnostic_mode ==
-                PvZ2DiagnosticMode::V73KeyboardFullscreenBridge;
+                PvZ2DiagnosticMode::V73KeyboardFullscreenBridge ||
+            V74Enabled();
     }
 
     bool V72Enabled() const {
@@ -22576,7 +22587,11 @@ public:
                             std::to_string(viewport[2]) +
                             "," +
                             std::to_string(viewport[3]) +
-                            ") hostFBO=1180x820 phase=" +
+                            ") hostFBO=" +
+                            std::to_string(host_surface_width) +
+                            "x" +
+                            std::to_string(host_surface_height) +
+                            " phase=" +
                             (current_lifecycle_name.empty()
                                 ? std::string{"n/a"}
                                 : current_lifecycle_name));
@@ -22624,7 +22639,11 @@ public:
                             std::to_string(scissor[2]) +
                             "," +
                             std::to_string(scissor[3]) +
-                            ") hostFBO=1180x820 phase=" +
+                            ") hostFBO=" +
+                            std::to_string(host_surface_width) +
+                            "x" +
+                            std::to_string(host_surface_height) +
+                            " phase=" +
                             (current_lifecycle_name.empty()
                                 ? std::string{"n/a"}
                                 : current_lifecycle_name));
@@ -25136,6 +25155,10 @@ bool JniProbePrepareRuntime(
     if (callbacks.V73Enabled()) {
         callbacks.Append(
             "V73 KEYBOARD/FULLSCREEN BRIDGE: the v72 iPad run delivered 162/162 touch events with zero drops, then the guest called Device_ShowKeyboard while v72 still no-op'd it. classes.dex proves UITextInputEvent type=6 with UTF-8 payload/action framing, and the historical iOS 1.5 binary uses a shared UITextField delegate. v73 bridges Show/Hide/IsKeyboardShowing to UIKit, emits exact text events, and leaves zlib/ETC1/GameState/resource behavior untouched.");
+    }
+    if (callbacks.V74Enabled()) {
+        callbacks.Append(
+            "V74 RETINA/INPUT POLISH: v73 proved text delivery lossless (10/10) while its host default FBO remained 1180x820 although the JNI bridge reports 2360x1640 native pixels. v74 makes the final host surface truly 2360x1640, keeps 1180x820 logical points, and publishes a live frame in the same completed guest frame that consumes text. No UI package, GameState, resource readiness, or guest input is forced.");
     }
 
     if (callbacks.V64Enabled()) {
@@ -28355,10 +28378,19 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                 constexpr std::uint32_t kNativeOnDrawFrame =
                     kGuestBase + 0x009f190cu;
 
+                callbacks.host_surface_width =
+                    callbacks.V74Enabled()
+                        ? 2360u
+                        : 1180u;
+                callbacks.host_surface_height =
+                    callbacks.V74Enabled()
+                        ? 1640u
+                        : 820u;
+
                 callbacks.host_gles_ready =
                     PvZ2HostGLESBegin(
-                        1180u,
-                        820u);
+                        callbacks.host_surface_width,
+                        callbacks.host_surface_height);
 
                 callbacks.host_default_framebuffer =
                     callbacks.host_gles_ready
@@ -28377,7 +28409,13 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                     std::string{
                         "V31 HOST GLES: "} +
                     (callbacks.host_gles_ready
-                        ? "READY offscreen=1180x820 hostFBO=0x" +
+                        ? "READY offscreen=" +
+                            std::to_string(
+                                callbacks.host_surface_width) +
+                            "x" +
+                            std::to_string(
+                                callbacks.host_surface_height) +
+                            " hostFBO=0x" +
                             JniProbeHex(
                                 callbacks.host_default_framebuffer)
                         : "UNAVAILABLE; retaining synthetic GLES probe fallback"));
@@ -28444,22 +28482,34 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                     return result;
                 }
 
-                // v39: this PvZ2 Android native entry point consumes the two
-                // dimensions in height,width order even though our first probe
-                // supplied width,height. v38 proved it unambiguously: passing
-                // 1180,820 caused the game's first/restore viewport to become
-                // 820x1180 on a 1180x820 host framebuffer. Feed 820,1180 so
-                // the native renderer establishes/restores a true landscape
-                // 1180x820 viewport.
+                // v39 proved this Android native entry consumes dimensions in
+                // height,width order. v74 keeps that verified ABI but finally
+                // gives the guest the same native pixel surface advertised by
+                // Graphics_GetScreenSizeInPixels (2360x1640) instead of a
+                // half-resolution 1180x820 host FBO.
                 callbacks.Append(
-                    "V39 SURFACE GEOMETRY: calling Native_onSurfaceChanged with native-order height=820 width=1180 for hostFBO=1180x820.");
+                    "V74 SURFACE GEOMETRY: calling Native_onSurfaceChanged with native-order height=" +
+                    std::to_string(
+                        callbacks.host_surface_height) +
+                    " width=" +
+                    std::to_string(
+                        callbacks.host_surface_width) +
+                    " for hostFBO=" +
+                    std::to_string(
+                        callbacks.host_surface_width) +
+                    "x" +
+                    std::to_string(
+                        callbacks.host_surface_height) +
+                    (callbacks.V74Enabled()
+                        ? " (Retina native pixels)."
+                        : " (legacy logical surface)."));
 
                 if (!run_lifecycle(
                         "Native_onSurfaceChanged",
                         kNativeOnSurfaceChanged,
                         kSurfaceThis,
-                        820,
-                        1180,
+                        callbacks.host_surface_height,
+                        callbacks.host_surface_width,
                         false)) {
                     return result;
                 }
@@ -28625,6 +28675,11 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             std::to_string(
                                 kV36FrameCount));
                     }
+
+                    const std::uint64_t
+                        v74_text_delivered_before_frame =
+                            callbacks
+                                .v73_text_events_delivered;
 
                     if (!run_lifecycle(
                             "Native_onDrawFrame",
@@ -29013,10 +29068,23 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             touch_generation !=
                             v72_last_touch_generation;
 
+                        // v73 wakes presentation when UIKit queues text, but
+                        // a key can arrive after this frame's UI_ProcessEvents:
+                        // that refresh still shows the previous framebuffer.
+                        // Publish again on the exact frame that actually
+                        // consumes text so the newly rendered character is not
+                        // delayed until the next 3-frame sampling interval.
+                        const bool text_consumed_this_frame =
+                            callbacks.V74Enabled() &&
+                            callbacks
+                                .v73_text_events_delivered !=
+                            v74_text_delivered_before_frame;
+
                         const bool publish_live =
                             frame_number == 1u ||
                             (frame_number % 3u) == 0u ||
-                            input_changed;
+                            input_changed ||
+                            text_consumed_this_frame;
 
                         if (publish_live) {
                             std::uint32_t live_width = 0u;

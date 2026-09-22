@@ -152,6 +152,14 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // surface to a host UITextField, serialize UITextInputEvent type 6 exactly
     // as classes.dex does, and make the live presentation edge-to-edge.
     V73KeyboardFullscreenBridge = 17u,
+
+    // v74: the v73 iPad run proves keyboard text is lossless (10/10) but also
+    // exposes three host-presentation issues: the final FBO is still 1180x820
+    // despite a 2360x1640 Retina screen, a transient startup Show/Hide pair can
+    // flash UIKit's keyboard, and text can be presented one sampling interval
+    // after the guest consumes it. Keep guest behavior intact while fixing the
+    // host surface/presentation bridge.
+    V74RetinaInputPolish = 18u,
 };
 
 struct PvZ2JniProbeResult {
