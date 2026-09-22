@@ -2349,6 +2349,11 @@ public:
     std::uint32_t v80_trace_frame = 0xffffffffu;
     std::uint32_t v80_traces_this_frame = 0u;
 
+    // v81: detailed event serialization provenance. The host-side mapper logs
+    // UIKit -> framebuffer-pixel -> logical-point candidates; this counter
+    // bounds the matching guest events actually written to ProcessEvents.
+    std::uint64_t v81_touch_events_logged = 0u;
+
     std::uint64_t gles_transition_draw_traces = 0u;
     std::uint64_t gles_transition_clear_traces = 0u;
 
@@ -6341,6 +6346,8 @@ public:
             return "V77_LEGACY_IPAD_GEOMETRY";
         case PvZ2DiagnosticMode::V80GlobalTransformProbe:
             return "V80_GLOBAL_TRANSFORM_PROBE";
+        case PvZ2DiagnosticMode::V81HitTestLogicalPoints:
+            return "V81_HITTEST_LOGICAL_POINTS";
         }
         return "UNKNOWN";
     }
@@ -6352,7 +6359,9 @@ public:
             diagnostic_mode ==
                 PvZ2DiagnosticMode::V77LegacyIpadGeometry ||
             diagnostic_mode ==
-                PvZ2DiagnosticMode::V80GlobalTransformProbe;
+                PvZ2DiagnosticMode::V80GlobalTransformProbe ||
+            diagnostic_mode ==
+                PvZ2DiagnosticMode::V81HitTestLogicalPoints;
     }
 
     const char* V79ProfileSiteName(
@@ -6415,10 +6424,17 @@ public:
         return out.str();
     }
 
+    bool V81Enabled() const {
+        return
+            diagnostic_mode ==
+                PvZ2DiagnosticMode::V81HitTestLogicalPoints;
+    }
+
     bool V80Enabled() const {
         return
             diagnostic_mode ==
-                PvZ2DiagnosticMode::V80GlobalTransformProbe;
+                PvZ2DiagnosticMode::V80GlobalTransformProbe ||
+            V81Enabled();
     }
 
     bool V77Enabled() const {
@@ -14774,6 +14790,40 @@ public:
                                     std::to_string(
                                         first.previous_y) +
                                     "}");
+
+                                if (V80Enabled()) {
+                                    for (std::size_t i = 0u;
+                                         i < events.size() &&
+                                         v81_touch_events_logged < 192u;
+                                         ++i) {
+                                        const V72TouchEvent& event =
+                                            events[i];
+                                        ++v81_touch_events_logged;
+                                        Append(
+                                            "V81 TOUCH DELIVER #" +
+                                            std::to_string(v81_touch_events_logged) +
+                                            " mode=" +
+                                            (V81Enabled()
+                                                ? std::string{"LOGICAL_POINTS"}
+                                                : std::string{"PIXEL_CONTROL"}) +
+                                            " batch=" +
+                                            std::to_string(v72_touch_batches) +
+                                            " index=" +
+                                            std::to_string(i) +
+                                            " ident=" +
+                                            std::to_string(event.pointer_id + 1u) +
+                                            " phase=" +
+                                            std::to_string(event.phase) +
+                                            " xy=" +
+                                            std::to_string(event.x) +
+                                            "," +
+                                            std::to_string(event.y) +
+                                            " prev=" +
+                                            std::to_string(event.previous_x) +
+                                            "," +
+                                            std::to_string(event.previous_y));
+                                    }
+                                }
                             }
 
                             bool more_text = false;
@@ -26373,11 +26423,15 @@ bool JniProbePrepareRuntime(
     }
     if (callbacks.V79ProfileProbeEnabled()) {
         callbacks.Append(
-            "V79 FIRST-RUN PROFILE PROVENANCE: observation-only traps are active in this V75/V77/V80 control. Static v2.5 matched the Android and historical-iOS Profile/Facebook/EULA layout paths and found only a localized text-entry constant difference. v79 records live parent +0x30/+0x34 dimensions, LawnApp +0x6a8 scale, branch state and bounded final geometry at the matched paths. No scale, rectangle, resource, GameState or widget state is modified.");
+            "V79 FIRST-RUN PROFILE PROVENANCE: observation-only traps are active in this V75/V77/V80/V81 control. Static v2.5 matched the Android and historical-iOS Profile/Facebook/EULA layout paths and found only a localized text-entry constant difference. v79 records live parent +0x30/+0x34 dimensions, LawnApp +0x6a8 scale, branch state and bounded final geometry at the matched paths. No scale, rectangle, resource, GameState or widget state is modified.");
     }
     if (callbacks.V80Enabled()) {
         callbacks.Append(
             "V80 GLOBAL TRANSFORM PROBE: user observation shows the same oversize/crop on the EA logo, PvZ2 title/loading screen and first-run Profile, so v80 keeps v77 geometry unchanged and traces the shared GLES screenMatrix plus sampled pre-transform position bounds and host presentation. Keyboard diagnostics also separate guest Show/Hide/status from UIKit first-responder state. No matrix, vertex, viewport, FBO, widget, resource or GameState value is modified.");
+    }
+    if (callbacks.V81Enabled()) {
+        callbacks.Append(
+            "V81 HIT-TEST PROVENANCE: v72 touch mapping was validated while framebuffer and logical coordinates were both 1180x820. v74 then introduced 2360x1640 Retina pixels while keeping 1180x820 points without changing mapTouch; v77 now uses 2048x1536 pixels / 1024x768 points. V81 keeps v39 height,width surface ordering and all v77/v80 rendering unchanged, but delivers touches in 1024x768 logical point space. V80 remains the same-IPA pixel-coordinate control.");
     }
 
     if (callbacks.V64Enabled()) {
@@ -30452,6 +30506,19 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                 if (callbacks.V80Enabled()) {
                     callbacks.Append(
                         callbacks.V80TransformSummary());
+                    callbacks.Append(
+                        std::string{"V81 HITTEST SUMMARY mode="} +
+                        (callbacks.V81Enabled()
+                            ? "LOGICAL_POINTS"
+                            : "PIXEL_CONTROL") +
+                        " guestTouchSpace=" +
+                        (callbacks.V81Enabled()
+                            ? "1024x768"
+                            : "2048x1536") +
+                        " detailedEvents=" +
+                        std::to_string(callbacks.v81_touch_events_logged) +
+                        " totalDelivered=" +
+                        std::to_string(callbacks.v72_touch_events_delivered));
                 }
 
                 if (callbacks.V73Enabled()) {

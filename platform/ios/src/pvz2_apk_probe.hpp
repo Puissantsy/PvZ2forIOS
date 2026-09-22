@@ -191,6 +191,13 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // introduced. Keyboard tracing separately distinguishes guest requests
     // from the real UIKit first-responder state. Observation only.
     V80GlobalTransformProbe = 22u,
+
+    // v81: preserve the complete v80 transform/profile/keyboard probe and add
+    // a causal input-space A/B. V80 remains the pixel-coordinate control.
+    // V81 maps the same presented touches into the historical iPad logical
+    // 1024x768 space while logging both pixel and point candidates. The v39
+    // Native_onSurfaceChanged height,width ABI fix is intentionally untouched.
+    V81HitTestLogicalPoints = 23u,
 };
 
 struct PvZ2JniProbeResult {
