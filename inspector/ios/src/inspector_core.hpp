@@ -38,6 +38,13 @@ struct PvZ2InspectorResult {
     std::string v74_display_diagnosis;
     std::string v75_display_plan;
     std::string v74_display_critical_excerpt;
+
+    // v2.3: remaining oversized UI / virtual-layout forensics.
+    std::string v78_ui_scale_diagnosis;
+    std::string ui_scale_static_markers;
+    std::string v79_ui_scale_plan;
+    std::string v78_ui_scale_critical_excerpt;
+
     std::string message;
 };
 

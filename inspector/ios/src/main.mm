@@ -51,7 +51,12 @@ NSArray<NSURL *> *ExistingReportURLs() {
         @"v74-display-geometry-diagnosis.txt",
         @"v75-display-plan.txt",
         @"v74-display-critical-excerpt.txt",
+        @"v78-ui-scale-diagnosis.txt",
+        @"ui-scale-static-markers.txt",
+        @"v79-ui-scale-plan.txt",
+        @"v78-ui-scale-critical-excerpt.txt",
         @"ios-reference-report.txt",
+        @"ios-ui-scale-reference.txt",
         @"android-ios-shared-strings.csv",
         @"objc-classes.csv",
         @"objc-methods.csv",
@@ -113,11 +118,11 @@ NSArray<NSURL *> *ExistingReportURLs() {
     [super viewDidLoad];
 
     self.view.backgroundColor = UIColor.systemBackgroundColor;
-    self.title = @"PvZ2 Inspector Lab v2.2-alpha";
+    self.title = @"PvZ2 Inspector Lab v2.3-alpha";
 
     UILabel *title = [[UILabel alloc] init];
     title.translatesAutoresizingMaskIntoConstraints = NO;
-    title.text = @"PvZ2 Inspector Lab v2.2-alpha";
+    title.text = @"PvZ2 Inspector Lab v2.3-alpha";
     title.font = [UIFont boldSystemFontOfSize:27.0];
     title.numberOfLines = 0;
 
@@ -126,13 +131,14 @@ NSArray<NSURL *> *ExistingReportURLs() {
     explanation.numberOfLines = 0;
     explanation.font = [UIFont systemFontOfSize:14.5];
     explanation.text =
-        @"Inspector v2.2 keeps the complete Android ELF/log analysis and "
-         "adds a dedicated v74 display-geometry/UI-platform diagnosis plus "
-         "the static iOS-reference path for the historical PvZ2 IPA. "
-         "Select the Android APK, optionally the decrypted iOS 1.5.252123 IPA "
-         "and a runtime log. The IPA analyzer discovers the Payload Mach-O, "
-         "parses ARMv7 load commands, encryption state, dylibs, segments, "
-         "sections and LC_FUNCTION_STARTS. No JIT or StikDebug is required.";
+        @"Inspector v2.3 targets the remaining oversized UI after v78 proved "
+         "that host FBO, 2048×1536 legacy geometry and UI_IPAD are applied. "
+         "It extracts LawnApp::SetWidthHeight content-resolution evidence, "
+         "audits HotUI virtual-layout anchors (VirtualWidth/Height, "
+         "SizeFromScreen, ScalePositionOffset, ImmuneToDeviceScaling), and "
+         "compares those anchors with the historical decrypted iOS 1.5 IPA. "
+         "Use the v78 log for the highest-value report. No JIT or StikDebug "
+         "is required by Inspector itself.";
 
     UIButton *apkButton =
         [self makeButton:@"1. Select PvZ2 APK"
@@ -534,10 +540,37 @@ didPickDocumentsAtURLs:
                         result.v74_display_critical_excerpt);
                 }
 
+                if (!result.v78_ui_scale_diagnosis.empty()) {
+                    WriteUtf8(
+                        [root stringByAppendingPathComponent:@"v78-ui-scale-diagnosis.txt"],
+                        result.v78_ui_scale_diagnosis);
+                }
+                if (!result.ui_scale_static_markers.empty()) {
+                    WriteUtf8(
+                        [root stringByAppendingPathComponent:@"ui-scale-static-markers.txt"],
+                        result.ui_scale_static_markers);
+                }
+                if (!result.v79_ui_scale_plan.empty()) {
+                    WriteUtf8(
+                        [root stringByAppendingPathComponent:@"v79-ui-scale-plan.txt"],
+                        result.v79_ui_scale_plan);
+                }
+                if (!result.v78_ui_scale_critical_excerpt.empty()) {
+                    WriteUtf8(
+                        [root stringByAppendingPathComponent:@"v78-ui-scale-critical-excerpt.txt"],
+                        result.v78_ui_scale_critical_excerpt);
+                }
+
                 if (ipa.length > 0 && ipaResult.ok) {
                     WriteUtf8(
                         [root stringByAppendingPathComponent:@"ios-reference-report.txt"],
                         ipaResult.report);
+
+                    if (!ipaResult.ui_scale_reference.empty()) {
+                        WriteUtf8(
+                            [root stringByAppendingPathComponent:@"ios-ui-scale-reference.txt"],
+                            ipaResult.ui_scale_reference);
+                    }
 
                     if (!ipaResult.shared_strings_csv.empty()) {
                         WriteUtf8(
@@ -603,6 +636,7 @@ didPickDocumentsAtURLs:
                              "%@"
                              "%@"
                              "%@"
+                             "%@"
                              "%@",
                             NSStringFromStd(result.summary),
                             ipa.length == 0
@@ -641,8 +675,12 @@ didPickDocumentsAtURLs:
                             result.v74_display_critical_excerpt.empty()
                                 ? @""
                                 : @"• v74-display-critical-excerpt.txt — compact geometry and UI-selection evidence\n",
+                            (result.v78_ui_scale_diagnosis.empty() &&
+                             result.ui_scale_static_markers.empty())
+                                ? @""
+                                : @"• v78-ui-scale-diagnosis.txt / ui-scale-static-markers.txt / v79-ui-scale-plan.txt — content-resolution + HotUI virtual-layout forensics\n",
                             (ipa.length > 0 && ipaResult.ok)
-                                ? @"• ios-reference-report.txt — ARMv7 Mach-O/load-command/framework/reference-marker report\n"
+                                ? @"• ios-reference-report.txt / ios-ui-scale-reference.txt — ARMv7 Mach-O plus historical HotUI scale anchors\n"
                                 : @"",
                             (ipa.length > 0 && ipaResult.ok && !ipaResult.shared_strings_csv.empty())
                                 ? @"• android-ios-shared-strings.csv — exact strings shared by libPVZ2.so and the iOS Mach-O\n"

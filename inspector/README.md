@@ -1,5 +1,45 @@
 # PvZ2 Inspector Lab
 
+## Lab v2.3-alpha — HotUI virtual scale / content-resolution forensics
+
+v2.3 targets the remaining oversized/cropped UI after the real-iPad v78 run
+proved that the legacy geometry experiment is genuinely applied and stable.
+
+The new analyzer correlates four evidence classes instead of trying another
+screen size blindly:
+
+- the three native \`LawnApp::SetWidthHeight\` diagnostics
+  (\`mOrigScreenWidth/Height\`, \`mWidth/mHeight\`,
+  \`m_contentResolutionWidth/Height\`);
+- the active host/FBO/UI package evidence already present in the runtime log;
+- Android \`libPVZ2.so\` HotUI anchors such as \`VirtualWidth\`,
+  \`VirtualHeight\`, \`BoardScaledVirtualWidth\`, \`SizeFromScreen\`,
+  \`ScalePositionOffset\` and \`ImmuneToDeviceScaling\`;
+- the same HotUI vocabulary in the historical decrypted iOS 1.5 ARMv7 Mach-O.
+
+With the v78 log it emits:
+
+\`\`\`
+v78-ui-scale-diagnosis.txt
+ui-scale-static-markers.txt
+v79-ui-scale-plan.txt
+v78-ui-scale-critical-excerpt.txt
+\`\`\`
+
+With the historical iOS IPA selected it also emits:
+
+\`\`\`
+ios-ui-scale-reference.txt
+\`\`\`
+
+The v79 plan is observational: one future runtime build compares the v75 and
+v77 controls while tracing the consumers of LawnApp's content-resolution
+fields and one concrete first-run widget's virtual-rect -> scalar ->
+final-pixel transform. It does **not** recommend changing
+\`m_contentResolutionWidth/Height\` until that provenance is known.
+
+# PvZ2 Inspector Lab
+
 ## Lab v2.2-alpha — v74 Retina / UI-platform diagnosis
 
 v2.2 targets the remaining visual scaling problem after v74 made the host

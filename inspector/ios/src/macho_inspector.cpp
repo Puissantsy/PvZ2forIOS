@@ -3,6 +3,7 @@
 #include <zlib.h>
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <cstring>
 #include <iomanip>
@@ -259,6 +260,56 @@ struct MachSectionRecord {
     std::uint32_t reserved1 = 0;
     std::uint32_t reserved2 = 0;
 };
+
+std::optional<std::uint32_t> MachFileToVaddr(
+    const std::vector<MachSegmentRecord>& segments,
+    std::size_t file_offset) {
+
+    for (const auto& seg : segments) {
+        const std::uint64_t begin = seg.fileoff;
+        const std::uint64_t end =
+            static_cast<std::uint64_t>(seg.fileoff) + seg.filesize;
+        if (file_offset >= begin && file_offset < end) {
+            return seg.vmaddr +
+                static_cast<std::uint32_t>(file_offset - begin);
+        }
+    }
+    return std::nullopt;
+}
+
+std::vector<std::size_t> FindExactAsciiOffsets(
+    const std::vector<std::uint8_t>& bytes,
+    const std::string& text) {
+
+    std::vector<std::size_t> out;
+    if (text.empty()) return out;
+
+    const auto* first =
+        reinterpret_cast<const std::uint8_t*>(text.data());
+    const auto* last = first + text.size();
+    auto it = bytes.begin();
+
+    while (it != bytes.end()) {
+        it = std::search(it, bytes.end(), first, last);
+        if (it == bytes.end()) break;
+
+        const std::size_t off =
+            static_cast<std::size_t>(
+                std::distance(bytes.begin(), it));
+        const bool terminates =
+            off + text.size() < bytes.size() &&
+            bytes[off + text.size()] == 0u;
+        const bool begins =
+            off == 0u ||
+            bytes[off - 1u] == 0u ||
+            bytes[off - 1u] < 0x20u ||
+            bytes[off - 1u] > 0x7eu;
+
+        if (terminates && begins) out.push_back(off);
+        ++it;
+    }
+    return out;
+}
 
 std::optional<std::size_t> MachVaddrToFile(
     const std::vector<MachSegmentRecord>& segments,
@@ -1242,7 +1293,15 @@ PvZ2IpaInspectorResult InspectPvZ2IpaReference(
             "iPhoneOSAppDriver",
             "SexyApplicationDelegate",
             "CADisplayLink",
-            "pthread_cond_wait"
+            "pthread_cond_wait",
+            "UIWidgetSheet",
+            "VirtualWidth",
+            "BoardScaledVirtualWidth",
+            "VirtualHeight",
+            "SizeFromScreen",
+            "PositionOffset",
+            "ScalePositionOffset",
+            "ImmuneToDeviceScaling"
         };
 
         std::set<std::string> string_set(strings.begin(), strings.end());
@@ -1315,6 +1374,68 @@ PvZ2IpaInspectorResult InspectPvZ2IpaReference(
             }
             if (found) found_markers.push_back(marker);
         }
+
+
+        std::ostringstream ui_scale_reference;
+        ui_scale_reference
+            << "PvZ2 Inspector Lab v2.3-alpha - historical iOS HotUI scale reference\n"
+            << "=====================================================================\n"
+            << "Source: decrypted historical PvZ2 iOS 1.5 ARMv7 Mach-O.\n"
+            << "Static string anchors do not prove that a runtime branch executes.\n\n";
+
+        const std::array<const char*, 9> hotui_markers = {{
+            "UIWidgetSheet",
+            "VirtualWidth",
+            "BoardScaledVirtualWidth",
+            "VirtualHeight",
+            "SizeFromScreen",
+            "PositionOffset",
+            "ScalePositionOffset",
+            "ImmuneToDeviceScaling",
+            "RESFILE_PACKAGES_UI_IPAD"
+        }};
+
+        for (const char* marker : hotui_markers) {
+            const auto offsets =
+                FindExactAsciiOffsets(macho, marker);
+            ui_scale_reference << marker << ": ";
+
+            if (offsets.empty()) {
+                ui_scale_reference << "NOT FOUND\n";
+                continue;
+            }
+
+            for (std::size_t i = 0; i < offsets.size(); ++i) {
+                if (i != 0u) ui_scale_reference << ", ";
+                ui_scale_reference
+                    << "file+" << Hex(static_cast<std::uint32_t>(offsets[i]));
+                if (const auto va =
+                        MachFileToVaddr(segment_records, offsets[i])) {
+                    ui_scale_reference << " vm=" << Hex(*va);
+                }
+            }
+            ui_scale_reference << "\n";
+        }
+
+        const bool has_setwidthheight_log =
+            !FindExactAsciiOffsets(
+                macho,
+                " LawnApp::SetWidthHeight m_contentResolutionWidth = %f m_contentResolutionHeight = %f").empty();
+
+        ui_scale_reference
+            << "\nAndroid-style LawnApp::SetWidthHeight diagnostic format present: "
+            << (has_setwidthheight_log ? "YES" : "NO")
+            << "\n"
+            << "Interpretation: the HotUI virtual-layout vocabulary is shared "
+            << "with the historical iOS executable, while the Android diagnostic "
+            << "format itself need not be shared. VirtualWidth/VirtualHeight/"
+            << "SizeFromScreen/ScalePositionOffset are therefore higher-value "
+            << "cross-platform anchors than the Android log string.\n\n"
+            << "Keep EAGLView contentScaleFactor/backingWidth/backingHeight "
+            << "separate from this engine-level HotUI transform.\n";
+
+        result.ui_scale_reference =
+            ui_scale_reference.str();
 
         std::ostringstream report;
         report
@@ -1411,10 +1532,11 @@ PvZ2IpaInspectorResult InspectPvZ2IpaReference(
         }
 
         report
-            << "\nNext Inspector v2 stages\n------------------------\n"
-            << "1. Build selector/string xrefs from EAGLView IMPs to the exact UIKit scale path.\n"
-            << "2. Match Android display/graphics functions to iOS Mach-O candidates.\n"
-            << "3. Correlate UI package selection with the iOS main.rsb resource graph.\n"
+            << "\nInspector v2.3 UI-scale direction\n--------------------------------\n"
+            << "1. Treat EAGL/contentScaleFactor as the host drawable layer only.\n"
+            << "2. Correlate the shared HotUI markers in ios-ui-scale-reference.txt.\n"
+            << "3. Runtime v79 should trace consumers of LawnApp content resolution "
+               "and one concrete first-run widget before mutating any scale.\n"
             << "4. Keep pthread/ResStreams/frame-loop reports as regression guards.\n";
 
         std::ostringstream summary;

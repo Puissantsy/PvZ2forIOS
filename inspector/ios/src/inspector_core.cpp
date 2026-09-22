@@ -334,6 +334,20 @@ public:
         return std::nullopt;
     }
 
+    std::optional<std::uint32_t> FileToVaddr(std::size_t file_offset) const {
+        for (const auto& p : phdrs_) {
+            if (p.type != kPtLoad) continue;
+            const std::uint64_t begin = p.offset;
+            const std::uint64_t end =
+                static_cast<std::uint64_t>(p.offset) + p.filesz;
+            if (file_offset >= begin && file_offset < end) {
+                return p.vaddr +
+                    static_cast<std::uint32_t>(file_offset - begin);
+            }
+        }
+        return std::nullopt;
+    }
+
     std::vector<std::uint8_t> Read(
         std::uint32_t vaddr,
         std::size_t count) const {
@@ -1810,6 +1824,33 @@ std::string LastLineContaining(
     return text.substr(begin, end - begin);
 }
 
+std::optional<double> ParseDoubleAfter(
+    const std::string& line,
+    const std::string& marker) {
+
+    const std::size_t pos = line.find(marker);
+    if (pos == std::string::npos) return std::nullopt;
+    const std::size_t begin = pos + marker.size();
+    std::size_t end = begin;
+
+    while (end < line.size()) {
+        const char ch = line[end];
+        const bool ok =
+            std::isdigit(static_cast<unsigned char>(ch)) != 0 ||
+            ch == '.' || ch == '-' || ch == '+' ||
+            ch == 'e' || ch == 'E';
+        if (!ok) break;
+        ++end;
+    }
+
+    if (end == begin) return std::nullopt;
+    try {
+        return std::stod(line.substr(begin, end - begin));
+    } catch (...) {
+        return std::nullopt;
+    }
+}
+
 std::optional<std::uint64_t> ParseUnsignedAfter(
     const std::string& line,
     const std::string& marker,
@@ -1838,6 +1879,338 @@ std::optional<std::uint64_t> ParseUnsignedAfter(
     } catch (...) {
         return std::nullopt;
     }
+}
+
+
+std::vector<std::uint32_t> FindExactAsciiVaddrs(
+    const Elf32Arm& elf,
+    const std::string& text) {
+
+    std::vector<std::uint32_t> out;
+    if (text.empty()) return out;
+
+    const auto& bytes = elf.data();
+    const auto* first =
+        reinterpret_cast<const std::uint8_t*>(text.data());
+    const auto* last = first + text.size();
+
+    auto it = bytes.begin();
+    while (it != bytes.end()) {
+        it = std::search(it, bytes.end(), first, last);
+        if (it == bytes.end()) break;
+
+        const std::size_t off =
+            static_cast<std::size_t>(
+                std::distance(bytes.begin(), it));
+
+        const bool terminates =
+            off + text.size() < bytes.size() &&
+            bytes[off + text.size()] == 0u;
+        const bool begins =
+            off == 0u ||
+            bytes[off - 1u] == 0u ||
+            bytes[off - 1u] < 0x20u ||
+            bytes[off - 1u] > 0x7eu;
+
+        if (terminates && begins) {
+            if (const auto va = elf.FileToVaddr(off)) {
+                out.push_back(*va);
+            }
+        }
+        ++it;
+    }
+    return out;
+}
+
+struct UiScaleRuntimeAnalysis {
+    bool present = false;
+    bool ui_ipad = false;
+    bool ui_android = false;
+    bool mainmenu_1536 = false;
+    bool can_set_false = false;
+
+    std::uint32_t orig_width = 0u;
+    std::uint32_t orig_height = 0u;
+    std::uint32_t width = 0u;
+    std::uint32_t height = 0u;
+    double content_width = 0.0;
+    double content_height = 0.0;
+    std::uint64_t stop_frame = 0u;
+
+    std::string diagnosis;
+    std::string static_markers;
+    std::string next_plan;
+    std::string critical_excerpt;
+};
+
+UiScaleRuntimeAnalysis AnalyzeUiScaleRuntime(
+    const std::string& log,
+    const Elf32Arm& elf) {
+
+    UiScaleRuntimeAnalysis a;
+
+    const std::string orig =
+        LastLineContaining(
+            log,
+            "LawnApp::SetWidthHeight mOrigScreenWidth");
+    const std::string active =
+        LastLineContaining(
+            log,
+            "LawnApp::SetWidthHeight mWidth");
+    const std::string content =
+        LastLineContaining(
+            log,
+            "LawnApp::SetWidthHeight m_contentResolutionWidth");
+
+    a.present =
+        !orig.empty() ||
+        !active.empty() ||
+        !content.empty();
+
+    if (const auto v = ParseUnsignedAfter(orig, "mOrigScreenWidth = ")) {
+        a.orig_width = static_cast<std::uint32_t>(*v);
+    }
+    if (const auto v = ParseUnsignedAfter(orig, "mOrigScreenHeight = ")) {
+        a.orig_height = static_cast<std::uint32_t>(*v);
+    }
+    if (const auto v = ParseUnsignedAfter(active, "mWidth = ")) {
+        a.width = static_cast<std::uint32_t>(*v);
+    }
+    if (const auto v = ParseUnsignedAfter(active, "mHeight = ")) {
+        a.height = static_cast<std::uint32_t>(*v);
+    }
+    if (const auto v =
+            ParseDoubleAfter(content, "m_contentResolutionWidth = ")) {
+        a.content_width = *v;
+    }
+    if (const auto v =
+            ParseDoubleAfter(content, "m_contentResolutionHeight = ")) {
+        a.content_height = *v;
+    }
+
+    a.ui_ipad =
+        log.find("RESFILE_PACKAGES_UI_IPAD") != std::string::npos;
+    a.ui_android =
+        log.find("id=\"RESFILE_PACKAGES_UI_ANDROID\"") != std::string::npos;
+    a.mainmenu_1536 =
+        log.find("UI_MainMenu_1536") != std::string::npos;
+    a.can_set_false =
+        log.find("Graphics_CanSetGLViewScaleFactor -> false") !=
+        std::string::npos;
+
+    const std::string stop =
+        LastLineContaining(log, "INTERACTIVE STOP after frame ");
+    if (const auto v =
+            ParseUnsignedAfter(stop, "INTERACTIVE STOP after frame ")) {
+        a.stop_frame = *v;
+    }
+
+    const bool canonical_2048_1536 =
+        std::abs(a.content_width - 2048.0) < 0.01 &&
+        std::abs(a.content_height - 1536.0) < 0.01;
+
+    const bool active_equals_content =
+        canonical_2048_1536 &&
+        a.width == 2048u &&
+        a.height == 1536u;
+
+    std::ostringstream diagnosis;
+    diagnosis
+        << "PvZ2 Inspector Lab v2.3-alpha - UI scale / content-resolution diagnosis\n"
+        << "=======================================================================\n\n"
+        << "RUNTIME GEOMETRY INSIDE LawnApp\n"
+        << "-------------------------------\n"
+        << "mOrigScreenWidth/Height: "
+        << a.orig_width << "x" << a.orig_height << "\n"
+        << "mWidth/mHeight: "
+        << a.width << "x" << a.height << "\n"
+        << "m_contentResolutionWidth/Height: "
+        << std::fixed << std::setprecision(3)
+        << a.content_width << "x" << a.content_height << "\n";
+
+    if (a.content_width > 0.0 &&
+        a.content_height > 0.0 &&
+        a.width != 0u &&
+        a.height != 0u) {
+        diagnosis
+            << "active/content scale X: "
+            << (static_cast<double>(a.width) / a.content_width)
+            << "\n"
+            << "active/content scale Y: "
+            << (static_cast<double>(a.height) / a.content_height)
+            << "\n";
+    }
+
+    diagnosis
+        << "\nUI / RESOURCE SIGNALS\n"
+        << "---------------------\n"
+        << "RESFILE_PACKAGES_UI_IPAD observed: "
+        << (a.ui_ipad ? "YES" : "NO") << "\n"
+        << "RESFILE_PACKAGES_UI_ANDROID runtime request observed: "
+        << (a.ui_android ? "YES" : "NO") << "\n"
+        << "UI_MainMenu_1536 observed: "
+        << (a.mainmenu_1536 ? "YES" : "NO") << "\n"
+        << "CanSetGLViewScaleFactor=false observed: "
+        << (a.can_set_false ? "YES" : "NO") << "\n"
+        << "interactive stop frame: "
+        << a.stop_frame << "\n\n"
+        << "DIAGNOSIS\n"
+        << "---------\n";
+
+    if (canonical_2048_1536) {
+        diagnosis
+            << "1. LawnApp keeps a canonical content coordinate basis of "
+            << "2048x1536 in this run. This is stronger evidence than the host "
+            << "FBO alone because the value is logged from LawnApp::SetWidthHeight.\n";
+    } else {
+        diagnosis
+            << "1. The current log does not expose the expected 2048x1536 "
+            << "content-resolution basis; do not apply the v78 hypothesis blindly.\n";
+    }
+
+    if (active_equals_content) {
+        diagnosis
+            << "2. In the v77/v78 legacy-iPad geometry A/B, mWidth/mHeight and "
+            << "m_contentResolutionWidth/Height collapse to the SAME 2048x1536 "
+            << "space. Yet the user-visible UI remains oversized. Changing only "
+            << "the host surface or mWidth/mHeight is therefore a low-information axis.\n";
+    }
+
+    if (a.ui_ipad && a.mainmenu_1536) {
+        diagnosis
+            << "3. The run combines the iPad layout package with the 1536 UI "
+            << "resource tier and still reproduces the visual problem. Package "
+            << "selection and texture-tier selection are not sufficient causes by themselves.\n";
+    }
+
+    diagnosis
+        << "4. The next unresolved layer is the engine HotUI virtual-layout "
+        << "transform: VirtualWidth/VirtualHeight, SizeFromScreen, "
+        << "ScalePositionOffset, ImmuneToDeviceScaling and the effective UI_S "
+        << "mapping from virtual widget coordinates into the content space.\n"
+        << "5. IMPORTANT: this does NOT prove that "
+        << "m_contentResolutionWidth/Height itself is wrong. It identifies the "
+        << "stable coordinate basis whose consumers must be traced before mutating it.\n";
+
+    std::ostringstream static_report;
+    static_report
+        << "PvZ2 Inspector Lab v2.3-alpha - Android UI-scale static anchors\n"
+        << "================================================================\n"
+        << "Source: original APK lib/armeabi-v7a/libPVZ2.so.\n"
+        << "These are reproducible string anchors; presence does not prove execution.\n\n";
+
+    const std::array<const char*, 12> markers = {{
+        " LawnApp::SetWidthHeight mOrigScreenWidth = %d mOrigScreenHeight = %d",
+        " LawnApp::SetWidthHeight mWidth = %d mHeight = %d",
+        " LawnApp::SetWidthHeight m_contentResolutionWidth = %f m_contentResolutionHeight = %f",
+        "UIWidgetSheet",
+        "VirtualWidth",
+        "BoardScaledVirtualWidth",
+        "VirtualHeight",
+        "SizeFromScreen",
+        "PositionOffset",
+        "ScalePositionOffset",
+        "ImmuneToDeviceScaling",
+        "RtWeakPtr<UIWidgetSheet>"
+    }};
+
+    for (const char* marker : markers) {
+        const auto locations =
+            FindExactAsciiVaddrs(elf, marker);
+
+        static_report << marker << ": ";
+        if (locations.empty()) {
+            static_report << "NOT FOUND\n";
+            continue;
+        }
+
+        for (std::size_t i = 0; i < locations.size(); ++i) {
+            if (i != 0u) static_report << ", ";
+            static_report
+                << "ELF " << Hex(locations[i])
+                << " / runtime " << Hex(kGuestBase + locations[i])
+                << " section=" << elf.SectionName(locations[i]);
+        }
+        static_report << "\n";
+    }
+
+    static_report
+        << "\nSTATIC INTERPRETATION\n"
+        << "---------------------\n"
+        << "The same Android binary contains both the LawnApp content-resolution "
+        << "diagnostics and the HotUI virtual-layout vocabulary. The next probe "
+        << "should connect these anchors through bounded runtime provenance instead "
+        << "of guessing another screen size.\n";
+
+    std::ostringstream plan;
+    plan
+        << "PvZ2 Inspector Lab v2.3-alpha - proposed v79 UI-scale provenance probe\n"
+        << "======================================================================\n\n"
+        << "GOAL\n"
+        << "----\n"
+        << "Find the exact virtual-widget -> content-pixel transform responsible "
+        << "for the oversized first-run UI. Do not change geometry until observed.\n\n"
+        << "ONE BUILD, TWO CONTROL MODES\n"
+        << "----------------------------\n"
+        << "A. V75 control: modern native geometry + UI_IPAD.\n"
+        << "B. V77 control: 1024x768 pt / 2048x1536 px + UI_IPAD.\n"
+        << "Both modes share identical UI-scale instrumentation.\n\n"
+        << "TRACE BATCH\n"
+        << "-----------\n"
+        << "1. In the __android_log_write shim, when text begins with "
+        << "LawnApp::SetWidthHeight, record guest PC/LR, r0-r12 and lifecycle "
+        << "phase. This gives SetWidthHeight caller provenance without string-xref guessing.\n"
+        << "2. Once SetWidthHeight/object provenance is known, snapshot bounded "
+        << "reads/writes around mOrigScreenWidth/Height, mWidth/mHeight and "
+        << "m_contentResolutionWidth/Height during startup and first MainMenu frames.\n"
+        << "3. Correlate HotUI initialization/layout with VirtualWidth, "
+        << "VirtualHeight, SizeFromScreen, ScalePositionOffset, "
+        << "BoardScaledVirtualWidth and ImmuneToDeviceScaling. Log the first "
+        << "bounded caller PCs and numeric operands consuming content-resolution fields.\n"
+        << "4. For one concrete first-run widget/container, capture virtual "
+        << "dimensions/position, effective scalar(s), and final pixel rectangle. "
+        << "Target the name/Facebook/EULA screen; do not assume it belongs to "
+        << "UI_MainMenu until provenance proves it.\n"
+        << "5. Keep V78LIVE, touch/keyboard, scheduler, zlib and ETC1 as "
+        << "regression guards; sample new UI traces to avoid hot-loop log spam.\n\n"
+        << "DECISION AFTER v79\n"
+        << "------------------\n"
+        << "- Same virtual rect + same scalar in V75/V77: geometry is non-causal; "
+        << "fix the HotUI scale source.\n"
+        << "- Different scalar but same final rect: trace the downstream canonical clamp.\n"
+        << "- Correct scalar but oversized virtual rect: inspect the concrete RTON layout.\n"
+        << "- Only after identifying the responsible transform/value should a "
+        << "corrective A/B mode alter it.\n";
+
+    std::ostringstream excerpt;
+    excerpt
+        << "PvZ2 Inspector v2.3-alpha - UI-scale critical runtime evidence\n"
+        << "================================================================\n";
+    for (const auto& line : {orig, active, content}) {
+        if (!line.empty()) excerpt << line << "\n";
+    }
+
+    const std::array<std::string, 7> evidence_needles = {{
+        "V75 UI PACKAGE REMAP:",
+        "V50 RESOURCE MILESTONE frame=0 id=\"RESFILE_PACKAGES_UI_IPAD\"",
+        "Graphics_GetScreenSizeInPixels ->",
+        "Graphics_GetScreenSizeInPoints ->",
+        "V47 GLES FBO ATTACH",
+        "UI_MainMenu_1536",
+        "V72 INTERACTIVE SUMMARY:"
+    }};
+
+    for (const auto& needle : evidence_needles) {
+        const std::string line =
+            LastLineContaining(log, needle);
+        if (!line.empty()) excerpt << line << "\n";
+    }
+
+    a.diagnosis = diagnosis.str();
+    a.static_markers = static_report.str();
+    a.next_plan = plan.str();
+    a.critical_excerpt = excerpt.str();
+    return a;
 }
 
 struct StartupLogoRuntimeDiagnosis {
@@ -3772,10 +4145,14 @@ PvZ2InspectorResult InspectPvZ2ApkAndLog(
             AnalyzeV68RuntimeLog(log_text);
         const PvZ2V74DisplayAnalysis v74_display =
             AnalyzeV74DisplayLog(log_text);
+        const UiScaleRuntimeAnalysis ui_scale =
+            AnalyzeUiScaleRuntime(
+                log_text,
+                elf);
 
         std::ostringstream summary;
         summary
-            << "PvZ2 Inspector Lab v2.2-alpha\n"
+            << "PvZ2 Inspector Lab v2.3-alpha\n"
             << "APK bytes: " << apk_size << "\n"
             << "libPVZ2.so bytes: " << result.elf_size << "\n"
             << "mapped image span: " << Hex(result.image_size) << "\n"
@@ -4387,10 +4764,19 @@ PvZ2InspectorResult InspectPvZ2ApkAndLog(
                 ? v74_display.critical_excerpt
                 : std::string{};
 
+        result.v78_ui_scale_diagnosis =
+            ui_scale.present ? ui_scale.diagnosis : std::string{};
+        result.ui_scale_static_markers =
+            ui_scale.static_markers;
+        result.v79_ui_scale_plan =
+            ui_scale.next_plan;
+        result.v78_ui_scale_critical_excerpt =
+            ui_scale.present ? ui_scale.critical_excerpt : std::string{};
+
         std::ostringstream json;
         json
             << "{\n"
-            << "  \"tool\": \"PvZ2 Inspector Lab v2.2-alpha\",\n"
+            << "  \"tool\": \"PvZ2 Inspector Lab v2.3-alpha\",\n"
             << "  \"apkSize\": " << result.apk_size << ",\n"
             << "  \"elfSize\": " << result.elf_size << ",\n"
             << "  \"guestBase\": \"" << Hex(kGuestBase) << "\",\n"
@@ -4407,6 +4793,9 @@ PvZ2InspectorResult InspectPvZ2ApkAndLog(
             << ",\n"
             << "  \"v74DisplayAnalysisPresent\": "
             << (v74_display.present ? "true" : "false")
+            << ",\n"
+            << "  \"v78UiScaleAnalysisPresent\": "
+            << (ui_scale.present ? "true" : "false")
             << ",\n"
             << "  \"genericAddressAnalysisBytes\": "
             << result.generic_log_bytes

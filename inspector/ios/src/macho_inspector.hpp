@@ -18,6 +18,7 @@ struct PvZ2IpaInspectorResult {
     std::string objc_ivars_csv;
     std::string ios_import_calls_csv;
     std::string pthread_reference;
+    std::string ui_scale_reference;
     std::size_t objc_class_count = 0;
     std::size_t objc_method_count = 0;
     std::size_t objc_ivar_count = 0;
