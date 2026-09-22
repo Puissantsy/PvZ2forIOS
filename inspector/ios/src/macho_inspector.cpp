@@ -1255,17 +1255,53 @@ PvZ2IpaInspectorResult InspectPvZ2IpaReference(
                 e.name.substr(e.name.size() - 4u) == ".png";
             if (!ipad_landscape) continue;
             const auto png = Extract(ipa_data, ipa_size, e);
-            if (png.size() < 24u ||
+            if (png.size() < 8u ||
                 png[0] != 0x89u || png[1] != 'P' ||
                 png[2] != 'N' || png[3] != 'G') {
                 continue;
             }
-            const std::uint32_t width = U32BE(png.data() + 16u);
-            const std::uint32_t height = U32BE(png.data() + 20u);
+
+            // Old iOS assets can contain an Apple CgBI chunk before IHDR,
+            // so do not assume the width/height live at fixed PNG offsets.
+            std::optional<std::pair<std::uint32_t, std::uint32_t>>
+                dimensions;
+            std::size_t chunk = 8u;
+            while (chunk + 12u <= png.size()) {
+                const std::uint32_t length =
+                    U32BE(png.data() + chunk);
+
+                const std::uint64_t next =
+                    static_cast<std::uint64_t>(chunk) +
+                    12u +
+                    static_cast<std::uint64_t>(length);
+
+                if (next > png.size()) break;
+
+                const bool ihdr =
+                    png[chunk + 4u] == 'I' &&
+                    png[chunk + 5u] == 'H' &&
+                    png[chunk + 6u] == 'D' &&
+                    png[chunk + 7u] == 'R';
+
+                if (ihdr && length >= 8u) {
+                    dimensions =
+                        std::pair<std::uint32_t, std::uint32_t>{
+                            U32BE(png.data() + chunk + 8u),
+                            U32BE(png.data() + chunk + 12u)
+                        };
+                    break;
+                }
+
+                chunk =
+                    static_cast<std::size_t>(next);
+            }
+
+            if (!dimensions) continue;
+
             ipad_launch_images.push_back(
                 e.name + " = " +
-                std::to_string(width) + "x" +
-                std::to_string(height));
+                std::to_string(dimensions->first) + "x" +
+                std::to_string(dimensions->second));
         }
 
         std::vector<std::string> found_markers;
