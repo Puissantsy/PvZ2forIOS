@@ -175,6 +175,13 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // store from the drawable. The host FBO is resized in-place to keep the
     // same framebuffer identity while matching the guest-requested scale.
     V76IosScaleContract = 20u,
+
+    // v77: v76 proved that exposing the iOS scale setter to the Android guest
+    // activates Android-specific scaling math (2.000666 on the iPad 10th gen)
+    // and produces a 2361x1641 host surface. Return to the stable v75 scale
+    // contract and instead emulate the historical iPad 1.5 geometry exactly:
+    // 1024x768 points / 2048x1536 Retina pixels, presented aspect-fit by UIKit.
+    V77LegacyIpadGeometry = 21u,
 };
 
 struct PvZ2JniProbeResult {
