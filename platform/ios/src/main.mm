@@ -6,6 +6,8 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <string>
@@ -242,6 +244,564 @@ NSString *NSStringFromStd(
 
 } // namespace
 
+@interface PvZ2LiveViewController : UIViewController
+
+@property(nonatomic, strong)
+    UIImageView *imageView;
+@property(nonatomic, strong)
+    UILabel *captionLabel;
+@property(nonatomic, strong)
+    UIButton *stopButton;
+@property(nonatomic, strong)
+    NSMutableDictionary<NSValue *, NSNumber *> *touchIds;
+@property(nonatomic, strong)
+    NSMutableIndexSet *availableTouchIds;
+@property(nonatomic, assign)
+    NSUInteger sourceWidth;
+@property(nonatomic, assign)
+    NSUInteger sourceHeight;
+@property(nonatomic, assign)
+    BOOL inputEnabled;
+@property(nonatomic, assign)
+    BOOL runFinished;
+
+- (void)updateFrameData:
+        (NSData *)data
+    width:
+        (NSUInteger)width
+    height:
+        (NSUInteger)height
+    frame:
+        (NSUInteger)frame;
+
+- (void)finishRunWithMessage:
+        (NSString *)message;
+
+@end
+
+static __weak PvZ2LiveViewController *
+    gPvZ2LiveController = nil;
+
+@implementation PvZ2LiveViewController
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+
+    self.view.backgroundColor =
+        UIColor.blackColor;
+    self.view.multipleTouchEnabled =
+        YES;
+
+    self.touchIds =
+        [[NSMutableDictionary alloc] init];
+    self.availableTouchIds =
+        [NSMutableIndexSet
+            indexSetWithIndexesInRange:
+                NSMakeRange(0, 32)];
+
+    self.captionLabel =
+        [[UILabel alloc] init];
+    self.captionLabel.translatesAutoresizingMaskIntoConstraints =
+        NO;
+    self.captionLabel.textColor =
+        UIColor.whiteColor;
+    self.captionLabel.textAlignment =
+        NSTextAlignmentCenter;
+    self.captionLabel.numberOfLines =
+        0;
+    self.captionLabel.font =
+        [UIFont
+            monospacedSystemFontOfSize:13.0
+            weight:UIFontWeightRegular];
+    self.captionLabel.text =
+        @"v72 LIVE — starting PvZ2…\nTouches become active as soon as live frames arrive.";
+
+    self.imageView =
+        [[UIImageView alloc] init];
+    self.imageView.translatesAutoresizingMaskIntoConstraints =
+        NO;
+    self.imageView.backgroundColor =
+        UIColor.blackColor;
+    self.imageView.contentMode =
+        UIViewContentModeScaleAspectFit;
+    self.imageView.userInteractionEnabled =
+        YES;
+    self.imageView.multipleTouchEnabled =
+        YES;
+
+    self.stopButton =
+        [UIButton
+            buttonWithType:UIButtonTypeSystem];
+    self.stopButton.translatesAutoresizingMaskIntoConstraints =
+        NO;
+    [self.stopButton
+        setTitle:@"Stop run"
+        forState:UIControlStateNormal];
+    self.stopButton.titleLabel.font =
+        [UIFont
+            boldSystemFontOfSize:18.0];
+    [self.stopButton
+        addTarget:self
+        action:@selector(stopOrClose)
+        forControlEvents:UIControlEventTouchUpInside];
+
+    [self.view addSubview:self.captionLabel];
+    [self.view addSubview:self.imageView];
+    [self.view addSubview:self.stopButton];
+
+    UILayoutGuide *guide =
+        self.view.safeAreaLayoutGuide;
+
+    [NSLayoutConstraint
+        activateConstraints:@[
+            [self.captionLabel.topAnchor
+                constraintEqualToAnchor:guide.topAnchor
+                constant:8.0],
+            [self.captionLabel.leadingAnchor
+                constraintEqualToAnchor:guide.leadingAnchor
+                constant:12.0],
+            [self.captionLabel.trailingAnchor
+                constraintEqualToAnchor:guide.trailingAnchor
+                constant:-12.0],
+
+            [self.imageView.topAnchor
+                constraintEqualToAnchor:self.captionLabel.bottomAnchor
+                constant:8.0],
+            [self.imageView.leadingAnchor
+                constraintEqualToAnchor:guide.leadingAnchor
+                constant:8.0],
+            [self.imageView.trailingAnchor
+                constraintEqualToAnchor:guide.trailingAnchor
+                constant:-8.0],
+
+            [self.stopButton.topAnchor
+                constraintEqualToAnchor:self.imageView.bottomAnchor
+                constant:8.0],
+            [self.stopButton.bottomAnchor
+                constraintEqualToAnchor:guide.bottomAnchor
+                constant:-8.0],
+            [self.stopButton.centerXAnchor
+                constraintEqualToAnchor:guide.centerXAnchor],
+            [self.stopButton.heightAnchor
+                constraintEqualToConstant:44.0],
+        ]];
+}
+
+- (void)stopOrClose {
+    if (self.runFinished) {
+        [self
+            dismissViewControllerAnimated:YES
+            completion:nil];
+        return;
+    }
+
+    self.inputEnabled = NO;
+    self.captionLabel.text =
+        @"v72 LIVE — stop requested; finishing the current guest frame…";
+    self.stopButton.enabled = NO;
+    PvZ2RequestInteractiveStop();
+}
+
+- (NSInteger)identifierForTouch:
+        (UITouch *)touch
+    create:
+        (BOOL)create {
+
+    NSValue *key =
+        [NSValue
+            valueWithNonretainedObject:
+                touch];
+
+    NSNumber *existing =
+        self.touchIds[key];
+
+    if (existing != nil) {
+        return existing.integerValue;
+    }
+
+    if (!create) {
+        return -1;
+    }
+
+    const NSUInteger identifier =
+        self.availableTouchIds.firstIndex;
+
+    if (identifier == NSNotFound) {
+        return -1;
+    }
+
+    [self.availableTouchIds
+        removeIndex:identifier];
+
+    self.touchIds[key] =
+        @(identifier);
+
+    return
+        static_cast<NSInteger>(
+            identifier);
+}
+
+- (void)releaseIdentifierForTouch:
+        (UITouch *)touch {
+
+    NSValue *key =
+        [NSValue
+            valueWithNonretainedObject:
+                touch];
+
+    NSNumber *identifier =
+        self.touchIds[key];
+
+    if (identifier == nil) {
+        return;
+    }
+
+    [self.availableTouchIds
+        addIndex:
+            identifier.unsignedIntegerValue];
+
+    [self.touchIds
+        removeObjectForKey:key];
+}
+
+- (BOOL)mapTouch:
+        (UITouch *)touch
+    x:
+        (std::int32_t *)x
+    y:
+        (std::int32_t *)y
+    previousX:
+        (std::int32_t *)previousX
+    previousY:
+        (std::int32_t *)previousY {
+
+    if (!self.inputEnabled ||
+        self.sourceWidth == 0u ||
+        self.sourceHeight == 0u ||
+        (touch.view != self.imageView &&
+         touch.view != self.view)) {
+        return NO;
+    }
+
+    const CGSize bounds =
+        self.imageView.bounds.size;
+
+    if (bounds.width <= 0.0 ||
+        bounds.height <= 0.0) {
+        return NO;
+    }
+
+    const CGFloat sourceWidth =
+        static_cast<CGFloat>(
+            self.sourceWidth);
+    const CGFloat sourceHeight =
+        static_cast<CGFloat>(
+            self.sourceHeight);
+
+    const CGFloat scale =
+        MIN(
+            bounds.width / sourceWidth,
+            bounds.height / sourceHeight);
+
+    if (scale <= 0.0) {
+        return NO;
+    }
+
+    const CGFloat renderedWidth =
+        sourceWidth * scale;
+    const CGFloat renderedHeight =
+        sourceHeight * scale;
+    const CGFloat offsetX =
+        (bounds.width -
+         renderedWidth) *
+        0.5;
+    const CGFloat offsetY =
+        (bounds.height -
+         renderedHeight) *
+        0.5;
+
+    const CGPoint point =
+        [touch
+            locationInView:
+                self.imageView];
+
+    if (point.x < offsetX ||
+        point.y < offsetY ||
+        point.x >=
+            offsetX + renderedWidth ||
+        point.y >=
+            offsetY + renderedHeight) {
+        return NO;
+    }
+
+    CGPoint previous =
+        [touch
+            previousLocationInView:
+                self.imageView];
+
+    previous.x =
+        std::clamp<CGFloat>(
+            previous.x,
+            offsetX,
+            offsetX +
+                renderedWidth -
+                0.001);
+    previous.y =
+        std::clamp<CGFloat>(
+            previous.y,
+            offsetY,
+            offsetY +
+                renderedHeight -
+                0.001);
+
+    auto convert =
+        [&](CGPoint value,
+            std::int32_t& outX,
+            std::int32_t& outY) {
+
+            const CGFloat logicalX =
+                (value.x - offsetX) /
+                scale;
+            const CGFloat logicalY =
+                (value.y - offsetY) /
+                scale;
+
+            outX =
+                static_cast<std::int32_t>(
+                    std::clamp<long>(
+                        std::lround(logicalX),
+                        0l,
+                        static_cast<long>(
+                            self.sourceWidth - 1u)));
+
+            outY =
+                static_cast<std::int32_t>(
+                    std::clamp<long>(
+                        std::lround(logicalY),
+                        0l,
+                        static_cast<long>(
+                            self.sourceHeight - 1u)));
+        };
+
+    convert(
+        point,
+        *x,
+        *y);
+    convert(
+        previous,
+        *previousX,
+        *previousY);
+
+    return YES;
+}
+
+- (void)queueTouches:
+        (NSSet<UITouch *> *)touches
+    phase:
+        (std::uint32_t)phase
+    release:
+        (BOOL)release {
+
+    for (UITouch *touch in touches) {
+        const NSInteger identifier =
+            [self
+                identifierForTouch:
+                    touch
+                create:YES];
+
+        if (identifier < 0) {
+            continue;
+        }
+
+        std::int32_t x = 0;
+        std::int32_t y = 0;
+        std::int32_t previousX = 0;
+        std::int32_t previousY = 0;
+
+        if ([self
+                mapTouch:
+                    touch
+                x:&x
+                y:&y
+                previousX:&previousX
+                previousY:&previousY]) {
+
+            PvZ2QueueTouchEvent(
+                static_cast<std::uint32_t>(
+                    identifier),
+                x,
+                y,
+                previousX,
+                previousY,
+                phase,
+                touch.timestamp * 1000.0);
+        }
+
+        if (release) {
+            [self
+                releaseIdentifierForTouch:
+                    touch];
+        }
+    }
+}
+
+- (void)touchesBegan:
+        (NSSet<UITouch *> *)touches
+    withEvent:
+        (UIEvent *)event {
+
+    [self
+        queueTouches:
+            touches
+        phase:0u
+        release:NO];
+
+    [super
+        touchesBegan:
+            touches
+        withEvent:
+            event];
+}
+
+- (void)touchesMoved:
+        (NSSet<UITouch *> *)touches
+    withEvent:
+        (UIEvent *)event {
+
+    [self
+        queueTouches:
+            touches
+        phase:1u
+        release:NO];
+
+    [super
+        touchesMoved:
+            touches
+        withEvent:
+            event];
+}
+
+- (void)touchesEnded:
+        (NSSet<UITouch *> *)touches
+    withEvent:
+        (UIEvent *)event {
+
+    [self
+        queueTouches:
+            touches
+        phase:3u
+        release:YES];
+
+    [super
+        touchesEnded:
+            touches
+        withEvent:
+            event];
+}
+
+- (void)touchesCancelled:
+        (NSSet<UITouch *> *)touches
+    withEvent:
+        (UIEvent *)event {
+
+    [self
+        queueTouches:
+            touches
+        phase:4u
+        release:YES];
+
+    [super
+        touchesCancelled:
+            touches
+        withEvent:
+            event];
+}
+
+- (void)updateFrameData:
+        (NSData *)data
+    width:
+        (NSUInteger)width
+    height:
+        (NSUInteger)height
+    frame:
+        (NSUInteger)frame {
+
+    if (data.length !=
+            width * height * 4u ||
+        width == 0u ||
+        height == 0u) {
+        return;
+    }
+
+    CGColorSpaceRef colorSpace =
+        CGColorSpaceCreateDeviceRGB();
+
+    CGDataProviderRef provider =
+        CGDataProviderCreateWithCFData(
+            (__bridge CFDataRef)data);
+
+    CGImageRef imageRef =
+        CGImageCreate(
+            width,
+            height,
+            8,
+            32,
+            width * 4u,
+            colorSpace,
+            kCGBitmapByteOrder32Big |
+                kCGImageAlphaLast,
+            provider,
+            nullptr,
+            false,
+            kCGRenderingIntentDefault);
+
+    if (imageRef != nullptr) {
+        self.imageView.image =
+            [UIImage
+                imageWithCGImage:
+                    imageRef];
+        CGImageRelease(imageRef);
+    }
+
+    CGDataProviderRelease(provider);
+    CGColorSpaceRelease(colorSpace);
+
+    self.sourceWidth = width;
+    self.sourceHeight = height;
+
+    if (!self.runFinished) {
+        // v71 established useful pixels by frame 3. Avoid accepting an
+        // accidental tap on the initial black startup buffers.
+        self.inputEnabled =
+            frame >= 3u;
+
+        self.captionLabel.text =
+            [NSString
+                stringWithFormat:
+                    @"v72 LIVE — guest frame %lu — %@\nUIKit touch → AndroidUIEventManager (1180×820 logical)",
+                    (unsigned long)frame,
+                    self.inputEnabled
+                        ? @"TOUCH ENABLED"
+                        : @"warming up…"];
+    }
+}
+
+- (void)finishRunWithMessage:
+        (NSString *)message {
+
+    self.runFinished = YES;
+    self.inputEnabled = NO;
+    self.captionLabel.text =
+        message ?: @"v72 LIVE — run finished.";
+    self.stopButton.enabled = YES;
+
+    [self.stopButton
+        setTitle:@"Close"
+        forState:UIControlStateNormal];
+}
+
+@end
+
 @interface ProbeViewController :
     UIViewController
     <UIDocumentPickerDelegate>
@@ -260,6 +820,9 @@ NSString *NSStringFromStd(
 
 @property(nonatomic, strong)
     UISegmentedControl *diagnosticModeControl;
+
+@property(nonatomic, strong)
+    PvZ2LiveViewController *liveController;
 
 @property(nonatomic, assign)
     BOOL dynarmicRunning;
@@ -318,7 +881,7 @@ NSString *NSStringFromStd(
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — v71 ETC1 Texture Bridge";
+        @"PvZ2forIOS — v72 Live Touch Bridge";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -327,7 +890,7 @@ NSString *NSStringFromStd(
         NO;
 
     title.text =
-        @"PvZ2forIOS — v71 ETC1 Texture Bridge";
+        @"PvZ2forIOS — v72 Live Touch Bridge";
 
     title.font =
         [UIFont
@@ -343,7 +906,7 @@ NSString *NSStringFromStd(
         NO;
 
     explanation.text =
-        @"v71 builds on the successful v70 zlib fix. v70 now returns real frames and completes the startup groups, but Android ETC1 uploads (GL_ETC1_RGB8_OES / 0x8D64) are rejected by the iOS GLES2 host, leaving both render targets black. v71 decodes ETC1 RGB in software and keeps PvZ2's separate alpha texture/shader path unchanged. No GameState, resource readiness or render result is forced.";
+        @"v72 starts the interactive phase. v71 already renders the real first-run/MainMenu screen and survives 600 frames. v72 keeps the zlib + ETC1 fixes, streams the live framebuffer into UIKit, and feeds real iPad touches into AndroidUIEventManager using the exact APK event format. No GameState, resource readiness or UI action is forced.";
 
     explanation.numberOfLines = 0;
 
@@ -394,7 +957,7 @@ NSString *NSStringFromStd(
             initWithItems:
                 @[
                     @"V56 Baseline",
-                    @"V71 ETC1 Bridge",
+                    @"V72 Live Touch",
                     @"V66 Blocking Waits",
                     @"V65 Cond Scheduler",
                     @"Ctype Deep Scout"
@@ -1037,7 +1600,7 @@ NSString *NSStringFromStd(
     NSArray<NSString *> *modeNames =
         @[
             @"V56_BASELINE",
-            @"V71_ETC1_TEXTURE_BRIDGE",
+            @"V72_LIVE_TOUCH_BRIDGE",
             @"V66_BLOCKING_WAIT_SCHEDULER",
             @"V65_CONDITION_VARIABLE_SCHEDULER",
             @"CTYPE_COMPAT_DEEP_SCOUT"
@@ -1056,7 +1619,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. mode=%@. V71 keeps the validated v70 zlib ownership fix and transcodes Android ETC1 color textures to host RGB8 while preserving the separate alpha plane. It does not force guest readiness, counters, GameState or resources.",
+                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. mode=%@. V72 keeps the validated zlib + ETC1 path, opens a live framebuffer view, and queues real UIKit touch phases for AndroidUIEventManager. No GameState, resource readiness or UI action is forced.",
                     modeNames[modeIndex]]];
 
     [self
@@ -1121,9 +1684,9 @@ NSString *NSStringFromStd(
 
     if (selectedMode == 1) {
         diagnosticMode =
-            PvZ2DiagnosticMode::V71Etc1TextureBridge;
+            PvZ2DiagnosticMode::V72LiveTouchBridge;
         diagnosticModeName =
-            @"V71_ETC1_TEXTURE_BRIDGE";
+            @"V72_LIVE_TOUCH_BRIDGE";
     } else if (selectedMode == 2) {
         diagnosticMode =
             PvZ2DiagnosticMode::V66BlockingWaitScheduler;
@@ -1148,7 +1711,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v71 ETC1 Texture Bridge Probe started mode=%@; PID=%d ===",
+                    @"=== PvZ2 v72 Live Touch Bridge Probe started mode=%@; PID=%d ===",
                     diagnosticModeName,
                     getpid()]];
 
@@ -1156,6 +1719,29 @@ NSString *NSStringFromStd(
         YES;
 
     [self refreshStatus];
+
+    if (diagnosticMode ==
+        PvZ2DiagnosticMode::V72LiveTouchBridge) {
+
+        PvZ2ResetInteractiveInput();
+
+        PvZ2LiveViewController *liveController =
+            [[PvZ2LiveViewController alloc] init];
+
+        liveController.modalPresentationStyle =
+            UIModalPresentationFullScreen;
+
+        self.liveController =
+            liveController;
+        gPvZ2LiveController =
+            liveController;
+
+        [self
+            presentViewController:
+                liveController
+            animated:YES
+            completion:nil];
+    }
 
     [self
         appendUI:
@@ -1245,10 +1831,65 @@ NSString *NSStringFromStd(
                                             : (obbError.localizedDescription
                                                 ?: @"failed")]];
 
+                        if (diagnosticMode ==
+                                PvZ2DiagnosticMode::V72LiveTouchBridge &&
+                            selfRef.liveController != nil) {
+
+                            [selfRef.liveController
+                                finishRunWithMessage:
+                                    @"v72 LIVE — APK/OBB read failed. Close this view and inspect the log."];
+                        }
+
                         [selfRef refreshStatus];
                     });
 
                 return;
+            }
+
+            PvZ2LiveFrameCallback liveFrameCallback;
+
+            if (diagnosticMode ==
+                PvZ2DiagnosticMode::V72LiveTouchBridge) {
+
+                liveFrameCallback =
+                    [](
+                        std::uint32_t frame,
+                        std::uint32_t width,
+                        std::uint32_t height,
+                        const std::uint8_t* rgba,
+                        std::size_t rgbaSize) {
+
+                        if (rgba == nullptr ||
+                            rgbaSize == 0u) {
+                            return;
+                        }
+
+                        @autoreleasepool {
+                            NSData *copy =
+                                [NSData
+                                    dataWithBytes:rgba
+                                    length:rgbaSize];
+
+                            dispatch_async(
+                                dispatch_get_main_queue(),
+                                ^{
+                                    PvZ2LiveViewController *controller =
+                                        gPvZ2LiveController;
+
+                                    if (controller != nil) {
+                                        [controller
+                                            updateFrameData:
+                                                copy
+                                            width:
+                                                width
+                                            height:
+                                                height
+                                            frame:
+                                                frame];
+                                    }
+                                });
+                        }
+                    };
             }
 
             PvZ2JniProbeResult result =
@@ -1269,7 +1910,8 @@ NSString *NSStringFromStd(
                                     nsLine]);
                         }
                     },
-                    diagnosticMode);
+                    diagnosticMode,
+                    liveFrameCallback);
 
             dispatch_async(
                 dispatch_get_main_queue(),
@@ -1451,9 +2093,20 @@ NSString *NSStringFromStd(
                     if (result.ok) {
                         [selfRef
                             appendUI:
-                                @"SUCCESS STEP 3: PvZ2 completed the selected diagnostic run. For V66, inspect V66 TASK SUBSTATE / SEM WAIT / SLEEP / STICKY-MUTEX plus V65 COND and preserved V64/V63/RSB/GLES diagnostics."];
+                                @"SUCCESS STEP 3: PvZ2 completed the selected diagnostic run. v72 preserves scheduler/zlib/ETC1 fixes and adds a live UIKit touch bridge without forcing guest state."];
 
-                        if (!result.final_frame_png_path.empty()) {
+                        if (diagnosticMode ==
+                                PvZ2DiagnosticMode::V72LiveTouchBridge &&
+                            selfRef.liveController != nil) {
+
+                            [selfRef.liveController
+                                finishRunWithMessage:
+                                    [NSString
+                                        stringWithFormat:
+                                            @"v72 LIVE — run finished after %u guest frames.\nClose to inspect the log. Touch delivery is recorded as V72 UI EVENTS.",
+                                            result.draw_frames_completed]];
+
+                        } else if (!result.final_frame_png_path.empty()) {
                             [selfRef
                                 appendUI:
                                     [NSString
@@ -1499,19 +2152,32 @@ NSString *NSStringFromStd(
                             NSStringFromStd(
                                 result.message);
 
-                        [selfRef
-                            showResult:
-                                !result.lifecycle_failure_name.empty()
-                                    ? @"Lifecycle/first-frame call stopped"
-                                    : (result.constructor_failure_index != 0xffffffffu
-                                        ? @"Constructor stopped safely"
-                                        : (result.reached_game_app_initialize
-                                            ? @"GameAppInitialize stopped safely"
-                                            : (result.reached_jni_onload
-                                                ? @"JNI_OnLoad stopped safely"
-                                                : @"Full-load probe failed")))
-                            message:
-                                message];
+                        if (diagnosticMode ==
+                                PvZ2DiagnosticMode::V72LiveTouchBridge &&
+                            selfRef.liveController != nil) {
+
+                            [selfRef.liveController
+                                finishRunWithMessage:
+                                    [NSString
+                                        stringWithFormat:
+                                            @"v72 LIVE — guest run stopped.\n%@\nClose to inspect the full log.",
+                                            message]];
+
+                        } else {
+                            [selfRef
+                                showResult:
+                                    !result.lifecycle_failure_name.empty()
+                                        ? @"Lifecycle/first-frame call stopped"
+                                        : (result.constructor_failure_index != 0xffffffffu
+                                            ? @"Constructor stopped safely"
+                                            : (result.reached_game_app_initialize
+                                                ? @"GameAppInitialize stopped safely"
+                                                : (result.reached_jni_onload
+                                                    ? @"JNI_OnLoad stopped safely"
+                                                    : @"Full-load probe failed")))
+                                message:
+                                    message];
+                        }
                     }
 
                     [selfRef refreshStatus];

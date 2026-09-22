@@ -40,6 +40,30 @@ PvZ2ApkProbeResult InspectAndMapPvZ2Apk(const std::uint8_t* apk_data, std::size_
 
 using PvZ2ProbeProgress = std::function<void(const std::string&)>;
 
+// v72 live-display callback. rgba points to a top-left-oriented, opaque RGBA8
+// copy of the host default framebuffer and is valid only for the callback.
+using PvZ2LiveFrameCallback =
+    std::function<void(
+        std::uint32_t frame,
+        std::uint32_t width,
+        std::uint32_t height,
+        const std::uint8_t* rgba,
+        std::size_t rgba_size)>;
+
+// UIKit owns input collection on the main thread while the guest runs on the
+// probe worker queue. These functions are intentionally narrow so the C++
+// runtime does not depend on UIKit types.
+void PvZ2ResetInteractiveInput();
+void PvZ2QueueTouchEvent(
+    std::uint32_t pointer_id,
+    std::int32_t x,
+    std::int32_t y,
+    std::int32_t previous_x,
+    std::int32_t previous_y,
+    std::uint32_t phase,
+    double timestamp_ms);
+void PvZ2RequestInteractiveStop();
+
 enum class PvZ2DiagnosticMode : std::uint32_t {
     PassiveRegistry = 0u,
     GateAScout = 1u,
@@ -104,6 +128,11 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // rejects that Android-only compressed upload, so decode ETC1 to host RGB8
     // while preserving PvZ2's separate alpha texture and shader path.
     V71Etc1TextureBridge = 15u,
+
+    // v72: first-frame + 600-frame stability are proven. Keep v71 rendering
+    // and bridge real UIKit touches into AndroidUIEventManager::ProcessEvents
+    // while streaming the live host framebuffer back to UIKit.
+    V72LiveTouchBridge = 16u,
 };
 
 struct PvZ2JniProbeResult {
@@ -216,4 +245,5 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
     std::size_t obb_size,
     PvZ2ProbeProgress progress = {},
     PvZ2DiagnosticMode diagnostic_mode =
-        PvZ2DiagnosticMode::PassiveRegistry);
+        PvZ2DiagnosticMode::PassiveRegistry,
+    PvZ2LiveFrameCallback live_frame = {});

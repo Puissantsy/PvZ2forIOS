@@ -26,6 +26,8 @@ NSString *gCapturePath = nil;
 std::string gFrameStats;
 std::string gFramebufferStats;
 std::uint64_t gLastNonBlackPixels = 0u;
+std::vector<std::uint8_t> gLiveReadbackPixels;
+std::vector<std::uint8_t> gLiveDisplayPixels;
 
 void DestroySurface() {
     if (gContext != nil) {
@@ -52,6 +54,8 @@ void DestroySurface() {
 
     gWidth = 0;
     gHeight = 0;
+    gLiveReadbackPixels.clear();
+    gLiveDisplayPixels.clear();
 }
 
 } // namespace
@@ -501,6 +505,150 @@ PvZ2HostGLESFramebufferStats(
 extern "C" std::uint64_t
 PvZ2HostGLESLastNonBlackPixels(void) {
     return gLastNonBlackPixels;
+}
+
+extern "C" const std::uint8_t*
+PvZ2HostGLESCopyDisplayRGBA(
+    std::uint32_t* width,
+    std::uint32_t* height,
+    std::size_t* size) {
+
+    if (width != nullptr) {
+        *width = 0u;
+    }
+    if (height != nullptr) {
+        *height = 0u;
+    }
+    if (size != nullptr) {
+        *size = 0u;
+    }
+
+    if (gContext == nil ||
+        gFramebuffer == 0u ||
+        gWidth == 0u ||
+        gHeight == 0u ||
+        ![EAGLContext setCurrentContext:gContext]) {
+        return nullptr;
+    }
+
+    GLint previous_framebuffer = 0;
+    GLint previous_pack_alignment = 4;
+
+    glGetIntegerv(
+        GL_FRAMEBUFFER_BINDING,
+        &previous_framebuffer);
+    glGetIntegerv(
+        GL_PACK_ALIGNMENT,
+        &previous_pack_alignment);
+
+    glBindFramebuffer(
+        GL_FRAMEBUFFER,
+        gFramebuffer);
+
+    const std::size_t row_bytes =
+        static_cast<std::size_t>(gWidth) * 4u;
+    const std::size_t total_bytes =
+        row_bytes *
+        static_cast<std::size_t>(gHeight);
+
+    gLiveReadbackPixels.resize(total_bytes);
+    gLiveDisplayPixels.resize(total_bytes);
+
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+
+    while (glGetError() != GL_NO_ERROR) {
+    }
+
+    glReadPixels(
+        0,
+        0,
+        static_cast<GLsizei>(gWidth),
+        static_cast<GLsizei>(gHeight),
+        GL_RGBA,
+        GL_UNSIGNED_BYTE,
+        gLiveReadbackPixels.data());
+
+    const GLenum read_error =
+        glGetError();
+
+    glPixelStorei(
+        GL_PACK_ALIGNMENT,
+        previous_pack_alignment);
+    glBindFramebuffer(
+        GL_FRAMEBUFFER,
+        static_cast<GLuint>(
+            previous_framebuffer));
+
+    if (read_error != GL_NO_ERROR) {
+        return nullptr;
+    }
+
+    // Match the diagnostic PNG exactly: UIKit coordinates are top-left, while
+    // glReadPixels is bottom-left. PvZ2's default target can also contain
+    // premultiplied alpha during fades; undo it and expose an opaque display
+    // copy without mutating any guest-visible framebuffer bytes.
+    for (std::uint32_t y = 0u;
+         y < gHeight;
+         ++y) {
+
+        std::memcpy(
+            gLiveDisplayPixels.data() +
+                static_cast<std::size_t>(y) *
+                    row_bytes,
+            gLiveReadbackPixels.data() +
+                static_cast<std::size_t>(
+                    gHeight - 1u - y) *
+                    row_bytes,
+            row_bytes);
+    }
+
+    for (std::size_t i = 0u;
+         i < total_bytes;
+         i += 4u) {
+
+        const std::uint32_t alpha =
+            gLiveDisplayPixels[i + 3u];
+
+        if (alpha == 0u) {
+            gLiveDisplayPixels[i + 0u] = 0u;
+            gLiveDisplayPixels[i + 1u] = 0u;
+            gLiveDisplayPixels[i + 2u] = 0u;
+        } else if (alpha < 255u) {
+            for (std::size_t channel = 0u;
+                 channel < 3u;
+                 ++channel) {
+
+                const std::uint32_t straight =
+                    (static_cast<std::uint32_t>(
+                         gLiveDisplayPixels[
+                             i + channel]) *
+                         255u +
+                     alpha / 2u) /
+                    alpha;
+
+                gLiveDisplayPixels[
+                    i + channel] =
+                    static_cast<std::uint8_t>(
+                        std::min<std::uint32_t>(
+                            255u,
+                            straight));
+            }
+        }
+
+        gLiveDisplayPixels[i + 3u] = 255u;
+    }
+
+    if (width != nullptr) {
+        *width = gWidth;
+    }
+    if (height != nullptr) {
+        *height = gHeight;
+    }
+    if (size != nullptr) {
+        *size = total_bytes;
+    }
+
+    return gLiveDisplayPixels.data();
 }
 
 extern "C" const char*
