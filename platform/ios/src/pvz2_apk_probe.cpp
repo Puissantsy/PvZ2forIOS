@@ -1198,6 +1198,25 @@ constexpr std::uint32_t kJniProbeSvcV69CompletedReadyResult = 0x00f08fu;
 constexpr std::uint32_t kJniProbeSvcV69CompletedTerminalResult = 0x00f090u;
 constexpr std::uint32_t kJniProbeSvcV69FinalizerReturn = 0x00f091u;
 
+// v79: first-run Profile/Facebook/EULA provenance. These traps are enabled
+// only in the already-validated V75 and V77 controls. Every replaced
+// instruction is emulated exactly; no rectangle, scale, state or resource is
+// changed. The goal is to observe the live parent dimensions and the exact
+// integer geometry produced by the statically matched Android/iOS paths.
+constexpr std::uint32_t kJniProbeSvcV79SetWidthHeightEntry = 0x00f0a0u;
+constexpr std::uint32_t kJniProbeSvcV79ProfileEntry = 0x00f0a1u;
+constexpr std::uint32_t kJniProbeSvcV79CheckboxEntry = 0x00f0a2u;
+constexpr std::uint32_t kJniProbeSvcV79CheckboxRect = 0x00f0a3u;
+constexpr std::uint32_t kJniProbeSvcV79FacebookEntry = 0x00f0a4u;
+constexpr std::uint32_t kJniProbeSvcV79FacebookRect = 0x00f0a5u;
+constexpr std::uint32_t kJniProbeSvcV79ContainerEntry = 0x00f0a6u;
+constexpr std::uint32_t kJniProbeSvcV79ContainerRect = 0x00f0a7u;
+constexpr std::uint32_t kJniProbeSvcV79TextEntry = 0x00f0a8u;
+constexpr std::uint32_t kJniProbeSvcV79TextRectA = 0x00f0a9u;
+constexpr std::uint32_t kJniProbeSvcV79TextRectB = 0x00f0aau;
+constexpr std::uint32_t kJniProbeSvcV79GenericEntry = 0x00f0abu;
+constexpr std::uint32_t kJniProbeSvcV79GenericRect = 0x00f0acu;
+
 constexpr std::uint32_t kJniProbeSvcUnsupportedJniBase = 0x00e000u;
 constexpr std::uint32_t kJniProbeJniSlotCount = 256u;
 
@@ -3016,6 +3035,13 @@ public:
     std::uint32_t v76_scale_can_calls = 0u;
     std::uint32_t v76_scale_get_calls = 0u;
     std::uint32_t v76_scale_set_calls = 0u;
+
+    // v79 is deliberately bounded: at most the first eight hits at each
+    // instrumented site are emitted, enough to catch initial creation plus
+    // a refresh/re-layout without turning widget hot paths into huge logs.
+    std::unordered_map<std::uint32_t, std::uint64_t>
+        v79_profile_hits;
+    std::uint64_t v79_profile_total_events = 0u;
 
     std::uint32_t v56_resource_manager = 0u;
     std::uint64_t v56_registry_pipeline_calls = 0u;
@@ -5995,6 +6021,74 @@ public:
             return "V77_LEGACY_IPAD_GEOMETRY";
         }
         return "UNKNOWN";
+    }
+
+    bool V79ProfileProbeEnabled() const {
+        return
+            diagnostic_mode ==
+                PvZ2DiagnosticMode::V75IpadUiPackage ||
+            diagnostic_mode ==
+                PvZ2DiagnosticMode::V77LegacyIpadGeometry;
+    }
+
+    const char* V79ProfileSiteName(
+        std::uint32_t svc) const {
+
+        switch (svc) {
+        case kJniProbeSvcV79SetWidthHeightEntry: return "SetWidthHeight.entry";
+        case kJniProbeSvcV79ProfileEntry: return "Profile.entry";
+        case kJniProbeSvcV79CheckboxEntry: return "Checkbox.entry";
+        case kJniProbeSvcV79CheckboxRect: return "Checkbox.rect";
+        case kJniProbeSvcV79FacebookEntry: return "FacebookButton.entry";
+        case kJniProbeSvcV79FacebookRect: return "FacebookButton.rect";
+        case kJniProbeSvcV79ContainerEntry: return "FacebookContainer.entry";
+        case kJniProbeSvcV79ContainerRect: return "FacebookContainer.rect";
+        case kJniProbeSvcV79TextEntry: return "TextEntry.entry";
+        case kJniProbeSvcV79TextRectA: return "TextEntry.rectA";
+        case kJniProbeSvcV79TextRectB: return "TextEntry.rectB";
+        case kJniProbeSvcV79GenericEntry: return "GenericProfile.entry";
+        case kJniProbeSvcV79GenericRect: return "GenericProfile.rect";
+        default: return "unknown";
+        }
+    }
+
+    std::string V79ProfileSummary() const {
+        std::ostringstream out;
+        out
+            << "V79 PROFILE SUMMARY mode="
+            << V56ModeName()
+            << " totalEvents="
+            << v79_profile_total_events;
+
+        const std::array<std::uint32_t, 13> sites = {{
+            kJniProbeSvcV79SetWidthHeightEntry,
+            kJniProbeSvcV79ProfileEntry,
+            kJniProbeSvcV79CheckboxEntry,
+            kJniProbeSvcV79CheckboxRect,
+            kJniProbeSvcV79FacebookEntry,
+            kJniProbeSvcV79FacebookRect,
+            kJniProbeSvcV79ContainerEntry,
+            kJniProbeSvcV79ContainerRect,
+            kJniProbeSvcV79TextEntry,
+            kJniProbeSvcV79TextRectA,
+            kJniProbeSvcV79TextRectB,
+            kJniProbeSvcV79GenericEntry,
+            kJniProbeSvcV79GenericRect
+        }};
+
+        for (const auto svc : sites) {
+            const auto it =
+                v79_profile_hits.find(svc);
+            out
+                << " | "
+                << V79ProfileSiteName(svc)
+                << "="
+                << (it == v79_profile_hits.end()
+                        ? 0u
+                        : it->second);
+        }
+
+        return out.str();
     }
 
     bool V77Enabled() const {
@@ -10159,6 +10253,390 @@ public:
         }
 
         auto& regs = jit->Regs();
+
+        // v79: exact first-run Profile provenance. Traps are installed only
+        // for V75/V77, and each case below first reproduces the original ARM
+        // instruction before reading anything for diagnostics.
+        if (V79ProfileProbeEnabled() &&
+            swi >= kJniProbeSvcV79SetWidthHeightEntry &&
+            swi <= kJniProbeSvcV79GenericRect) {
+
+            ++v79_profile_total_events;
+            const std::uint64_t hit =
+                ++v79_profile_hits[swi];
+            const bool emit =
+                hit <= 8u;
+
+            auto f32_from_bits =
+                [](std::uint32_t bits) {
+                    float value = 0.0f;
+                    std::memcpy(
+                        &value,
+                        &bits,
+                        sizeof(value));
+                    return value;
+                };
+
+            auto append_snapshot =
+                [&](const char* site,
+                    std::uint32_t object,
+                    const std::string& detail) {
+
+                    if (!emit) {
+                        return;
+                    }
+
+                    const std::uint32_t app =
+                        v52_last_app;
+                    const std::uint32_t scale_bits =
+                        app != 0u
+                            ? mem.Read32Guest(
+                                  app + 0x6a8u)
+                            : 0u;
+                    const float scale =
+                        f32_from_bits(
+                            scale_bits);
+
+                    std::ostringstream line;
+                    line
+                        << "V79 PROFILE "
+                        << site
+                        << " hit="
+                        << hit
+                        << " frame="
+                        << current_frame_number
+                        << " object=0x"
+                        << JniProbeHex(object)
+                        << " parentWH="
+                        << static_cast<std::int32_t>(
+                               mem.Read32Guest(
+                                   object + 0x30u))
+                        << "x"
+                        << static_cast<std::int32_t>(
+                               mem.Read32Guest(
+                                   object + 0x34u))
+                        << " stateA0="
+                        << static_cast<unsigned>(
+                               mem.Read8(
+                                   object + 0xa0u))
+                        << " stateC8=0x"
+                        << JniProbeHex(
+                               mem.Read32Guest(
+                                   object + 0xc8u))
+                        << " app=0x"
+                        << JniProbeHex(app)
+                        << " scale6A8Bits=0x"
+                        << JniProbeHex(scale_bits)
+                        << " scale6A8="
+                        << scale
+                        << " lr="
+                        << V46DescribeGuestAddress(
+                               regs[14]);
+
+                    if (!detail.empty()) {
+                        line
+                            << " "
+                            << detail;
+                    }
+
+                    Append(
+                        line.str());
+                };
+
+            switch (swi) {
+            case kJniProbeSvcV79SetWidthHeightEntry: {
+                // Original @0x102b8494: MOV r4,r0.
+                regs[4] = regs[0];
+
+                std::ostringstream detail;
+                detail
+                    << "inputR1="
+                    << static_cast<std::int32_t>(
+                           regs[1])
+                    << " beforeWH="
+                    << static_cast<std::int32_t>(
+                           mem.Read32Guest(
+                               regs[0] + 0x70u))
+                    << "x"
+                    << static_cast<std::int32_t>(
+                           mem.Read32Guest(
+                               regs[0] + 0x74u))
+                    << " baseHeight6B8="
+                    << static_cast<std::int32_t>(
+                           mem.Read32Guest(
+                               regs[0] + 0x6b8u));
+
+                append_snapshot(
+                    "SetWidthHeight.entry",
+                    regs[0],
+                    detail.str());
+                return;
+            }
+
+            case kJniProbeSvcV79ProfileEntry:
+                // Original @0x103095b4: MOV r11,r0.
+                regs[11] = regs[0];
+                append_snapshot(
+                    "Profile.entry",
+                    regs[0],
+                    "arg1=0x" +
+                        JniProbeHex(
+                            regs[1]));
+                return;
+
+            case kJniProbeSvcV79CheckboxEntry:
+                // Original @0x103082d8: MOV r9,r0.
+                regs[9] = regs[0];
+                append_snapshot(
+                    "Checkbox.entry",
+                    regs[0],
+                    "");
+                return;
+
+            case kJniProbeSvcV79CheckboxRect: {
+                // Original @0x103083e8: MOV r2,#0.
+                regs[2] = 0u;
+
+                const std::uint32_t sp =
+                    regs[13];
+                std::ostringstream detail;
+                detail
+                    << "callArgs{r0=0x"
+                    << JniProbeHex(regs[0])
+                    << ",r1="
+                    << static_cast<std::int32_t>(
+                           regs[1])
+                    << ",r2="
+                    << static_cast<std::int32_t>(
+                           regs[2])
+                    << ",r3="
+                    << static_cast<std::int32_t>(
+                           regs[3])
+                    << ",sp0="
+                    << static_cast<std::int32_t>(
+                           mem.Read32Guest(sp))
+                    << "}";
+
+                append_snapshot(
+                    "Checkbox.rect",
+                    regs[9],
+                    detail.str());
+                return;
+            }
+
+            case kJniProbeSvcV79FacebookEntry:
+                // Original @0x103085f8: MOV r9,r0.
+                regs[9] = regs[0];
+                append_snapshot(
+                    "FacebookButton.entry",
+                    regs[0],
+                    "");
+                return;
+
+            case kJniProbeSvcV79FacebookRect: {
+                // Original @0x103087a8: MOV r0,r5.
+                regs[0] = regs[5];
+
+                const std::uint32_t sp =
+                    regs[13];
+                std::ostringstream detail;
+                detail
+                    << "callArgs{r0=0x"
+                    << JniProbeHex(regs[0])
+                    << ",r1="
+                    << static_cast<std::int32_t>(
+                           regs[1])
+                    << ",r2="
+                    << static_cast<std::int32_t>(
+                           regs[2])
+                    << ",r3="
+                    << static_cast<std::int32_t>(
+                           regs[3])
+                    << ",sp0="
+                    << static_cast<std::int32_t>(
+                           mem.Read32Guest(sp))
+                    << "}";
+
+                append_snapshot(
+                    "FacebookButton.rect",
+                    regs[9],
+                    detail.str());
+                return;
+            }
+
+            case kJniProbeSvcV79ContainerEntry:
+                // Original @0x10308b80: MOV r10,r0.
+                regs[10] = regs[0];
+                append_snapshot(
+                    "FacebookContainer.entry",
+                    regs[0],
+                    "arg1=0x" +
+                        JniProbeHex(
+                            regs[1]));
+                return;
+
+            case kJniProbeSvcV79ContainerRect: {
+                // Original @0x10308c5c: VSTR s2,[sp,#4].
+                const std::uint32_t sp =
+                    regs[13];
+                mem.Write32Guest(
+                    sp + 4u,
+                    jit->ExtRegs()[2]);
+
+                std::ostringstream detail;
+                detail
+                    << "callArgs{r0=0x"
+                    << JniProbeHex(regs[0])
+                    << ",r1=0x"
+                    << JniProbeHex(regs[1])
+                    << ",r2="
+                    << static_cast<std::int32_t>(
+                           regs[2])
+                    << ",r3="
+                    << static_cast<std::int32_t>(
+                           regs[3])
+                    << ",sp0="
+                    << static_cast<std::int32_t>(
+                           mem.Read32Guest(sp))
+                    << ",sp4="
+                    << static_cast<std::int32_t>(
+                           mem.Read32Guest(
+                               sp + 4u))
+                    << "}";
+
+                append_snapshot(
+                    "FacebookContainer.rect",
+                    regs[10],
+                    detail.str());
+                return;
+            }
+
+            case kJniProbeSvcV79TextEntry:
+                // Original @0x1030aea8: MOV r10,r0.
+                regs[10] = regs[0];
+                append_snapshot(
+                    "TextEntry.entry",
+                    regs[0],
+                    "arg1=0x" +
+                        JniProbeHex(
+                            regs[1]) +
+                    " branchC8=" +
+                        std::to_string(
+                            mem.Read32Guest(
+                                regs[0] +
+                                0xc8u)));
+                return;
+
+            case kJniProbeSvcV79TextRectA: {
+                // Original @0x1030b03c: MOV r0,r8.
+                regs[0] = regs[8];
+
+                const std::uint32_t sp =
+                    regs[13];
+                std::ostringstream detail;
+                detail
+                    << "computedTriple{x="
+                    << static_cast<std::int32_t>(
+                           mem.Read32Guest(
+                               sp + 40u))
+                    << ",y="
+                    << static_cast<std::int32_t>(
+                           mem.Read32Guest(
+                               sp + 44u))
+                    << ",w="
+                    << static_cast<std::int32_t>(
+                           mem.Read32Guest(
+                               sp + 48u))
+                    << "} callR2=0x"
+                    << JniProbeHex(
+                           regs[2]);
+
+                append_snapshot(
+                    "TextEntry.rectA",
+                    regs[10],
+                    detail.str());
+                return;
+            }
+
+            case kJniProbeSvcV79TextRectB: {
+                // Original @0x1030b0b0: MOV r0,r8.
+                regs[0] = regs[8];
+
+                const std::uint32_t sp =
+                    regs[13];
+                std::ostringstream detail;
+                detail
+                    << "computedQuad{a="
+                    << static_cast<std::int32_t>(
+                           mem.Read32Guest(
+                               sp + 24u))
+                    << ",b="
+                    << static_cast<std::int32_t>(
+                           mem.Read32Guest(
+                               sp + 28u))
+                    << ",c="
+                    << static_cast<std::int32_t>(
+                           mem.Read32Guest(
+                               sp + 32u))
+                    << ",d="
+                    << static_cast<std::int32_t>(
+                           mem.Read32Guest(
+                               sp + 36u))
+                    << "} callR2=0x"
+                    << JniProbeHex(
+                           regs[2]);
+
+                append_snapshot(
+                    "TextEntry.rectB",
+                    regs[10],
+                    detail.str());
+                return;
+            }
+
+            case kJniProbeSvcV79GenericEntry:
+                // Original @0x1030f930: MOV r10,r0.
+                regs[10] = regs[0];
+                append_snapshot(
+                    "GenericProfile.entry",
+                    regs[0],
+                    "");
+                return;
+
+            case kJniProbeSvcV79GenericRect: {
+                // Original @0x1030fa50: MOV r0,r5.
+                regs[0] = regs[5];
+
+                const std::uint32_t sp =
+                    regs[13];
+                std::ostringstream detail;
+                detail
+                    << "callArgs{r0=0x"
+                    << JniProbeHex(regs[0])
+                    << ",r1="
+                    << static_cast<std::int32_t>(
+                           regs[1])
+                    << ",r2="
+                    << static_cast<std::int32_t>(
+                           regs[2])
+                    << ",r3="
+                    << static_cast<std::int32_t>(
+                           regs[3])
+                    << ",sp0="
+                    << static_cast<std::int32_t>(
+                           mem.Read32Guest(sp))
+                    << "}";
+
+                append_snapshot(
+                    "GenericProfile.rect",
+                    regs[10],
+                    detail.str());
+                return;
+            }
+
+            default:
+                break;
+            }
+        }
 
         // v31: real ARM32 printf-family formatting. Before this bridge,
         // snprintf/sprintf/vsnprintf/vsprintf returned zero without writing
@@ -25270,6 +25748,65 @@ bool JniProbePrepareRuntime(
         return false;
     }
 
+    if (callbacks.V79ProfileProbeEnabled() &&
+        (!patch_resource_native_miss(
+             0x002b8494u,
+             0xe1a04000u,
+             kJniProbeSvcV79SetWidthHeightEntry) ||
+         !patch_resource_native_miss(
+             0x003095b4u,
+             0xe1a0b000u,
+             kJniProbeSvcV79ProfileEntry) ||
+         !patch_resource_native_miss(
+             0x003082d8u,
+             0xe1a09000u,
+             kJniProbeSvcV79CheckboxEntry) ||
+         !patch_resource_native_miss(
+             0x003083e8u,
+             0xe3a02000u,
+             kJniProbeSvcV79CheckboxRect) ||
+         !patch_resource_native_miss(
+             0x003085f8u,
+             0xe1a09000u,
+             kJniProbeSvcV79FacebookEntry) ||
+         !patch_resource_native_miss(
+             0x003087a8u,
+             0xe1a00005u,
+             kJniProbeSvcV79FacebookRect) ||
+         !patch_resource_native_miss(
+             0x00308b80u,
+             0xe1a0a000u,
+             kJniProbeSvcV79ContainerEntry) ||
+         !patch_resource_native_miss(
+             0x00308c5cu,
+             0xed8d1a01u,
+             kJniProbeSvcV79ContainerRect) ||
+         !patch_resource_native_miss(
+             0x0030aea8u,
+             0xe1a0a000u,
+             kJniProbeSvcV79TextEntry) ||
+         !patch_resource_native_miss(
+             0x0030b03cu,
+             0xe1a00008u,
+             kJniProbeSvcV79TextRectA) ||
+         !patch_resource_native_miss(
+             0x0030b0b0u,
+             0xe1a00008u,
+             kJniProbeSvcV79TextRectB) ||
+         !patch_resource_native_miss(
+             0x0030f930u,
+             0xe1a0a000u,
+             kJniProbeSvcV79GenericEntry) ||
+         !patch_resource_native_miss(
+             0x0030fa50u,
+             0xe1a00005u,
+             kJniProbeSvcV79GenericRect))) {
+
+        error =
+            "v79 first-run Profile provenance signature mismatch: refusing to patch an unverified Android 1.5.252752 instruction.";
+        return false;
+    }
+
     callbacks.Append(
         "V48 RESFILE WRAPPER-FINAL BRIDGE: v45 internal hooks preserved; direct-group null returns are observed at 0x1087a708 and all-groups-exhausted nulls at 0x1087a76c with the exact wrapper ID still in r6.");
     callbacks.Append(
@@ -25365,6 +25902,10 @@ bool JniProbePrepareRuntime(
     if (callbacks.V77Enabled()) {
         callbacks.Append(
             "V77 LEGACY IPAD GEOMETRY: v76 A/B is rejected for the Android guest after it requested scale=2.000666 and resized 2360x1640 to 2361x1641. v77 restores the stable CanSet=false scale bridge, retains UI_IPAD/touch/keyboard/zlib/ETC1, and exposes the exact historical Retina iPad geometry used by the 1.5 launch assets: 1024x768 points / 2048x1536 pixels. UIKit remains aspect-fit on the modern iPad.");
+    }
+    if (callbacks.V79ProfileProbeEnabled()) {
+        callbacks.Append(
+            "V79 FIRST-RUN PROFILE PROVENANCE: observation-only traps are active in this V75/V77 control. Static v2.5 matched the Android and historical-iOS Profile/Facebook/EULA layout paths and found only a localized text-entry constant difference. v79 records live parent +0x30/+0x34 dimensions, LawnApp +0x6a8 scale, branch state and bounded final geometry at the matched paths. No scale, rectangle, resource, GameState or widget state is modified.");
     }
 
     if (callbacks.V64Enabled()) {
@@ -29429,6 +29970,11 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                              std::memory_order_relaxed)
                             ? std::string{"YES"}
                             : std::string{"NO"}));
+                }
+
+                if (callbacks.V79ProfileProbeEnabled()) {
+                    callbacks.Append(
+                        callbacks.V79ProfileSummary());
                 }
 
                 if (callbacks.V73Enabled()) {

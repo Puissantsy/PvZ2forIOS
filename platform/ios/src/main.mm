@@ -394,7 +394,7 @@ bool PvZ2HostKeyboardVisible() {
     self.captionLabel.clipsToBounds =
         YES;
     self.captionLabel.text =
-        @"PvZ2 v78 — starting…\nV77 geometry validation";
+        @"PvZ2 v79 — starting…\nV77 geometry validation";
 
     self.stopButton =
         [UIButton
@@ -1165,7 +1165,7 @@ bool PvZ2HostKeyboardVisible() {
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — v78 Geometry Validation";
+        @"PvZ2forIOS — v79 First-Run Provenance";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -1174,7 +1174,7 @@ bool PvZ2HostKeyboardVisible() {
         NO;
 
     title.text =
-        @"PvZ2forIOS — v78 Geometry Validation";
+        @"PvZ2forIOS — v79 First-Run Provenance";
 
     title.font =
         [UIFont
@@ -1190,7 +1190,7 @@ bool PvZ2HostKeyboardVisible() {
         NO;
 
     explanation.text =
-        @"v78 validates the existing v77 geometry without changing guest behavior. The v77 .ips proved the frame-1 crash was host-side: the live caption passed width=2048 to %@, so Foundation dereferenced address 0x800. That formatting bug is fixed here. V77 Legacy iPad remains the default experiment (UI_IPAD + 1024×768 pt + 2048×1536 px, CanSetGLViewScaleFactor=false) and V75 iPad UI remains available as the same-build control. Extra V78LIVE breadcrumbs surround framebuffer copy and UIKit presentation.";
+        @"v79 is an observation-only first-run Profile provenance probe. Static v2.4/v2.5 matched the Android MainMenu/Profile/Facebook/EULA code against the historical iOS 1.5 binary: both use the same 600-unit base height, 2.56 scale at 1536 px, and mostly identical widget constants; only the name text-entry showed a localized 26/373 vs 110/289 difference. Keep V77 Legacy iPad selected for the historical-geometry run, then optionally run V75 iPad UI in the same IPA as the modern-geometry control. Both modes get the same bounded V79 PROFILE instrumentation. No runtime geometry or widget value is changed.";
 
     explanation.numberOfLines = 0;
 
@@ -1909,7 +1909,7 @@ bool PvZ2HostKeyboardVisible() {
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. mode=%@. This is the v78 validation build: V77 Legacy iPad is the default experiment (UI_IPAD, 1024×768 pt / 2048×1536 px, stable CanSet=false); V75 iPad UI is the control in the same IPA.",
+                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. mode=%@. v79 instruments the already-validated V77 Legacy iPad and V75 iPad UI controls only. V77 remains the default historical-geometry run; V75 is the same-build modern-geometry comparison. Look for bounded V79 PROFILE lines; no guest geometry is modified.",
                     modeNames[modeIndex]]];
 
     [self
@@ -2016,7 +2016,7 @@ bool PvZ2HostKeyboardVisible() {
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v78 Geometry Validation Probe started mode=%@; PID=%d ===",
+                    @"=== PvZ2 v79 First-Run Profile Provenance Probe started mode=%@; PID=%d ===",
                     diagnosticModeName,
                     getpid()]];
 
@@ -2456,7 +2456,7 @@ bool PvZ2HostKeyboardVisible() {
                     if (result.ok) {
                         [selfRef
                             appendUI:
-                                @"SUCCESS STEP 3: PvZ2 completed the selected v78 validation run. V77 mode keeps the historical Retina-iPad geometry while retaining the validated v75 UI/input/render path."];
+                                @"SUCCESS STEP 3: PvZ2 completed the selected v79 provenance run. Inspect V79 PROFILE lines and the V79 PROFILE SUMMARY; V75/V77 geometry itself was not changed."];
 
                         if ((diagnosticMode ==
                                  PvZ2DiagnosticMode::V74RetinaInputPolish ||
@@ -2472,7 +2472,7 @@ bool PvZ2HostKeyboardVisible() {
                                 finishRunWithMessage:
                                     [NSString
                                         stringWithFormat:
-                                            @"PvZ2 v78 LIVE — run finished after %u guest frames.\nClose to inspect the log. V77 geometry and V78LIVE host-presentation markers are recorded.",
+                                            @"PvZ2 v79 LIVE — run finished after %u guest frames.\nClose to inspect the log. V79 PROFILE provenance plus inherited V78LIVE presentation markers are recorded.",
                                             result.draw_frames_completed]];
 
                         } else if (!result.final_frame_png_path.empty()) {
@@ -2535,7 +2535,7 @@ bool PvZ2HostKeyboardVisible() {
                                 finishRunWithMessage:
                                     [NSString
                                         stringWithFormat:
-                                            @"PvZ2 v78 LIVE — guest run stopped.\n%@\nClose to inspect the full log.",
+                                            @"PvZ2 v79 LIVE — guest run stopped.\n%@\nClose to inspect the full log.",
                                             message]];
 
                         } else {
