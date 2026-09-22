@@ -154,6 +154,275 @@ void Write32(std::uint8_t* p, std::uint32_t value) {
     p[3] = static_cast<std::uint8_t>(value >> 24);
 }
 
+// Android PvZ2 1.5.252752 PTX format 0x93 stores the RGB plane as ETC1 and
+// the alpha plane separately as 8-bit GL_ALPHA. Our host context is GLES2 on
+// iOS, where GL_ETC1_RGB8_OES is not accepted. Decode only the ETC1 RGB plane
+// here; the existing guest upload keeps the independent alpha plane unchanged.
+constexpr GLenum kPvZ2Etc1Rgb8Oes = 0x8d64u;
+
+constexpr std::int32_t kEtc1Modifiers[8][4] = {
+    {  2,   8,   -2,   -8},
+    {  5,  17,   -5,  -17},
+    {  9,  29,   -9,  -29},
+    { 13,  42,  -13,  -42},
+    { 18,  60,  -18,  -60},
+    { 24,  80,  -24,  -80},
+    { 33, 106,  -33, -106},
+    { 47, 183,  -47, -183},
+};
+
+std::uint32_t Read32BigEndian(
+    const std::uint8_t* p) {
+
+    return
+        static_cast<std::uint32_t>(p[0]) << 24u |
+        static_cast<std::uint32_t>(p[1]) << 16u |
+        static_cast<std::uint32_t>(p[2]) << 8u |
+        static_cast<std::uint32_t>(p[3]);
+}
+
+std::int32_t Etc1Signed3(
+    std::uint32_t value) {
+
+    value &= 7u;
+    return
+        (value & 4u) != 0u
+            ? static_cast<std::int32_t>(value) - 8
+            : static_cast<std::int32_t>(value);
+}
+
+std::uint8_t Etc1Expand4(
+    std::uint32_t value) {
+
+    value &= 0x0fu;
+    return static_cast<std::uint8_t>(
+        (value << 4u) | value);
+}
+
+std::uint8_t Etc1Expand5(
+    std::int32_t value) {
+
+    value =
+        std::clamp<std::int32_t>(
+            value,
+            0,
+            31);
+
+    return static_cast<std::uint8_t>(
+        (static_cast<std::uint32_t>(value) << 3u) |
+        (static_cast<std::uint32_t>(value) >> 2u));
+}
+
+std::uint8_t Etc1Clamp8(
+    std::int32_t value) {
+
+    return static_cast<std::uint8_t>(
+        std::clamp<std::int32_t>(
+            value,
+            0,
+            255));
+}
+
+bool DecodeEtc1Rgb(
+    const void* compressed_data,
+    std::size_t compressed_size,
+    GLsizei width,
+    GLsizei height,
+    std::vector<std::uint8_t>& rgb) {
+
+    if (compressed_data == nullptr ||
+        width <= 0 ||
+        height <= 0) {
+        return false;
+    }
+
+    const std::size_t blocks_x =
+        (static_cast<std::size_t>(width) + 3u) / 4u;
+    const std::size_t blocks_y =
+        (static_cast<std::size_t>(height) + 3u) / 4u;
+
+    if (blocks_x >
+            std::numeric_limits<std::size_t>::max() /
+                std::max<std::size_t>(blocks_y, 1u) ||
+        blocks_x * blocks_y >
+            std::numeric_limits<std::size_t>::max() / 8u) {
+        return false;
+    }
+
+    const std::size_t expected =
+        blocks_x * blocks_y * 8u;
+
+    if (compressed_size < expected) {
+        return false;
+    }
+
+    const std::size_t pixel_count =
+        static_cast<std::size_t>(width) *
+        static_cast<std::size_t>(height);
+
+    if (pixel_count >
+        std::numeric_limits<std::size_t>::max() / 3u) {
+        return false;
+    }
+
+    rgb.assign(pixel_count * 3u, 0u);
+
+    const auto* source =
+        static_cast<const std::uint8_t*>(
+            compressed_data);
+
+    for (std::size_t by = 0u;
+         by < blocks_y;
+         ++by) {
+        for (std::size_t bx = 0u;
+             bx < blocks_x;
+             ++bx) {
+
+            const std::uint8_t* block =
+                source +
+                (by * blocks_x + bx) * 8u;
+
+            const std::uint32_t high =
+                Read32BigEndian(block);
+            const std::uint32_t low =
+                Read32BigEndian(block + 4u);
+
+            const bool differential =
+                (high & 0x2u) != 0u;
+            const bool flip =
+                (high & 0x1u) != 0u;
+
+            const std::uint32_t table0 =
+                (high >> 5u) & 7u;
+            const std::uint32_t table1 =
+                (high >> 2u) & 7u;
+
+            std::array<std::uint8_t, 3> color0{};
+            std::array<std::uint8_t, 3> color1{};
+
+            if (differential) {
+                const std::int32_t r0 =
+                    static_cast<std::int32_t>(
+                        (high >> 27u) & 31u);
+                const std::int32_t g0 =
+                    static_cast<std::int32_t>(
+                        (high >> 19u) & 31u);
+                const std::int32_t b0 =
+                    static_cast<std::int32_t>(
+                        (high >> 11u) & 31u);
+
+                const std::int32_t r1 =
+                    r0 + Etc1Signed3(
+                        (high >> 24u) & 7u);
+                const std::int32_t g1 =
+                    g0 + Etc1Signed3(
+                        (high >> 16u) & 7u);
+                const std::int32_t b1 =
+                    b0 + Etc1Signed3(
+                        (high >> 8u) & 7u);
+
+                color0 = {
+                    Etc1Expand5(r0),
+                    Etc1Expand5(g0),
+                    Etc1Expand5(b0)};
+                color1 = {
+                    Etc1Expand5(r1),
+                    Etc1Expand5(g1),
+                    Etc1Expand5(b1)};
+            } else {
+                color0 = {
+                    Etc1Expand4(
+                        (high >> 28u) & 15u),
+                    Etc1Expand4(
+                        (high >> 20u) & 15u),
+                    Etc1Expand4(
+                        (high >> 12u) & 15u)};
+                color1 = {
+                    Etc1Expand4(
+                        (high >> 24u) & 15u),
+                    Etc1Expand4(
+                        (high >> 16u) & 15u),
+                    Etc1Expand4(
+                        (high >> 8u) & 15u)};
+            }
+
+            for (std::size_t y = 0u;
+                 y < 4u;
+                 ++y) {
+                for (std::size_t x = 0u;
+                     x < 4u;
+                     ++x) {
+
+                    const std::size_t dst_x =
+                        bx * 4u + x;
+                    const std::size_t dst_y =
+                        by * 4u + y;
+
+                    if (dst_x >=
+                            static_cast<std::size_t>(width) ||
+                        dst_y >=
+                            static_cast<std::size_t>(height)) {
+                        continue;
+                    }
+
+                    // ETC1 selector bits are column-major within a 4x4 block:
+                    // k = x*4+y, low plane first, high plane at k+16.
+                    const std::uint32_t k =
+                        static_cast<std::uint32_t>(
+                            x * 4u + y);
+                    const std::uint32_t selector =
+                        ((low >> k) & 1u) |
+                        (((low >> (k + 16u)) & 1u)
+                         << 1u);
+
+                    const bool first_partition =
+                        flip
+                            ? y < 2u
+                            : x < 2u;
+
+                    const auto& base =
+                        first_partition
+                            ? color0
+                            : color1;
+                    const std::uint32_t table =
+                        first_partition
+                            ? table0
+                            : table1;
+
+                    const std::int32_t modifier =
+                        kEtc1Modifiers[
+                            table][selector];
+
+                    const std::size_t dst =
+                        (dst_y *
+                             static_cast<std::size_t>(
+                                 width) +
+                         dst_x) *
+                        3u;
+
+                    rgb[dst + 0u] =
+                        Etc1Clamp8(
+                            static_cast<std::int32_t>(
+                                base[0]) +
+                            modifier);
+                    rgb[dst + 1u] =
+                        Etc1Clamp8(
+                            static_cast<std::int32_t>(
+                                base[1]) +
+                            modifier);
+                    rgb[dst + 2u] =
+                        Etc1Clamp8(
+                            static_cast<std::int32_t>(
+                                base[2]) +
+                            modifier);
+                }
+            }
+        }
+    }
+
+    return true;
+}
+
 std::string Join(const std::vector<std::string>& values) {
     std::ostringstream out;
     for (std::size_t i = 0; i < values.size(); ++i) {
@@ -2726,6 +2995,11 @@ public:
     std::uint64_t v70_zlib_no_progress = 0u;
     std::uint64_t v70_zlib_input_bytes = 0u;
     std::uint64_t v70_zlib_output_bytes = 0u;
+
+    std::uint64_t v71_etc1_transcodes = 0u;
+    std::uint64_t v71_etc1_compressed_bytes = 0u;
+    std::uint64_t v71_etc1_decoded_bytes = 0u;
+    std::uint64_t v71_etc1_decode_failures = 0u;
 
     std::string V46KnownCodeLabel(
         std::uint32_t offset) const {
@@ -5594,14 +5868,23 @@ public:
             return "V69_TASKRESOURCE_LIFECYCLE";
         case PvZ2DiagnosticMode::V70ZlibStreamOwnership:
             return "V70_ZLIB_STREAM_OWNERSHIP";
+        case PvZ2DiagnosticMode::V71Etc1TextureBridge:
+            return "V71_ETC1_TEXTURE_BRIDGE";
         }
         return "UNKNOWN";
+    }
+
+    bool V71Enabled() const {
+        return
+            diagnostic_mode ==
+                PvZ2DiagnosticMode::V71Etc1TextureBridge;
     }
 
     bool V70Enabled() const {
         return
             diagnostic_mode ==
-                PvZ2DiagnosticMode::V70ZlibStreamOwnership;
+                PvZ2DiagnosticMode::V70ZlibStreamOwnership ||
+            V71Enabled();
     }
 
     bool V69Enabled() const {
@@ -21478,6 +21761,25 @@ public:
                     name == "glCompressedTexImage2D") {
 
                     ++gles_texture_uploads;
+
+                    const GLenum target =
+                        static_cast<GLenum>(
+                            guest_arg(0u));
+                    const GLint level =
+                        static_cast<GLint>(
+                            guest_arg(1u));
+                    const GLenum internal_format =
+                        static_cast<GLenum>(
+                            guest_arg(2u));
+                    const GLsizei width =
+                        static_cast<GLsizei>(
+                            guest_arg(3u));
+                    const GLsizei height =
+                        static_cast<GLsizei>(
+                            guest_arg(4u));
+                    const GLint border =
+                        static_cast<GLint>(
+                            guest_arg(5u));
                     const GLsizei image_size =
                         static_cast<GLsizei>(
                             guest_arg(6u));
@@ -21494,21 +21796,149 @@ public:
                                       : 1u)
                             : nullptr;
 
-                    glCompressedTexImage2D(
-                        static_cast<GLenum>(
-                            guest_arg(0u)),
-                        static_cast<GLint>(
-                            guest_arg(1u)),
-                        static_cast<GLenum>(
-                            guest_arg(2u)),
-                        static_cast<GLsizei>(
-                            guest_arg(3u)),
-                        static_cast<GLsizei>(
-                            guest_arg(4u)),
-                        static_cast<GLint>(
-                            guest_arg(5u)),
-                        image_size,
-                        data);
+                    GLuint bound_texture = 0u;
+
+                    if (gles_active_texture_unit >=
+                        GL_TEXTURE0) {
+                        const std::uint32_t unit =
+                            static_cast<std::uint32_t>(
+                                gles_active_texture_unit -
+                                GL_TEXTURE0);
+
+                        if (unit <
+                            gles_bound_texture_2d.size()) {
+                            bound_texture =
+                                gles_bound_texture_2d[unit];
+                        }
+                    }
+
+                    if (V71Enabled() &&
+                        internal_format ==
+                            kPvZ2Etc1Rgb8Oes) {
+
+                        std::vector<std::uint8_t>
+                            decoded_rgb;
+
+                        const bool decoded =
+                            data == nullptr
+                                ? false
+                                : DecodeEtc1Rgb(
+                                      data,
+                                      image_size > 0
+                                          ? static_cast<std::size_t>(
+                                                image_size)
+                                          : 0u,
+                                      width,
+                                      height,
+                                      decoded_rgb);
+
+                        if (data == nullptr) {
+                            glTexImage2D(
+                                target,
+                                level,
+                                GL_RGB,
+                                width,
+                                height,
+                                border,
+                                GL_RGB,
+                                GL_UNSIGNED_BYTE,
+                                nullptr);
+                        } else if (decoded) {
+                            glTexImage2D(
+                                target,
+                                level,
+                                GL_RGB,
+                                width,
+                                height,
+                                border,
+                                GL_RGB,
+                                GL_UNSIGNED_BYTE,
+                                decoded_rgb.data());
+
+                            ++v71_etc1_transcodes;
+                            v71_etc1_compressed_bytes +=
+                                static_cast<std::uint64_t>(
+                                    std::max<GLsizei>(
+                                        image_size,
+                                        0));
+                            v71_etc1_decoded_bytes +=
+                                static_cast<std::uint64_t>(
+                                    decoded_rgb.size());
+
+                            Append(
+                                "V71 ETC1 TRANSCODE #" +
+                                std::to_string(
+                                    v71_etc1_transcodes) +
+                                " tex=" +
+                                std::to_string(
+                                    bound_texture) +
+                                " size=" +
+                                std::to_string(width) +
+                                "x" +
+                                std::to_string(height) +
+                                " compressed=" +
+                                std::to_string(
+                                    image_size) +
+                                " decodedRGB=" +
+                                std::to_string(
+                                    decoded_rgb.size()) +
+                                " format=0x8d64 -> GL_RGB8");
+                        } else {
+                            ++v71_etc1_decode_failures;
+
+                            Append(
+                                "V71 ETC1 DECODE FAILURE #" +
+                                std::to_string(
+                                    v71_etc1_decode_failures) +
+                                " tex=" +
+                                std::to_string(
+                                    bound_texture) +
+                                " size=" +
+                                std::to_string(width) +
+                                "x" +
+                                std::to_string(height) +
+                                " compressed=" +
+                                std::to_string(
+                                    image_size));
+
+                            // Keep a valid host texture object without
+                            // fabricating guest pixels. The failure remains
+                            // visible in the v71 diagnostics.
+                            glTexImage2D(
+                                target,
+                                level,
+                                GL_RGB,
+                                width,
+                                height,
+                                border,
+                                GL_RGB,
+                                GL_UNSIGNED_BYTE,
+                                nullptr);
+                        }
+
+                        if (bound_texture != 0u) {
+                            gles_texture_info[
+                                bound_texture] =
+                                V42TextureInfo{
+                                    width,
+                                    height,
+                                    GL_RGB,
+                                    GL_UNSIGNED_BYTE,
+                                    data == nullptr ||
+                                    decoded};
+                        }
+                    } else {
+                        glCompressedTexImage2D(
+                            target,
+                            level,
+                            internal_format,
+                            width,
+                            height,
+                            border,
+                            image_size,
+                            data);
+                    }
+
                     regs[0] = 0u;
                 } else if (
                     name == "glBindFramebuffer" ||
@@ -24220,7 +24650,11 @@ bool JniProbePrepareRuntime(
     }
     if (callbacks.V70Enabled()) {
         callbacks.Append(
-            "V70 ZLIB STREAM OWNERSHIP: v69 proves TaskResource reaches start, completed-ready and finalizer normally. Static ARM correlation identifies Task A as the ResStreams inflate worker. The previous host bridge copied an initialized z_stream, invalidating zlib's internal state->strm backlink and causing inflate to return Z_STREAM_ERROR. v70 initializes each host z_stream directly inside its stable map node and samples real decompression progress. No guest stream result is forced.");
+            "V70 ZLIB STREAM OWNERSHIP: v69 proves TaskResource reaches start, completed-ready and finalizer normally. Static ARM correlation identifies Task A as the ResStreams inflate worker. Host z_stream objects stay at a stable address for their initialized lifetime and real decompression progress is sampled. No guest stream result is forced.");
+    }
+    if (callbacks.V71Enabled()) {
+        callbacks.Append(
+            "V71 ETC1 TEXTURE BRIDGE: v70 reached 120 returned frames with completed startup groups, but Android colorType 36196 (GL_ETC1_RGB8_OES / 0x8d64) produced GL_INVALID_ENUM on the iOS GLES2 host and every captured FBO stayed black. v71 software-decodes the ETC1 RGB plane to GL_RGB/UNSIGNED_BYTE while leaving PvZ2's separate 8-bit alpha texture and shader composition untouched. The decoder was validated against the project PTX+PNG first-frame reference pairs; no GameState or resource readiness is forced.");
     }
 
     if (callbacks.V64Enabled()) {

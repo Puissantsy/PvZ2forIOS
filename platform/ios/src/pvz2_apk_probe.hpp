@@ -99,6 +99,11 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // objects at a stable address for their entire initialized lifetime instead
     // of copying them after inflateInit_/deflateInit_.
     V70ZlibStreamOwnership = 14u,
+
+    // v71: the Android PTX RGB plane is ETC1 (GL_ETC1_RGB8_OES). iOS GLES2
+    // rejects that Android-only compressed upload, so decode ETC1 to host RGB8
+    // while preserving PvZ2's separate alpha texture and shader path.
+    V71Etc1TextureBridge = 15u,
 };
 
 struct PvZ2JniProbeResult {

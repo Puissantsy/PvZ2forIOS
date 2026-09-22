@@ -318,7 +318,7 @@ NSString *NSStringFromStd(
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — v70 Zlib Stream Ownership";
+        @"PvZ2forIOS — v71 ETC1 Texture Bridge";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -327,7 +327,7 @@ NSString *NSStringFromStd(
         NO;
 
     title.text =
-        @"PvZ2forIOS — v70 Zlib Stream Ownership";
+        @"PvZ2forIOS — v71 ETC1 Texture Bridge";
 
     title.font =
         [UIFont
@@ -343,7 +343,7 @@ NSString *NSStringFromStd(
         NO;
 
     explanation.text =
-        @"v70 follows the v69 lifecycle proof: TaskResource itself reaches start → completed-ready → finalizer, while the repeating Task-A jobs map to ResStreams inflate. The host zlib bridge previously copied an initialized z_stream, breaking zlib's internal stream backlink. v70 keeps every host z_stream at a stable address and samples real decompression progress; no guest result, GameState or resource is forced.";
+        @"v71 builds on the successful v70 zlib fix. v70 now returns real frames and completes the startup groups, but Android ETC1 uploads (GL_ETC1_RGB8_OES / 0x8D64) are rejected by the iOS GLES2 host, leaving both render targets black. v71 decodes ETC1 RGB in software and keeps PvZ2's separate alpha texture/shader path unchanged. No GameState, resource readiness or render result is forced.";
 
     explanation.numberOfLines = 0;
 
@@ -394,7 +394,7 @@ NSString *NSStringFromStd(
             initWithItems:
                 @[
                     @"V56 Baseline",
-                    @"V70 Zlib ABI",
+                    @"V71 ETC1 Bridge",
                     @"V66 Blocking Waits",
                     @"V65 Cond Scheduler",
                     @"Ctype Deep Scout"
@@ -1037,7 +1037,7 @@ NSString *NSStringFromStd(
     NSArray<NSString *> *modeNames =
         @[
             @"V56_BASELINE",
-            @"V70_ZLIB_STREAM_OWNERSHIP",
+            @"V71_ETC1_TEXTURE_BRIDGE",
             @"V66_BLOCKING_WAIT_SCHEDULER",
             @"V65_CONDITION_VARIABLE_SCHEDULER",
             @"CTYPE_COMPAT_DEEP_SCOUT"
@@ -1056,7 +1056,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. mode=%@. V70 keeps the validated v69 lifecycle instrumentation, fixes host z_stream ownership in place, and samples inflate/deflate progress. It does not force guest readiness, counters, GameState or resources.",
+                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. mode=%@. V71 keeps the validated v70 zlib ownership fix and transcodes Android ETC1 color textures to host RGB8 while preserving the separate alpha plane. It does not force guest readiness, counters, GameState or resources.",
                     modeNames[modeIndex]]];
 
     [self
@@ -1121,9 +1121,9 @@ NSString *NSStringFromStd(
 
     if (selectedMode == 1) {
         diagnosticMode =
-            PvZ2DiagnosticMode::V70ZlibStreamOwnership;
+            PvZ2DiagnosticMode::V71Etc1TextureBridge;
         diagnosticModeName =
-            @"V70_ZLIB_STREAM_OWNERSHIP";
+            @"V71_ETC1_TEXTURE_BRIDGE";
     } else if (selectedMode == 2) {
         diagnosticMode =
             PvZ2DiagnosticMode::V66BlockingWaitScheduler;
@@ -1148,7 +1148,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v70 Zlib Stream Ownership Probe started mode=%@; PID=%d ===",
+                    @"=== PvZ2 v71 ETC1 Texture Bridge Probe started mode=%@; PID=%d ===",
                     diagnosticModeName,
                     getpid()]];
 
