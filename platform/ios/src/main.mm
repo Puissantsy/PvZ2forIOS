@@ -394,7 +394,7 @@ bool PvZ2HostKeyboardVisible() {
     self.captionLabel.clipsToBounds =
         YES;
     self.captionLabel.text =
-        @"v74 — starting PvZ2…\nRetina surface + input bridge";
+        @"PvZ2 LIVE — starting…\nRetina + touch + keyboard";
 
     self.stopButton =
         [UIButton
@@ -1048,8 +1048,10 @@ bool PvZ2HostKeyboardVisible() {
         self.captionLabel.text =
             [NSString
                 stringWithFormat:
-                    @"v74 • frame %lu • %@\n2360×1640 native / 1180×820 pt • touch + keyboard",
+                    @"PvZ2 LIVE • frame %lu • %@\n%u×%u framebuffer / 1180×820 pt • touch + keyboard",
                     (unsigned long)frame,
+                    width,
+                    height,
                     self.inputEnabled
                         ? @"TOUCH ENABLED"
                         : @"warming up…"];
@@ -1066,7 +1068,7 @@ bool PvZ2HostKeyboardVisible() {
     self.runFinished = YES;
     self.inputEnabled = NO;
     self.captionLabel.text =
-        message ?: @"v74 LIVE — run finished.";
+        message ?: @"PvZ2 LIVE — run finished.";
     self.stopButton.enabled = YES;
 
     [self.stopButton
@@ -1155,7 +1157,7 @@ bool PvZ2HostKeyboardVisible() {
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — v75 Retina + iPad UI A/B";
+        @"PvZ2forIOS — v76 iOS Scale Contract";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -1164,7 +1166,7 @@ bool PvZ2HostKeyboardVisible() {
         NO;
 
     title.text =
-        @"PvZ2forIOS — v75 Retina + iPad UI A/B";
+        @"PvZ2forIOS — v76 iOS Scale Contract";
 
     title.font =
         [UIFont
@@ -1180,7 +1182,7 @@ bool PvZ2HostKeyboardVisible() {
         NO;
 
     explanation.text =
-        @"v75 keeps the validated v74 Retina/scheduler/zlib/ETC1/touch/keyboard path and adds one isolated A/B mode: use the historical iOS UI_IPAD package instead of Android UI_ANDROID. Inspector v2.2 proved the host surface is already coherent and that the 2210×1536 guest target is created by PvZ2 itself. No GameState, readiness, FBO size or input action is forced.";
+        @"v76 keeps v75 and fixes the next confirmed platform divergence: the historical iOS driver reports that EAGLView supports contentScaleFactor, returns the live factor, applies SetGLViewScaleFactor to the view, then sizes the GLES backing store from the drawable. Our Android bridge previously returned CanSet=false and no-op'd Set. v76 makes that complete scale contract functional while preserving scheduler/zlib/ETC1/UI_IPAD/touch/keyboard behavior.";
 
     explanation.numberOfLines = 0;
 
@@ -1230,18 +1232,19 @@ bool PvZ2HostKeyboardVisible() {
         [[UISegmentedControl alloc]
             initWithItems:
                 @[
-                    @"V56 Baseline",
-                    @"V74 Baseline",
+                    @"V56 Base",
+                    @"V74 Retina",
                     @"V75 iPad UI",
-                    @"V66 Blocking Waits",
-                    @"V65 Cond Scheduler",
-                    @"Ctype Deep Scout"
+                    @"V76 iOS Scale",
+                    @"V66 Waits",
+                    @"V65 Cond",
+                    @"Ctype Scout"
                 ]];
 
     self.diagnosticModeControl.translatesAutoresizingMaskIntoConstraints =
         NO;
     self.diagnosticModeControl.selectedSegmentIndex =
-        2;
+        3;
 
     UIStackView *mainButtons =
         [[UIStackView alloc]
@@ -1877,6 +1880,7 @@ bool PvZ2HostKeyboardVisible() {
             @"V56_BASELINE",
             @"V74_RETINA_INPUT_POLISH",
             @"V75_IPAD_UI_PACKAGE",
+            @"V76_IOS_SCALE_CONTRACT",
             @"V66_BLOCKING_WAIT_SCHEDULER",
             @"V65_CONDITION_VARIABLE_SCHEDULER",
             @"CTYPE_COMPAT_DEEP_SCOUT"
@@ -1895,7 +1899,7 @@ bool PvZ2HostKeyboardVisible() {
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. mode=%@. V74 is the unchanged Retina/input control. V75 inherits it and changes only the single UI package ID from UI_ANDROID to UI_IPAD before constructors, matching the historical iOS platform selection.",
+                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. mode=%@. V76 inherits V75 and additionally reproduces the historical iOS EAGLView contentScaleFactor contract, including in-place host drawable resizing.",
                     modeNames[modeIndex]]];
 
     [self
@@ -1970,15 +1974,20 @@ bool PvZ2HostKeyboardVisible() {
             @"V75_IPAD_UI_PACKAGE";
     } else if (selectedMode == 3) {
         diagnosticMode =
+            PvZ2DiagnosticMode::V76IosScaleContract;
+        diagnosticModeName =
+            @"V76_IOS_SCALE_CONTRACT";
+    } else if (selectedMode == 4) {
+        diagnosticMode =
             PvZ2DiagnosticMode::V66BlockingWaitScheduler;
         diagnosticModeName =
             @"V66_BLOCKING_WAIT_SCHEDULER";
-    } else if (selectedMode == 4) {
+    } else if (selectedMode == 5) {
         diagnosticMode =
             PvZ2DiagnosticMode::V65ConditionVariableScheduler;
         diagnosticModeName =
             @"V65_CONDITION_VARIABLE_SCHEDULER";
-    } else if (selectedMode == 5) {
+    } else if (selectedMode == 6) {
         diagnosticMode =
             PvZ2DiagnosticMode::CtypeCompatDeepScout;
         diagnosticModeName =
@@ -1992,7 +2001,7 @@ bool PvZ2HostKeyboardVisible() {
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v75 Retina + iPad UI A/B Probe started mode=%@; PID=%d ===",
+                    @"=== PvZ2 v76 iOS Scale Contract Probe started mode=%@; PID=%d ===",
                     diagnosticModeName,
                     getpid()]];
 
@@ -2004,7 +2013,9 @@ bool PvZ2HostKeyboardVisible() {
     if ((diagnosticMode ==
          PvZ2DiagnosticMode::V74RetinaInputPolish ||
      diagnosticMode ==
-         PvZ2DiagnosticMode::V75IpadUiPackage)) {
+         PvZ2DiagnosticMode::V75IpadUiPackage ||
+     diagnosticMode ==
+         PvZ2DiagnosticMode::V76IosScaleContract)) {
 
         PvZ2ResetInteractiveInput();
         gPvZ2KeyboardHostReady.store(
@@ -2121,7 +2132,9 @@ bool PvZ2HostKeyboardVisible() {
                         if ((diagnosticMode ==
                                  PvZ2DiagnosticMode::V74RetinaInputPolish ||
                              diagnosticMode ==
-                                 PvZ2DiagnosticMode::V75IpadUiPackage) &&
+                                 PvZ2DiagnosticMode::V75IpadUiPackage ||
+                             diagnosticMode ==
+                                 PvZ2DiagnosticMode::V76IosScaleContract) &&
                             selfRef.liveController != nil) {
 
                             [selfRef.liveController
@@ -2140,7 +2153,9 @@ bool PvZ2HostKeyboardVisible() {
             if ((diagnosticMode ==
                  PvZ2DiagnosticMode::V74RetinaInputPolish ||
              diagnosticMode ==
-                 PvZ2DiagnosticMode::V75IpadUiPackage)) {
+                 PvZ2DiagnosticMode::V75IpadUiPackage ||
+             diagnosticMode ==
+                 PvZ2DiagnosticMode::V76IosScaleContract)) {
 
                 liveFrameCallback =
                     [](
@@ -2384,19 +2399,21 @@ bool PvZ2HostKeyboardVisible() {
                     if (result.ok) {
                         [selfRef
                             appendUI:
-                                @"SUCCESS STEP 3: PvZ2 completed the selected diagnostic run. V74 remains the control; V75 changes only UI_ANDROID → UI_IPAD on top of the same Retina/scheduler/zlib/ETC1/touch/keyboard path."];
+                                @"SUCCESS STEP 3: PvZ2 completed the selected run. V76 adds the historical iOS GL-view contentScaleFactor/backing-store contract on top of the validated v75 path."];
 
                         if ((diagnosticMode ==
                                  PvZ2DiagnosticMode::V74RetinaInputPolish ||
                              diagnosticMode ==
-                                 PvZ2DiagnosticMode::V75IpadUiPackage) &&
+                                 PvZ2DiagnosticMode::V75IpadUiPackage ||
+                             diagnosticMode ==
+                                 PvZ2DiagnosticMode::V76IosScaleContract) &&
                             selfRef.liveController != nil) {
 
                             [selfRef.liveController
                                 finishRunWithMessage:
                                     [NSString
                                         stringWithFormat:
-                                            @"v74/v75 LIVE — run finished after %u guest frames.\nClose to inspect the log. V75 UI-package selection is recorded by V50/V75 markers.",
+                                            @"PvZ2 LIVE — run finished after %u guest frames.\nClose to inspect the log. V76 scale requests/resizes are recorded by V76 markers.",
                                             result.draw_frames_completed]];
 
                         } else if (!result.final_frame_png_path.empty()) {
@@ -2448,14 +2465,16 @@ bool PvZ2HostKeyboardVisible() {
                         if ((diagnosticMode ==
                                  PvZ2DiagnosticMode::V74RetinaInputPolish ||
                              diagnosticMode ==
-                                 PvZ2DiagnosticMode::V75IpadUiPackage) &&
+                                 PvZ2DiagnosticMode::V75IpadUiPackage ||
+                             diagnosticMode ==
+                                 PvZ2DiagnosticMode::V76IosScaleContract) &&
                             selfRef.liveController != nil) {
 
                             [selfRef.liveController
                                 finishRunWithMessage:
                                     [NSString
                                         stringWithFormat:
-                                            @"v74/v75 LIVE — guest run stopped.\n%@\nClose to inspect the full log.",
+                                            @"PvZ2 LIVE — guest run stopped.\n%@\nClose to inspect the full log.",
                                             message]];
 
                         } else {

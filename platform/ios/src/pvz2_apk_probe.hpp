@@ -167,6 +167,14 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // behavior and change only this one package-selection literal for a clean
     // causal A/B test of the oversized/cropped UI.
     V75IpadUiPackage = 19u,
+
+    // v76: preserve v75, but replace the synthetic Android GL-view-scale
+    // contract with the behavior statically confirmed in the historical
+    // iOS 1.5 binary. EAGLView responds to contentScaleFactor, Get returns
+    // that property, Set writes it, and the renderer then sizes its backing
+    // store from the drawable. The host FBO is resized in-place to keep the
+    // same framebuffer identity while matching the guest-requested scale.
+    V76IosScaleContract = 20u,
 };
 
 struct PvZ2JniProbeResult {

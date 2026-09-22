@@ -8,6 +8,12 @@ extern "C" {
 #endif
 
 bool PvZ2HostGLESBegin(std::uint32_t width, std::uint32_t height);
+
+// v76: resize the existing offscreen default framebuffer in-place. The FBO,
+// texture and renderbuffer object IDs are preserved so guest<->host GLES
+// mappings remain valid across a GL-view scale-factor change.
+bool PvZ2HostGLESResize(std::uint32_t width, std::uint32_t height);
+
 std::uint32_t PvZ2HostGLESDefaultFramebuffer(void);
 const char* PvZ2HostGLESCapturePNG(void);
 const char* PvZ2HostGLESFrameStats(void);

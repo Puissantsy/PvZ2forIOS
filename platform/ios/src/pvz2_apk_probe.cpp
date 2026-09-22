@@ -3007,6 +3007,16 @@ public:
     // v56 Diagnostic Matrix state.
     PvZ2DiagnosticMode diagnostic_mode =
         PvZ2DiagnosticMode::PassiveRegistry;
+
+    // v76 iOS GL-view-scale contract. The historical iOS driver stores the
+    // scale on EAGLView.contentScaleFactor. Start at Android's old synthetic
+    // 1.0 and let the guest choose the actual value through Set.
+    std::uint32_t v76_gl_view_scale_factor_bits = 0x3f800000u;
+    bool v76_gl_view_scale_set = false;
+    std::uint32_t v76_scale_can_calls = 0u;
+    std::uint32_t v76_scale_get_calls = 0u;
+    std::uint32_t v76_scale_set_calls = 0u;
+
     std::uint32_t v56_resource_manager = 0u;
     std::uint64_t v56_registry_pipeline_calls = 0u;
     std::uint64_t v56_registry_pipeline_returns = 0u;
@@ -5979,14 +5989,23 @@ public:
             return "V74_RETINA_INPUT_POLISH";
         case PvZ2DiagnosticMode::V75IpadUiPackage:
             return "V75_IPAD_UI_PACKAGE";
+        case PvZ2DiagnosticMode::V76IosScaleContract:
+            return "V76_IOS_SCALE_CONTRACT";
         }
         return "UNKNOWN";
+    }
+
+    bool V76Enabled() const {
+        return
+            diagnostic_mode ==
+                PvZ2DiagnosticMode::V76IosScaleContract;
     }
 
     bool V75Enabled() const {
         return
             diagnostic_mode ==
-                PvZ2DiagnosticMode::V75IpadUiPackage;
+                PvZ2DiagnosticMode::V75IpadUiPackage ||
+            V76Enabled();
     }
 
     bool V74Enabled() const {
@@ -13471,19 +13490,39 @@ public:
                             length_it->second >= 2u &&
                             data_it->second != 0u) {
 
-                            // iPad 10th-generation native pixel resolution in
-                            // the current landscape orientation.
+                            const std::uint32_t pixels_w =
+                                V76Enabled() &&
+                                v76_gl_view_scale_set
+                                    ? host_surface_width
+                                    : 2360u;
+                            const std::uint32_t pixels_h =
+                                V76Enabled() &&
+                                v76_gl_view_scale_set
+                                    ? host_surface_height
+                                    : 1640u;
+
                             mem.Write32Guest(
                                 data_it->second + 0u,
-                                2360u);
+                                pixels_w);
                             mem.Write32Guest(
                                 data_it->second + 4u,
-                                1640u);
+                                pixels_h);
                         }
 
                         regs[0] = 0u;
                         Append(
-                            "JNI bridge: Graphics_GetScreenSizeInPixels -> 2360x1640");
+                            "JNI bridge: Graphics_GetScreenSizeInPixels -> " +
+                            std::to_string(
+                                V76Enabled() &&
+                                v76_gl_view_scale_set
+                                    ? host_surface_width
+                                    : 2360u) +
+                            "x" +
+                            std::to_string(
+                                V76Enabled() &&
+                                v76_gl_view_scale_set
+                                    ? host_surface_height
+                                    : 1640u));
                         return true;
                     }
 
@@ -14114,12 +14153,23 @@ public:
                         method_name ==
                             "Graphics_CanSetGLViewScaleFactor") {
 
-                        // The probe does not expose a real Android GLSurfaceView
-                        // scaling control. Reporting false avoids asking Java
-                        // to mutate a view that does not exist on iOS.
-                        regs[0] = 0u;
-                        Append(
-                            "JNI bridge: Graphics_CanSetGLViewScaleFactor -> false");
+                        ++v76_scale_can_calls;
+
+                        if (V76Enabled()) {
+                            // Exact historical iOS semantic at ~0x00590010:
+                            // [EAGLView respondsToSelector:@selector(contentScaleFactor)].
+                            // EAGLView is a UIView and supports the property.
+                            regs[0] = 1u;
+                            Append(
+                                "V76 JNI Graphics_CanSetGLViewScaleFactor call#" +
+                                std::to_string(
+                                    v76_scale_can_calls) +
+                                " -> true (iOS EAGLView contentScaleFactor supported)");
+                        } else {
+                            regs[0] = 0u;
+                            Append(
+                                "JNI bridge: Graphics_CanSetGLViewScaleFactor -> false");
+                        }
                         return true;
                     }
 
@@ -14157,9 +14207,32 @@ public:
                         method_name ==
                             "Graphics_GetGLViewScaleFactor") {
 
-                        regs[0] = 0x3f800000u; // 1.0f
+                        ++v76_scale_get_calls;
+
+                        regs[0] =
+                            V76Enabled()
+                                ? v76_gl_view_scale_factor_bits
+                                : 0x3f800000u;
+
+                        float value = 1.0f;
+                        std::uint32_t value_bits = regs[0];
+                        std::memcpy(
+                            &value,
+                            &value_bits,
+                            sizeof(value));
+
                         Append(
-                            "JNI bridge: Graphics_GetGLViewScaleFactor -> 1.0");
+                            std::string{
+                                V76Enabled()
+                                    ? "V76"
+                                    : "JNI bridge:"} +
+                            " Graphics_GetGLViewScaleFactor call#" +
+                            std::to_string(
+                                v76_scale_get_calls) +
+                            " -> " +
+                            std::to_string(value) +
+                            " bits=0x" +
+                            JniProbeHex(value_bits));
                         return true;
                     }
 
@@ -14541,6 +14614,85 @@ public:
                             "removeScheduledNotificationsBySource",
                             "UI_DidRecieveFocus"
                         };
+
+                    if (family == 9 &&
+                        method_name ==
+                            "Graphics_SetGLViewScaleFactor" &&
+                        V76Enabled()) {
+
+                        ++v76_scale_set_calls;
+
+                        const std::uint32_t bits =
+                            java_arg_word(0u);
+                        float scale = 0.0f;
+                        std::memcpy(
+                            &scale,
+                            &bits,
+                            sizeof(scale));
+
+                        const bool valid =
+                            std::isfinite(scale) &&
+                            scale >= 0.5f &&
+                            scale <= 4.0f;
+
+                        bool resized = false;
+                        std::uint32_t target_w =
+                            host_surface_width;
+                        std::uint32_t target_h =
+                            host_surface_height;
+
+                        if (valid) {
+                            v76_gl_view_scale_factor_bits =
+                                bits;
+                            v76_gl_view_scale_set = true;
+
+                            target_w =
+                                static_cast<std::uint32_t>(
+                                    std::lround(
+                                        1180.0 * scale));
+                            target_h =
+                                static_cast<std::uint32_t>(
+                                    std::lround(
+                                        820.0 * scale));
+
+                            if (target_w != 0u &&
+                                target_h != 0u &&
+                                host_gles_ready) {
+
+                                resized =
+                                    PvZ2HostGLESResize(
+                                        target_w,
+                                        target_h);
+
+                                if (resized) {
+                                    host_surface_width =
+                                        target_w;
+                                    host_surface_height =
+                                        target_h;
+                                }
+                            }
+                        }
+
+                        regs[0] = 0u;
+
+                        Append(
+                            "V76 JNI Graphics_SetGLViewScaleFactor call#" +
+                            std::to_string(
+                                v76_scale_set_calls) +
+                            " requested=" +
+                            std::to_string(scale) +
+                            " bits=0x" +
+                            JniProbeHex(bits) +
+                            " valid=" +
+                            (valid ? "YES" : "NO") +
+                            " target=" +
+                            std::to_string(target_w) +
+                            "x" +
+                            std::to_string(target_h) +
+                            " hostResize=" +
+                            (resized ? "YES" : "NO"));
+                        return true;
+                    }
 
                     if (family == 9 &&
                         kV29VoidNoOpMethods.count(
@@ -25171,7 +25323,11 @@ bool JniProbePrepareRuntime(
     }
     if (callbacks.V75Enabled()) {
         callbacks.Append(
-            "V75 IPAD UI PACKAGE A/B: Inspector v2.2 proves host/JNI geometry is coherent (2360x1640 pixels, 1180x820 points) and the guest intentionally renders through a 2210x1536 internal target, while RESFILE_PACKAGES_UI_ANDROID is selected and UI_IPAD is not. v75 keeps v74 rendering/input/scheduler behavior byte-for-byte except for replacing the single libPVZ2.so UI_ANDROID resource-ID literal with UI_IPAD before constructors run. No GameState, readiness, FBO size, touch or keyboard action is forced.");
+            "V75 IPAD UI PACKAGE A/B: Inspector v2.2 proves host/JNI geometry is coherent (2360x1640 pixels, 1180x820 points) and the guest intentionally renders through a 2210x1536 internal target, while RESFILE_PACKAGES_UI_ANDROID is selected and UI_IPAD is not. v75 keeps v74 rendering/input/scheduler behavior byte-for-byte except for replacing the single libPVZ2.so UI_ANDROID resource-ID literal with UI_IPAD before constructors run.");
+    }
+    if (callbacks.V76Enabled()) {
+        callbacks.Append(
+            "V76 IOS SCALE CONTRACT: the decrypted iOS 1.5 binary proves CanSetGLViewScaleFactor is respondsToSelector(contentScaleFactor), Get returns EAGLView.contentScaleFactor, Set calls setContentScaleFactor:, and ES2Renderer.resizeFromLayer sizes backingWidth/backingHeight from renderbufferStorage:fromDrawable:. v76 makes that whole class functional and resizes the existing host FBO in-place when the guest changes the view scale. UI_IPAD from v75 is retained; GameState/readiness/input remain native.");
     }
 
     if (callbacks.V64Enabled()) {

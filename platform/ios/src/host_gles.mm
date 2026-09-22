@@ -158,6 +158,107 @@ extern "C" bool PvZ2HostGLESBegin(
     return true;
 }
 
+extern "C" bool PvZ2HostGLESResize(
+    std::uint32_t width,
+    std::uint32_t height) {
+
+    if (gContext == nil ||
+        gFramebuffer == 0u ||
+        gColorTexture == 0u ||
+        gDepthRenderbuffer == 0u ||
+        width == 0u ||
+        height == 0u ||
+        width > 4096u ||
+        height > 4096u ||
+        ![EAGLContext setCurrentContext:gContext]) {
+        return false;
+    }
+
+    if (gWidth == width &&
+        gHeight == height) {
+        return true;
+    }
+
+    GLint previous_framebuffer = 0;
+    GLint previous_texture = 0;
+    GLint previous_renderbuffer = 0;
+
+    glGetIntegerv(
+        GL_FRAMEBUFFER_BINDING,
+        &previous_framebuffer);
+    glGetIntegerv(
+        GL_TEXTURE_BINDING_2D,
+        &previous_texture);
+    glGetIntegerv(
+        GL_RENDERBUFFER_BINDING,
+        &previous_renderbuffer);
+
+    glBindTexture(
+        GL_TEXTURE_2D,
+        gColorTexture);
+    glTexImage2D(
+        GL_TEXTURE_2D,
+        0,
+        GL_RGBA,
+        static_cast<GLsizei>(width),
+        static_cast<GLsizei>(height),
+        0,
+        GL_RGBA,
+        GL_UNSIGNED_BYTE,
+        nullptr);
+
+    glBindRenderbuffer(
+        GL_RENDERBUFFER,
+        gDepthRenderbuffer);
+    glRenderbufferStorage(
+        GL_RENDERBUFFER,
+        GL_DEPTH_COMPONENT16,
+        static_cast<GLsizei>(width),
+        static_cast<GLsizei>(height));
+
+    glBindFramebuffer(
+        GL_FRAMEBUFFER,
+        gFramebuffer);
+    glFramebufferTexture2D(
+        GL_FRAMEBUFFER,
+        GL_COLOR_ATTACHMENT0,
+        GL_TEXTURE_2D,
+        gColorTexture,
+        0);
+    glFramebufferRenderbuffer(
+        GL_FRAMEBUFFER,
+        GL_DEPTH_ATTACHMENT,
+        GL_RENDERBUFFER,
+        gDepthRenderbuffer);
+
+    const GLenum status =
+        glCheckFramebufferStatus(
+            GL_FRAMEBUFFER);
+
+    if (status == GL_FRAMEBUFFER_COMPLETE) {
+        gWidth = width;
+        gHeight = height;
+        gLiveReadbackPixels.clear();
+        gLiveDisplayPixels.clear();
+    }
+
+    glBindTexture(
+        GL_TEXTURE_2D,
+        static_cast<GLuint>(
+            previous_texture));
+    glBindRenderbuffer(
+        GL_RENDERBUFFER,
+        static_cast<GLuint>(
+            previous_renderbuffer));
+    glBindFramebuffer(
+        GL_FRAMEBUFFER,
+        static_cast<GLuint>(
+            previous_framebuffer));
+
+    return
+        status == GL_FRAMEBUFFER_COMPLETE;
+}
+
 extern "C" std::uint32_t
 PvZ2HostGLESDefaultFramebuffer(void) {
     return
