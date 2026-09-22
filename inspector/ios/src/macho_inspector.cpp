@@ -29,6 +29,13 @@ std::uint32_t U32(const std::uint8_t* p) {
            (static_cast<std::uint32_t>(p[3]) << 24);
 }
 
+std::uint32_t U32BE(const std::uint8_t* p) {
+    return (static_cast<std::uint32_t>(p[0]) << 24) |
+           (static_cast<std::uint32_t>(p[1]) << 16) |
+           (static_cast<std::uint32_t>(p[2]) << 8) |
+           static_cast<std::uint32_t>(p[3]);
+}
+
 std::string Hex(std::uint32_t v) {
     std::ostringstream s;
     s << "0x" << std::hex << std::setfill('0') << std::setw(8) << v;
@@ -1226,6 +1233,11 @@ PvZ2IpaInspectorResult InspectPvZ2IpaReference(
             "ResourceManager::Init: RSB Initialization failed",
             "MainMenu_Background",
             "EAGLView",
+            "setContentScaleFactor:",
+            "contentScaleFactor",
+            "renderbufferStorage:fromDrawable:",
+            "backingWidth",
+            "backingHeight",
             "ES2Renderer",
             "iPhoneOSAppDriver",
             "SexyApplicationDelegate",
@@ -1234,6 +1246,28 @@ PvZ2IpaInspectorResult InspectPvZ2IpaReference(
         };
 
         std::set<std::string> string_set(strings.begin(), strings.end());
+        std::vector<std::string> ipad_launch_images;
+        for (const auto& e : entries) {
+            const bool ipad_landscape =
+                e.name.find("Landscape") != std::string::npos &&
+                e.name.find("ipad") != std::string::npos &&
+                e.name.size() >= 4u &&
+                e.name.substr(e.name.size() - 4u) == ".png";
+            if (!ipad_landscape) continue;
+            const auto png = Extract(ipa_data, ipa_size, e);
+            if (png.size() < 24u ||
+                png[0] != 0x89u || png[1] != 'P' ||
+                png[2] != 'N' || png[3] != 'G') {
+                continue;
+            }
+            const std::uint32_t width = U32BE(png.data() + 16u);
+            const std::uint32_t height = U32BE(png.data() + 20u);
+            ipad_launch_images.push_back(
+                e.name + " = " +
+                std::to_string(width) + "x" +
+                std::to_string(height));
+        }
+
         std::vector<std::string> found_markers;
         for (const auto& marker : markers) {
             bool found = false;
@@ -1305,6 +1339,31 @@ PvZ2IpaInspectorResult InspectPvZ2IpaReference(
         report << "\nPvZ2 reference markers found\n----------------------------\n";
         for (const auto& marker : found_markers) report << marker << "\n";
 
+        report
+            << "\niOS display / Retina reference evidence\n"
+            << "---------------------------------------\n";
+        for (const auto& line : ipad_launch_images) {
+            report << line << "\n";
+        }
+        report << "EAGLView methods:\n";
+        {
+            std::istringstream methods_stream(objc.methods_csv);
+            std::string line;
+            while (std::getline(methods_stream, line)) {
+                if (line.rfind("EAGLView,", 0u) == 0u) {
+                    report << "  " << line << "\n";
+                }
+            }
+        }
+        report
+            << "Retina selectors/ivars present: "
+            << (string_set.count("setContentScaleFactor:") ? "setContentScaleFactor " : "")
+            << (string_set.count("contentScaleFactor") ? "contentScaleFactor " : "")
+            << (string_set.count("renderbufferStorage:fromDrawable:") ? "renderbufferStorage " : "")
+            << (string_set.count("backingWidth") ? "backingWidth " : "")
+            << (string_set.count("backingHeight") ? "backingHeight" : "")
+            << "\n";
+
         if (!shared_strings.empty()) {
             report
                 << "\nRepresentative Android/iOS shared anchors\n"
@@ -1317,11 +1376,10 @@ PvZ2IpaInspectorResult InspectPvZ2IpaReference(
 
         report
             << "\nNext Inspector v2 stages\n------------------------\n"
-            << "1. Parse Objective-C class/selector/ivar metadata and IMP addresses.\n"
-            << "2. Build string/literal xrefs to ARM functions.\n"
-            << "3. Match Android ELF functions to iOS Mach-O candidates.\n"
-            << "4. Add pthread/ResStreams/frame-loop focused reports.\n"
-            << "5. Parse/diff iOS main.rsb against the Android RSB/OBB.\n";
+            << "1. Build selector/string xrefs from EAGLView IMPs to the exact UIKit scale path.\n"
+            << "2. Match Android display/graphics functions to iOS Mach-O candidates.\n"
+            << "3. Correlate UI package selection with the iOS main.rsb resource graph.\n"
+            << "4. Keep pthread/ResStreams/frame-loop reports as regression guards.\n";
 
         std::ostringstream summary;
         summary

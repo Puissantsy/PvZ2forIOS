@@ -1,5 +1,30 @@
 # PvZ2 Inspector Lab
 
+## Lab v2.2-alpha — v74 Retina / UI-platform diagnosis
+
+v2.2 targets the remaining visual scaling problem after v74 made the host
+surface truly Retina. With a v74 log it now emits:
+
+```
+v74-display-geometry-diagnosis.txt
+v74-display-critical-excerpt.txt
+v75-display-plan.txt
+```
+
+The analyzer reconstructs the advertised pixel/point contract, host FBO,
+distinct guest viewports, guest-created FBO attachment sizes, GL-view scale
+capability and the actually requested UI package. In particular it can
+separate a host-surface problem from a guest-side canonical render target and
+from Android-vs-iPad UI package selection.
+
+The iOS-reference report is also display-aware: it lists historical iPad
+landscape launch-image dimensions, EAGLView Objective-C methods and the
+Retina-related selectors/ivars (contentScaleFactor, renderbufferStorage,
+backingWidth/backingHeight). This is intended to prevent blind scale-factor or
+UI remaps: compare the real iOS 1.5 path first, then run one batched A/B probe.
+
+# PvZ2 Inspector Lab
+
 ## Lab v2.1-alpha — v68 post-LogoScreen TaskResource lifecycle
 
 v2.1 adds a complete-log analyzer for the current v68 run. It scans huge logs for the natural `GAME_LogoScreen` transition, real GLES texture uploads, worker-7 lifetime, pump/TaskResource growth, `IDLE_NOT_STALL` observations and the stable Task A/B substate cycle. It correlates those runtime facts with the already-verified resource worker/pump and TaskResource addresses and emits:

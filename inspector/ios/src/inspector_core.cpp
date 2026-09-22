@@ -1,5 +1,6 @@
 #include "inspector_core.hpp"
 #include "v68_analyzer.hpp"
+#include "v74_display_analyzer.hpp"
 
 #include <zlib.h>
 
@@ -3769,10 +3770,12 @@ PvZ2InspectorResult InspectPvZ2ApkAndLog(
                 v56_profile);
         const PvZ2V68RuntimeAnalysis v68_analysis =
             AnalyzeV68RuntimeLog(log_text);
+        const PvZ2V74DisplayAnalysis v74_display =
+            AnalyzeV74DisplayLog(log_text);
 
         std::ostringstream summary;
         summary
-            << "PvZ2 Inspector Lab v1.4\n"
+            << "PvZ2 Inspector Lab v2.2-alpha\n"
             << "APK bytes: " << apk_size << "\n"
             << "libPVZ2.so bytes: " << result.elf_size << "\n"
             << "mapped image span: " << Hex(result.image_size) << "\n"
@@ -3934,10 +3937,18 @@ PvZ2InspectorResult InspectPvZ2ApkAndLog(
                 << "\n";
         }
 
+        if (v74_display.present) {
+            summary
+                << "v74 display geometry analysis: PRESENT\n";
+        }
+
         result.summary = summary.str();
 
         std::ostringstream report;
         report << result.summary << "\n";
+        if (v74_display.present) {
+            report << v74_display.diagnosis << "\n";
+        }
 
         report << "ELF identity\n"
                << "============\n"
@@ -4363,11 +4374,23 @@ PvZ2InspectorResult InspectPvZ2ApkAndLog(
             v68_analysis.present
                 ? v68_analysis.critical_excerpt
                 : std::string{};
+        result.v74_display_diagnosis =
+            v74_display.present
+                ? v74_display.diagnosis
+                : std::string{};
+        result.v75_display_plan =
+            v74_display.present
+                ? v74_display.next_plan
+                : std::string{};
+        result.v74_display_critical_excerpt =
+            v74_display.present
+                ? v74_display.critical_excerpt
+                : std::string{};
 
         std::ostringstream json;
         json
             << "{\n"
-            << "  \"tool\": \"PvZ2 Inspector Lab v1.4\",\n"
+            << "  \"tool\": \"PvZ2 Inspector Lab v2.2-alpha\",\n"
             << "  \"apkSize\": " << result.apk_size << ",\n"
             << "  \"elfSize\": " << result.elf_size << ",\n"
             << "  \"guestBase\": \"" << Hex(kGuestBase) << "\",\n"
@@ -4381,6 +4404,9 @@ PvZ2InspectorResult InspectPvZ2ApkAndLog(
             << "  \"relocations\": " << result.relocations << ",\n"
             << "  \"sourceLogBytes\": "
             << result.source_log_bytes
+            << ",\n"
+            << "  \"v74DisplayAnalysisPresent\": "
+            << (v74_display.present ? "true" : "false")
             << ",\n"
             << "  \"genericAddressAnalysisBytes\": "
             << result.generic_log_bytes

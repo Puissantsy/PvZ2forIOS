@@ -110,11 +110,11 @@ NSArray<NSURL *> *ExistingReportURLs() {
     [super viewDidLoad];
 
     self.view.backgroundColor = UIColor.systemBackgroundColor;
-    self.title = @"PvZ2 Inspector Lab v2.1-alpha";
+    self.title = @"PvZ2 Inspector Lab v2.2-alpha";
 
     UILabel *title = [[UILabel alloc] init];
     title.translatesAutoresizingMaskIntoConstraints = NO;
-    title.text = @"PvZ2 Inspector Lab v2.1-alpha";
+    title.text = @"PvZ2 Inspector Lab v2.2-alpha";
     title.font = [UIFont boldSystemFontOfSize:27.0];
     title.numberOfLines = 0;
 
@@ -123,8 +123,9 @@ NSArray<NSURL *> *ExistingReportURLs() {
     explanation.numberOfLines = 0;
     explanation.font = [UIFont systemFontOfSize:14.5];
     explanation.text =
-        @"Inspector v2 keeps the complete Android ELF/log analysis from v1.4 "
-         "and adds a static iOS-reference path for the historical PvZ2 IPA. "
+        @"Inspector v2.2 keeps the complete Android ELF/log analysis and "
+         "adds a dedicated v74 display-geometry/UI-platform diagnosis plus "
+         "the static iOS-reference path for the historical PvZ2 IPA. "
          "Select the Android APK, optionally the decrypted iOS 1.5.252123 IPA "
          "and a runtime log. The IPA analyzer discovers the Payload Mach-O, "
          "parses ARMv7 load commands, encryption state, dylibs, segments, "
@@ -512,6 +513,24 @@ didPickDocumentsAtURLs:
                         result.v68_critical_excerpt);
                 }
 
+                if (!result.v74_display_diagnosis.empty()) {
+                    WriteUtf8(
+                        [root stringByAppendingPathComponent:@"v74-display-geometry-diagnosis.txt"],
+                        result.v74_display_diagnosis);
+                }
+
+                if (!result.v75_display_plan.empty()) {
+                    WriteUtf8(
+                        [root stringByAppendingPathComponent:@"v75-display-plan.txt"],
+                        result.v75_display_plan);
+                }
+
+                if (!result.v74_display_critical_excerpt.empty()) {
+                    WriteUtf8(
+                        [root stringByAppendingPathComponent:@"v74-display-critical-excerpt.txt"],
+                        result.v74_display_critical_excerpt);
+                }
+
                 if (ipa.length > 0 && ipaResult.ok) {
                     WriteUtf8(
                         [root stringByAppendingPathComponent:@"ios-reference-report.txt"],
@@ -578,6 +597,9 @@ didPickDocumentsAtURLs:
                              "%@"
                              "%@"
                              "%@"
+                             "%@"
+                             "%@"
+                             "%@"
                              "%@",
                             NSStringFromStd(result.summary),
                             ipa.length == 0
@@ -607,6 +629,15 @@ didPickDocumentsAtURLs:
                             result.critical_log_excerpt.empty()
                                 ? @""
                                 : @"• critical-log-excerpt.txt — compact worker-7/crash/tail evidence from huge logs\n",
+                            result.v74_display_diagnosis.empty()
+                                ? @""
+                                : @"• v74-display-geometry-diagnosis.txt — Retina/FBO/viewport/UI-package root-cause classification\n",
+                            result.v75_display_plan.empty()
+                                ? @""
+                                : @"• v75-display-plan.txt — batched baseline/UI-iPad/scale-reference A/B plan\n",
+                            result.v74_display_critical_excerpt.empty()
+                                ? @""
+                                : @"• v74-display-critical-excerpt.txt — compact geometry and UI-selection evidence\n",
                             (ipa.length > 0 && ipaResult.ok)
                                 ? @"• ios-reference-report.txt — ARMv7 Mach-O/load-command/framework/reference-marker report\n"
                                 : @"",
