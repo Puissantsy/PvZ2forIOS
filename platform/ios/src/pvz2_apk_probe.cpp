@@ -5991,8 +5991,16 @@ public:
             return "V75_IPAD_UI_PACKAGE";
         case PvZ2DiagnosticMode::V76IosScaleContract:
             return "V76_IOS_SCALE_CONTRACT";
+        case PvZ2DiagnosticMode::V77LegacyIpadGeometry:
+            return "V77_LEGACY_IPAD_GEOMETRY";
         }
         return "UNKNOWN";
+    }
+
+    bool V77Enabled() const {
+        return
+            diagnostic_mode ==
+                PvZ2DiagnosticMode::V77LegacyIpadGeometry;
     }
 
     bool V76Enabled() const {
@@ -6005,7 +6013,8 @@ public:
         return
             diagnostic_mode ==
                 PvZ2DiagnosticMode::V75IpadUiPackage ||
-            V76Enabled();
+            V76Enabled() ||
+            V77Enabled();
     }
 
     bool V74Enabled() const {
@@ -13483,23 +13492,27 @@ public:
                         const auto length_it =
                             jni_array_lengths.find(array);
 
+                        const std::uint32_t pixels_w =
+                            V77Enabled()
+                                ? 2048u
+                                : (V76Enabled() &&
+                                   v76_gl_view_scale_set
+                                       ? host_surface_width
+                                       : 2360u);
+                        const std::uint32_t pixels_h =
+                            V77Enabled()
+                                ? 1536u
+                                : (V76Enabled() &&
+                                   v76_gl_view_scale_set
+                                       ? host_surface_height
+                                       : 1640u);
+
                         if (data_it !=
                                 jni_array_data.end() &&
                             length_it !=
                                 jni_array_lengths.end() &&
                             length_it->second >= 2u &&
                             data_it->second != 0u) {
-
-                            const std::uint32_t pixels_w =
-                                V76Enabled() &&
-                                v76_gl_view_scale_set
-                                    ? host_surface_width
-                                    : 2360u;
-                            const std::uint32_t pixels_h =
-                                V76Enabled() &&
-                                v76_gl_view_scale_set
-                                    ? host_surface_height
-                                    : 1640u;
 
                             mem.Write32Guest(
                                 data_it->second + 0u,
@@ -13511,18 +13524,14 @@ public:
 
                         regs[0] = 0u;
                         Append(
-                            "JNI bridge: Graphics_GetScreenSizeInPixels -> " +
-                            std::to_string(
-                                V76Enabled() &&
-                                v76_gl_view_scale_set
-                                    ? host_surface_width
-                                    : 2360u) +
+                            std::string{
+                                V77Enabled()
+                                    ? "V77 JNI bridge: "
+                                    : "JNI bridge: "} +
+                            "Graphics_GetScreenSizeInPixels -> " +
+                            std::to_string(pixels_w) +
                             "x" +
-                            std::to_string(
-                                V76Enabled() &&
-                                v76_gl_view_scale_set
-                                    ? host_surface_height
-                                    : 1640u));
+                            std::to_string(pixels_h));
                         return true;
                     }
 
@@ -14126,6 +14135,15 @@ public:
                         const auto length_it =
                             jni_array_lengths.find(array);
 
+                        const std::uint32_t points_w =
+                            V77Enabled()
+                                ? 1024u
+                                : 1180u;
+                        const std::uint32_t points_h =
+                            V77Enabled()
+                                ? 768u
+                                : 820u;
+
                         if (data_it !=
                                 jni_array_data.end() &&
                             length_it !=
@@ -14133,19 +14151,24 @@ public:
                             length_it->second >= 2u &&
                             data_it->second != 0u) {
 
-                            // iPad 10th-generation logical landscape size:
-                            // 2360x1640 native pixels at a 2x point scale.
                             mem.Write32Guest(
                                 data_it->second + 0u,
-                                1180u);
+                                points_w);
                             mem.Write32Guest(
                                 data_it->second + 4u,
-                                820u);
+                                points_h);
                         }
 
                         regs[0] = 0u;
                         Append(
-                            "JNI bridge: Graphics_GetScreenSizeInPoints -> 1180x820");
+                            std::string{
+                                V77Enabled()
+                                    ? "V77 JNI bridge: "
+                                    : "JNI bridge: "} +
+                            "Graphics_GetScreenSizeInPoints -> " +
+                            std::to_string(points_w) +
+                            "x" +
+                            std::to_string(points_h));
                         return true;
                     }
 
@@ -14165,6 +14188,16 @@ public:
                                 std::to_string(
                                     v76_scale_can_calls) +
                                 " -> true (iOS EAGLView contentScaleFactor supported)");
+                        } else if (V77Enabled()) {
+                            // v76 proved the Android guest does not use the same
+                            // caller-side scale policy as the historical iOS
+                            // executable: it requested 2.000666 and expanded a
+                            // native 2360x1640 surface to 2361x1641. Keep the
+                            // stable Android-side contract disabled in v77 and
+                            // test historical iPad geometry independently.
+                            regs[0] = 0u;
+                            Append(
+                                "V77 JNI Graphics_CanSetGLViewScaleFactor -> false (Android scale path disabled for geometry A/B)");
                         } else {
                             regs[0] = 0u;
                             Append(
@@ -25329,6 +25362,10 @@ bool JniProbePrepareRuntime(
         callbacks.Append(
             "V76 IOS SCALE CONTRACT: the decrypted iOS 1.5 binary proves CanSetGLViewScaleFactor is respondsToSelector(contentScaleFactor), Get returns EAGLView.contentScaleFactor, Set calls setContentScaleFactor:, and ES2Renderer.resizeFromLayer sizes backingWidth/backingHeight from renderbufferStorage:fromDrawable:. v76 makes that whole class functional and resizes the existing host FBO in-place when the guest changes the view scale. UI_IPAD from v75 is retained; GameState/readiness/input remain native.");
     }
+    if (callbacks.V77Enabled()) {
+        callbacks.Append(
+            "V77 LEGACY IPAD GEOMETRY: v76 A/B is rejected for the Android guest after it requested scale=2.000666 and resized 2360x1640 to 2361x1641. v77 restores the stable CanSet=false scale bridge, retains UI_IPAD/touch/keyboard/zlib/ETC1, and exposes the exact historical Retina iPad geometry used by the 1.5 launch assets: 1024x768 points / 2048x1536 pixels. UIKit remains aspect-fit on the modern iPad.");
+    }
 
     if (callbacks.V64Enabled()) {
         callbacks.Append(
@@ -28590,13 +28627,17 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                     kGuestBase + 0x009f190cu;
 
                 callbacks.host_surface_width =
-                    callbacks.V74Enabled()
-                        ? 2360u
-                        : 1180u;
+                    callbacks.V77Enabled()
+                        ? 2048u
+                        : (callbacks.V74Enabled()
+                               ? 2360u
+                               : 1180u);
                 callbacks.host_surface_height =
-                    callbacks.V74Enabled()
-                        ? 1640u
-                        : 820u;
+                    callbacks.V77Enabled()
+                        ? 1536u
+                        : (callbacks.V74Enabled()
+                               ? 1640u
+                               : 820u);
 
                 callbacks.host_gles_ready =
                     PvZ2HostGLESBegin(
@@ -28699,7 +28740,11 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                 // Graphics_GetScreenSizeInPixels (2360x1640) instead of a
                 // half-resolution 1180x820 host FBO.
                 callbacks.Append(
-                    "V74 SURFACE GEOMETRY: calling Native_onSurfaceChanged with native-order height=" +
+                    std::string{
+                        callbacks.V77Enabled()
+                            ? "V77 LEGACY IPAD SURFACE GEOMETRY: "
+                            : "V74 SURFACE GEOMETRY: "} +
+                    "calling Native_onSurfaceChanged with native-order height=" +
                     std::to_string(
                         callbacks.host_surface_height) +
                     " width=" +
@@ -28711,9 +28756,11 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                     "x" +
                     std::to_string(
                         callbacks.host_surface_height) +
-                    (callbacks.V74Enabled()
-                        ? " (Retina native pixels)."
-                        : " (legacy logical surface)."));
+                    (callbacks.V77Enabled()
+                        ? " (historical iPad Retina 4:3)."
+                        : (callbacks.V74Enabled()
+                               ? " (Retina native pixels)."
+                               : " (legacy logical surface).")));
 
                 if (!run_lifecycle(
                         "Native_onSurfaceChanged",
