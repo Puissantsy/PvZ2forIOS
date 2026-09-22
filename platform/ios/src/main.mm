@@ -1157,7 +1157,7 @@ bool PvZ2HostKeyboardVisible() {
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — v76 iOS Scale Contract";
+        @"PvZ2forIOS — v77 Legacy iPad Geometry";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -1166,7 +1166,7 @@ bool PvZ2HostKeyboardVisible() {
         NO;
 
     title.text =
-        @"PvZ2forIOS — v76 iOS Scale Contract";
+        @"PvZ2forIOS — v77 Legacy iPad Geometry";
 
     title.font =
         [UIFont
@@ -1182,7 +1182,7 @@ bool PvZ2HostKeyboardVisible() {
         NO;
 
     explanation.text =
-        @"v76 keeps v75 and fixes the next confirmed platform divergence: the historical iOS driver reports that EAGLView supports contentScaleFactor, returns the live factor, applies SetGLViewScaleFactor to the view, then sizes the GLES backing store from the drawable. Our Android bridge previously returned CanSet=false and no-op'd Set. v76 makes that complete scale contract functional while preserving scheduler/zlib/ETC1/UI_IPAD/touch/keyboard behavior.";
+        @"v76 proved the iOS contentScaleFactor callee contract is not safe to expose directly to the Android guest: it requested 2.000666 and expanded the 2360×1640 host surface to 2361×1641 before the run died after frame 1. v77 restores the stable scale bridge and tests the more fundamental historical-iPad contract instead: UI_IPAD + 1024×768 logical points + 2048×1536 Retina pixels, aspect-fit on the modern iPad. Touch, keyboard, scheduler, zlib and ETC1 behavior are preserved.";
 
     explanation.numberOfLines = 0;
 
@@ -1236,6 +1236,7 @@ bool PvZ2HostKeyboardVisible() {
                     @"V74 Retina",
                     @"V75 iPad UI",
                     @"V76 iOS Scale",
+                    @"V77 Legacy iPad",
                     @"V66 Waits",
                     @"V65 Cond",
                     @"Ctype Scout"
@@ -1244,7 +1245,7 @@ bool PvZ2HostKeyboardVisible() {
     self.diagnosticModeControl.translatesAutoresizingMaskIntoConstraints =
         NO;
     self.diagnosticModeControl.selectedSegmentIndex =
-        3;
+        4;
 
     UIStackView *mainButtons =
         [[UIStackView alloc]
@@ -1881,6 +1882,7 @@ bool PvZ2HostKeyboardVisible() {
             @"V74_RETINA_INPUT_POLISH",
             @"V75_IPAD_UI_PACKAGE",
             @"V76_IOS_SCALE_CONTRACT",
+            @"V77_LEGACY_IPAD_GEOMETRY",
             @"V66_BLOCKING_WAIT_SCHEDULER",
             @"V65_CONDITION_VARIABLE_SCHEDULER",
             @"CTYPE_COMPAT_DEEP_SCOUT"
@@ -1899,7 +1901,7 @@ bool PvZ2HostKeyboardVisible() {
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. mode=%@. V76 inherits V75 and additionally reproduces the historical iOS EAGLView contentScaleFactor contract, including in-place host drawable resizing.",
+                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. mode=%@. V77 is the default: it keeps UI_IPAD but restores the stable Android scale bridge and presents the guest as a historical Retina iPad (1024×768 pt / 2048×1536 px).",
                     modeNames[modeIndex]]];
 
     [self
@@ -1979,15 +1981,20 @@ bool PvZ2HostKeyboardVisible() {
             @"V76_IOS_SCALE_CONTRACT";
     } else if (selectedMode == 4) {
         diagnosticMode =
+            PvZ2DiagnosticMode::V77LegacyIpadGeometry;
+        diagnosticModeName =
+            @"V77_LEGACY_IPAD_GEOMETRY";
+    } else if (selectedMode == 5) {
+        diagnosticMode =
             PvZ2DiagnosticMode::V66BlockingWaitScheduler;
         diagnosticModeName =
             @"V66_BLOCKING_WAIT_SCHEDULER";
-    } else if (selectedMode == 5) {
+    } else if (selectedMode == 6) {
         diagnosticMode =
             PvZ2DiagnosticMode::V65ConditionVariableScheduler;
         diagnosticModeName =
             @"V65_CONDITION_VARIABLE_SCHEDULER";
-    } else if (selectedMode == 6) {
+    } else if (selectedMode == 7) {
         diagnosticMode =
             PvZ2DiagnosticMode::CtypeCompatDeepScout;
         diagnosticModeName =
@@ -2001,7 +2008,7 @@ bool PvZ2HostKeyboardVisible() {
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v76 iOS Scale Contract Probe started mode=%@; PID=%d ===",
+                    @"=== PvZ2 v77 Legacy iPad Geometry Probe started mode=%@; PID=%d ===",
                     diagnosticModeName,
                     getpid()]];
 
@@ -2015,7 +2022,9 @@ bool PvZ2HostKeyboardVisible() {
      diagnosticMode ==
          PvZ2DiagnosticMode::V75IpadUiPackage ||
      diagnosticMode ==
-         PvZ2DiagnosticMode::V76IosScaleContract)) {
+         PvZ2DiagnosticMode::V76IosScaleContract ||
+     diagnosticMode ==
+         PvZ2DiagnosticMode::V77LegacyIpadGeometry)) {
 
         PvZ2ResetInteractiveInput();
         gPvZ2KeyboardHostReady.store(
@@ -2134,7 +2143,9 @@ bool PvZ2HostKeyboardVisible() {
                              diagnosticMode ==
                                  PvZ2DiagnosticMode::V75IpadUiPackage ||
                              diagnosticMode ==
-                                 PvZ2DiagnosticMode::V76IosScaleContract) &&
+                                 PvZ2DiagnosticMode::V76IosScaleContract ||
+                             diagnosticMode ==
+                                 PvZ2DiagnosticMode::V77LegacyIpadGeometry) &&
                             selfRef.liveController != nil) {
 
                             [selfRef.liveController
@@ -2155,7 +2166,9 @@ bool PvZ2HostKeyboardVisible() {
              diagnosticMode ==
                  PvZ2DiagnosticMode::V75IpadUiPackage ||
              diagnosticMode ==
-                 PvZ2DiagnosticMode::V76IosScaleContract)) {
+                 PvZ2DiagnosticMode::V76IosScaleContract ||
+             diagnosticMode ==
+                 PvZ2DiagnosticMode::V77LegacyIpadGeometry)) {
 
                 liveFrameCallback =
                     [](
@@ -2399,21 +2412,23 @@ bool PvZ2HostKeyboardVisible() {
                     if (result.ok) {
                         [selfRef
                             appendUI:
-                                @"SUCCESS STEP 3: PvZ2 completed the selected run. V76 adds the historical iOS GL-view contentScaleFactor/backing-store contract on top of the validated v75 path."];
+                                @"SUCCESS STEP 3: PvZ2 completed the selected run. In V77, the guest used historical Retina-iPad geometry while retaining the validated v75 UI/input/render path."];
 
                         if ((diagnosticMode ==
                                  PvZ2DiagnosticMode::V74RetinaInputPolish ||
                              diagnosticMode ==
                                  PvZ2DiagnosticMode::V75IpadUiPackage ||
                              diagnosticMode ==
-                                 PvZ2DiagnosticMode::V76IosScaleContract) &&
+                                 PvZ2DiagnosticMode::V76IosScaleContract ||
+                             diagnosticMode ==
+                                 PvZ2DiagnosticMode::V77LegacyIpadGeometry) &&
                             selfRef.liveController != nil) {
 
                             [selfRef.liveController
                                 finishRunWithMessage:
                                     [NSString
                                         stringWithFormat:
-                                            @"PvZ2 LIVE — run finished after %u guest frames.\nClose to inspect the log. V76 scale requests/resizes are recorded by V76 markers.",
+                                            @"PvZ2 LIVE — run finished after %u guest frames.\nClose to inspect the log. V77 geometry is recorded by V77 markers.",
                                             result.draw_frames_completed]];
 
                         } else if (!result.final_frame_png_path.empty()) {
@@ -2467,7 +2482,9 @@ bool PvZ2HostKeyboardVisible() {
                              diagnosticMode ==
                                  PvZ2DiagnosticMode::V75IpadUiPackage ||
                              diagnosticMode ==
-                                 PvZ2DiagnosticMode::V76IosScaleContract) &&
+                                 PvZ2DiagnosticMode::V76IosScaleContract ||
+                             diagnosticMode ==
+                                 PvZ2DiagnosticMode::V77LegacyIpadGeometry) &&
                             selfRef.liveController != nil) {
 
                             [selfRef.liveController
