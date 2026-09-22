@@ -93,6 +93,12 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // post-LogoScreen loop to the TaskResource lifecycle. Observe the whole
     // active -> started -> completed -> finalized chain in one bounded probe.
     V69TaskResourceLifecycle = 13u,
+
+    // v70: v69 proves TaskResource itself drains correctly. The remaining
+    // recycled Task-A jobs are the ResStreams inflate path. Keep host z_stream
+    // objects at a stable address for their entire initialized lifetime instead
+    // of copying them after inflateInit_/deflateInit_.
+    V70ZlibStreamOwnership = 14u,
 };
 
 struct PvZ2JniProbeResult {

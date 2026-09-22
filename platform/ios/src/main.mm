@@ -318,7 +318,7 @@ NSString *NSStringFromStd(
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — v69 TaskResource Lifecycle";
+        @"PvZ2forIOS — v70 Zlib Stream Ownership";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -327,7 +327,7 @@ NSString *NSStringFromStd(
         NO;
 
     title.text =
-        @"PvZ2forIOS — v69 TaskResource Lifecycle";
+        @"PvZ2forIOS — v70 Zlib Stream Ownership";
 
     title.font =
         [UIFont
@@ -343,7 +343,7 @@ NSString *NSStringFromStd(
         NO;
 
     explanation.text =
-        @"v69 follows Inspector v2.1: v68 reached GAME_LogoScreen and uploaded real UI_MainMenu/MainMenu_Background textures, then stayed in a non-draining TaskResource lifecycle. This mode observes active → started → completed → finalized edges, the resource-worker event flag and quiet token balance in one bounded probe. No readiness, counter, GameState or resource is forced.";
+        @"v70 follows the v69 lifecycle proof: TaskResource itself reaches start → completed-ready → finalizer, while the repeating Task-A jobs map to ResStreams inflate. The host zlib bridge previously copied an initialized z_stream, breaking zlib's internal stream backlink. v70 keeps every host z_stream at a stable address and samples real decompression progress; no guest result, GameState or resource is forced.";
 
     explanation.numberOfLines = 0;
 
@@ -394,7 +394,7 @@ NSString *NSStringFromStd(
             initWithItems:
                 @[
                     @"V56 Baseline",
-                    @"V69 Task Lifecycle",
+                    @"V70 Zlib ABI",
                     @"V66 Blocking Waits",
                     @"V65 Cond Scheduler",
                     @"Ctype Deep Scout"
@@ -1037,7 +1037,7 @@ NSString *NSStringFromStd(
     NSArray<NSString *> *modeNames =
         @[
             @"V56_BASELINE",
-            @"V69_TASKRESOURCE_LIFECYCLE",
+            @"V70_ZLIB_STREAM_OWNERSHIP",
             @"V66_BLOCKING_WAIT_SCHEDULER",
             @"V65_CONDITION_VARIABLE_SCHEDULER",
             @"CTYPE_COMPAT_DEEP_SCOUT"
@@ -1056,7 +1056,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. mode=%@. V69 keeps the validated v68 token semantics and instruments the complete TaskResource lifecycle plus the resource-worker event flag. It uses bounded/sampled logging and does not force guest readiness, counters, GameState or resources.",
+                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. mode=%@. V70 keeps the validated v69 lifecycle instrumentation, fixes host z_stream ownership in place, and samples inflate/deflate progress. It does not force guest readiness, counters, GameState or resources.",
                     modeNames[modeIndex]]];
 
     [self
@@ -1121,9 +1121,9 @@ NSString *NSStringFromStd(
 
     if (selectedMode == 1) {
         diagnosticMode =
-            PvZ2DiagnosticMode::V69TaskResourceLifecycle;
+            PvZ2DiagnosticMode::V70ZlibStreamOwnership;
         diagnosticModeName =
-            @"V69_TASKRESOURCE_LIFECYCLE";
+            @"V70_ZLIB_STREAM_OWNERSHIP";
     } else if (selectedMode == 2) {
         diagnosticMode =
             PvZ2DiagnosticMode::V66BlockingWaitScheduler;
@@ -1148,7 +1148,7 @@ NSString *NSStringFromStd(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v69 TaskResource Lifecycle Probe started mode=%@; PID=%d ===",
+                    @"=== PvZ2 v70 Zlib Stream Ownership Probe started mode=%@; PID=%d ===",
                     diagnosticModeName,
                     getpid()]];
 

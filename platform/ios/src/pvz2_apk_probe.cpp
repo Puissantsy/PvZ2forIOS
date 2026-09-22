@@ -2718,6 +2718,15 @@ public:
     std::unordered_map<std::uint32_t, z_stream> zstreams;
     std::unordered_map<std::uint32_t, bool> zstream_deflate_mode;
 
+    // v70: zlib keeps an internal state->strm backlink to the exact z_stream
+    // address passed at init. An initialized host z_stream must not be copied.
+    std::uint64_t v70_zlib_init_calls = 0u;
+    std::uint64_t v70_zlib_calls = 0u;
+    std::uint64_t v70_zlib_stream_errors = 0u;
+    std::uint64_t v70_zlib_no_progress = 0u;
+    std::uint64_t v70_zlib_input_bytes = 0u;
+    std::uint64_t v70_zlib_output_bytes = 0u;
+
     std::string V46KnownCodeLabel(
         std::uint32_t offset) const {
 
@@ -4266,7 +4275,8 @@ public:
             kLifecycleSampleLimit =
                 1048576u;
 
-        if (!V69Enabled() ||
+        if (diagnostic_mode !=
+                PvZ2DiagnosticMode::V69TaskResourceLifecycle ||
             current_probe_thread_id != 7u ||
             v69_summary_emitted ||
             v69_active_ready_calls <
@@ -5582,14 +5592,23 @@ public:
             return "V68_COMPLETION_TOKEN_SEMANTICS";
         case PvZ2DiagnosticMode::V69TaskResourceLifecycle:
             return "V69_TASKRESOURCE_LIFECYCLE";
+        case PvZ2DiagnosticMode::V70ZlibStreamOwnership:
+            return "V70_ZLIB_STREAM_OWNERSHIP";
         }
         return "UNKNOWN";
+    }
+
+    bool V70Enabled() const {
+        return
+            diagnostic_mode ==
+                PvZ2DiagnosticMode::V70ZlibStreamOwnership;
     }
 
     bool V69Enabled() const {
         return
             diagnostic_mode ==
-                PvZ2DiagnosticMode::V69TaskResourceLifecycle;
+                PvZ2DiagnosticMode::V69TaskResourceLifecycle ||
+            V70Enabled();
     }
 
     bool V68Enabled() const {
@@ -15751,8 +15770,47 @@ public:
 
             const std::uint32_t guest_stream =
                 regs[0];
+            const bool deflate_mode =
+                name != "inflateInit_";
 
-            z_stream stream{};
+            // zlib's state object remembers the exact z_stream* used by init.
+            // Initialize the map node itself, never a temporary copied later.
+            auto previous =
+                zstreams.find(guest_stream);
+
+            if (previous != zstreams.end()) {
+                const auto mode_it =
+                    zstream_deflate_mode.find(
+                        guest_stream);
+                const bool previous_deflate =
+                    mode_it != zstream_deflate_mode.end() &&
+                    mode_it->second;
+
+                if (previous->second.state != nullptr) {
+                    if (previous_deflate) {
+                        ::deflateEnd(
+                            &previous->second);
+                    } else {
+                        ::inflateEnd(
+                            &previous->second);
+                    }
+                }
+
+                zstreams.erase(previous);
+                zstream_deflate_mode.erase(
+                    guest_stream);
+            }
+
+            auto [stream_it, inserted] =
+                zstreams.try_emplace(
+                    guest_stream);
+            (void)inserted;
+
+            z_stream& stream =
+                stream_it->second;
+            stream =
+                z_stream{};
+
             int status = Z_STREAM_ERROR;
 
             if (name == "deflateInit_") {
@@ -15792,11 +15850,32 @@ public:
             }
 
             if (status == Z_OK) {
-                zstreams[guest_stream] =
-                    stream;
-
                 zstream_deflate_mode[guest_stream] =
-                    name != "inflateInit_";
+                    deflate_mode;
+            } else {
+                if (stream.state != nullptr) {
+                    if (deflate_mode) {
+                        ::deflateEnd(&stream);
+                    } else {
+                        ::inflateEnd(&stream);
+                    }
+                }
+                zstreams.erase(stream_it);
+            }
+
+            if (V70Enabled()) {
+                ++v70_zlib_init_calls;
+                Append(
+                    "V70 ZLIB INIT #" +
+                    std::to_string(
+                        v70_zlib_init_calls) +
+                    " api=" + name +
+                    " guestStream=" +
+                    V46DescribeGuestAddress(
+                        guest_stream) +
+                    " status=" +
+                    std::to_string(status) +
+                    " ownership=IN_PLACE_STABLE");
             }
 
             regs[0] =
@@ -15859,6 +15938,83 @@ public:
                     : ::inflate(
                         &it->second,
                         static_cast<int>(regs[1]));
+
+            const std::uint32_t consumed =
+                original_avail_in -
+                it->second.avail_in;
+            const std::uint32_t produced =
+                original_avail_out -
+                it->second.avail_out;
+
+            if (V70Enabled()) {
+                ++v70_zlib_calls;
+                v70_zlib_input_bytes += consumed;
+                v70_zlib_output_bytes += produced;
+
+                if (status == Z_STREAM_ERROR) {
+                    ++v70_zlib_stream_errors;
+                }
+                if (consumed == 0u &&
+                    produced == 0u &&
+                    status != Z_STREAM_END) {
+                    ++v70_zlib_no_progress;
+                }
+
+                const bool power_of_two =
+                    (v70_zlib_calls &
+                     (v70_zlib_calls - 1u)) == 0u;
+                const bool error_sample =
+                    status < 0 &&
+                    (v70_zlib_stream_errors <= 16u ||
+                     (v70_zlib_stream_errors != 0u &&
+                      (v70_zlib_stream_errors &
+                       (v70_zlib_stream_errors - 1u)) == 0u));
+
+                if (v70_zlib_calls <= 16u ||
+                    power_of_two ||
+                    status == Z_STREAM_END ||
+                    error_sample) {
+
+                    Append(
+                        "V70 ZLIB " + name +
+                        " #" +
+                        std::to_string(
+                            v70_zlib_calls) +
+                        " guestStream=" +
+                        V46DescribeGuestAddress(
+                            guest_stream) +
+                        " flush=" +
+                        std::to_string(
+                            static_cast<int>(
+                                regs[1])) +
+                        " status=" +
+                        std::to_string(status) +
+                        " consumed=" +
+                        std::to_string(consumed) +
+                        " produced=" +
+                        std::to_string(produced) +
+                        " availIn=" +
+                        std::to_string(
+                            it->second.avail_in) +
+                        " availOut=" +
+                        std::to_string(
+                            it->second.avail_out) +
+                        " totalIn=" +
+                        std::to_string(
+                            static_cast<std::uint64_t>(
+                                it->second.total_in)) +
+                        " totalOut=" +
+                        std::to_string(
+                            static_cast<std::uint64_t>(
+                                it->second.total_out)) +
+                        " streamErrors=" +
+                        std::to_string(
+                            v70_zlib_stream_errors) +
+                        " noProgress=" +
+                        std::to_string(
+                            v70_zlib_no_progress));
+                }
+            }
 
             sync_zstream_to_guest(
                 guest_stream,
@@ -24055,9 +24211,16 @@ bool JniProbePrepareRuntime(
     }
     if (callbacks.V69Enabled()) {
         callbacks.Append(
-            "V69 TASKRESOURCE LIFECYCLE: Inspector v2.1 confirmed a live post-LogoScreen non-draining TaskResource loop after six real GLES texture uploads. Android and historical iOS binaries independently show the same worker wait->pump and active->started->completed->finalized architecture. v69 observes every lifecycle edge in one bounded sample, plus the worker event flag and silent token balance; no readiness, counter, GameState, resource or vector entry is forced.");
+            "V69 TASKRESOURCE LIFECYCLE: lifecycle edges, the resource-worker event flag and quiet token balance remain observational; no readiness, counter, GameState, resource or vector entry is forced.");
+    }
+    if (callbacks.V69Enabled() &&
+        !callbacks.V70Enabled()) {
         callbacks.Append(
             "V69 LOG BUDGET: unchanged TaskSubstate, TaskGuard and release-boundary messages are aggressively sampled. The resource worker stops diagnostically after 1,048,576 active-ready observations if frame 1 has not returned, emitting a compact lifecycle summary instead of another ~100 MiB loop.");
+    }
+    if (callbacks.V70Enabled()) {
+        callbacks.Append(
+            "V70 ZLIB STREAM OWNERSHIP: v69 proves TaskResource reaches start, completed-ready and finalizer normally. Static ARM correlation identifies Task A as the ResStreams inflate worker. The previous host bridge copied an initialized z_stream, invalidating zlib's internal state->strm backlink and causing inflate to return Z_STREAM_ERROR. v70 initializes each host z_stream directly inside its stable map node and samples real decompression progress. No guest stream result is forced.");
     }
 
     if (callbacks.V64Enabled()) {
