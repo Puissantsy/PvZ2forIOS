@@ -1225,6 +1225,10 @@ constexpr std::uint32_t kJniProbeSvcV82Candidate7Post = 0x00f0b1u;
 constexpr std::uint32_t kJniProbeSvcV82Candidate6Pre = 0x00f0b2u;
 constexpr std::uint32_t kJniProbeSvcV82Candidate6Post = 0x00f0b3u;
 
+// v83: Profile button-listener dispatcher entry. The original instruction is
+// MOV r9,r0 at libPVZ2.so+0x0030b8f8, eight bytes after the function prologue.
+constexpr std::uint32_t kJniProbeSvcV83ButtonDispatchEntry = 0x00f0b4u;
+
 constexpr std::uint32_t kJniProbeSvcUnsupportedJniBase = 0x00e000u;
 constexpr std::uint32_t kJniProbeJniSlotCount = 256u;
 
@@ -3402,6 +3406,14 @@ public:
     std::uint32_t v82_last_profile_a4 = 0u;
     std::uint32_t v82_last_profile_a8 = 0u;
     bool v82_profile_state_initialized = false;
+
+    // v83 verified Profile button dispatcher telemetry.
+    std::uint64_t v83_button_dispatch_calls = 0u;
+    std::uint64_t v83_button_id_hits[21] = {};
+    std::uint32_t v83_last_button_id = 0xffffffffu;
+    std::uint32_t v83_last_button_this = 0u;
+    std::uint32_t v83_last_button_lr = 0u;
+    std::uint32_t v83_last_button_frame = 0u;
 
     std::uint32_t v56_resource_manager = 0u;
     std::uint64_t v56_registry_pipeline_calls = 0u;
@@ -6385,6 +6397,8 @@ public:
             return "V81_HITTEST_LOGICAL_POINTS";
         case PvZ2DiagnosticMode::V82ProfileLayoutRadar:
             return "V82_PROFILE_LAYOUT_RADAR";
+        case PvZ2DiagnosticMode::V83ProfileButtonDispatch:
+            return "V83_PROFILE_BUTTON_DISPATCH";
         }
         return "UNKNOWN";
     }
@@ -6400,7 +6414,9 @@ public:
             diagnostic_mode ==
                 PvZ2DiagnosticMode::V81HitTestLogicalPoints ||
             diagnostic_mode ==
-                PvZ2DiagnosticMode::V82ProfileLayoutRadar;
+                PvZ2DiagnosticMode::V82ProfileLayoutRadar ||
+            diagnostic_mode ==
+                PvZ2DiagnosticMode::V83ProfileButtonDispatch;
     }
 
     const char* V79ProfileSiteName(
@@ -6463,10 +6479,17 @@ public:
         return out.str();
     }
 
+    bool V83Enabled() const {
+        return
+            diagnostic_mode ==
+                PvZ2DiagnosticMode::V83ProfileButtonDispatch;
+    }
+
     bool V82Enabled() const {
         return
             diagnostic_mode ==
-                PvZ2DiagnosticMode::V82ProfileLayoutRadar;
+                PvZ2DiagnosticMode::V82ProfileLayoutRadar ||
+            V83Enabled();
     }
 
     std::string V82TouchContext() const {
@@ -6584,7 +6607,7 @@ public:
 
     std::string V82RadarSummary() {
         std::ostringstream out;
-        out << "V82 PROFILE RADAR SUMMARY"
+        out << "V82 PROFILE RADAR SUMMARY mode=" << V56ModeName()
             << " profile=0x" << JniProbeHex(v82_profile_object)
             << " candidate5=0x" << JniProbeHex(v82_candidate5)
             << " candidate6=0x" << JniProbeHex(v82_candidate6)
@@ -6603,18 +6626,59 @@ public:
         return out.str();
     }
 
+    const char* V83StaticCase(std::uint32_t id) const {
+        switch (id) {
+        case 5u: return "id5->0x1030b958";
+        case 6u: return "id6->0x1030ba88";
+        case 7u: return "id7->0x1030bbc4";
+        case 8u: return "id8->0x1030be34";
+        case 18u: return "id18->0x1030bf40";
+        case 19u: return "id19->0x1030bf60";
+        case 20u: return "id20->0x1030bf80";
+        default:
+            if (id >= 9u && id <= 17u) {
+                return "id9-17->common-return";
+            }
+            return "outside-switch/default";
+        }
+    }
+
+    std::string V83ButtonSummary() const {
+        std::ostringstream out;
+        out << "V83 BUTTON DISPATCH SUMMARY"
+            << " total=" << v83_button_dispatch_calls
+            << " hits{5=" << v83_button_id_hits[5]
+            << ",6=" << v83_button_id_hits[6]
+            << ",7=" << v83_button_id_hits[7]
+            << ",8=" << v83_button_id_hits[8]
+            << ",18=" << v83_button_id_hits[18]
+            << ",19=" << v83_button_id_hits[19]
+            << ",20=" << v83_button_id_hits[20]
+            << "} last{id=" << v83_last_button_id
+            << ",this=0x" << JniProbeHex(v83_last_button_this)
+            << ",frame=" << v83_last_button_frame
+            << ",lr=0x" << JniProbeHex(v83_last_button_lr)
+            << ",case=" << V83StaticCase(v83_last_button_id)
+            << "} " << V82TouchContext();
+        return out.str();
+    }
+
     bool V81Enabled() const {
+        // Only v81/v82 actually deliver logical 1024x768 touch coordinates.
+        // v83 keeps the tracing but returns to the v80 2048x1536 pixel control.
         return
             diagnostic_mode ==
                 PvZ2DiagnosticMode::V81HitTestLogicalPoints ||
-            V82Enabled();
+            diagnostic_mode ==
+                PvZ2DiagnosticMode::V82ProfileLayoutRadar;
     }
 
     bool V80Enabled() const {
         return
             diagnostic_mode ==
                 PvZ2DiagnosticMode::V80GlobalTransformProbe ||
-            V81Enabled();
+            V81Enabled() ||
+            V83Enabled();
     }
 
     bool V77Enabled() const {
@@ -11255,6 +11319,61 @@ public:
             default:
                 break;
             }
+        }
+
+        // v83: verified Profile button-listener dispatcher. The static switch
+        // at 0x1030b8f0 uses r1 as the button ID. This trap is after the
+        // prologue and emulates only the replaced MOV r9,r0.
+        if (V83Enabled() &&
+            swi == kJniProbeSvcV83ButtonDispatchEntry) {
+
+            const std::uint32_t button_this = regs[0];
+            const std::uint32_t button_id = regs[1];
+            const std::uint32_t caller_lr = regs[14];
+
+            // Original @0x1030b8f8: MOV r9,r0.
+            regs[9] = regs[0];
+
+            ++v83_button_dispatch_calls;
+            if (button_id < 21u) {
+                ++v83_button_id_hits[button_id];
+            }
+
+            v83_last_button_id = button_id;
+            v83_last_button_this = button_this;
+            v83_last_button_lr = caller_lr;
+            v83_last_button_frame = current_frame_number;
+
+            Append(
+                "V83 BUTTON DISPATCH #" +
+                std::to_string(v83_button_dispatch_calls) +
+                " frame=" +
+                std::to_string(current_frame_number) +
+                " buttonId=" +
+                std::to_string(button_id) +
+                " staticCase=" +
+                V83StaticCase(button_id) +
+                " this=0x" +
+                JniProbeHex(button_this) +
+                " profile=0x" +
+                JniProbeHex(v82_profile_object) +
+                " sameProfile=" +
+                ((v82_profile_object != 0u &&
+                  button_this == v82_profile_object)
+                    ? std::string{"YES"}
+                    : std::string{"NO"}) +
+                " lr=0x" +
+                JniProbeHex(caller_lr) +
+                " " +
+                V82TouchContext() +
+                " " +
+                V82RadarSnapshot(
+                    v82_last_touch_x,
+                    v82_last_touch_y));
+
+            V82ObserveProfileState(
+                "V83.ButtonDispatch.entry");
+            return;
         }
 
         // v31: real ARM32 printf-family formatting. Before this bridge,
@@ -26666,6 +26785,17 @@ bool JniProbePrepareRuntime(
         return false;
     }
 
+    if (callbacks.V83Enabled() &&
+        !patch_resource_native_miss(
+            0x0030b8f8u,
+            0xe1a09000u,
+            kJniProbeSvcV83ButtonDispatchEntry)) {
+
+        error =
+            "v83 Profile button dispatcher signature mismatch: refusing to patch an unverified Android 1.5.252752 instruction.";
+        return false;
+    }
+
     callbacks.Append(
         "V48 RESFILE WRAPPER-FINAL BRIDGE: v45 internal hooks preserved; direct-group null returns are observed at 0x1087a708 and all-groups-exhausted nulls at 0x1087a76c with the exact wrapper ID still in r6.");
     callbacks.Append(
@@ -26764,7 +26894,7 @@ bool JniProbePrepareRuntime(
     }
     if (callbacks.V79ProfileProbeEnabled()) {
         callbacks.Append(
-            "V79 FIRST-RUN PROFILE PROVENANCE: observation-only traps are active in this V75/V77/V80/V81/V82 control. Static v2.5 matched the Android and historical-iOS Profile/Facebook/EULA layout paths and found only a localized text-entry constant difference. v79 records live parent +0x30/+0x34 dimensions, LawnApp +0x6a8 scale, branch state and bounded final geometry at the matched paths. No scale, rectangle, resource, GameState or widget state is modified.");
+            "V79 FIRST-RUN PROFILE PROVENANCE: observation-only traps are active in this V75/V77/V80/V81/V82/V83 control. Static v2.5 matched the Android and historical-iOS Profile/Facebook/EULA layout paths and found only a localized text-entry constant difference. v79 records live parent +0x30/+0x34 dimensions, LawnApp +0x6a8 scale, branch state and bounded final geometry at the matched paths. No scale, rectangle, resource, GameState or widget state is modified.");
     }
     if (callbacks.V80Enabled()) {
         callbacks.Append(
@@ -26776,7 +26906,11 @@ bool JniProbePrepareRuntime(
     }
     if (callbacks.V82Enabled()) {
         callbacks.Append(
-            "V82 PROFILE WIDGET/ACTION RADAR: v81 moved the physical tap needed to hit the TextEntry exactly as expected from the /2 input experiment, rejecting /2 as a final fix. v82 keeps that logical-touch mode only as a coordinate probe and observes Profile candidate button IDs 5/6/7 after their verified layout calls. Raw +0x28/+0x2c/+0x30/+0x34 fields are correlated with every began/ended tap, keyboard request, Profile pointer/state change and GameState transition. Candidate semantics are not guessed and no action is forced.");
+            "V82 PROFILE WIDGET/ACTION RADAR: v81 moved the physical tap needed to hit the TextEntry exactly as expected from the /2 input experiment, rejecting /2 as a final fix. The radar observes Profile candidate button IDs 5/6/7 after their verified layout calls and correlates raw +0x28/+0x2c/+0x30/+0x34 with touches, keyboard requests, Profile state and GameState. V82 delivers logical touches; v83 reuses the same radar with pixel-space touches. Candidate semantics are not guessed and no action is forced.");
+    }
+    if (callbacks.V83Enabled()) {
+        callbacks.Append(
+            "V83 PROFILE BUTTON DISPATCH: v82 measured candidate5 rawXYWH=(360,1158,368,110), proving it is unreachable when touches are capped to 1024x768. v83 restores the V80 2048x1536 pixel touch control and signature-checks a passive trap at dispatcher+0x8 (0x1030b8f8, MOV r9,r0). Static switch IDs with dedicated paths are 5,6,7,8,18,19,20; IDs 9..17 share the no-action return. Runtime r1 is logged before the native switch. Rendering, widget geometry and GameState are untouched.");
     }
 
     if (callbacks.V64Enabled()) {
@@ -30868,6 +31002,10 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                     if (callbacks.V82Enabled()) {
                         callbacks.Append(
                             callbacks.V82RadarSummary());
+                    }
+                    if (callbacks.V83Enabled()) {
+                        callbacks.Append(
+                            callbacks.V83ButtonSummary());
                     }
                 }
 

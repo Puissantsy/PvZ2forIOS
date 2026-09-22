@@ -204,6 +204,11 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // constructor IDs seen statically (5/6/7) until runtime proves semantics.
     // No rendering, widget, touch or GameState value is forced.
     V82ProfileLayoutRadar = 24u,
+
+    // v83: reuse the v82 Profile radar but return touch delivery to the v80
+    // 2048x1536 pixel control. Trace the verified Profile button dispatcher
+    // switch so a hidden button can be identified by its real runtime ID.
+    V83ProfileButtonDispatch = 25u,
 };
 
 struct PvZ2JniProbeResult {
