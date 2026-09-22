@@ -7,6 +7,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -244,7 +245,9 @@ NSString *NSStringFromStd(
 
 } // namespace
 
-@interface PvZ2LiveViewController : UIViewController
+@interface PvZ2LiveViewController :
+    UIViewController
+    <UITextFieldDelegate>
 
 @property(nonatomic, strong)
     UIImageView *imageView;
@@ -252,6 +255,8 @@ NSString *NSStringFromStd(
     UILabel *captionLabel;
 @property(nonatomic, strong)
     UIButton *stopButton;
+@property(nonatomic, strong)
+    UITextField *keyboardField;
 @property(nonatomic, strong)
     NSMutableDictionary<NSValue *, NSNumber *> *touchIds;
 @property(nonatomic, strong)
@@ -277,10 +282,51 @@ NSString *NSStringFromStd(
 - (void)finishRunWithMessage:
         (NSString *)message;
 
+- (void)setHostKeyboardVisible:
+        (BOOL)visible;
+
 @end
 
 static __weak PvZ2LiveViewController *
     gPvZ2LiveController = nil;
+
+static std::atomic<bool>
+    gPvZ2KeyboardRequested{false};
+
+void PvZ2HostSetKeyboardVisible(
+    bool visible) {
+
+    gPvZ2KeyboardRequested.store(
+        visible,
+        std::memory_order_release);
+
+    dispatch_async(
+        dispatch_get_main_queue(),
+        ^{
+            // Show/hide requests can arrive back-to-back during surface init.
+            // Ignore an obsolete queued block and honor only the latest guest
+            // request.
+            if (gPvZ2KeyboardRequested.load(
+                    std::memory_order_acquire) !=
+                visible) {
+                return;
+            }
+
+            PvZ2LiveViewController *controller =
+                gPvZ2LiveController;
+
+            if (controller != nil) {
+                [controller
+                    setHostKeyboardVisible:
+                        visible ? YES : NO];
+            }
+        });
+}
+
+bool PvZ2HostKeyboardVisible() {
+    return gPvZ2KeyboardRequested.load(
+        std::memory_order_acquire);
+}
 
 @implementation PvZ2LiveViewController
 
@@ -299,23 +345,6 @@ static __weak PvZ2LiveViewController *
             indexSetWithIndexesInRange:
                 NSMakeRange(0, 32)];
 
-    self.captionLabel =
-        [[UILabel alloc] init];
-    self.captionLabel.translatesAutoresizingMaskIntoConstraints =
-        NO;
-    self.captionLabel.textColor =
-        UIColor.whiteColor;
-    self.captionLabel.textAlignment =
-        NSTextAlignmentCenter;
-    self.captionLabel.numberOfLines =
-        0;
-    self.captionLabel.font =
-        [UIFont
-            monospacedSystemFontOfSize:13.0
-            weight:UIFontWeightRegular];
-    self.captionLabel.text =
-        @"v72 LIVE — starting PvZ2…\nTouches become active as soon as live frames arrive.";
-
     self.imageView =
         [[UIImageView alloc] init];
     self.imageView.translatesAutoresizingMaskIntoConstraints =
@@ -329,65 +358,182 @@ static __weak PvZ2LiveViewController *
     self.imageView.multipleTouchEnabled =
         YES;
 
+    self.captionLabel =
+        [[UILabel alloc] init];
+    self.captionLabel.translatesAutoresizingMaskIntoConstraints =
+        NO;
+    self.captionLabel.textColor =
+        UIColor.whiteColor;
+    self.captionLabel.textAlignment =
+        NSTextAlignmentCenter;
+    self.captionLabel.numberOfLines =
+        2;
+    self.captionLabel.font =
+        [UIFont
+            monospacedSystemFontOfSize:11.0
+            weight:UIFontWeightMedium];
+    self.captionLabel.backgroundColor =
+        [UIColor
+            colorWithWhite:0.0
+            alpha:0.58];
+    self.captionLabel.layer.cornerRadius =
+        7.0;
+    self.captionLabel.clipsToBounds =
+        YES;
+    self.captionLabel.text =
+        @"v73 — starting PvZ2…\nfirst frame can take several minutes";
+
     self.stopButton =
         [UIButton
             buttonWithType:UIButtonTypeSystem];
     self.stopButton.translatesAutoresizingMaskIntoConstraints =
         NO;
     [self.stopButton
-        setTitle:@"Stop run"
+        setTitle:@"Stop"
         forState:UIControlStateNormal];
+    [self.stopButton
+        setTitleColor:
+            UIColor.whiteColor
+        forState:UIControlStateNormal];
+    self.stopButton.backgroundColor =
+        [UIColor
+            colorWithWhite:0.0
+            alpha:0.58];
+    self.stopButton.layer.cornerRadius =
+        7.0;
     self.stopButton.titleLabel.font =
         [UIFont
-            boldSystemFontOfSize:18.0];
+            boldSystemFontOfSize:15.0];
     [self.stopButton
         addTarget:self
         action:@selector(stopOrClose)
         forControlEvents:UIControlEventTouchUpInside];
 
-    [self.view addSubview:self.captionLabel];
+    // The original decrypted PvZ2 iOS 1.5 binary exposes
+    // sharedUITextField + UITextFieldDelegate + activate/deactivateTextField.
+    // Keep the host field effectively invisible while using the same UIKit
+    // input mechanism to summon the system keyboard and receive committed
+    // characters/backspace.
+    self.keyboardField =
+        [[UITextField alloc]
+            initWithFrame:
+                CGRectMake(
+                    0.0,
+                    0.0,
+                    1.0,
+                    1.0)];
+    self.keyboardField.delegate =
+        self;
+    self.keyboardField.alpha =
+        0.01;
+    self.keyboardField.backgroundColor =
+        UIColor.clearColor;
+    self.keyboardField.textColor =
+        UIColor.clearColor;
+    self.keyboardField.tintColor =
+        UIColor.clearColor;
+    self.keyboardField.autocorrectionType =
+        UITextAutocorrectionTypeNo;
+    self.keyboardField.spellCheckingType =
+        UITextSpellCheckingTypeNo;
+    self.keyboardField.smartQuotesType =
+        UITextSmartQuotesTypeNo;
+    self.keyboardField.smartDashesType =
+        UITextSmartDashesTypeNo;
+    self.keyboardField.smartInsertDeleteType =
+        UITextSmartInsertDeleteTypeNo;
+    self.keyboardField.keyboardType =
+        UIKeyboardTypeDefault;
+    self.keyboardField.returnKeyType =
+        UIReturnKeyDone;
+    self.keyboardField.autocapitalizationType =
+        UITextAutocapitalizationTypeNone;
+
     [self.view addSubview:self.imageView];
+    [self.view addSubview:self.keyboardField];
+    [self.view addSubview:self.captionLabel];
     [self.view addSubview:self.stopButton];
 
     UILayoutGuide *guide =
         self.view.safeAreaLayoutGuide;
 
+    // v72 put the debug text and Stop button outside the game image, shrinking
+    // the live PvZ2 surface. v73 pins the image edge-to-edge and floats tiny
+    // controls above it. Guest rendering remains the validated 1180x820
+    // logical target; this is presentation-only.
     [NSLayoutConstraint
         activateConstraints:@[
+            [self.imageView.topAnchor
+                constraintEqualToAnchor:self.view.topAnchor],
+            [self.imageView.bottomAnchor
+                constraintEqualToAnchor:self.view.bottomAnchor],
+            [self.imageView.leadingAnchor
+                constraintEqualToAnchor:self.view.leadingAnchor],
+            [self.imageView.trailingAnchor
+                constraintEqualToAnchor:self.view.trailingAnchor],
+
             [self.captionLabel.topAnchor
                 constraintEqualToAnchor:guide.topAnchor
-                constant:8.0],
-            [self.captionLabel.leadingAnchor
-                constraintEqualToAnchor:guide.leadingAnchor
-                constant:12.0],
-            [self.captionLabel.trailingAnchor
-                constraintEqualToAnchor:guide.trailingAnchor
-                constant:-12.0],
-
-            [self.imageView.topAnchor
-                constraintEqualToAnchor:self.captionLabel.bottomAnchor
-                constant:8.0],
-            [self.imageView.leadingAnchor
-                constraintEqualToAnchor:guide.leadingAnchor
-                constant:8.0],
-            [self.imageView.trailingAnchor
-                constraintEqualToAnchor:guide.trailingAnchor
-                constant:-8.0],
+                constant:6.0],
+            [self.captionLabel.centerXAnchor
+                constraintEqualToAnchor:guide.centerXAnchor],
+            [self.captionLabel.widthAnchor
+                constraintLessThanOrEqualToAnchor:guide.widthAnchor
+                multiplier:0.72],
 
             [self.stopButton.topAnchor
-                constraintEqualToAnchor:self.imageView.bottomAnchor
-                constant:8.0],
-            [self.stopButton.bottomAnchor
-                constraintEqualToAnchor:guide.bottomAnchor
+                constraintEqualToAnchor:guide.topAnchor
+                constant:6.0],
+            [self.stopButton.trailingAnchor
+                constraintEqualToAnchor:guide.trailingAnchor
                 constant:-8.0],
-            [self.stopButton.centerXAnchor
-                constraintEqualToAnchor:guide.centerXAnchor],
+            [self.stopButton.widthAnchor
+                constraintEqualToConstant:68.0],
             [self.stopButton.heightAnchor
-                constraintEqualToConstant:44.0],
+                constraintEqualToConstant:36.0],
         ]];
 }
 
+- (BOOL)prefersStatusBarHidden {
+    return YES;
+}
+
+- (BOOL)prefersHomeIndicatorAutoHidden {
+    return YES;
+}
+
+- (void)viewDidAppear:
+        (BOOL)animated {
+
+    [super
+        viewDidAppear:
+            animated];
+
+    if (gPvZ2KeyboardRequested.load(
+            std::memory_order_acquire)) {
+        [self
+            setHostKeyboardVisible:
+                YES];
+    }
+}
+
+- (void)viewWillDisappear:
+        (BOOL)animated {
+
+    [self
+        setHostKeyboardVisible:
+            NO];
+
+    [super
+        viewWillDisappear:
+            animated];
+}
+
 - (void)stopOrClose {
+    [self
+        setHostKeyboardVisible:
+            NO];
+
     if (self.runFinished) {
         [self
             dismissViewControllerAnimated:YES
@@ -400,6 +546,100 @@ static __weak PvZ2LiveViewController *
         @"v72 LIVE — stop requested; finishing the current guest frame…";
     self.stopButton.enabled = NO;
     PvZ2RequestInteractiveStop();
+}
+
+- (void)setHostKeyboardVisible:
+        (BOOL)visible {
+
+    if (visible) {
+        const BOOL became =
+            [self.keyboardField
+                becomeFirstResponder];
+
+        gPvZ2KeyboardRequested.store(
+            became == YES,
+            std::memory_order_release);
+
+        if (became) {
+            self.captionLabel.text =
+                @"v73 — iOS keyboard active\nUITextInputEvent → Android guest";
+        }
+    } else {
+        [self.keyboardField
+            resignFirstResponder];
+
+        gPvZ2KeyboardRequested.store(
+            false,
+            std::memory_order_release);
+    }
+}
+
+- (void)textFieldDidBeginEditing:
+        (UITextField *)textField {
+
+    gPvZ2KeyboardRequested.store(
+        true,
+        std::memory_order_release);
+}
+
+- (void)textFieldDidEndEditing:
+        (UITextField *)textField {
+
+    gPvZ2KeyboardRequested.store(
+        false,
+        std::memory_order_release);
+}
+
+- (BOOL)textField:
+        (UITextField *)textField
+    shouldChangeCharactersInRange:
+        (NSRange)range
+    replacementString:
+        (NSString *)string {
+
+    // Android EditInputConnection.deleteSurroundingText emits one action=3
+    // UITextInputEvent per deleted character.
+    for (NSUInteger i = 0u;
+         i < range.length;
+         ++i) {
+        PvZ2QueueTextInputEvent(
+            3u,
+            nullptr,
+            0u);
+    }
+
+    if (string.length != 0u) {
+        NSData *utf8 =
+            [string
+                dataUsingEncoding:
+                    NSUTF8StringEncoding
+              allowLossyConversion:
+                    NO];
+
+        if (utf8 != nil) {
+            PvZ2QueueTextInputEvent(
+                0u,
+                static_cast<const std::uint8_t*>(
+                    utf8.bytes),
+                utf8.length);
+        }
+    }
+
+    return YES;
+}
+
+- (BOOL)textFieldShouldReturn:
+        (UITextField *)textField {
+
+    static const std::uint8_t newline =
+        static_cast<std::uint8_t>('\n');
+
+    PvZ2QueueTextInputEvent(
+        0u,
+        &newline,
+        1u);
+
+    return YES;
 }
 
 - (NSInteger)identifierForTouch:
@@ -778,7 +1018,7 @@ static __weak PvZ2LiveViewController *
         self.captionLabel.text =
             [NSString
                 stringWithFormat:
-                    @"v72 LIVE — guest frame %lu — %@\nUIKit touch → AndroidUIEventManager (1180×820 logical)",
+                    @"v73 • frame %lu • %@\n1180×820 logical • touch + iOS keyboard",
                     (unsigned long)frame,
                     self.inputEnabled
                         ? @"TOUCH ENABLED"
@@ -788,6 +1028,10 @@ static __weak PvZ2LiveViewController *
 
 - (void)finishRunWithMessage:
         (NSString *)message {
+
+    [self
+        setHostKeyboardVisible:
+            NO];
 
     self.runFinished = YES;
     self.inputEnabled = NO;
@@ -881,7 +1125,7 @@ static __weak PvZ2LiveViewController *
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — v72 Live Touch Bridge";
+        @"PvZ2forIOS — v73 Keyboard + Fullscreen";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -890,7 +1134,7 @@ static __weak PvZ2LiveViewController *
         NO;
 
     title.text =
-        @"PvZ2forIOS — v72 Live Touch Bridge";
+        @"PvZ2forIOS — v73 Keyboard + Fullscreen";
 
     title.font =
         [UIFont
@@ -906,7 +1150,7 @@ static __weak PvZ2LiveViewController *
         NO;
 
     explanation.text =
-        @"v72 starts the interactive phase. v71 already renders the real first-run/MainMenu screen and survives 600 frames. v72 keeps the zlib + ETC1 fixes, streams the live framebuffer into UIKit, and feeds real iPad touches into AndroidUIEventManager using the exact APK event format. No GameState, resource readiness or UI action is forced.";
+        @"v73 builds on the validated v72 touch bridge (162/162 events, zero drops). The guest now reaches the first-run name field and calls Device_ShowKeyboard, so v73 bridges that Android request to a host UITextField and serializes exact type-6 UTF-8 text events. The live game view is edge-to-edge; debug controls float above it. No GameState, resource readiness or UI action is forced.";
 
     explanation.numberOfLines = 0;
 
@@ -957,7 +1201,7 @@ static __weak PvZ2LiveViewController *
             initWithItems:
                 @[
                     @"V56 Baseline",
-                    @"V72 Live Touch",
+                    @"V73 Keyboard",
                     @"V66 Blocking Waits",
                     @"V65 Cond Scheduler",
                     @"Ctype Deep Scout"
@@ -1600,7 +1844,7 @@ static __weak PvZ2LiveViewController *
     NSArray<NSString *> *modeNames =
         @[
             @"V56_BASELINE",
-            @"V72_LIVE_TOUCH_BRIDGE",
+            @"V73_KEYBOARD_FULLSCREEN_BRIDGE",
             @"V66_BLOCKING_WAIT_SCHEDULER",
             @"V65_CONDITION_VARIABLE_SCHEDULER",
             @"CTYPE_COMPAT_DEEP_SCOUT"
@@ -1619,7 +1863,7 @@ static __weak PvZ2LiveViewController *
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. mode=%@. V72 keeps the validated zlib + ETC1 path, opens a live framebuffer view, and queues real UIKit touch phases for AndroidUIEventManager. No GameState, resource readiness or UI action is forced.",
+                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. mode=%@. V73 keeps the validated touch/zlib/ETC1 path, presents PvZ2 edge-to-edge, and bridges Android keyboard requests plus exact UTF-8 UITextInputEvent records. No GameState, resource readiness or UI action is forced.",
                     modeNames[modeIndex]]];
 
     [self
@@ -1684,9 +1928,9 @@ static __weak PvZ2LiveViewController *
 
     if (selectedMode == 1) {
         diagnosticMode =
-            PvZ2DiagnosticMode::V72LiveTouchBridge;
+            PvZ2DiagnosticMode::V73KeyboardFullscreenBridge;
         diagnosticModeName =
-            @"V72_LIVE_TOUCH_BRIDGE";
+            @"V73_KEYBOARD_FULLSCREEN_BRIDGE";
     } else if (selectedMode == 2) {
         diagnosticMode =
             PvZ2DiagnosticMode::V66BlockingWaitScheduler;
@@ -1711,7 +1955,7 @@ static __weak PvZ2LiveViewController *
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v72 Live Touch Bridge Probe started mode=%@; PID=%d ===",
+                    @"=== PvZ2 v73 Keyboard + Fullscreen Probe started mode=%@; PID=%d ===",
                     diagnosticModeName,
                     getpid()]];
 
@@ -1721,9 +1965,10 @@ static __weak PvZ2LiveViewController *
     [self refreshStatus];
 
     if (diagnosticMode ==
-        PvZ2DiagnosticMode::V72LiveTouchBridge) {
+        PvZ2DiagnosticMode::V73KeyboardFullscreenBridge) {
 
         PvZ2ResetInteractiveInput();
+        PvZ2HostSetKeyboardVisible(false);
 
         PvZ2LiveViewController *liveController =
             [[PvZ2LiveViewController alloc] init];
@@ -1832,7 +2077,7 @@ static __weak PvZ2LiveViewController *
                                                 ?: @"failed")]];
 
                         if (diagnosticMode ==
-                                PvZ2DiagnosticMode::V72LiveTouchBridge &&
+                                PvZ2DiagnosticMode::V73KeyboardFullscreenBridge &&
                             selfRef.liveController != nil) {
 
                             [selfRef.liveController
@@ -1849,7 +2094,7 @@ static __weak PvZ2LiveViewController *
             PvZ2LiveFrameCallback liveFrameCallback;
 
             if (diagnosticMode ==
-                PvZ2DiagnosticMode::V72LiveTouchBridge) {
+                PvZ2DiagnosticMode::V73KeyboardFullscreenBridge) {
 
                 liveFrameCallback =
                     [](
@@ -2093,10 +2338,10 @@ static __weak PvZ2LiveViewController *
                     if (result.ok) {
                         [selfRef
                             appendUI:
-                                @"SUCCESS STEP 3: PvZ2 completed the selected diagnostic run. v72 preserves scheduler/zlib/ETC1 fixes and adds a live UIKit touch bridge without forcing guest state."];
+                                @"SUCCESS STEP 3: PvZ2 completed the selected diagnostic run. v73 preserves scheduler/zlib/ETC1/touch fixes and adds the iOS keyboard + fullscreen presentation bridge without forcing guest state."];
 
                         if (diagnosticMode ==
-                                PvZ2DiagnosticMode::V72LiveTouchBridge &&
+                                PvZ2DiagnosticMode::V73KeyboardFullscreenBridge &&
                             selfRef.liveController != nil) {
 
                             [selfRef.liveController
@@ -2153,7 +2398,7 @@ static __weak PvZ2LiveViewController *
                                 result.message);
 
                         if (diagnosticMode ==
-                                PvZ2DiagnosticMode::V72LiveTouchBridge &&
+                                PvZ2DiagnosticMode::V73KeyboardFullscreenBridge &&
                             selfRef.liveController != nil) {
 
                             [selfRef.liveController

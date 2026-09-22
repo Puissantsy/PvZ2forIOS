@@ -62,6 +62,20 @@ void PvZ2QueueTouchEvent(
     std::int32_t previous_y,
     std::uint32_t phase,
     double timestamp_ms);
+
+// v73: exact Android UITextInputEvent path. action=0 mirrors commitText,
+// action=3 mirrors deleteSurroundingText. The bytes are UTF-8 and copied
+// synchronously into the host event queue.
+void PvZ2QueueTextInputEvent(
+    std::uint32_t action,
+    const std::uint8_t* utf8,
+    std::size_t utf8_size);
+
+// Implemented by the UIKit host in main.mm. The guest thread uses these only
+// for Android Device_ShowKeyboard/HideKeyboard/IsKeyboardShowing.
+void PvZ2HostSetKeyboardVisible(bool visible);
+bool PvZ2HostKeyboardVisible();
+
 void PvZ2RequestInteractiveStop();
 
 enum class PvZ2DiagnosticMode : std::uint32_t {
@@ -133,6 +147,11 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // and bridge real UIKit touches into AndroidUIEventManager::ProcessEvents
     // while streaming the live host framebuffer back to UIKit.
     V72LiveTouchBridge = 16u,
+
+    // v73: v72 proves touch delivery end-to-end. Bridge the Android keyboard
+    // surface to a host UITextField, serialize UITextInputEvent type 6 exactly
+    // as classes.dex does, and make the live presentation edge-to-edge.
+    V73KeyboardFullscreenBridge = 17u,
 };
 
 struct PvZ2JniProbeResult {

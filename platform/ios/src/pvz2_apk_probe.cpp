@@ -1004,6 +1004,28 @@ std::atomic<std::uint64_t> gV72TouchGeneration{0u};
 std::atomic<std::uint64_t> gV72QueuedTouches{0u};
 std::atomic<std::uint64_t> gV72DroppedTouches{0u};
 
+// v73 classes.dex facts:
+//   UITextInputEvent.Serialize(ByteBuffer)
+//     putInt(6); putInt(action); putInt(utf8.length); put(utf8);
+//     pad with zero bytes to a 4-byte boundary.
+// EditInputConnection.commitText() sends action 0, while
+// deleteSurroundingText() sends action 3 with an empty UTF-8 payload.
+// The historical decrypted iOS 1.5 binary independently exposes
+// sharedUITextField / UITextFieldDelegate / activateTextField, so the host
+// UIKit bridge below follows the same platform strategy instead of inventing
+// a synthetic guest text field.
+struct V73TextInputEvent {
+    std::uint32_t action = 0u;
+    std::vector<std::uint8_t> utf8;
+};
+
+constexpr std::size_t kV73MaxQueuedTextEvents = 256u;
+
+std::mutex gV73TextMutex;
+std::deque<V73TextInputEvent> gV73TextQueue;
+std::atomic<std::uint64_t> gV73QueuedTextEvents{0u};
+std::atomic<std::uint64_t> gV73DroppedTextEvents{0u};
+
 std::vector<V72TouchEvent> V72TakeTouchEvents(
     std::size_t max_events,
     bool& more) {
@@ -1035,6 +1057,12 @@ std::size_t V72PendingTouchCount() {
     std::lock_guard<std::mutex> lock(
         gV72TouchMutex);
     return gV72TouchQueue.size();
+}
+
+std::size_t V73PendingTextCount() {
+    std::lock_guard<std::mutex> lock(
+        gV73TextMutex);
+    return gV73TextQueue.size();
 }
 
 constexpr std::uint32_t kJniProbeImportSvcBase = 0x001000u;
@@ -3064,6 +3092,13 @@ public:
     std::uint64_t v72_touch_batches = 0u;
     std::uint64_t v72_touch_events_delivered = 0u;
     std::uint64_t v72_invalid_event_buffers = 0u;
+
+    std::uint64_t v73_text_batches = 0u;
+    std::uint64_t v73_text_events_delivered = 0u;
+    std::uint64_t v73_text_bytes_delivered = 0u;
+    std::uint64_t v73_keyboard_show_calls = 0u;
+    std::uint64_t v73_keyboard_hide_calls = 0u;
+    std::uint64_t v73_keyboard_status_calls = 0u;
 
     std::string V46KnownCodeLabel(
         std::uint32_t offset) const {
@@ -5936,14 +5971,23 @@ public:
             return "V71_ETC1_TEXTURE_BRIDGE";
         case PvZ2DiagnosticMode::V72LiveTouchBridge:
             return "V72_LIVE_TOUCH_BRIDGE";
+        case PvZ2DiagnosticMode::V73KeyboardFullscreenBridge:
+            return "V73_KEYBOARD_FULLSCREEN_BRIDGE";
         }
         return "UNKNOWN";
+    }
+
+    bool V73Enabled() const {
+        return
+            diagnostic_mode ==
+                PvZ2DiagnosticMode::V73KeyboardFullscreenBridge;
     }
 
     bool V72Enabled() const {
         return
             diagnostic_mode ==
-                PvZ2DiagnosticMode::V72LiveTouchBridge;
+                PvZ2DiagnosticMode::V72LiveTouchBridge ||
+            V73Enabled();
     }
 
     bool V71Enabled() const {
@@ -13705,153 +13749,10 @@ public:
                         ++v52_ui_process_events_calls;
 
                         if (V72Enabled()) {
-                            bool more = false;
-                            std::vector<V72TouchEvent> events;
-
-                            if (buffer != nullptr &&
-                                cleared >=
+                            if (buffer == nullptr ||
+                                cleared <
                                     kV72EventHeaderBytes) {
 
-                                const std::size_t max_events =
-                                    (cleared -
-                                     kV72EventHeaderBytes) /
-                                    kV72TouchRecordBytes;
-
-                                events =
-                                    V72TakeTouchEvents(
-                                        max_events,
-                                        more);
-
-                                Write32(
-                                    buffer,
-                                    static_cast<std::uint32_t>(
-                                        events.size()));
-
-                                for (std::size_t i = 0u;
-                                     i < events.size();
-                                     ++i) {
-
-                                    const V72TouchEvent& event =
-                                        events[i];
-
-                                    std::uint8_t* record =
-                                        buffer +
-                                        kV72EventHeaderBytes +
-                                        i *
-                                            kV72TouchRecordBytes;
-
-                                    // Android UITouchEvent.Serialize order:
-                                    // type, ident, XY, previousXY, tapCount,
-                                    // timestamp(double), phase, two sentinels.
-                                    Write32(record + 0x00u, 0u);
-                                    Write32(
-                                        record + 0x04u,
-                                        event.pointer_id + 1u);
-                                    Write32(
-                                        record + 0x08u,
-                                        static_cast<std::uint32_t>(
-                                            event.x));
-                                    Write32(
-                                        record + 0x0cu,
-                                        static_cast<std::uint32_t>(
-                                            event.y));
-                                    Write32(
-                                        record + 0x10u,
-                                        static_cast<std::uint32_t>(
-                                            event.previous_x));
-                                    Write32(
-                                        record + 0x14u,
-                                        static_cast<std::uint32_t>(
-                                            event.previous_y));
-                                    Write32(record + 0x18u, 1u);
-
-                                    std::uint64_t timestamp_bits = 0u;
-                                    static_assert(
-                                        sizeof(timestamp_bits) ==
-                                        sizeof(event.timestamp_ms));
-                                    std::memcpy(
-                                        &timestamp_bits,
-                                        &event.timestamp_ms,
-                                        sizeof(timestamp_bits));
-
-                                    for (std::size_t byte = 0u;
-                                         byte < 8u;
-                                         ++byte) {
-                                        record[
-                                            0x1cu + byte] =
-                                            static_cast<std::uint8_t>(
-                                                timestamp_bits >>
-                                                (byte * 8u));
-                                    }
-
-                                    Write32(
-                                        record + 0x24u,
-                                        event.phase);
-                                    Write32(
-                                        record + 0x28u,
-                                        0xdeadbeefu);
-                                    Write32(
-                                        record + 0x2cu,
-                                        0xdeadbeefu);
-                                }
-
-                                regs[0] =
-                                    more
-                                        ? 1u
-                                        : 0u;
-
-                                if (!events.empty()) {
-                                    ++v72_touch_batches;
-                                    v72_touch_events_delivered +=
-                                        events.size();
-
-                                    const V72TouchEvent& first =
-                                        events.front();
-
-                                    Append(
-                                        "V72 UI EVENTS batch#" +
-                                        std::to_string(
-                                            v72_touch_batches) +
-                                        " count=" +
-                                        std::to_string(
-                                            events.size()) +
-                                        " more=" +
-                                        (more
-                                            ? std::string{"YES"}
-                                            : std::string{"NO"}) +
-                                        " first{ident=" +
-                                        std::to_string(
-                                            first.pointer_id + 1u) +
-                                        ",phase=" +
-                                        std::to_string(
-                                            first.phase) +
-                                        ",xy=" +
-                                        std::to_string(
-                                            first.x) +
-                                        "," +
-                                        std::to_string(
-                                            first.y) +
-                                        ",prev=" +
-                                        std::to_string(
-                                            first.previous_x) +
-                                        "," +
-                                        std::to_string(
-                                            first.previous_y) +
-                                        "}");
-                                } else if (
-                                    v52_ui_process_events_calls <= 8u ||
-                                    (v52_ui_process_events_calls %
-                                         250u) == 0u) {
-
-                                    Append(
-                                        "V72 UI_ProcessEvents call#" +
-                                        std::to_string(
-                                            v52_ui_process_events_calls) +
-                                        " empty queue; bufferBytes=" +
-                                        std::to_string(
-                                            cleared));
-                                }
-                            } else {
                                 regs[0] = 0u;
                                 ++v72_invalid_event_buffers;
 
@@ -13867,10 +13768,272 @@ public:
                                         " bytes=" +
                                         std::to_string(
                                             cleared) +
-                                        " pending=" +
+                                        " pendingTouch=" +
                                         std::to_string(
-                                            V72PendingTouchCount()));
+                                            V72PendingTouchCount()) +
+                                        " pendingText=" +
+                                        std::to_string(
+                                            V73PendingTextCount()));
                                 }
+
+                                return true;
+                            }
+
+                            std::size_t write_offset =
+                                kV72EventHeaderBytes;
+                            std::uint32_t event_count = 0u;
+
+                            const std::size_t max_touch_events =
+                                (cleared - write_offset) /
+                                kV72TouchRecordBytes;
+
+                            bool more_touch = false;
+                            const std::vector<V72TouchEvent> events =
+                                V72TakeTouchEvents(
+                                    max_touch_events,
+                                    more_touch);
+
+                            for (const V72TouchEvent& event :
+                                 events) {
+
+                                std::uint8_t* record =
+                                    buffer +
+                                    write_offset;
+
+                                // Android UITouchEvent.Serialize order:
+                                // type, ident, XY, previousXY, tapCount,
+                                // timestamp(double), phase, two sentinels.
+                                Write32(record + 0x00u, 0u);
+                                Write32(
+                                    record + 0x04u,
+                                    event.pointer_id + 1u);
+                                Write32(
+                                    record + 0x08u,
+                                    static_cast<std::uint32_t>(
+                                        event.x));
+                                Write32(
+                                    record + 0x0cu,
+                                    static_cast<std::uint32_t>(
+                                        event.y));
+                                Write32(
+                                    record + 0x10u,
+                                    static_cast<std::uint32_t>(
+                                        event.previous_x));
+                                Write32(
+                                    record + 0x14u,
+                                    static_cast<std::uint32_t>(
+                                        event.previous_y));
+                                Write32(record + 0x18u, 1u);
+
+                                std::uint64_t timestamp_bits = 0u;
+                                static_assert(
+                                    sizeof(timestamp_bits) ==
+                                    sizeof(event.timestamp_ms));
+                                std::memcpy(
+                                    &timestamp_bits,
+                                    &event.timestamp_ms,
+                                    sizeof(timestamp_bits));
+
+                                for (std::size_t byte = 0u;
+                                     byte < 8u;
+                                     ++byte) {
+                                    record[
+                                        0x1cu + byte] =
+                                        static_cast<std::uint8_t>(
+                                            timestamp_bits >>
+                                            (byte * 8u));
+                                }
+
+                                Write32(
+                                    record + 0x24u,
+                                    event.phase);
+                                Write32(
+                                    record + 0x28u,
+                                    0xdeadbeefu);
+                                Write32(
+                                    record + 0x2cu,
+                                    0xdeadbeefu);
+
+                                write_offset +=
+                                    kV72TouchRecordBytes;
+                                ++event_count;
+                            }
+
+                            if (!events.empty()) {
+                                ++v72_touch_batches;
+                                v72_touch_events_delivered +=
+                                    events.size();
+
+                                const V72TouchEvent& first =
+                                    events.front();
+
+                                Append(
+                                    "V72 UI EVENTS batch#" +
+                                    std::to_string(
+                                        v72_touch_batches) +
+                                    " count=" +
+                                    std::to_string(
+                                        events.size()) +
+                                    " more=" +
+                                    (more_touch
+                                        ? std::string{"YES"}
+                                        : std::string{"NO"}) +
+                                    " first{ident=" +
+                                    std::to_string(
+                                        first.pointer_id + 1u) +
+                                    ",phase=" +
+                                    std::to_string(
+                                        first.phase) +
+                                    ",xy=" +
+                                    std::to_string(
+                                        first.x) +
+                                    "," +
+                                    std::to_string(
+                                        first.y) +
+                                    ",prev=" +
+                                    std::to_string(
+                                        first.previous_x) +
+                                    "," +
+                                    std::to_string(
+                                        first.previous_y) +
+                                    "}");
+                            }
+
+                            bool more_text = false;
+                            std::uint32_t text_delivered = 0u;
+                            std::uint64_t text_bytes = 0u;
+                            std::uint32_t first_text_action = 0u;
+                            std::size_t first_text_bytes = 0u;
+                            bool first_text_seen = false;
+
+                            if (V73Enabled()) {
+                                std::lock_guard<std::mutex> lock(
+                                    gV73TextMutex);
+
+                                while (!gV73TextQueue.empty()) {
+                                    const V73TextInputEvent& event =
+                                        gV73TextQueue.front();
+
+                                    const std::size_t padded =
+                                        (event.utf8.size() + 3u) &
+                                        ~std::size_t{3u};
+                                    const std::size_t record_size =
+                                        12u + padded;
+
+                                    if (record_size >
+                                        cleared - write_offset) {
+                                        break;
+                                    }
+
+                                    std::uint8_t* record =
+                                        buffer +
+                                        write_offset;
+
+                                    Write32(record + 0u, 6u);
+                                    Write32(
+                                        record + 4u,
+                                        event.action);
+                                    Write32(
+                                        record + 8u,
+                                        static_cast<std::uint32_t>(
+                                            event.utf8.size()));
+
+                                    if (!event.utf8.empty()) {
+                                        std::memcpy(
+                                            record + 12u,
+                                            event.utf8.data(),
+                                            event.utf8.size());
+                                    }
+
+                                    if (padded >
+                                        event.utf8.size()) {
+                                        std::memset(
+                                            record +
+                                                12u +
+                                                event.utf8.size(),
+                                            0,
+                                            padded -
+                                                event.utf8.size());
+                                    }
+
+                                    if (!first_text_seen) {
+                                        first_text_seen = true;
+                                        first_text_action =
+                                            event.action;
+                                        first_text_bytes =
+                                            event.utf8.size();
+                                    }
+
+                                    text_bytes +=
+                                        event.utf8.size();
+                                    ++text_delivered;
+                                    ++event_count;
+                                    write_offset +=
+                                        record_size;
+
+                                    gV73TextQueue.pop_front();
+                                }
+
+                                more_text =
+                                    !gV73TextQueue.empty();
+                            }
+
+                            if (text_delivered != 0u) {
+                                ++v73_text_batches;
+                                v73_text_events_delivered +=
+                                    text_delivered;
+                                v73_text_bytes_delivered +=
+                                    text_bytes;
+
+                                Append(
+                                    "V73 TEXT EVENTS batch#" +
+                                    std::to_string(
+                                        v73_text_batches) +
+                                    " count=" +
+                                    std::to_string(
+                                        text_delivered) +
+                                    " bytes=" +
+                                    std::to_string(
+                                        text_bytes) +
+                                    " more=" +
+                                    (more_text
+                                        ? std::string{"YES"}
+                                        : std::string{"NO"}) +
+                                    " first{action=" +
+                                    std::to_string(
+                                        first_text_action) +
+                                    ",bytes=" +
+                                    std::to_string(
+                                        first_text_bytes) +
+                                    "}");
+                            }
+
+                            Write32(
+                                buffer,
+                                event_count);
+
+                            regs[0] =
+                                (more_touch ||
+                                 more_text)
+                                    ? 1u
+                                    : 0u;
+
+                            if (event_count == 0u &&
+                                (v52_ui_process_events_calls <= 8u ||
+                                 (v52_ui_process_events_calls %
+                                      250u) == 0u)) {
+
+                                Append(
+                                    std::string{
+                                        V73Enabled()
+                                            ? "V73"
+                                            : "V72"} +
+                                    " UI_ProcessEvents call#" +
+                                    std::to_string(
+                                        v52_ui_process_events_calls) +
+                                    " empty queue; bufferBytes=" +
+                                    std::to_string(
+                                        cleared));
                             }
 
                             return true;
@@ -14033,6 +14196,35 @@ public:
                         regs[0] = 0u;
                         Append(
                             "JNI bridge: OpenSessionForRead -> false");
+                        return true;
+                    }
+
+                    if (family == 1 &&
+                        method_name ==
+                            "Device_IsKeyboardShowing" &&
+                        V73Enabled()) {
+
+                        const bool visible =
+                            PvZ2HostKeyboardVisible();
+
+                        regs[0] =
+                            visible
+                                ? 1u
+                                : 0u;
+
+                        ++v73_keyboard_status_calls;
+
+                        if (v73_keyboard_status_calls <= 12u ||
+                            (v73_keyboard_status_calls % 100u) == 0u) {
+                            Append(
+                                "V73 KEYBOARD status call#" +
+                                std::to_string(
+                                    v73_keyboard_status_calls) +
+                                " -> " +
+                                (visible
+                                    ? std::string{"true"}
+                                    : std::string{"false"}));
+                        }
                         return true;
                     }
 
@@ -14227,6 +14419,43 @@ public:
                                 pending_cloud_state_loaded
                                     ? "YES"
                                     : "NO"});
+                        return true;
+                    }
+
+                    if (family == 9 &&
+                        V73Enabled() &&
+                        (method_name ==
+                             "Device_ShowKeyboard" ||
+                         method_name ==
+                             "Device_HideKeyboard")) {
+
+                        const bool show =
+                            method_name ==
+                                "Device_ShowKeyboard";
+
+                        PvZ2HostSetKeyboardVisible(
+                            show);
+
+                        if (show) {
+                            ++v73_keyboard_show_calls;
+                        } else {
+                            ++v73_keyboard_hide_calls;
+                        }
+
+                        regs[0] = 0u;
+
+                        Append(
+                            "V73 KEYBOARD " +
+                            std::string{
+                                show
+                                    ? "show"
+                                    : "hide"} +
+                            " request#" +
+                            std::to_string(
+                                show
+                                    ? v73_keyboard_show_calls
+                                    : v73_keyboard_hide_calls) +
+                            " -> UIKit UITextField");
                         return true;
                     }
 
@@ -24902,7 +25131,11 @@ bool JniProbePrepareRuntime(
     }
     if (callbacks.V72Enabled()) {
         callbacks.Append(
-            "V72 LIVE TOUCH BRIDGE: v71 proved a natural GAME_LogoScreen -> GAME_MainMenu transition and 600 returned non-black frames. v72 streams the live host framebuffer to UIKit and serializes real UIKit touches into AndroidUIEventManager::ProcessEvents using the verified 16-byte header + 48-byte touch ABI from classes.dex. Touch phases map 0=began,1=moved,3=ended,4=cancelled; no GameState, resource readiness or UI action is forced.");
+            "V72 LIVE TOUCH BRIDGE: real UIKit touches are serialized into AndroidUIEventManager::ProcessEvents using the verified 16-byte header + 48-byte touch ABI from classes.dex. Touch phases map 0=began,1=moved,3=ended,4=cancelled; no GameState, resource readiness or UI action is forced.");
+    }
+    if (callbacks.V73Enabled()) {
+        callbacks.Append(
+            "V73 KEYBOARD/FULLSCREEN BRIDGE: the v72 iPad run delivered 162/162 touch events with zero drops, then the guest called Device_ShowKeyboard while v72 still no-op'd it. classes.dex proves UITextInputEvent type=6 with UTF-8 payload/action framing, and the historical iOS 1.5 binary uses a shared UITextField delegate. v73 bridges Show/Hide/IsKeyboardShowing to UIKit, emits exact text events, and leaves zlib/ETC1/GameState/resource behavior untouched.");
     }
 
     if (callbacks.V64Enabled()) {
@@ -25060,6 +25293,12 @@ void PvZ2ResetInteractiveInput() {
         gV72TouchQueue.clear();
     }
 
+    {
+        std::lock_guard<std::mutex> lock(
+            gV73TextMutex);
+        gV73TextQueue.clear();
+    }
+
     gV72StopRequested.store(
         false,
         std::memory_order_release);
@@ -25070,6 +25309,12 @@ void PvZ2ResetInteractiveInput() {
         0u,
         std::memory_order_release);
     gV72DroppedTouches.store(
+        0u,
+        std::memory_order_release);
+    gV73QueuedTextEvents.store(
+        0u,
+        std::memory_order_release);
+    gV73DroppedTextEvents.store(
         0u,
         std::memory_order_release);
 }
@@ -25116,6 +25361,59 @@ void PvZ2QueueTouchEvent(
     gV72QueuedTouches.fetch_add(
         1u,
         std::memory_order_relaxed);
+    gV72TouchGeneration.fetch_add(
+        1u,
+        std::memory_order_release);
+}
+
+void PvZ2QueueTextInputEvent(
+    std::uint32_t action,
+    const std::uint8_t* utf8,
+    std::size_t utf8_size) {
+
+    // These are the two actions emitted by Android's EditInputConnection for
+    // ordinary committed text and deleteSurroundingText respectively.
+    if (action != 0u &&
+        action != 3u) {
+        return;
+    }
+
+    if (utf8_size != 0u &&
+        utf8 == nullptr) {
+        return;
+    }
+
+    V73TextInputEvent event;
+    event.action = action;
+
+    if (utf8_size != 0u) {
+        event.utf8.assign(
+            utf8,
+            utf8 + utf8_size);
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(
+            gV73TextMutex);
+
+        if (gV73TextQueue.size() >=
+            kV73MaxQueuedTextEvents) {
+            gV73TextQueue.pop_front();
+            gV73DroppedTextEvents.fetch_add(
+                1u,
+                std::memory_order_relaxed);
+        }
+
+        gV73TextQueue.push_back(
+            std::move(event));
+    }
+
+    gV73QueuedTextEvents.fetch_add(
+        1u,
+        std::memory_order_relaxed);
+
+    // Reuse the v72 generation wake-up so a typed character also requests an
+    // immediate live presentation refresh instead of waiting three frames.
     gV72TouchGeneration.fetch_add(
         1u,
         std::memory_order_release);
@@ -28803,6 +29101,49 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                         " stopRequested=" +
                         (gV72StopRequested.load(
                              std::memory_order_relaxed)
+                            ? std::string{"YES"}
+                            : std::string{"NO"}));
+                }
+
+                if (callbacks.V73Enabled()) {
+                    callbacks.Append(
+                        "V73 KEYBOARD SUMMARY: textQueued=" +
+                        std::to_string(
+                            gV73QueuedTextEvents.load(
+                                std::memory_order_relaxed)) +
+                        " textDelivered=" +
+                        std::to_string(
+                            callbacks
+                                .v73_text_events_delivered) +
+                        " textBytes=" +
+                        std::to_string(
+                            callbacks
+                                .v73_text_bytes_delivered) +
+                        " textBatches=" +
+                        std::to_string(
+                            callbacks
+                                .v73_text_batches) +
+                        " textRemaining=" +
+                        std::to_string(
+                            V73PendingTextCount()) +
+                        " textDropped=" +
+                        std::to_string(
+                            gV73DroppedTextEvents.load(
+                                std::memory_order_relaxed)) +
+                        " show=" +
+                        std::to_string(
+                            callbacks
+                                .v73_keyboard_show_calls) +
+                        " hide=" +
+                        std::to_string(
+                            callbacks
+                                .v73_keyboard_hide_calls) +
+                        " status=" +
+                        std::to_string(
+                            callbacks
+                                .v73_keyboard_status_calls) +
+                        " hostVisible=" +
+                        (PvZ2HostKeyboardVisible()
                             ? std::string{"YES"}
                             : std::string{"NO"}));
                 }
