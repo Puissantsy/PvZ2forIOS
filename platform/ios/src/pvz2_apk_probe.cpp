@@ -2334,6 +2334,21 @@ public:
         gles_uniform_names;
     std::unordered_map<std::uint64_t, GLint>
         gles_uniform1i_values;
+
+    // v80: retain the latest matrix uploaded to each program/location.
+    // Nothing here changes guest or host GL state; it only lets sampled UI
+    // draws be related to the exact screenMatrix that was active.
+    std::unordered_map<
+        std::uint64_t,
+        std::array<GLfloat, 16>>
+        gles_uniform_matrix4_values;
+    std::uint64_t v80_screen_matrix_uploads = 0u;
+    std::uint64_t v80_screen_matrix_changes = 0u;
+    std::uint64_t v80_array_draws_seen = 0u;
+    std::uint64_t v80_transform_draw_traces = 0u;
+    std::uint32_t v80_trace_frame = 0xffffffffu;
+    std::uint32_t v80_traces_this_frame = 0u;
+
     std::uint64_t gles_transition_draw_traces = 0u;
     std::uint64_t gles_transition_clear_traces = 0u;
 
@@ -2573,6 +2588,311 @@ public:
                 raw +
                 "\"");
         }
+    }
+
+    void V80TraceArrayTransform(
+        GLint first,
+        GLsizei count) {
+
+        ++v80_array_draws_seen;
+
+        if (!V80Enabled() ||
+            first < 0 ||
+            count <= 0 ||
+            gles_bound_guest_framebuffer == 0u) {
+            return;
+        }
+
+        // Three bounded windows: early EA, title/loading, then Profile.
+        const bool sample_frame =
+            current_frame_number <= 12u ||
+            (current_frame_number >= 50u &&
+             current_frame_number <= 95u &&
+             (current_frame_number % 5u) == 0u) ||
+            (current_frame_number >= 108u &&
+             (current_frame_number % 3u) == 0u);
+
+        if (!sample_frame ||
+            v80_transform_draw_traces >= 220u) {
+            return;
+        }
+
+        if (v80_trace_frame != current_frame_number) {
+            v80_trace_frame = current_frame_number;
+            v80_traces_this_frame = 0u;
+        }
+        if (v80_traces_this_frame >= 10u) {
+            return;
+        }
+
+        std::optional<GLuint> position_index;
+        for (GLuint index = 0u;
+             index < gles_attrib_state.size();
+             ++index) {
+
+            const auto& state = gles_attrib_state[index];
+            if (!state.enabled) {
+                continue;
+            }
+
+            const std::uint64_t key =
+                (static_cast<std::uint64_t>(
+                     gles_current_program) << 32u) |
+                index;
+            const auto name_it = gles_attrib_names.find(key);
+            if (name_it == gles_attrib_names.end()) {
+                continue;
+            }
+
+            std::string lowered = name_it->second;
+            std::transform(
+                lowered.begin(),
+                lowered.end(),
+                lowered.begin(),
+                [](unsigned char c) {
+                    return static_cast<char>(std::tolower(c));
+                });
+
+            if (lowered.find("position") != std::string::npos) {
+                position_index = index;
+                break;
+            }
+        }
+
+        if (!position_index.has_value()) {
+            return;
+        }
+
+        const auto& position =
+            gles_attrib_state[*position_index];
+
+        if (position.type != GL_FLOAT ||
+            position.size < 2 ||
+            position.guest_pointer == 0u) {
+            return;
+        }
+
+        const std::size_t packed_stride =
+            static_cast<std::size_t>(position.size) *
+            sizeof(GLfloat);
+        const std::size_t stride =
+            position.stride > 0
+                ? static_cast<std::size_t>(position.stride)
+                : packed_stride;
+        const std::size_t sample_count =
+            std::min<std::size_t>(
+                static_cast<std::size_t>(count),
+                256u);
+
+        bool have_bounds = false;
+        float min_x = 0.0f;
+        float min_y = 0.0f;
+        float max_x = 0.0f;
+        float max_y = 0.0f;
+
+        for (std::size_t i = 0u; i < sample_count; ++i) {
+            const std::uint64_t vertex_index =
+                static_cast<std::uint64_t>(first) + i;
+            const std::uint64_t address64 =
+                static_cast<std::uint64_t>(
+                    position.guest_pointer) +
+                vertex_index * stride;
+
+            if (address64 >
+                std::numeric_limits<std::uint32_t>::max()) {
+                break;
+            }
+
+            const auto* bytes =
+                mem.Ptr(
+                    static_cast<std::uint32_t>(address64),
+                    sizeof(GLfloat) * 2u);
+            if (bytes == nullptr) {
+                break;
+            }
+
+            GLfloat x = 0.0f;
+            GLfloat y = 0.0f;
+            std::memcpy(&x, bytes, sizeof(x));
+            std::memcpy(
+                &y,
+                bytes + sizeof(GLfloat),
+                sizeof(y));
+
+            if (!std::isfinite(x) || !std::isfinite(y)) {
+                continue;
+            }
+
+            if (!have_bounds) {
+                min_x = max_x = x;
+                min_y = max_y = y;
+                have_bounds = true;
+            } else {
+                min_x = std::min(min_x, x);
+                min_y = std::min(min_y, y);
+                max_x = std::max(max_x, x);
+                max_y = std::max(max_y, y);
+            }
+        }
+
+        if (!have_bounds) {
+            return;
+        }
+
+        bool have_matrix = false;
+        std::array<GLfloat, 16> matrix{};
+        std::string matrix_name = "(none)";
+
+        for (const auto& entry : gles_uniform_names) {
+            const GLuint program =
+                static_cast<GLuint>(entry.first >> 32u);
+            if (program != gles_current_program) {
+                continue;
+            }
+
+            std::string lowered = entry.second;
+            std::transform(
+                lowered.begin(),
+                lowered.end(),
+                lowered.begin(),
+                [](unsigned char c) {
+                    return static_cast<char>(std::tolower(c));
+                });
+            if (lowered.find("screenmatrix") ==
+                std::string::npos) {
+                continue;
+            }
+
+            const auto matrix_it =
+                gles_uniform_matrix4_values.find(entry.first);
+            if (matrix_it !=
+                gles_uniform_matrix4_values.end()) {
+                matrix = matrix_it->second;
+                matrix_name = entry.second;
+                have_matrix = true;
+                break;
+            }
+        }
+
+        double inferred_w = 0.0;
+        double inferred_h = 0.0;
+        if (have_matrix &&
+            std::fabs(matrix[0]) > 1.0e-9f &&
+            std::fabs(matrix[5]) > 1.0e-9f) {
+            inferred_w =
+                2.0 /
+                std::fabs(
+                    static_cast<double>(matrix[0]));
+            inferred_h =
+                2.0 /
+                std::fabs(
+                    static_cast<double>(matrix[5]));
+        }
+
+        auto texture_label =
+            [&](GLuint texture) {
+                std::ostringstream value;
+                value << texture;
+                const auto it =
+                    gles_texture_info.find(texture);
+                if (it != gles_texture_info.end()) {
+                    value
+                        << "("
+                        << it->second.width
+                        << "x"
+                        << it->second.height
+                        << ")";
+                }
+                return value.str();
+            };
+
+        ++v80_traces_this_frame;
+        ++v80_transform_draw_traces;
+
+        std::ostringstream diagnostic;
+        diagnostic
+            << "V80 TRANSFORM DRAW #"
+            << v80_transform_draw_traces
+            << " frame="
+            << current_frame_number
+            << " program="
+            << gles_current_program
+            << " guestFBO="
+            << gles_bound_guest_framebuffer
+            << " hostFBO="
+            << gles_bound_host_framebuffer
+            << " viewport=("
+            << last_gles_viewport[0] << ","
+            << last_gles_viewport[1] << ","
+            << last_gles_viewport[2] << ","
+            << last_gles_viewport[3]
+            << ") first="
+            << first
+            << " count="
+            << count
+            << " posBBox=("
+            << min_x << "," << min_y << ")-("
+            << max_x << "," << max_y << ")"
+            << " tex0="
+            << texture_label(gles_bound_texture_2d[0u])
+            << " tex1="
+            << texture_label(gles_bound_texture_2d[1u])
+            << " matrix="
+            << matrix_name;
+
+        if (have_matrix) {
+            diagnostic
+                << " m00=" << matrix[0]
+                << " m11=" << matrix[5]
+                << " tx=" << matrix[12]
+                << " ty=" << matrix[13]
+                << " inferredCanvas="
+                << inferred_w << "x" << inferred_h;
+        } else {
+            diagnostic << " unavailable";
+        }
+
+        Append(diagnostic.str());
+    }
+
+    std::string V80TransformSummary() const {
+        std::ostringstream out;
+        out
+            << "V80 TRANSFORM SUMMARY mode="
+            << V56ModeName()
+            << " screenMatrixUploads="
+            << v80_screen_matrix_uploads
+            << " screenMatrixChanges="
+            << v80_screen_matrix_changes
+            << " arrayDrawsSeen="
+            << v80_array_draws_seen
+            << " sampledTransformDraws="
+            << v80_transform_draw_traces
+            << " finalViewport=("
+            << last_gles_viewport[0] << ","
+            << last_gles_viewport[1] << ","
+            << last_gles_viewport[2] << ","
+            << last_gles_viewport[3]
+            << ") hostSurface="
+            << host_surface_width
+            << "x"
+            << host_surface_height
+            << " touchDelivered="
+            << v72_touch_events_delivered
+            << " keyboard{show="
+            << v73_keyboard_show_calls
+            << ",hide="
+            << v73_keyboard_hide_calls
+            << ",status="
+            << v73_keyboard_status_calls
+            << ",requested="
+            << (PvZ2HostKeyboardVisible() ? "YES" : "NO")
+            << ",firstResponder="
+            << (PvZ2HostKeyboardFirstResponder()
+                    ? "YES"
+                    : "NO")
+            << "}";
+        return out.str();
     }
 
     bool V48TraceTransitionFrame() const {
@@ -6019,6 +6339,8 @@ public:
             return "V76_IOS_SCALE_CONTRACT";
         case PvZ2DiagnosticMode::V77LegacyIpadGeometry:
             return "V77_LEGACY_IPAD_GEOMETRY";
+        case PvZ2DiagnosticMode::V80GlobalTransformProbe:
+            return "V80_GLOBAL_TRANSFORM_PROBE";
         }
         return "UNKNOWN";
     }
@@ -6028,7 +6350,9 @@ public:
             diagnostic_mode ==
                 PvZ2DiagnosticMode::V75IpadUiPackage ||
             diagnostic_mode ==
-                PvZ2DiagnosticMode::V77LegacyIpadGeometry;
+                PvZ2DiagnosticMode::V77LegacyIpadGeometry ||
+            diagnostic_mode ==
+                PvZ2DiagnosticMode::V80GlobalTransformProbe;
     }
 
     const char* V79ProfileSiteName(
@@ -6091,10 +6415,17 @@ public:
         return out.str();
     }
 
+    bool V80Enabled() const {
+        return
+            diagnostic_mode ==
+                PvZ2DiagnosticMode::V80GlobalTransformProbe;
+    }
+
     bool V77Enabled() const {
         return
             diagnostic_mode ==
-                PvZ2DiagnosticMode::V77LegacyIpadGeometry;
+                PvZ2DiagnosticMode::V77LegacyIpadGeometry ||
+            V80Enabled();
     }
 
     bool V76Enabled() const {
@@ -14829,6 +15160,24 @@ public:
                                     ? std::string{"true"}
                                     : std::string{"false"}));
                         }
+
+                        if (V80Enabled() &&
+                            (v73_keyboard_status_calls <= 24u ||
+                             (v73_keyboard_status_calls % 25u) == 0u)) {
+                            Append(
+                                "V80 KEYBOARD status frame=" +
+                                std::to_string(current_frame_number) +
+                                " call#" +
+                                std::to_string(v73_keyboard_status_calls) +
+                                " requested=" +
+                                (visible
+                                    ? std::string{"YES"}
+                                    : std::string{"NO"}) +
+                                " firstResponder=" +
+                                (PvZ2HostKeyboardFirstResponder()
+                                    ? std::string{"YES"}
+                                    : std::string{"NO"}));
+                        }
                         return true;
                     }
 
@@ -15060,6 +15409,24 @@ public:
                                     ? v73_keyboard_show_calls
                                     : v73_keyboard_hide_calls) +
                             " -> UIKit UITextField");
+
+                        if (V80Enabled()) {
+                            Append(
+                                "V80 KEYBOARD guestRequest frame=" +
+                                std::to_string(current_frame_number) +
+                                " action=" +
+                                (show
+                                    ? std::string{"show"}
+                                    : std::string{"hide"}) +
+                                " requestedNow=" +
+                                (PvZ2HostKeyboardVisible()
+                                    ? std::string{"YES"}
+                                    : std::string{"NO"}) +
+                                " firstResponderNow=" +
+                                (PvZ2HostKeyboardFirstResponder()
+                                    ? std::string{"YES"}
+                                    : std::string{"NO"}));
+                        }
                         return true;
                     }
 
@@ -22532,6 +22899,103 @@ public:
                                       bytes)
                                 : nullptr);
 
+                    if (values != nullptr && count > 0) {
+                        const GLint location =
+                            static_cast<GLint>(guest_arg(0u));
+                        const std::uint64_t key =
+                            (static_cast<std::uint64_t>(
+                                 gles_current_program) << 32u) |
+                            static_cast<std::uint32_t>(location);
+
+                        std::array<GLfloat, 16> matrix{};
+                        std::copy_n(values, 16u, matrix.begin());
+
+                        const auto previous =
+                            gles_uniform_matrix4_values.find(key);
+                        const bool changed =
+                            previous ==
+                                gles_uniform_matrix4_values.end() ||
+                            previous->second != matrix;
+                        gles_uniform_matrix4_values[key] = matrix;
+
+                        const auto name_it =
+                            gles_uniform_names.find(key);
+                        const std::string uniform_name =
+                            name_it != gles_uniform_names.end()
+                                ? name_it->second
+                                : std::string{"loc"} +
+                                      std::to_string(location);
+
+                        std::string lowered = uniform_name;
+                        std::transform(
+                            lowered.begin(),
+                            lowered.end(),
+                            lowered.begin(),
+                            [](unsigned char c) {
+                                return static_cast<char>(
+                                    std::tolower(c));
+                            });
+
+                        if (V80Enabled() &&
+                            lowered.find("screenmatrix") !=
+                                std::string::npos) {
+
+                            ++v80_screen_matrix_uploads;
+
+                            if (changed) {
+                                ++v80_screen_matrix_changes;
+
+                                if (v80_screen_matrix_changes <= 96u) {
+                                    const double inferred_w =
+                                        std::fabs(matrix[0]) > 1.0e-9f
+                                            ? 2.0 /
+                                                  std::fabs(
+                                                      static_cast<double>(
+                                                          matrix[0]))
+                                            : 0.0;
+                                    const double inferred_h =
+                                        std::fabs(matrix[5]) > 1.0e-9f
+                                            ? 2.0 /
+                                                  std::fabs(
+                                                      static_cast<double>(
+                                                          matrix[5]))
+                                            : 0.0;
+
+                                    std::ostringstream diagnostic;
+                                    diagnostic
+                                        << "V80 SCREENMATRIX change#"
+                                        << v80_screen_matrix_changes
+                                        << " upload#"
+                                        << v80_screen_matrix_uploads
+                                        << " frame="
+                                        << current_frame_number
+                                        << " program="
+                                        << gles_current_program
+                                        << " loc="
+                                        << location
+                                        << " name="
+                                        << uniform_name
+                                        << " viewport=("
+                                        << last_gles_viewport[0] << ","
+                                        << last_gles_viewport[1] << ","
+                                        << last_gles_viewport[2] << ","
+                                        << last_gles_viewport[3]
+                                        << ") inferredCanvas="
+                                        << inferred_w << "x" << inferred_h
+                                        << " m=[";
+                                    for (std::size_t i = 0u;
+                                         i < matrix.size();
+                                         ++i) {
+                                        if (i != 0u) diagnostic << ",";
+                                        diagnostic << matrix[i];
+                                    }
+                                    diagnostic << "]";
+                                    Append(diagnostic.str());
+                                }
+                            }
+                        }
+                    }
+
                     glUniformMatrix4fv(
                         static_cast<GLint>(
                             guest_arg(0u)),
@@ -23823,6 +24287,10 @@ public:
                     V48TraceDrawState(
                         "arrays",
                         draw_mode,
+                        count);
+
+                    V80TraceArrayTransform(
+                        first,
                         count);
 
                     glDrawArrays(
@@ -25905,7 +26373,11 @@ bool JniProbePrepareRuntime(
     }
     if (callbacks.V79ProfileProbeEnabled()) {
         callbacks.Append(
-            "V79 FIRST-RUN PROFILE PROVENANCE: observation-only traps are active in this V75/V77 control. Static v2.5 matched the Android and historical-iOS Profile/Facebook/EULA layout paths and found only a localized text-entry constant difference. v79 records live parent +0x30/+0x34 dimensions, LawnApp +0x6a8 scale, branch state and bounded final geometry at the matched paths. No scale, rectangle, resource, GameState or widget state is modified.");
+            "V79 FIRST-RUN PROFILE PROVENANCE: observation-only traps are active in this V75/V77/V80 control. Static v2.5 matched the Android and historical-iOS Profile/Facebook/EULA layout paths and found only a localized text-entry constant difference. v79 records live parent +0x30/+0x34 dimensions, LawnApp +0x6a8 scale, branch state and bounded final geometry at the matched paths. No scale, rectangle, resource, GameState or widget state is modified.");
+    }
+    if (callbacks.V80Enabled()) {
+        callbacks.Append(
+            "V80 GLOBAL TRANSFORM PROBE: user observation shows the same oversize/crop on the EA logo, PvZ2 title/loading screen and first-run Profile, so v80 keeps v77 geometry unchanged and traces the shared GLES screenMatrix plus sampled pre-transform position bounds and host presentation. Keyboard diagnostics also separate guest Show/Hide/status from UIKit first-responder state. No matrix, vertex, viewport, FBO, widget, resource or GameState value is modified.");
     }
 
     if (callbacks.V64Enabled()) {
@@ -29975,6 +30447,11 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                 if (callbacks.V79ProfileProbeEnabled()) {
                     callbacks.Append(
                         callbacks.V79ProfileSummary());
+                }
+
+                if (callbacks.V80Enabled()) {
+                    callbacks.Append(
+                        callbacks.V80TransformSummary());
                 }
 
                 if (callbacks.V73Enabled()) {

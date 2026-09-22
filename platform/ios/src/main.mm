@@ -293,6 +293,12 @@ static __weak PvZ2LiveViewController *
 static std::atomic<bool>
     gPvZ2KeyboardRequested{false};
 
+static std::atomic<bool>
+    gPvZ2KeyboardFirstResponder{false};
+
+static std::atomic<bool>
+    gV80TransformProbeActive{false};
+
 // v74: the guest emits a transient ShowKeyboard -> HideKeyboard pair while
 // Native_onSurfaceCreated is still on the black startup surface. Keep the
 // requested state observable to the guest, but do not summon UIKit until a
@@ -338,6 +344,11 @@ void PvZ2HostSetKeyboardVisible(
 
 bool PvZ2HostKeyboardVisible() {
     return gPvZ2KeyboardRequested.load(
+        std::memory_order_acquire);
+}
+
+bool PvZ2HostKeyboardFirstResponder() {
+    return gPvZ2KeyboardFirstResponder.load(
         std::memory_order_acquire);
 }
 
@@ -394,7 +405,7 @@ bool PvZ2HostKeyboardVisible() {
     self.captionLabel.clipsToBounds =
         YES;
     self.captionLabel.text =
-        @"PvZ2 v79 — starting…\nV77 geometry validation";
+        @"PvZ2 v80 — starting…\nGlobal transform probe";
 
     self.stopButton =
         [UIButton
@@ -570,18 +581,36 @@ bool PvZ2HostKeyboardVisible() {
 - (void)setHostKeyboardVisible:
         (BOOL)visible {
 
+    const BOOL before =
+        self.keyboardField.isFirstResponder;
+
+    if (gV80TransformProbeActive.load(
+            std::memory_order_acquire)) {
+        AppendPersistentLog(
+            [NSString
+                stringWithFormat:
+                    @"[V80 HOST KEYBOARD] set requested=%@ beforeFirstResponder=%@",
+                    visible ? @"YES" : @"NO",
+                    before ? @"YES" : @"NO"]);
+    }
+
     if (visible) {
         const BOOL became =
             [self.keyboardField
                 becomeFirstResponder];
+        const BOOL actual =
+            self.keyboardField.isFirstResponder;
 
         gPvZ2KeyboardRequested.store(
             became == YES,
             std::memory_order_release);
+        gPvZ2KeyboardFirstResponder.store(
+            actual == YES,
+            std::memory_order_release);
 
         if (became) {
             self.captionLabel.text =
-                @"v74 — iOS keyboard active\nUITextInputEvent → Android guest";
+                @"v80 — iOS keyboard active\nUITextInputEvent → Android guest";
         }
     } else {
         [self.keyboardField
@@ -590,6 +619,23 @@ bool PvZ2HostKeyboardVisible() {
         gPvZ2KeyboardRequested.store(
             false,
             std::memory_order_release);
+        gPvZ2KeyboardFirstResponder.store(
+            self.keyboardField.isFirstResponder == YES,
+            std::memory_order_release);
+    }
+
+    if (gV80TransformProbeActive.load(
+            std::memory_order_acquire)) {
+        AppendPersistentLog(
+            [NSString
+                stringWithFormat:
+                    @"[V80 HOST KEYBOARD] set-complete requested=%@ afterFirstResponder=%@ guestVisibleAtomic=%@",
+                    visible ? @"YES" : @"NO",
+                    self.keyboardField.isFirstResponder ? @"YES" : @"NO",
+                    gPvZ2KeyboardRequested.load(
+                        std::memory_order_acquire)
+                        ? @"YES"
+                        : @"NO"]);
     }
 }
 
@@ -599,6 +645,15 @@ bool PvZ2HostKeyboardVisible() {
     gPvZ2KeyboardRequested.store(
         true,
         std::memory_order_release);
+    gPvZ2KeyboardFirstResponder.store(
+        true,
+        std::memory_order_release);
+
+    if (gV80TransformProbeActive.load(
+            std::memory_order_acquire)) {
+        AppendPersistentLog(
+            @"[V80 HOST KEYBOARD] delegate didBeginEditing firstResponder=YES");
+    }
 }
 
 - (void)textFieldDidEndEditing:
@@ -607,6 +662,15 @@ bool PvZ2HostKeyboardVisible() {
     gPvZ2KeyboardRequested.store(
         false,
         std::memory_order_release);
+    gPvZ2KeyboardFirstResponder.store(
+        false,
+        std::memory_order_release);
+
+    if (gV80TransformProbeActive.load(
+            std::memory_order_acquire)) {
+        AppendPersistentLog(
+            @"[V80 HOST KEYBOARD] delegate didEndEditing firstResponder=NO");
+    }
 }
 
 - (BOOL)textField:
@@ -1039,6 +1103,39 @@ bool PvZ2HostKeyboardVisible() {
                 YES];
     }
 
+    if (gV80TransformProbeActive.load(
+            std::memory_order_acquire) &&
+        (frame == 3u ||
+         frame == 5u ||
+         frame == 10u ||
+         frame == 55u ||
+         frame == 60u ||
+         frame == 70u ||
+         frame == 90u ||
+         frame == 114u ||
+         frame == 120u ||
+         frame == 129u)) {
+
+        const CGRect viewBounds = self.view.bounds;
+        const CGRect imageBounds = self.imageView.bounds;
+        UIScreen *screen = UIScreen.mainScreen;
+
+        AppendPersistentLog(
+            [NSString
+                stringWithFormat:
+                    @"[V80 HOST PRESENT] frame=%lu source=%lux%lu viewPt=%.1fx%.1f imageViewPt=%.1fx%.1f contentMode=%ld screenScale=%.3f nativeScale=%.3f",
+                    (unsigned long)frame,
+                    (unsigned long)width,
+                    (unsigned long)height,
+                    CGRectGetWidth(viewBounds),
+                    CGRectGetHeight(viewBounds),
+                    CGRectGetWidth(imageBounds),
+                    CGRectGetHeight(imageBounds),
+                    (long)self.imageView.contentMode,
+                    screen.scale,
+                    screen.nativeScale]);
+    }
+
     if (!self.runFinished) {
         // v71 established useful pixels by frame 3. Avoid accepting an
         // accidental tap on the initial black startup buffers.
@@ -1165,7 +1262,7 @@ bool PvZ2HostKeyboardVisible() {
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — v79 First-Run Provenance";
+        @"PvZ2forIOS — v80 Global Transform Probe";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -1174,7 +1271,7 @@ bool PvZ2HostKeyboardVisible() {
         NO;
 
     title.text =
-        @"PvZ2forIOS — v79 First-Run Provenance";
+        @"PvZ2forIOS — v80 Global Transform Probe";
 
     title.font =
         [UIFont
@@ -1190,7 +1287,7 @@ bool PvZ2HostKeyboardVisible() {
         NO;
 
     explanation.text =
-        @"v79 is an observation-only first-run Profile provenance probe. Static v2.4/v2.5 matched the Android MainMenu/Profile/Facebook/EULA code against the historical iOS 1.5 binary: both use the same 600-unit base height, 2.56 scale at 1536 px, and mostly identical widget constants; only the name text-entry showed a localized 26/373 vs 110/289 difference. Keep V77 Legacy iPad selected for the historical-geometry run, then optionally run V75 iPad UI in the same IPA as the modern-geometry control. Both modes get the same bounded V79 PROFILE instrumentation. No runtime geometry or widget value is changed.";
+        @"v80 targets the common transform behind the same oversized/cropped rendering observed on the EA logo, the PvZ2 title/loading screen and the first-run Profile. It preserves V77 historical iPad geometry (1024×768 pt / 2048×1536 px), UI_IPAD, touch, keyboard and all validated bridges. The probe records screenMatrix changes, sampled pre-transform position bounds and final UIKit presentation without modifying them. V79 Profile provenance remains active. Keyboard tracing now separates guest Show/Hide/status from the real UIKit first-responder state.";
 
     explanation.numberOfLines = 0;
 
@@ -1245,6 +1342,7 @@ bool PvZ2HostKeyboardVisible() {
                     @"V75 iPad UI",
                     @"V76 iOS Scale",
                     @"V77 Legacy iPad",
+                    @"V80 Transform",
                     @"V66 Waits",
                     @"V65 Cond",
                     @"Ctype Scout"
@@ -1253,7 +1351,7 @@ bool PvZ2HostKeyboardVisible() {
     self.diagnosticModeControl.translatesAutoresizingMaskIntoConstraints =
         NO;
     self.diagnosticModeControl.selectedSegmentIndex =
-        4;
+        5;
 
     UIStackView *mainButtons =
         [[UIStackView alloc]
@@ -1891,6 +1989,7 @@ bool PvZ2HostKeyboardVisible() {
             @"V75_IPAD_UI_PACKAGE",
             @"V76_IOS_SCALE_CONTRACT",
             @"V77_LEGACY_IPAD_GEOMETRY",
+            @"V80_GLOBAL_TRANSFORM_PROBE",
             @"V66_BLOCKING_WAIT_SCHEDULER",
             @"V65_CONDITION_VARIABLE_SCHEDULER",
             @"CTYPE_COMPAT_DEEP_SCOUT"
@@ -1909,7 +2008,7 @@ bool PvZ2HostKeyboardVisible() {
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. mode=%@. v79 instruments the already-validated V77 Legacy iPad and V75 iPad UI controls only. V77 remains the default historical-geometry run; V75 is the same-build modern-geometry comparison. Look for bounded V79 PROFILE lines; no guest geometry is modified.",
+                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. mode=%@. Keep V80 Transform selected. It preserves V77 geometry and records V80 SCREENMATRIX / V80 TRANSFORM DRAW / V80 HOST PRESENT plus inherited V79 PROFILE provenance. No guest geometry is modified.",
                     modeNames[modeIndex]]];
 
     [self
@@ -1994,15 +2093,20 @@ bool PvZ2HostKeyboardVisible() {
             @"V77_LEGACY_IPAD_GEOMETRY";
     } else if (selectedMode == 5) {
         diagnosticMode =
+            PvZ2DiagnosticMode::V80GlobalTransformProbe;
+        diagnosticModeName =
+            @"V80_GLOBAL_TRANSFORM_PROBE";
+    } else if (selectedMode == 6) {
+        diagnosticMode =
             PvZ2DiagnosticMode::V66BlockingWaitScheduler;
         diagnosticModeName =
             @"V66_BLOCKING_WAIT_SCHEDULER";
-    } else if (selectedMode == 6) {
+    } else if (selectedMode == 7) {
         diagnosticMode =
             PvZ2DiagnosticMode::V65ConditionVariableScheduler;
         diagnosticModeName =
             @"V65_CONDITION_VARIABLE_SCHEDULER";
-    } else if (selectedMode == 7) {
+    } else if (selectedMode == 8) {
         diagnosticMode =
             PvZ2DiagnosticMode::CtypeCompatDeepScout;
         diagnosticModeName =
@@ -2016,12 +2120,20 @@ bool PvZ2HostKeyboardVisible() {
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v79 First-Run Profile Provenance Probe started mode=%@; PID=%d ===",
+                    @"=== PvZ2 v80 Global Transform Probe started mode=%@; PID=%d ===",
                     diagnosticModeName,
                     getpid()]];
 
     self.jniRunning =
         YES;
+
+    gV80TransformProbeActive.store(
+        diagnosticMode ==
+            PvZ2DiagnosticMode::V80GlobalTransformProbe,
+        std::memory_order_release);
+    gPvZ2KeyboardFirstResponder.store(
+        false,
+        std::memory_order_release);
 
     [self refreshStatus];
 
@@ -2032,7 +2144,9 @@ bool PvZ2HostKeyboardVisible() {
      diagnosticMode ==
          PvZ2DiagnosticMode::V76IosScaleContract ||
      diagnosticMode ==
-         PvZ2DiagnosticMode::V77LegacyIpadGeometry)) {
+         PvZ2DiagnosticMode::V77LegacyIpadGeometry ||
+      diagnosticMode ==
+         PvZ2DiagnosticMode::V80GlobalTransformProbe)) {
 
         PvZ2ResetInteractiveInput();
         gPvZ2KeyboardHostReady.store(
@@ -2153,7 +2267,9 @@ bool PvZ2HostKeyboardVisible() {
                              diagnosticMode ==
                                  PvZ2DiagnosticMode::V76IosScaleContract ||
                              diagnosticMode ==
-                                 PvZ2DiagnosticMode::V77LegacyIpadGeometry) &&
+                                 PvZ2DiagnosticMode::V77LegacyIpadGeometry ||
+                              diagnosticMode ==
+                                  PvZ2DiagnosticMode::V80GlobalTransformProbe) &&
                             selfRef.liveController != nil) {
 
                             [selfRef.liveController
@@ -2176,7 +2292,9 @@ bool PvZ2HostKeyboardVisible() {
              diagnosticMode ==
                  PvZ2DiagnosticMode::V76IosScaleContract ||
              diagnosticMode ==
-                 PvZ2DiagnosticMode::V77LegacyIpadGeometry)) {
+                 PvZ2DiagnosticMode::V77LegacyIpadGeometry ||
+      diagnosticMode ==
+         PvZ2DiagnosticMode::V80GlobalTransformProbe)) {
 
                 liveFrameCallback =
                     [](
@@ -2456,7 +2574,7 @@ bool PvZ2HostKeyboardVisible() {
                     if (result.ok) {
                         [selfRef
                             appendUI:
-                                @"SUCCESS STEP 3: PvZ2 completed the selected v79 provenance run. Inspect V79 PROFILE lines and the V79 PROFILE SUMMARY; V75/V77 geometry itself was not changed."];
+                                @"SUCCESS STEP 3: PvZ2 completed the selected v80 transform run. Inspect V80 SCREENMATRIX, V80 TRANSFORM DRAW, V80 HOST PRESENT, V80 KEYBOARD and V80 TRANSFORM SUMMARY. V77 geometry itself was not changed."];
 
                         if ((diagnosticMode ==
                                  PvZ2DiagnosticMode::V74RetinaInputPolish ||
@@ -2465,14 +2583,16 @@ bool PvZ2HostKeyboardVisible() {
                              diagnosticMode ==
                                  PvZ2DiagnosticMode::V76IosScaleContract ||
                              diagnosticMode ==
-                                 PvZ2DiagnosticMode::V77LegacyIpadGeometry) &&
+                                 PvZ2DiagnosticMode::V77LegacyIpadGeometry ||
+                              diagnosticMode ==
+                                  PvZ2DiagnosticMode::V80GlobalTransformProbe) &&
                             selfRef.liveController != nil) {
 
                             [selfRef.liveController
                                 finishRunWithMessage:
                                     [NSString
                                         stringWithFormat:
-                                            @"PvZ2 v79 LIVE — run finished after %u guest frames.\nClose to inspect the log. V79 PROFILE provenance plus inherited V78LIVE presentation markers are recorded.",
+                                            @"PvZ2 v80 LIVE — run finished after %u guest frames.\nClose to inspect the log. Global transform, host presentation, keyboard state and inherited V79 Profile provenance are recorded.",
                                             result.draw_frames_completed]];
 
                         } else if (!result.final_frame_png_path.empty()) {
@@ -2528,14 +2648,16 @@ bool PvZ2HostKeyboardVisible() {
                              diagnosticMode ==
                                  PvZ2DiagnosticMode::V76IosScaleContract ||
                              diagnosticMode ==
-                                 PvZ2DiagnosticMode::V77LegacyIpadGeometry) &&
+                                 PvZ2DiagnosticMode::V77LegacyIpadGeometry ||
+                              diagnosticMode ==
+                                  PvZ2DiagnosticMode::V80GlobalTransformProbe) &&
                             selfRef.liveController != nil) {
 
                             [selfRef.liveController
                                 finishRunWithMessage:
                                     [NSString
                                         stringWithFormat:
-                                            @"PvZ2 v79 LIVE — guest run stopped.\n%@\nClose to inspect the full log.",
+                                            @"PvZ2 v80 LIVE — guest run stopped.\n%@\nClose to inspect the full log.",
                                             message]];
 
                         } else {

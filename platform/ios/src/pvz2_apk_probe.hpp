@@ -75,6 +75,7 @@ void PvZ2QueueTextInputEvent(
 // for Android Device_ShowKeyboard/HideKeyboard/IsKeyboardShowing.
 void PvZ2HostSetKeyboardVisible(bool visible);
 bool PvZ2HostKeyboardVisible();
+bool PvZ2HostKeyboardFirstResponder();
 
 void PvZ2RequestInteractiveStop();
 
@@ -182,6 +183,14 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // contract and instead emulate the historical iPad 1.5 geometry exactly:
     // 1024x768 points / 2048x1536 Retina pixels, presented aspect-fit by UIKit.
     V77LegacyIpadGeometry = 21u,
+
+    // v80: preserve the validated v77 historical iPad geometry and all
+    // v71-v79 bridges/probes, but instrument the common GLES transform chain.
+    // screenMatrix uploads plus sampled position bounds show where the same
+    // oversize/crop seen on EA, the PvZ2 title/loading screen and Profile is
+    // introduced. Keyboard tracing separately distinguishes guest requests
+    // from the real UIKit first-responder state. Observation only.
+    V80GlobalTransformProbe = 22u,
 };
 
 struct PvZ2JniProbeResult {
