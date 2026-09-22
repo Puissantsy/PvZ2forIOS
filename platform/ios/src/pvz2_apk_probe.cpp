@@ -828,6 +828,19 @@ constexpr std::uint32_t kJniProbeSvcV66TaskBChildResult = 0x00f086u;
 constexpr std::uint32_t kJniProbeSvcV67TokenIncrementStore = 0x00f087u;
 constexpr std::uint32_t kJniProbeSvcV67TokenDecrementStore = 0x00f088u;
 
+// v69: one batched TaskResource lifecycle probe. Traps are placed after
+// virtual calls (or on simple MOV/LDR/STR/CMP instructions) so the real
+// guest virtual methods still execute naturally.
+constexpr std::uint32_t kJniProbeSvcV69WorkerPreWait = 0x00f089u;
+constexpr std::uint32_t kJniProbeSvcV69ActiveReadyResult = 0x00f08au;
+constexpr std::uint32_t kJniProbeSvcV69ActivePhaseResult = 0x00f08bu;
+constexpr std::uint32_t kJniProbeSvcV69StartWorkReturn = 0x00f08cu;
+constexpr std::uint32_t kJniProbeSvcV69MoveCompleted = 0x00f08du;
+constexpr std::uint32_t kJniProbeSvcV69CompletedPollReturn = 0x00f08eu;
+constexpr std::uint32_t kJniProbeSvcV69CompletedReadyResult = 0x00f08fu;
+constexpr std::uint32_t kJniProbeSvcV69CompletedTerminalResult = 0x00f090u;
+constexpr std::uint32_t kJniProbeSvcV69FinalizerReturn = 0x00f091u;
+
 constexpr std::uint32_t kJniProbeSvcUnsupportedJniBase = 0x00e000u;
 constexpr std::uint32_t kJniProbeJniSlotCount = 256u;
 
@@ -1840,6 +1853,39 @@ public:
     std::unordered_map<std::uint32_t, V67TokenHistory>
         v67_token_history;
     std::uint64_t v67_token_events = 0u;
+
+    // v69 bounded lifecycle counters. The probe deliberately records aggregate
+    // state and changes instead of emitting one line per hot-loop dispatch.
+    struct V69TaskASnapshot {
+        bool valid = false;
+        std::uint32_t state18 = 0u;
+        std::uint32_t owner = 0u;
+        std::uint32_t owner8 = 0xffffffffu;
+        std::uint32_t dep20 = 0u;
+        std::uint32_t child28 = 0u;
+    };
+    std::unordered_map<std::uint32_t, V69TaskASnapshot>
+        v69_task_a_snapshots;
+    std::uint64_t v69_worker_wait_calls = 0u;
+    std::uint64_t v69_worker_wait_zero = 0u;
+    std::uint64_t v69_worker_wait_nonzero = 0u;
+    std::uint32_t v69_last_worker_wait_flag = 0xffffffffu;
+    std::uint64_t v69_active_ready_calls = 0u;
+    std::uint64_t v69_active_ready_true = 0u;
+    std::uint64_t v69_active_phase_calls = 0u;
+    std::uint64_t v69_active_phase_true = 0u;
+    std::uint64_t v69_start_work_returns = 0u;
+    std::uint64_t v69_completed_moves = 0u;
+    std::uint64_t v69_completed_poll_returns = 0u;
+    std::uint64_t v69_completed_ready_calls = 0u;
+    std::uint64_t v69_completed_ready_true = 0u;
+    std::uint64_t v69_completed_terminal_calls = 0u;
+    std::uint64_t v69_completed_terminal_true = 0u;
+    std::uint64_t v69_finalizer_returns = 0u;
+    std::uint32_t v69_max_active_count = 0u;
+    std::uint32_t v69_max_completed_count = 0u;
+    std::uint64_t v69_task_a_change_events = 0u;
+    bool v69_summary_emitted = false;
 
     std::uint32_t next_pthread_key = 1;
     std::uint32_t next_synthetic_thread = 1;
@@ -3449,7 +3495,7 @@ public:
         std::uint32_t import_lr,
         std::uint32_t sp) {
 
-        if (!V67Enabled() ||
+        if ((!V67Enabled() && !V69Enabled()) ||
             address == 0u ||
             (size != 16u && size != 24u)) {
             return;
@@ -3543,7 +3589,7 @@ public:
                  (token_events - 1u)) == 0u ||
                 (v67_token_events % 4096u) == 0u;
 
-            if (sample) {
+            if (sample && V67Enabled()) {
                 Append(
                     "V67 TOKEN " +
                     std::string{
@@ -3616,9 +3662,10 @@ public:
         ++hits;
 
         const bool sample =
-            hits <= 8u ||
+            hits <= (V69Enabled() ? 2u : 8u) ||
             (hits & (hits - 1u)) == 0u ||
-            (hits % 65536u) == 0u;
+            (!V69Enabled() &&
+             (hits % 65536u) == 0u);
 
         constexpr std::uint64_t kTaskStagnationLimit =
             65536u;
@@ -3807,6 +3854,442 @@ public:
                 jit->HaltExecution(
                     Dynarmic::HaltReason::UserDefined3);
             }
+        }
+    }
+
+
+    bool V69ShouldSample(
+        std::uint64_t count) const {
+
+        return
+            count <= 8u ||
+            (count != 0u &&
+             (count & (count - 1u)) == 0u);
+    }
+
+    std::uint32_t V69VectorCount(
+        std::uint32_t begin,
+        std::uint32_t end) const {
+
+        if (begin == 0u ||
+            end < begin ||
+            ((end - begin) & 3u) != 0u ||
+            end - begin > 0x00100000u) {
+            return 0xffffffffu;
+        }
+
+        return
+            (end - begin) /
+            4u;
+    }
+
+    void V69ObserveTaskA(
+        std::uint32_t task,
+        const char* stage) {
+
+        constexpr std::uint32_t kTaskAVtable =
+            kGuestBase + 0x00cd0bd8u;
+
+        if (!V69Enabled() ||
+            task == 0u ||
+            mem.Ptr(task, 0x2cu) == nullptr ||
+            mem.Read32Guest(task) != kTaskAVtable) {
+            return;
+        }
+
+        V69TaskASnapshot now;
+        now.valid = true;
+        now.state18 =
+            mem.Read32Guest(task + 0x18u);
+        now.owner =
+            mem.Read32Guest(task + 0x0cu);
+        now.owner8 =
+            now.owner != 0u &&
+                    mem.Ptr(now.owner + 8u, 4u) != nullptr
+                ? mem.Read32Guest(now.owner + 8u)
+                : 0xffffffffu;
+        now.dep20 =
+            mem.Read32Guest(task + 0x20u);
+        now.child28 =
+            mem.Read32Guest(task + 0x28u);
+
+        auto& previous =
+            v69_task_a_snapshots[task];
+
+        const bool changed =
+            !previous.valid ||
+            previous.state18 != now.state18 ||
+            previous.owner != now.owner ||
+            previous.owner8 != now.owner8 ||
+            previous.dep20 != now.dep20 ||
+            previous.child28 != now.child28;
+
+        if (!changed) {
+            return;
+        }
+
+        previous = now;
+        ++v69_task_a_change_events;
+
+        if (v69_task_a_change_events <= 32u ||
+            V69ShouldSample(
+                v69_task_a_change_events)) {
+
+            Append(
+                "V69 TASK-A CHANGE #" +
+                std::to_string(
+                    v69_task_a_change_events) +
+                " stage=" +
+                std::string{
+                    stage != nullptr
+                        ? stage
+                        : "unknown"} +
+                " tid=" +
+                std::to_string(
+                    current_probe_thread_id) +
+                " task=" +
+                V46DescribeGuestAddress(task) +
+                " state18=0x" +
+                JniProbeHex(now.state18) +
+                " owner=" +
+                V46DescribeGuestAddress(
+                    now.owner) +
+                " owner8=0x" +
+                JniProbeHex(now.owner8) +
+                " dep20=" +
+                V46DescribeGuestAddress(
+                    now.dep20) +
+                " child28=" +
+                V46DescribeGuestAddress(
+                    now.child28));
+        }
+    }
+
+    void V69RecordWorkerPreWait(
+        std::uint32_t wait_object) {
+
+        if (!V69Enabled()) {
+            return;
+        }
+
+        ++v69_worker_wait_calls;
+
+        const std::uint32_t flag =
+            wait_object != 0u &&
+                    mem.Ptr(wait_object + 8u, 4u) != nullptr
+                ? mem.Read32Guest(
+                      wait_object + 8u)
+                : 0xffffffffu;
+
+        if (flag == 0u) {
+            ++v69_worker_wait_zero;
+        } else if (flag != 0xffffffffu) {
+            ++v69_worker_wait_nonzero;
+        }
+
+        const bool changed =
+            flag !=
+            v69_last_worker_wait_flag;
+
+        if (changed ||
+            V69ShouldSample(
+                v69_worker_wait_calls)) {
+
+            Append(
+                "V69 RES-WORKER PREWAIT #" +
+                std::to_string(
+                    v69_worker_wait_calls) +
+                " tid=" +
+                std::to_string(
+                    current_probe_thread_id) +
+                " waitObj=" +
+                V46DescribeGuestAddress(
+                    wait_object) +
+                " pendingFlag=" +
+                (flag == 0xffffffffu
+                    ? std::string{"UNREADABLE"}
+                    : std::to_string(flag)) +
+                " zero/nonzero=" +
+                std::to_string(
+                    v69_worker_wait_zero) +
+                "/" +
+                std::to_string(
+                    v69_worker_wait_nonzero));
+        }
+
+        v69_last_worker_wait_flag =
+            flag;
+    }
+
+    void V69RecordLifecycle(
+        const char* stage,
+        std::uint32_t task,
+        std::uint32_t result_value,
+        bool has_result,
+        std::uint64_t& event_counter,
+        std::uint64_t* true_counter = nullptr) {
+
+        if (!V69Enabled()) {
+            return;
+        }
+
+        ++event_counter;
+
+        if (has_result &&
+            result_value == 1u &&
+            true_counter != nullptr) {
+            ++(*true_counter);
+        }
+
+        std::uint32_t active_count =
+            0xffffffffu;
+        std::uint32_t completed_count =
+            0xffffffffu;
+
+        if (jit) {
+            const auto& regs =
+                jit->Regs();
+            const std::uint32_t manager =
+                regs[4];
+
+            if (manager != 0u &&
+                mem.Ptr(manager + 0x64u, 4u) != nullptr) {
+
+                active_count =
+                    V69VectorCount(
+                        mem.Read32Guest(
+                            manager + 0x50u),
+                        mem.Read32Guest(
+                            manager + 0x54u));
+
+                completed_count =
+                    V69VectorCount(
+                        mem.Read32Guest(
+                            manager + 0x5cu),
+                        mem.Read32Guest(
+                            manager + 0x60u));
+
+                if (active_count !=
+                    0xffffffffu) {
+                    v69_max_active_count =
+                        std::max(
+                            v69_max_active_count,
+                            active_count);
+                }
+
+                if (completed_count !=
+                    0xffffffffu) {
+                    v69_max_completed_count =
+                        std::max(
+                            v69_max_completed_count,
+                            completed_count);
+                }
+            }
+        }
+
+        if (V69ShouldSample(
+                event_counter)) {
+
+            std::ostringstream out;
+            out
+                << "V69 LIFECYCLE "
+                << (stage != nullptr
+                        ? stage
+                        : "unknown")
+                << " #" << event_counter
+                << " tid="
+                << current_probe_thread_id
+                << " task="
+                << V46DescribeGuestAddress(task)
+                << " vtable="
+                << V46DescribeGuestAddress(
+                       task != 0u &&
+                               mem.Ptr(task, 4u) != nullptr
+                           ? mem.Read32Guest(task)
+                           : 0u);
+
+            if (has_result) {
+                out
+                    << " result="
+                    << result_value;
+            }
+
+            out
+                << " activeCount="
+                << (active_count == 0xffffffffu
+                        ? std::string{"?"}
+                        : std::to_string(
+                              active_count))
+                << " completedCount="
+                << (completed_count == 0xffffffffu
+                        ? std::string{"?"}
+                        : std::to_string(
+                              completed_count));
+
+            Append(out.str());
+        }
+
+        V69ObserveTaskA(
+            task,
+            stage);
+    }
+
+    void V69AppendSummary(
+        const char* reason) {
+
+        if (!V69Enabled() ||
+            v69_summary_emitted) {
+            return;
+        }
+
+        v69_summary_emitted = true;
+
+        std::uint64_t token_increments = 0u;
+        std::uint64_t token_decrements = 0u;
+
+        for (const auto& entry :
+             v67_token_history) {
+            token_increments +=
+                entry.second.increments;
+            token_decrements +=
+                entry.second.decrements;
+        }
+
+        Append(
+            "V69 LIFECYCLE SUMMARY reason=" +
+            std::string{
+                reason != nullptr
+                    ? reason
+                    : "n/a"} +
+            " activeReady=" +
+            std::to_string(
+                v69_active_ready_calls) +
+            "/" +
+            std::to_string(
+                v69_active_ready_true) +
+            " phase=" +
+            std::to_string(
+                v69_active_phase_calls) +
+            "/" +
+            std::to_string(
+                v69_active_phase_true) +
+            " startReturns=" +
+            std::to_string(
+                v69_start_work_returns) +
+            " movedToCompleted=" +
+            std::to_string(
+                v69_completed_moves) +
+            " completedPoll=" +
+            std::to_string(
+                v69_completed_poll_returns) +
+            " completedReady=" +
+            std::to_string(
+                v69_completed_ready_calls) +
+            "/" +
+            std::to_string(
+                v69_completed_ready_true) +
+            " terminal=" +
+            std::to_string(
+                v69_completed_terminal_calls) +
+            "/" +
+            std::to_string(
+                v69_completed_terminal_true) +
+            " finalizerReturns=" +
+            std::to_string(
+                v69_finalizer_returns) +
+            " waitFlagZero/nonzero=" +
+            std::to_string(
+                v69_worker_wait_zero) +
+            "/" +
+            std::to_string(
+                v69_worker_wait_nonzero) +
+            " maxVectors(active/completed)=" +
+            std::to_string(
+                v69_max_active_count) +
+            "/" +
+            std::to_string(
+                v69_max_completed_count) +
+            " taskAChanges=" +
+            std::to_string(
+                v69_task_a_change_events) +
+            " tokenEvents=" +
+            std::to_string(
+                v67_token_events) +
+            " tokenInc/dec=" +
+            std::to_string(
+                token_increments) +
+            "/" +
+            std::to_string(
+                token_decrements) +
+            " trackedTokens=" +
+            std::to_string(
+                v67_token_history.size()));
+    }
+
+    void V69EmulateCmp(
+        std::uint32_t lhs,
+        std::uint32_t rhs) {
+
+        if (!jit) {
+            return;
+        }
+
+        const std::uint32_t value =
+            lhs - rhs;
+
+        std::uint32_t cpsr =
+            jit->Cpsr();
+
+        cpsr &= ~0xf0000000u;
+
+        if ((value & 0x80000000u) != 0u) {
+            cpsr |= 0x80000000u; // N
+        }
+        if (value == 0u) {
+            cpsr |= 0x40000000u; // Z
+        }
+        if (lhs >= rhs) {
+            cpsr |= 0x20000000u; // C = no borrow
+        }
+        if (((lhs ^ rhs) &
+             (lhs ^ value) &
+             0x80000000u) != 0u) {
+            cpsr |= 0x10000000u; // V
+        }
+
+        jit->SetCpsr(cpsr);
+    }
+
+    void V69MaybeBoundedStop() {
+
+        constexpr std::uint64_t
+            kLifecycleSampleLimit =
+                1048576u;
+
+        if (!V69Enabled() ||
+            current_probe_thread_id != 7u ||
+            v69_summary_emitted ||
+            v69_active_ready_calls <
+                kLifecycleSampleLimit) {
+            return;
+        }
+
+        V69AppendSummary(
+            "bounded-1M-active-ready-sample");
+
+        v66_failure_message =
+            "v69 bounded TaskResource lifecycle diagnostic completed after " +
+            std::to_string(
+                v69_active_ready_calls) +
+            " active-ready observations on resource worker tid=7; guest state was not forced.";
+
+        Append(
+            "V69 DIAGNOSTIC STOP: " +
+            v66_failure_message);
+
+        if (jit) {
+            jit->HaltExecution(
+                Dynarmic::HaltReason::UserDefined3);
         }
     }
 
@@ -5097,14 +5580,23 @@ public:
             return "V67_COMPLETION_TOKEN_PROVENANCE";
         case PvZ2DiagnosticMode::V68CompletionTokenSemantics:
             return "V68_COMPLETION_TOKEN_SEMANTICS";
+        case PvZ2DiagnosticMode::V69TaskResourceLifecycle:
+            return "V69_TASKRESOURCE_LIFECYCLE";
         }
         return "UNKNOWN";
+    }
+
+    bool V69Enabled() const {
+        return
+            diagnostic_mode ==
+                PvZ2DiagnosticMode::V69TaskResourceLifecycle;
     }
 
     bool V68Enabled() const {
         return
             diagnostic_mode ==
-                PvZ2DiagnosticMode::V68CompletionTokenSemantics;
+                PvZ2DiagnosticMode::V68CompletionTokenSemantics ||
+            V69Enabled();
     }
 
     bool V67Enabled() const {
@@ -9987,6 +10479,139 @@ public:
             }
         }
 
+
+        if (swi >= kJniProbeSvcV69WorkerPreWait &&
+            swi <= kJniProbeSvcV69FinalizerReturn) {
+
+            switch (swi) {
+            case kJniProbeSvcV69WorkerPreWait: {
+                // Original @ 0x10abd8c8: MOV r0,r5.
+                const std::uint32_t wait_object =
+                    regs[5];
+
+                V69RecordWorkerPreWait(
+                    wait_object);
+
+                regs[0] =
+                    regs[5];
+                return;
+            }
+
+            case kJniProbeSvcV69ActiveReadyResult:
+                // Original @ 0x10868cbc: CMP r0,#1.
+                V69RecordLifecycle(
+                    "active-vfn14",
+                    regs[7],
+                    regs[0],
+                    true,
+                    v69_active_ready_calls,
+                    &v69_active_ready_true);
+                V69EmulateCmp(
+                    regs[0],
+                    1u);
+                V69MaybeBoundedStop();
+                return;
+
+            case kJniProbeSvcV69ActivePhaseResult:
+                // Original @ 0x10868cdc: CMP r0,#1.
+                V69RecordLifecycle(
+                    "active-vfn3c",
+                    regs[7],
+                    regs[0],
+                    true,
+                    v69_active_phase_calls,
+                    &v69_active_phase_true);
+                V69EmulateCmp(
+                    regs[0],
+                    1u);
+                return;
+
+            case kJniProbeSvcV69StartWorkReturn:
+                // Original @ 0x10868d20: STR r7,[sp,#0x14].
+                V69RecordLifecycle(
+                    "start-vfn18-return",
+                    regs[7],
+                    0u,
+                    false,
+                    v69_start_work_returns);
+                mem.Write32Guest(
+                    regs[13] + 0x14u,
+                    regs[7]);
+                return;
+
+            case kJniProbeSvcV69MoveCompleted:
+                // Original @ 0x10868d5c: LDR r0,[r4,#0x54].
+                V69RecordLifecycle(
+                    "moved-to-completed",
+                    regs[7],
+                    0u,
+                    false,
+                    v69_completed_moves);
+                regs[0] =
+                    mem.Read32Guest(
+                        regs[4] + 0x54u);
+                return;
+
+            case kJniProbeSvcV69CompletedPollReturn:
+                // Original @ 0x10868da0: LDR r0,[r8].
+                // r0 still contains the just-returned vfn+0x0c value.
+                V69RecordLifecycle(
+                    "completed-vfn0c-return",
+                    regs[8],
+                    regs[0],
+                    true,
+                    v69_completed_poll_returns);
+                regs[0] =
+                    mem.Read32Guest(
+                        regs[8]);
+                return;
+
+            case kJniProbeSvcV69CompletedReadyResult:
+                // Original @ 0x10868db0: CMP r0,#1.
+                V69RecordLifecycle(
+                    "completed-vfn1c",
+                    regs[8],
+                    regs[0],
+                    true,
+                    v69_completed_ready_calls,
+                    &v69_completed_ready_true);
+                V69EmulateCmp(
+                    regs[0],
+                    1u);
+                return;
+
+            case kJniProbeSvcV69CompletedTerminalResult:
+                // Original @ 0x10868dc8: CMP r0,#1.
+                V69RecordLifecycle(
+                    "completed-vfn20",
+                    regs[8],
+                    regs[0],
+                    true,
+                    v69_completed_terminal_calls,
+                    &v69_completed_terminal_true);
+                V69EmulateCmp(
+                    regs[0],
+                    1u);
+                return;
+
+            case kJniProbeSvcV69FinalizerReturn:
+                // Original @ 0x10868e18: CMP r8,#0.
+                V69RecordLifecycle(
+                    "finalizer-vfn24-return",
+                    regs[8],
+                    0u,
+                    false,
+                    v69_finalizer_returns);
+                V69EmulateCmp(
+                    regs[8],
+                    0u);
+                return;
+
+            default:
+                break;
+            }
+        }
+
         if (swi == kJniProbeSvcV67TokenIncrementStore ||
             swi == kJniProbeSvcV67TokenDecrementStore) {
 
@@ -10079,9 +10704,11 @@ public:
                     !executable;
 
                 const std::uint64_t task_log_interval =
-                    V66Enabled()
-                        ? 65536u
-                        : 256u;
+                    V69Enabled()
+                        ? 1048576u
+                        : (V66Enabled()
+                            ? 65536u
+                            : 256u);
 
                 if (anomaly ||
                     v63_task_dispatch_events <= 8u ||
@@ -14167,7 +14794,7 @@ public:
         }
 
         if (name == "free") {
-            if (V67Enabled()) {
+            if (V67Enabled() || V69Enabled()) {
                 v67_small_allocations.erase(
                     regs[0]);
                 v67_token_history.erase(
@@ -14201,7 +14828,7 @@ public:
                     old_address,
                     new_size);
 
-            if (V67Enabled()) {
+            if (V67Enabled() || V69Enabled()) {
                 v67_small_allocations.erase(
                     old_address);
                 v67_token_history.erase(
@@ -23312,7 +23939,51 @@ bool JniProbePrepareRuntime(
         return false;
     }
 
-    if (callbacks.V67Enabled() &&
+    if (callbacks.V69Enabled() &&
+        (!patch_resource_native_miss(
+             0x00abd8c8u,
+             0xe1a00005u,
+             kJniProbeSvcV69WorkerPreWait) ||
+         !patch_resource_native_miss(
+             0x00868cbcu,
+             0xe3500001u,
+             kJniProbeSvcV69ActiveReadyResult) ||
+         !patch_resource_native_miss(
+             0x00868cdcu,
+             0xe3500001u,
+             kJniProbeSvcV69ActivePhaseResult) ||
+         !patch_resource_native_miss(
+             0x00868d20u,
+             0xe58d7014u,
+             kJniProbeSvcV69StartWorkReturn) ||
+         !patch_resource_native_miss(
+             0x00868d5cu,
+             0xe5940054u,
+             kJniProbeSvcV69MoveCompleted) ||
+         !patch_resource_native_miss(
+             0x00868da0u,
+             0xe5980000u,
+             kJniProbeSvcV69CompletedPollReturn) ||
+         !patch_resource_native_miss(
+             0x00868db0u,
+             0xe3500001u,
+             kJniProbeSvcV69CompletedReadyResult) ||
+         !patch_resource_native_miss(
+             0x00868dc8u,
+             0xe3500001u,
+             kJniProbeSvcV69CompletedTerminalResult) ||
+         !patch_resource_native_miss(
+             0x00868e18u,
+             0xe3580000u,
+             kJniProbeSvcV69FinalizerReturn))) {
+
+        error =
+            "v69 TaskResource lifecycle instrumentation did not match the verified Android 1.5.252752 worker/pump profile.";
+        return false;
+    }
+
+    if ((callbacks.V67Enabled() ||
+         callbacks.V69Enabled()) &&
         (!patch_resource_native_miss(
              0x00abedd4u,
              0xe5801004u,
@@ -23323,7 +23994,7 @@ bool JniProbePrepareRuntime(
              kJniProbeSvcV67TokenDecrementStore))) {
 
         error =
-            "v67 completion-token provenance did not match STR r1,[r0,#4] at 0x10abedd4/0x10abede8.";
+            "v67/v69 completion-token accounting did not match STR r1,[r0,#4] at 0x10abedd4/0x10abede8.";
         return false;
     }
 
@@ -23377,9 +24048,16 @@ bool JniProbePrepareRuntime(
         callbacks.Append(
             "V67 COMPLETION-TOKEN PROVENANCE: exact counter stores at 0x10abedd4/0x10abede8 are observed and emulated unchanged. Token logs include old/new counter, caller LR, tid, live 16/24-byte allocation creator provenance and inc/dec history. Child snapshots are capped to the tracked allocation size.");
     }
-    if (callbacks.V68Enabled()) {
+    if (callbacks.V68Enabled() &&
+        !callbacks.V69Enabled()) {
         callbacks.Append(
             "V68 COMPLETION-TOKEN SEMANTICS: v67 proved vfnC@0x10abedb8 is exactly counter>0 (busy), not a readiness predicate. Repeated zero results for this verified token class are logged as IDLE_NOT_STALL and cannot trip the v66 TaskResource stagnation fail-fast. The v67 increment/decrement hot-path traps are disabled in v68; all other v66/v65/v64 safety and blocking semantics remain active.");
+    }
+    if (callbacks.V69Enabled()) {
+        callbacks.Append(
+            "V69 TASKRESOURCE LIFECYCLE: Inspector v2.1 confirmed a live post-LogoScreen non-draining TaskResource loop after six real GLES texture uploads. Android and historical iOS binaries independently show the same worker wait->pump and active->started->completed->finalized architecture. v69 observes every lifecycle edge in one bounded sample, plus the worker event flag and silent token balance; no readiness, counter, GameState, resource or vector entry is forced.");
+        callbacks.Append(
+            "V69 LOG BUDGET: unchanged TaskSubstate, TaskGuard and release-boundary messages are aggressively sampled. The resource worker stops diagnostically after 1,048,576 active-ready observations if frame 1 has not returned, emitting a compact lifecycle summary instead of another ~100 MiB loop.");
     }
 
     if (callbacks.V64Enabled()) {
@@ -25287,8 +25965,18 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                     }
 
                                     if (callbacks.V64Enabled()) {
-                                        if (coherence_chunks <= 4u ||
-                                            (coherence_chunks % 64u) == 0u) {
+                                        const std::uint64_t
+                                            release_arm_index =
+                                                callbacks
+                                                    .v64_release_boundary_arms +
+                                                1u;
+                                        const bool log_release_wait =
+                                            callbacks.V69Enabled()
+                                                ? callbacks.V69ShouldSample(
+                                                      release_arm_index)
+                                                : (coherence_chunks <= 4u ||
+                                                   (coherence_chunks % 64u) == 0u);
+                                        if (log_release_wait) {
                                             callbacks.Append(
                                                 "V64 RELEASE-BOUNDARY WAIT tid=" +
                                                 std::to_string(
@@ -25368,7 +26056,11 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                     !worker_fatal &&
                                     !worker_returned &&
                                     callbacks.V63HeldMutexCount(
-                                        worker_state.id) == 0u) {
+                                        worker_state.id) == 0u &&
+                                    (!callbacks.V69Enabled() ||
+                                     callbacks.V69ShouldSample(
+                                         callbacks
+                                             .v64_release_boundary_yields))) {
                                     callbacks.Append(
                                         "V64 SAFE SWITCH tid=" +
                                         std::to_string(

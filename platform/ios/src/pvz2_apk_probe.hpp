@@ -88,6 +88,11 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // intrinsic evidence of a stalled TaskResource. The v67 store traps are
     // intentionally not inherited so the hot worker path runs at normal speed.
     V68CompletionTokenSemantics = 12u,
+
+    // v69: Inspector v2.1 + Android/iOS static correlation isolate the remaining
+    // post-LogoScreen loop to the TaskResource lifecycle. Observe the whole
+    // active -> started -> completed -> finalized chain in one bounded probe.
+    V69TaskResourceLifecycle = 13u,
 };
 
 struct PvZ2JniProbeResult {
