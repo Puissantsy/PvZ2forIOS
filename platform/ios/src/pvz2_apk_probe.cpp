@@ -2209,6 +2209,7 @@ public:
     std::uint64_t v87_mutex_resumes = 0u;
     std::uint64_t v87_owner_preemptions = 0u;
     std::uint64_t v87_priority_continuations = 0u;
+    std::uint64_t v88_burst_continuations = 0u;
     std::uint64_t v87_deadlock_cycles = 0u;
     std::uint32_t v87_last_mutex_error = 0u;
     std::string v87_failure_message;
@@ -6116,6 +6117,8 @@ public:
             << v87_owner_preemptions
             << " priorityContinuations="
             << v87_priority_continuations
+            << " v88BurstContinuations="
+            << v88_burst_continuations
             << " deadlockCycles="
             << v87_deadlock_cycles
             << " pendingWaiters="
@@ -7138,6 +7141,8 @@ public:
             return "V86_HEAP_PERFORMANCE_FIX";
         case PvZ2DiagnosticMode::V87PreemptiveMutexScheduler:
             return "V87_PREEMPTIVE_MUTEX_SCHEDULER";
+        case PvZ2DiagnosticMode::V88AdaptiveMutexStartup:
+            return "V88_ADAPTIVE_MUTEX_STARTUP";
         }
         return "UNKNOWN";
     }
@@ -7224,9 +7229,16 @@ public:
         return out.str();
     }
 
-    bool V87Enabled() const {
+    bool V88Enabled() const {
         return diagnostic_mode ==
-            PvZ2DiagnosticMode::V87PreemptiveMutexScheduler;
+            PvZ2DiagnosticMode::V88AdaptiveMutexStartup;
+    }
+
+    bool V87Enabled() const {
+        return
+            diagnostic_mode ==
+                PvZ2DiagnosticMode::V87PreemptiveMutexScheduler ||
+            V88Enabled();
     }
 
     bool V86Enabled() const {
@@ -7273,7 +7285,9 @@ public:
         if (line.rfind("V85 PERF", 0u) == 0u ||
             line.rfind("V86 PERF", 0u) == 0u ||
             line.rfind("V87 MUTEX", 0u) == 0u ||
-            line.rfind("V87 SCHEDULER", 0u) == 0u) {
+            line.rfind("V87 SCHEDULER", 0u) == 0u ||
+            line.rfind("V88 STARTUP", 0u) == 0u ||
+            line.rfind("V88 SCHEDULER", 0u) == 0u) {
             return true;
         }
 
@@ -28050,7 +28064,10 @@ bool JniProbePrepareRuntime(
         callbacks.Append(
             "V83 PROFILE BUTTON DISPATCH: v83 restored the V80 2048x1536 pixel touch control and proved buttonId=5 can dispatch even when the raw +0x28/+0x2c/+0x30/+0x34 radar rectangle does not contain the screen-space tap. Those raw fields are therefore local/transformed, not absolute hitboxes. The passive dispatcher trap remains enabled and does not alter rendering, widget geometry or GameState.");
     }
-    if (callbacks.V87Enabled()) {
+    if (callbacks.V88Enabled()) {
+        callbacks.Append(
+            "V88 SCHEDULER: v87 blocking mutex/waiter semantics preserved; concrete startup waits allow a bounded 8-quantum (6M tick) critical-section burst before preemption, replacing v87 one-quantum over-preemption. Startup wall-clock phase markers are enabled.");
+    } else if (callbacks.V87Enabled()) {
         callbacks.Append(
             "V87 SCHEDULER: v86 128 MiB heap/perf baseline preserved; mutex owners are preemptible; blocking locks sleep in FIFO waiter queues; unlock performs ownership handoff; explicit Bionic mutexattr types are retained; wait-for cycles fail-fast.");
     } else if (callbacks.V86Enabled()) {
@@ -28587,7 +28604,9 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
             (diagnostic_mode ==
                     PvZ2DiagnosticMode::V86HeapPerformanceFix ||
              diagnostic_mode ==
-                    PvZ2DiagnosticMode::V87PreemptiveMutexScheduler)
+                    PvZ2DiagnosticMode::V87PreemptiveMutexScheduler ||
+             diagnostic_mode ==
+                    PvZ2DiagnosticMode::V88AdaptiveMutexStartup)
                 ? kJniProbeHeapSizeV86
                 : kJniProbeHeapSize;
 
@@ -28707,6 +28726,17 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
             ", non-null constructors=" +
             std::to_string(result.constructors_total));
 
+        const std::uint64_t v88_constructors_begin_ns =
+            callbacks.V88Enabled()
+                ? V85SteadyNowNs()
+                : 0u;
+
+        if (callbacks.V88Enabled()) {
+            callbacks.Append(
+                "V88 STARTUP BEGIN phase=constructors count=" +
+                std::to_string(result.constructors_total));
+        }
+
         for (std::uint32_t index = 0;
              index < constructors.size();
              ++index) {
@@ -28823,6 +28853,15 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
             std::to_string(result.constructors_completed) +
             " non-null .init_array constructors returned successfully.");
 
+        if (callbacks.V88Enabled()) {
+            callbacks.Append(
+                "V88 STARTUP END phase=constructors wallMs=" +
+                std::to_string(
+                    (V85SteadyNowNs() -
+                     v88_constructors_begin_ns) /
+                    1000000ull));
+        }
+
         callbacks.return_mode =
             PvZ2JniCallbacks::ReturnMode::JniOnLoad;
 
@@ -28863,8 +28902,27 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                 kGuestBase +
                 loaded.jni_onload));
 
+        const std::uint64_t v88_jni_begin_ns =
+            callbacks.V88Enabled()
+                ? V85SteadyNowNs()
+                : 0u;
+
+        if (callbacks.V88Enabled()) {
+            callbacks.Append(
+                "V88 STARTUP BEGIN phase=JNI_OnLoad");
+        }
+
         const Dynarmic::HaltReason halt =
             jit.Run();
+
+        if (callbacks.V88Enabled()) {
+            callbacks.Append(
+                "V88 STARTUP END phase=JNI_OnLoad wallMs=" +
+                std::to_string(
+                    (V85SteadyNowNs() -
+                     v88_jni_begin_ns) /
+                    1000000ull));
+        }
 
         result.final_pc =
             jit.Regs()[15];
@@ -28993,8 +29051,27 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
             callbacks.Append(
                 "Entering real Native_GameAppInitialize with 8 synthetic Android object handles.");
 
+            const std::uint64_t v88_app_init_begin_ns =
+                callbacks.V88Enabled()
+                    ? V85SteadyNowNs()
+                    : 0u;
+
+            if (callbacks.V88Enabled()) {
+                callbacks.Append(
+                    "V88 STARTUP BEGIN phase=Native_GameAppInitialize");
+            }
+
             const Dynarmic::HaltReason app_halt =
                 jit.Run();
+
+            if (callbacks.V88Enabled()) {
+                callbacks.Append(
+                    "V88 STARTUP END phase=Native_GameAppInitialize wallMs=" +
+                    std::to_string(
+                        (V85SteadyNowNs() -
+                         v88_app_init_begin_ns) /
+                        1000000ull));
+            }
 
             result.final_pc =
                 jit.Regs()[15];
@@ -29517,6 +29594,17 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                         std::uint64_t lifecycle_ticks = 0;
                         std::uint32_t async_round = 0;
 
+                        const std::uint64_t v88_lifecycle_begin_ns =
+                            callbacks.V88Enabled()
+                                ? V85SteadyNowNs()
+                                : 0u;
+
+                        if (callbacks.V88Enabled()) {
+                            callbacks.Append(
+                                "V88 STARTUP BEGIN phase=" +
+                                std::string{name});
+                        }
+
                         // v60: v59 proved that every verified stream-future
                         // wait restarted worker scanning at index 0. The first
                         // worker (tid=1) normally changed the future object,
@@ -29593,6 +29681,21 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                     std::to_string(
                                         lifecycle_ticks) +
                                     " scheduled ticks.");
+
+                                if (callbacks.V88Enabled()) {
+                                    callbacks.Append(
+                                        "V88 STARTUP END phase=" +
+                                        std::string{name} +
+                                        " wallMs=" +
+                                        std::to_string(
+                                            (V85SteadyNowNs() -
+                                             v88_lifecycle_begin_ns) /
+                                            1000000ull) +
+                                        " mainTicks=" +
+                                        std::to_string(lifecycle_ticks) +
+                                        " asyncRounds=" +
+                                        std::to_string(async_round));
+                                }
 
                                 result.trace =
                                     callbacks.Trace();
@@ -30097,15 +30200,62 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                             break;
                                         }
 
+                                        const bool worker_blocked =
+                                            callbacks.V87MutexWaitPending(
+                                                worker_state.id) ||
+                                            callbacks.V65ThreadBlocked(
+                                                worker_state.id) ||
+                                            callbacks.V66ThreadBlocked(
+                                                worker_state.id);
+
+                                        if (callbacks.V88Enabled()) {
+                                            constexpr std::uint32_t
+                                                kV88CriticalBurstQuanta = 8u;
+
+                                            const bool dependency_wait =
+                                                concrete_wait &&
+                                                !res_stream_pump_boundary;
+
+                                            const bool burst_continue =
+                                                dependency_wait &&
+                                                owns_any_v63_mutex &&
+                                                !worker_blocked &&
+                                                coherence_chunks <
+                                                    kV88CriticalBurstQuanta;
+
+                                            if (burst_continue) {
+                                                ++coherence_chunks;
+                                                ++callbacks
+                                                    .v88_burst_continuations;
+
+                                                callbacks.control_returned =
+                                                    false;
+                                                callbacks.soft_slice_timeout =
+                                                    true;
+                                                callbacks.ticks_left =
+                                                    kWorkerSliceTicks;
+                                                callbacks.ticks_consumed = 0u;
+                                                callbacks.next_tick_report =
+                                                    std::numeric_limits<
+                                                        std::uint64_t>::max();
+
+                                                result.message.clear();
+                                                clear_probe_halts();
+                                                continue;
+                                            }
+
+                                            if (owns_any_v63_mutex) {
+                                                callbacks.V87RecordOwnerPreemption(
+                                                    worker_state.id);
+                                            }
+
+                                            break;
+                                        }
+
                                         const bool priority_owner_continue =
                                             v87_main_mutex_wait &&
                                             owns_any_v63_mutex &&
-                                            !callbacks.V87MutexWaitPending(
-                                                worker_state.id) &&
-                                            !callbacks.V65ThreadBlocked(
-                                                worker_state.id) &&
-                                            !callbacks.V66ThreadBlocked(
-                                                worker_state.id);
+                                            !worker_blocked;
 
                                         if (!priority_owner_continue) {
                                             if (owns_any_v63_mutex) {

@@ -425,7 +425,7 @@ bool PvZ2HostKeyboardFirstResponder() {
     self.captionLabel.clipsToBounds =
         YES;
     self.captionLabel.text =
-        @"PvZ2 v87 — starting…\npreemptive mutex scheduler";
+        @"PvZ2 v88 — starting…\nadaptive startup scheduler";
 
     self.stopButton =
         [UIButton
@@ -1350,7 +1350,7 @@ bool PvZ2HostKeyboardFirstResponder() {
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — v87 Preemptive Mutex Scheduler";
+        @"PvZ2forIOS — v88 Adaptive Startup Scheduler";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -1359,7 +1359,7 @@ bool PvZ2HostKeyboardFirstResponder() {
         NO;
 
     title.text =
-        @"PvZ2forIOS — v87 Preemptive Mutex Scheduler";
+        @"PvZ2forIOS — v88 Adaptive Startup Scheduler";
 
     title.font =
         [UIFont
@@ -1375,7 +1375,7 @@ bool PvZ2HostKeyboardFirstResponder() {
         NO;
 
     explanation.text =
-        @"v87 keeps the validated v86 128 MiB heap, Points=Pixels/UI_IPAD/input/resource path and v85 timings. It changes pthread mutex scheduling only: owners may be preempted while holding locks, blocking lock callers sleep, unlock hands ownership to waiters, and explicit mutexattr types are preserved. Audio output and framebuffer presentation are unchanged.";
+        @"v88 keeps v87's blocking mutex/waiter correctness but fixes its startup over-preemption: during a real resource/future wait, a runnable mutex owner may execute a bounded 8-quantum burst before preemption. Lightweight STARTUP markers time constructors, JNI, GameAppInit and every lifecycle phase. Heap/render/input/audio paths remain unchanged.";
 
     explanation.numberOfLines = 0;
 
@@ -1440,6 +1440,7 @@ bool PvZ2HostKeyboardFirstResponder() {
                     @"V85 Perf",
                     @"V86 Heap+Perf",
                     @"V87 Mutex",
+                    @"V88 Adaptive",
                     @"V66 Waits",
                     @"V65 Cond",
                     @"Ctype Scout"
@@ -1448,7 +1449,7 @@ bool PvZ2HostKeyboardFirstResponder() {
     self.diagnosticModeControl.translatesAutoresizingMaskIntoConstraints =
         NO;
     self.diagnosticModeControl.selectedSegmentIndex =
-        14;
+        15;
 
     UIStackView *mainButtons =
         [[UIStackView alloc]
@@ -2096,6 +2097,7 @@ bool PvZ2HostKeyboardFirstResponder() {
             @"V85_PERFORMANCE_BASELINE",
             @"V86_HEAP_PERFORMANCE_FIX",
             @"V87_PREEMPTIVE_MUTEX_SCHEDULER",
+            @"V88_ADAPTIVE_MUTEX_STARTUP",
             @"V66_BLOCKING_WAIT_SCHEDULER",
             @"V65_CONDITION_VARIABLE_SCHEDULER",
             @"CTYPE_COMPAT_DEEP_SCOUT"
@@ -2114,7 +2116,7 @@ bool PvZ2HostKeyboardFirstResponder() {
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. mode=%@. Start with V87 Mutex. It keeps the validated v86 128 MiB/2048x1536/UI_IPAD/input/resource baseline and changes pthread mutex scheduling only: owners are preemptible, blocking locks sleep, and unlock performs waiter handoff.",
+                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. mode=%@. Start with V88 Adaptive. It keeps v87 mutex wait/handoff correctness but allows bounded 8-quantum worker bursts during concrete startup waits and records wall-clock startup phases.",
                     modeNames[modeIndex]]];
 
     [self
@@ -2249,15 +2251,20 @@ bool PvZ2HostKeyboardFirstResponder() {
             @"V87_PREEMPTIVE_MUTEX_SCHEDULER";
     } else if (selectedMode == 15) {
         diagnosticMode =
+            PvZ2DiagnosticMode::V88AdaptiveMutexStartup;
+        diagnosticModeName =
+            @"V88_ADAPTIVE_MUTEX_STARTUP";
+    } else if (selectedMode == 16) {
+        diagnosticMode =
             PvZ2DiagnosticMode::V66BlockingWaitScheduler;
         diagnosticModeName =
             @"V66_BLOCKING_WAIT_SCHEDULER";
-    } else if (selectedMode == 16) {
+    } else if (selectedMode == 17) {
         diagnosticMode =
             PvZ2DiagnosticMode::V65ConditionVariableScheduler;
         diagnosticModeName =
             @"V65_CONDITION_VARIABLE_SCHEDULER";
-    } else if (selectedMode == 17) {
+    } else if (selectedMode == 18) {
         diagnosticMode =
             PvZ2DiagnosticMode::CtypeCompatDeepScout;
         diagnosticModeName =
@@ -2271,7 +2278,7 @@ bool PvZ2HostKeyboardFirstResponder() {
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v87 Preemptive Mutex Scheduler started mode=%@; PID=%d ===",
+                    @"=== PvZ2 v88 Adaptive Startup Scheduler started mode=%@; PID=%d ===",
                     diagnosticModeName,
                     getpid()]];
 
@@ -2325,7 +2332,9 @@ bool PvZ2HostKeyboardFirstResponder() {
         diagnosticMode ==
                 PvZ2DiagnosticMode::V86HeapPerformanceFix ||
         diagnosticMode ==
-                PvZ2DiagnosticMode::V87PreemptiveMutexScheduler,
+                PvZ2DiagnosticMode::V87PreemptiveMutexScheduler ||
+        diagnosticMode ==
+                PvZ2DiagnosticMode::V88AdaptiveMutexStartup,
         std::memory_order_release);
     gPvZ2KeyboardFirstResponder.store(
         false,
@@ -2360,7 +2369,9 @@ bool PvZ2HostKeyboardFirstResponder() {
        diagnosticMode ==
           PvZ2DiagnosticMode::V86HeapPerformanceFix ||
        diagnosticMode ==
-          PvZ2DiagnosticMode::V87PreemptiveMutexScheduler)) {
+          PvZ2DiagnosticMode::V87PreemptiveMutexScheduler ||
+       diagnosticMode ==
+          PvZ2DiagnosticMode::V88AdaptiveMutexStartup)) {
 
         PvZ2ResetInteractiveInput();
         gPvZ2KeyboardHostReady.store(
@@ -2542,7 +2553,9 @@ bool PvZ2HostKeyboardFirstResponder() {
        diagnosticMode ==
           PvZ2DiagnosticMode::V86HeapPerformanceFix ||
        diagnosticMode ==
-          PvZ2DiagnosticMode::V87PreemptiveMutexScheduler)) {
+          PvZ2DiagnosticMode::V87PreemptiveMutexScheduler ||
+       diagnosticMode ==
+          PvZ2DiagnosticMode::V88AdaptiveMutexStartup)) {
 
                 liveFrameCallback =
                     [](

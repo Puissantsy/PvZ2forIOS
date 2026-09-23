@@ -238,6 +238,12 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // with cooperative preemption plus real blocking mutex waiters. This mode
     // deliberately keeps the v86 heap/render/input/resource baseline intact.
     V87PreemptiveMutexScheduler = 31u,
+
+    // v88: keep v87's real blocking mutex semantics, but replace one-quantum
+    // over-preemption during concrete startup waits with a bounded adaptive
+    // critical-section burst. Also retain lightweight wall-clock startup phase
+    // markers so the next iPad log identifies where startup time is spent.
+    V88AdaptiveMutexStartup = 32u,
 };
 
 struct PvZ2JniProbeResult {
