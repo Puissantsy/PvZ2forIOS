@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -308,6 +309,16 @@ static std::atomic<bool>
 static std::atomic<std::uint64_t>
     gV81TouchMapTraceCount{0u};
 
+static std::atomic<bool>
+    gV85PerformanceBaselineActive{false};
+
+static std::uint64_t V85HostNowNs() {
+    return static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now().time_since_epoch())
+            .count());
+}
+
 // v74: the guest emits a transient ShowKeyboard -> HideKeyboard pair while
 // Native_onSurfaceCreated is still on the black startup surface. Keep the
 // requested state observable to the guest, but do not summon UIKit until a
@@ -414,7 +425,7 @@ bool PvZ2HostKeyboardFirstResponder() {
     self.captionLabel.clipsToBounds =
         YES;
     self.captionLabel.text =
-        @"PvZ2 v84 — starting…\nRender contract / final blit A/B";
+        @"PvZ2 v85 — starting…\nPerformance baseline";
 
     self.stopButton =
         [UIButton
@@ -1339,7 +1350,7 @@ bool PvZ2HostKeyboardFirstResponder() {
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — v84 Render Contract A/B";
+        @"PvZ2forIOS — v85 Performance Baseline";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -1348,7 +1359,7 @@ bool PvZ2HostKeyboardFirstResponder() {
         NO;
 
     title.text =
-        @"PvZ2forIOS — v84 Render Contract A/B";
+        @"PvZ2forIOS — v85 Performance Baseline";
 
     title.font =
         [UIFont
@@ -1364,7 +1375,7 @@ bool PvZ2HostKeyboardFirstResponder() {
         NO;
 
     explanation.text =
-        @"v84 targets the global oversized/cropped framebuffer before continuing gameplay. V84 Blit is the exact v83 graphics control plus final-FBO draw tracing. V84 P=PX changes only Graphics_GetScreenSizeInPoints from 1024×768 to 2048×1536. V84 Android additionally reproduces the APK AndroidSurfaceView scale contract: CanSet=true, scale starts at 0.5 and Set only stores the value. All modes keep UI_IPAD, the 2048×1536 FBO, v39 height,width ordering, touch/keyboard and natural GameState behavior.";
+        @"v85 keeps the validated 2048×1536 Points=Pixels render contract and all functional bridges, but removes old startup/Profile/render provenance probes from the hot path. It records only guest draw, framebuffer capture/copy, UIKit presentation and touch→guest latency. Heap size and scheduler semantics are unchanged.";
 
     explanation.numberOfLines = 0;
 
@@ -1426,6 +1437,7 @@ bool PvZ2HostKeyboardFirstResponder() {
                     @"V84 Blit",
                     @"V84 P=PX",
                     @"V84 Android",
+                    @"V85 Perf",
                     @"V66 Waits",
                     @"V65 Cond",
                     @"Ctype Scout"
@@ -1434,7 +1446,7 @@ bool PvZ2HostKeyboardFirstResponder() {
     self.diagnosticModeControl.translatesAutoresizingMaskIntoConstraints =
         NO;
     self.diagnosticModeControl.selectedSegmentIndex =
-        10;
+        12;
 
     UIStackView *mainButtons =
         [[UIStackView alloc]
@@ -2079,6 +2091,7 @@ bool PvZ2HostKeyboardFirstResponder() {
             @"V84_FINAL_BLIT_TRACE",
             @"V84_POINTS_EQUAL_PIXELS",
             @"V84_ANDROID_GRAPHICS_CONTRACT",
+            @"V85_PERFORMANCE_BASELINE",
             @"V66_BLOCKING_WAIT_SCHEDULER",
             @"V65_CONDITION_VARIABLE_SCHEDULER",
             @"CTYPE_COMPAT_DEEP_SCOUT"
@@ -2097,7 +2110,7 @@ bool PvZ2HostKeyboardFirstResponder() {
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. mode=%@. Start with V84 P=PX. It changes only Android Graphics_GetScreenSizeInPoints to 2048x1536 while keeping the same framebuffer, viewport, UI_IPAD, touch and v39 surface order. V84 Blit is the no-mutation control; V84 Android adds the original APK GL-view-scale field semantics without resizing the host FBO.",
+                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. mode=%@. Start with V85 Perf. Points=Pixels 2048x1536, UI_IPAD, touch/keyboard, VFS/OBB, scheduler, zlib, ETC1, GLES and USERFS stay enabled; old high-volume probes are disabled and the heap is unchanged.",
                     modeNames[modeIndex]]];
 
     [self
@@ -2217,15 +2230,20 @@ bool PvZ2HostKeyboardFirstResponder() {
             @"V84_ANDROID_GRAPHICS_CONTRACT";
     } else if (selectedMode == 12) {
         diagnosticMode =
+            PvZ2DiagnosticMode::V85PerformanceBaseline;
+        diagnosticModeName =
+            @"V85_PERFORMANCE_BASELINE";
+    } else if (selectedMode == 13) {
+        diagnosticMode =
             PvZ2DiagnosticMode::V66BlockingWaitScheduler;
         diagnosticModeName =
             @"V66_BLOCKING_WAIT_SCHEDULER";
-    } else if (selectedMode == 13) {
+    } else if (selectedMode == 14) {
         diagnosticMode =
             PvZ2DiagnosticMode::V65ConditionVariableScheduler;
         diagnosticModeName =
             @"V65_CONDITION_VARIABLE_SCHEDULER";
-    } else if (selectedMode == 14) {
+    } else if (selectedMode == 15) {
         diagnosticMode =
             PvZ2DiagnosticMode::CtypeCompatDeepScout;
         diagnosticModeName =
@@ -2239,7 +2257,7 @@ bool PvZ2HostKeyboardFirstResponder() {
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v84 Render Contract / Final Blit Probe started mode=%@; PID=%d ===",
+                    @"=== PvZ2 v85 Performance Baseline started mode=%@; PID=%d ===",
                     diagnosticModeName,
                     getpid()]];
 
@@ -2287,6 +2305,10 @@ bool PvZ2HostKeyboardFirstResponder() {
     gV81TouchMapTraceCount.store(
         0u,
         std::memory_order_release);
+    gV85PerformanceBaselineActive.store(
+        diagnosticMode ==
+            PvZ2DiagnosticMode::V85PerformanceBaseline,
+        std::memory_order_release);
     gPvZ2KeyboardFirstResponder.store(
         false,
         std::memory_order_release);
@@ -2314,7 +2336,9 @@ bool PvZ2HostKeyboardFirstResponder() {
        diagnosticMode ==
           PvZ2DiagnosticMode::V84PointsEqualPixels ||
        diagnosticMode ==
-          PvZ2DiagnosticMode::V84AndroidGraphicsContract)) {
+          PvZ2DiagnosticMode::V84AndroidGraphicsContract ||
+       diagnosticMode ==
+          PvZ2DiagnosticMode::V85PerformanceBaseline)) {
 
         PvZ2ResetInteractiveInput();
         gPvZ2KeyboardHostReady.store(
@@ -2449,12 +2473,14 @@ bool PvZ2HostKeyboardFirstResponder() {
                                diagnosticMode ==
                                    PvZ2DiagnosticMode::V84PointsEqualPixels ||
                                diagnosticMode ==
-                                   PvZ2DiagnosticMode::V84AndroidGraphicsContract) &&
+                                   PvZ2DiagnosticMode::V84AndroidGraphicsContract ||
+                               diagnosticMode ==
+                                   PvZ2DiagnosticMode::V85PerformanceBaseline) &&
                             selfRef.liveController != nil) {
 
                             [selfRef.liveController
                                 finishRunWithMessage:
-                                    @"v74 LIVE — APK/OBB read failed. Close this view and inspect the log."];
+                                    @"PvZ2 LIVE — APK/OBB read failed. Close this view and inspect the log."];
                         }
 
                         [selfRef refreshStatus];
@@ -2486,7 +2512,9 @@ bool PvZ2HostKeyboardFirstResponder() {
        diagnosticMode ==
           PvZ2DiagnosticMode::V84PointsEqualPixels ||
        diagnosticMode ==
-          PvZ2DiagnosticMode::V84AndroidGraphicsContract)) {
+          PvZ2DiagnosticMode::V84AndroidGraphicsContract ||
+       diagnosticMode ==
+          PvZ2DiagnosticMode::V85PerformanceBaseline)) {
 
                 liveFrameCallback =
                     [](
@@ -2502,58 +2530,100 @@ bool PvZ2HostKeyboardFirstResponder() {
                         }
 
                         @autoreleasepool {
-                            AppendPersistentLog(
-                                [NSString
-                                    stringWithFormat:
-                                        @"[V78LIVE] callback frame=%u capture=%ux%u bytes=%llu copy-begin",
-                                        (unsigned int)frame,
-                                        (unsigned int)width,
-                                        (unsigned int)height,
-                                        (unsigned long long)rgbaSize]);
+                            const bool v85 =
+                                gV85PerformanceBaselineActive.load(
+                                    std::memory_order_acquire);
+                            const std::uint64_t copyBeginNs =
+                                v85 ? V85HostNowNs() : 0u;
+
+                            if (!v85) {
+                                AppendPersistentLog(
+                                    [NSString
+                                        stringWithFormat:
+                                            @"[V78LIVE] callback frame=%u capture=%ux%u bytes=%llu copy-begin",
+                                            (unsigned int)frame,
+                                            (unsigned int)width,
+                                            (unsigned int)height,
+                                            (unsigned long long)rgbaSize]);
+                            }
 
                             NSData *copy =
-                                [NSData
-                                    dataWithBytes:rgba
-                                    length:rgbaSize];
+                                [NSData dataWithBytes:rgba length:rgbaSize];
 
-                            AppendPersistentLog(
-                                [NSString
-                                    stringWithFormat:
-                                        @"[V78LIVE] callback frame=%u copy-ready bytes=%llu dispatch-main",
-                                        (unsigned int)frame,
-                                        (unsigned long long)copy.length]);
+                            const std::uint64_t copyNs =
+                                v85 ? V85HostNowNs() - copyBeginNs : 0u;
+
+                            if (!v85) {
+                                AppendPersistentLog(
+                                    [NSString
+                                        stringWithFormat:
+                                            @"[V78LIVE] callback frame=%u copy-ready bytes=%llu dispatch-main",
+                                            (unsigned int)frame,
+                                            (unsigned long long)copy.length]);
+                            }
+
+                            const std::uint64_t dispatchNs =
+                                v85 ? V85HostNowNs() : 0u;
 
                             dispatch_async(
                                 dispatch_get_main_queue(),
                                 ^{
+                                    const bool liveV85 =
+                                        gV85PerformanceBaselineActive.load(
+                                            std::memory_order_acquire);
+                                    const std::uint64_t mainBeginNs =
+                                        liveV85 ? V85HostNowNs() : 0u;
+                                    const std::uint64_t mainQueueNs =
+                                        liveV85 && mainBeginNs >= dispatchNs
+                                            ? mainBeginNs - dispatchNs
+                                            : 0u;
+
                                     PvZ2LiveViewController *controller =
                                         gPvZ2LiveController;
 
                                     if (controller != nil) {
-                                        AppendPersistentLog(
-                                            [NSString
-                                                stringWithFormat:
-                                                    @"[V78LIVE] UIKit update-begin frame=%u %ux%u",
-                                                    (unsigned int)frame,
-                                                    (unsigned int)width,
-                                                    (unsigned int)height]);
+                                        if (!liveV85) {
+                                            AppendPersistentLog(
+                                                [NSString
+                                                    stringWithFormat:
+                                                        @"[V78LIVE] UIKit update-begin frame=%u %ux%u",
+                                                        (unsigned int)frame,
+                                                        (unsigned int)width,
+                                                        (unsigned int)height]);
+                                        }
+
+                                        const std::uint64_t presentBeginNs =
+                                            liveV85 ? V85HostNowNs() : 0u;
 
                                         [controller
-                                            updateFrameData:
-                                                copy
-                                            width:
-                                                width
-                                            height:
-                                                height
-                                            frame:
-                                                frame];
+                                            updateFrameData:copy
+                                            width:width
+                                            height:height
+                                            frame:frame];
 
-                                        AppendPersistentLog(
-                                            [NSString
-                                                stringWithFormat:
-                                                    @"[V78LIVE] UIKit update-return frame=%u",
-                                                    (unsigned int)frame]);
-                                    } else {
+                                        if (liveV85) {
+                                            const std::uint64_t presentNs =
+                                                V85HostNowNs() - presentBeginNs;
+                                            if (frame <= 5u ||
+                                                (frame % 30u) == 0u) {
+                                                AppendPersistentLog(
+                                                    [NSString
+                                                        stringWithFormat:
+                                                            @"[V85 PERF HOST] frame=%u bytes=%llu frameCopyMs=%.3f UIKitPresentMs=%.3f mainQueueMs=%.3f",
+                                                            (unsigned int)frame,
+                                                            (unsigned long long)copy.length,
+                                                            (double)copyNs / 1000000.0,
+                                                            (double)presentNs / 1000000.0,
+                                                            (double)mainQueueNs / 1000000.0]);
+                                            }
+                                        } else {
+                                            AppendPersistentLog(
+                                                [NSString
+                                                    stringWithFormat:
+                                                        @"[V78LIVE] UIKit update-return frame=%u",
+                                                        (unsigned int)frame]);
+                                        }
+                                    } else if (!liveV85) {
                                         AppendPersistentLog(
                                             [NSString
                                                 stringWithFormat:
@@ -2789,14 +2859,16 @@ bool PvZ2HostKeyboardFirstResponder() {
                                diagnosticMode ==
                                    PvZ2DiagnosticMode::V84PointsEqualPixels ||
                                diagnosticMode ==
-                                   PvZ2DiagnosticMode::V84AndroidGraphicsContract) &&
+                                   PvZ2DiagnosticMode::V84AndroidGraphicsContract ||
+                               diagnosticMode ==
+                                   PvZ2DiagnosticMode::V85PerformanceBaseline) &&
                             selfRef.liveController != nil) {
 
                             [selfRef.liveController
                                 finishRunWithMessage:
                                     [NSString
                                         stringWithFormat:
-                                            @"PvZ2 v84 LIVE — run finished after %u guest frames.\nClose to inspect the log. Final-blit geometry and the selected Android graphics contract are recorded.",
+                                            @"PvZ2 v85 LIVE — run finished after %u guest frames.\nClose to inspect the performance log.",
                                             result.draw_frames_completed]];
 
                         } else if (!result.final_frame_png_path.empty()) {
@@ -2866,14 +2938,16 @@ bool PvZ2HostKeyboardFirstResponder() {
                                diagnosticMode ==
                                    PvZ2DiagnosticMode::V84PointsEqualPixels ||
                                diagnosticMode ==
-                                   PvZ2DiagnosticMode::V84AndroidGraphicsContract) &&
+                                   PvZ2DiagnosticMode::V84AndroidGraphicsContract ||
+                               diagnosticMode ==
+                                   PvZ2DiagnosticMode::V85PerformanceBaseline) &&
                             selfRef.liveController != nil) {
 
                             [selfRef.liveController
                                 finishRunWithMessage:
                                     [NSString
                                         stringWithFormat:
-                                            @"PvZ2 v84 LIVE — guest run stopped.\n%@\nClose to inspect the full log.",
+                                            @"PvZ2 v85 LIVE — guest run stopped.\n%@\nClose to inspect the performance log.",
                                             message]];
 
                         } else {

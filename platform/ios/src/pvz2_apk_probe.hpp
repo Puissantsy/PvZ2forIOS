@@ -220,6 +220,13 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // Original APK AndroidSurfaceView contract: CanSet=true, scale field starts
     // at 0.5, Get/Set are simple field access and Set never resizes the FBO.
     V84AndroidGraphicsContract = 28u,
+
+    // v85: performance baseline. Preserve the validated functional ladder
+    // (VFS/OBB, scheduler, zlib, ETC1, GLES, iPad UI, touch, keyboard,
+    // USERFS and the v84 Points=Pixels fix) while disabling the historical
+    // transform/profile/startup hot-path diagnostics. Only lightweight
+    // wall-clock performance/input timing remains enabled.
+    V85PerformanceBaseline = 29u,
 };
 
 struct PvZ2JniProbeResult {

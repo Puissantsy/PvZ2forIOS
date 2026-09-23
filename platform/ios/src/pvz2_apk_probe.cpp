@@ -38,6 +38,13 @@
 
 namespace {
 
+std::uint64_t V85SteadyNowNs() {
+    return static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now().time_since_epoch())
+            .count());
+}
+
 constexpr const char* kPvZ2Path = "lib/armeabi-v7a/libPVZ2.so";
 
 constexpr std::uint32_t kZipLocal = 0x04034b50u;
@@ -991,6 +998,7 @@ struct V72TouchEvent {
     std::int32_t previous_y = 0;
     std::uint32_t phase = 0u;
     double timestamp_ms = 0.0;
+    std::uint64_t queued_steady_ns = 0u;
 };
 
 constexpr std::size_t kV72EventHeaderBytes = 16u;
@@ -2379,6 +2387,25 @@ public:
     std::uint64_t v84_get_scale_calls = 0u;
     std::uint64_t v84_set_scale_calls = 0u;
 
+    std::uint64_t v85_log_lines_kept = 0u;
+    std::uint64_t v85_log_lines_suppressed = 0u;
+    std::uint64_t v85_guest_draw_samples = 0u;
+    std::uint64_t v85_guest_draw_total_ns = 0u;
+    std::uint64_t v85_guest_draw_max_ns = 0u;
+    std::uint64_t v85_capture_samples = 0u;
+    std::uint64_t v85_capture_total_ns = 0u;
+    std::uint64_t v85_capture_max_ns = 0u;
+    std::uint64_t v85_touch_process_samples = 0u;
+    std::uint64_t v85_touch_process_total_ns = 0u;
+    std::uint64_t v85_touch_process_max_ns = 0u;
+    std::uint64_t v85_touch_action_samples = 0u;
+    std::uint64_t v85_touch_action_total_ns = 0u;
+    std::uint64_t v85_touch_action_max_ns = 0u;
+    std::uint64_t v85_last_touch_queued_ns = 0u;
+    std::uint32_t v85_last_touch_phase = 0u;
+    std::int32_t v85_last_touch_x = 0;
+    std::int32_t v85_last_touch_y = 0;
+
     // v81: detailed event serialization provenance. The host-side mapper logs
     // UIKit -> framebuffer-pixel -> logical-point candidates; this counter
     // bounds the matching guest events actually written to ProcessEvents.
@@ -2479,6 +2506,7 @@ public:
     void V50ObserveResourceId(
         const std::string& id) {
 
+        if (V85PerformanceEnabled()) return;
         std::string key = id;
         std::transform(
             key.begin(),
@@ -2522,6 +2550,7 @@ public:
         const std::string& raw,
         const char* source) {
 
+        if (V85PerformanceEnabled()) return;
         std::string key = raw;
 
         for (char& ch : key) {
@@ -6515,6 +6544,8 @@ public:
             return "V84_POINTS_EQUAL_PIXELS";
         case PvZ2DiagnosticMode::V84AndroidGraphicsContract:
             return "V84_ANDROID_GRAPHICS_CONTRACT";
+        case PvZ2DiagnosticMode::V85PerformanceBaseline:
+            return "V85_PERFORMANCE_BASELINE";
         }
         return "UNKNOWN";
     }
@@ -6601,6 +6632,122 @@ public:
         return out.str();
     }
 
+    bool V85PerformanceEnabled() const {
+        return diagnostic_mode == PvZ2DiagnosticMode::V85PerformanceBaseline;
+    }
+
+    std::string V85FormatMs(std::uint64_t ns) const {
+        std::ostringstream out;
+        out << std::fixed << std::setprecision(3)
+            << (static_cast<double>(ns) / 1000000.0);
+        return out.str();
+    }
+
+    bool V85KeepLogLine(const std::string& line) const {
+        if (line.rfind("V85 PERF", 0u) == 0u) return true;
+        return line.find("FAILED") != std::string::npos ||
+               line.find("failed") != std::string::npos ||
+               line.find("ERROR") != std::string::npos ||
+               line.find("error") != std::string::npos ||
+               line.find("exception") != std::string::npos ||
+               line.find("EXCEPTION") != std::string::npos ||
+               line.find("EXECUTION BUDGET") != std::string::npos ||
+               line.find("unsupported") != std::string::npos ||
+               line.find("UNSUPPORTED") != std::string::npos ||
+               line.find(" out of ") != std::string::npos ||
+               line.find("NULL") != std::string::npos ||
+               line.find("V75 UI PACKAGE REMAP") != std::string::npos ||
+               line.find("V72 INTERACTIVE SUMMARY") != std::string::npos ||
+               line.find("V73 KEYBOARD SUMMARY") != std::string::npos ||
+               line.find("USERFS") != std::string::npos;
+    }
+
+    void V85RecordGuestDraw(std::uint32_t frame, std::uint64_t elapsed_ns) {
+        if (!V85PerformanceEnabled()) return;
+        ++v85_guest_draw_samples;
+        v85_guest_draw_total_ns += elapsed_ns;
+        v85_guest_draw_max_ns = std::max(v85_guest_draw_max_ns, elapsed_ns);
+        if (frame <= 5u || (frame % 30u) == 0u) {
+            Append("V85 PERF guest frame=" + std::to_string(frame) +
+                   " guestDrawMs=" + V85FormatMs(elapsed_ns));
+        }
+    }
+
+    void V85RecordCapture(std::uint32_t frame, std::uint64_t elapsed_ns, std::size_t bytes) {
+        if (!V85PerformanceEnabled()) return;
+        ++v85_capture_samples;
+        v85_capture_total_ns += elapsed_ns;
+        v85_capture_max_ns = std::max(v85_capture_max_ns, elapsed_ns);
+        if (frame <= 5u || (frame % 30u) == 0u) {
+            Append("V85 PERF capture frame=" + std::to_string(frame) +
+                   " frameCaptureMs=" + V85FormatMs(elapsed_ns) +
+                   " bytes=" + std::to_string(bytes));
+        }
+    }
+
+    void V85RecordTouchProcess(const V72TouchEvent& event) {
+        if (!V85PerformanceEnabled() || event.queued_steady_ns == 0u) return;
+        const std::uint64_t now = V85SteadyNowNs();
+        const std::uint64_t elapsed_ns =
+            now >= event.queued_steady_ns ? now - event.queued_steady_ns : 0u;
+        ++v85_touch_process_samples;
+        v85_touch_process_total_ns += elapsed_ns;
+        v85_touch_process_max_ns = std::max(v85_touch_process_max_ns, elapsed_ns);
+        v85_last_touch_queued_ns = event.queued_steady_ns;
+        v85_last_touch_phase = event.phase;
+        v85_last_touch_x = event.x;
+        v85_last_touch_y = event.y;
+        if (event.phase == 0u || event.phase == 3u || event.phase == 4u) {
+            Append("V85 PERF input stage=UI_ProcessEvents frame=" +
+                   std::to_string(current_frame_number) +
+                   " phase=" + std::to_string(event.phase) +
+                   " xy=" + std::to_string(event.x) + "," + std::to_string(event.y) +
+                   " touchToUIProcessMs=" + V85FormatMs(elapsed_ns));
+        }
+    }
+
+    void V85RecordGuestAction(const std::string& action) {
+        if (!V85PerformanceEnabled() || v85_last_touch_queued_ns == 0u) return;
+        const std::uint64_t now = V85SteadyNowNs();
+        const std::uint64_t elapsed_ns =
+            now >= v85_last_touch_queued_ns ? now - v85_last_touch_queued_ns : 0u;
+        ++v85_touch_action_samples;
+        v85_touch_action_total_ns += elapsed_ns;
+        v85_touch_action_max_ns = std::max(v85_touch_action_max_ns, elapsed_ns);
+        Append("V85 PERF input stage=guestAction frame=" +
+               std::to_string(current_frame_number) +
+               " action=" + action +
+               " lastTouch{phase=" + std::to_string(v85_last_touch_phase) +
+               ",xy=" + std::to_string(v85_last_touch_x) + "," +
+               std::to_string(v85_last_touch_y) +
+               "} touchToGuestActionMs=" + V85FormatMs(elapsed_ns));
+    }
+
+    std::string V85PerformanceSummary() const {
+        auto average = [](std::uint64_t total, std::uint64_t samples) {
+            return samples == 0u ? 0.0 :
+                static_cast<double>(total) / static_cast<double>(samples) / 1000000.0;
+        };
+        std::ostringstream out;
+        out << std::fixed << std::setprecision(3)
+            << "V85 PERF SUMMARY"
+            << " guestDraw{samples=" << v85_guest_draw_samples
+            << ",avgMs=" << average(v85_guest_draw_total_ns, v85_guest_draw_samples)
+            << ",maxMs=" << (static_cast<double>(v85_guest_draw_max_ns) / 1000000.0)
+            << "} capture{samples=" << v85_capture_samples
+            << ",avgMs=" << average(v85_capture_total_ns, v85_capture_samples)
+            << ",maxMs=" << (static_cast<double>(v85_capture_max_ns) / 1000000.0)
+            << "} touchToUIProcess{samples=" << v85_touch_process_samples
+            << ",avgMs=" << average(v85_touch_process_total_ns, v85_touch_process_samples)
+            << ",maxMs=" << (static_cast<double>(v85_touch_process_max_ns) / 1000000.0)
+            << "} touchToGuestAction{samples=" << v85_touch_action_samples
+            << ",avgMs=" << average(v85_touch_action_total_ns, v85_touch_action_samples)
+            << ",maxMs=" << (static_cast<double>(v85_touch_action_max_ns) / 1000000.0)
+            << "} logLines{kept=" << v85_log_lines_kept
+            << ",suppressed=" << v85_log_lines_suppressed << "}";
+        return out.str();
+    }
+
     bool V84FinalBlitEnabled() const {
         return
             diagnostic_mode ==
@@ -6616,7 +6763,8 @@ public:
             diagnostic_mode ==
                 PvZ2DiagnosticMode::V84PointsEqualPixels ||
             diagnostic_mode ==
-                PvZ2DiagnosticMode::V84AndroidGraphicsContract;
+                PvZ2DiagnosticMode::V84AndroidGraphicsContract ||
+            V85PerformanceEnabled();
     }
 
     bool V84AndroidContractEnabled() const {
@@ -6630,6 +6778,10 @@ public:
             diagnostic_mode ==
                 PvZ2DiagnosticMode::V83ProfileButtonDispatch ||
             V84FinalBlitEnabled();
+    }
+
+    bool V83ButtonTrapEnabled() const {
+        return V83Enabled() || V85PerformanceEnabled();
     }
 
     bool V82Enabled() const {
@@ -6832,7 +6984,8 @@ public:
         return
             diagnostic_mode ==
                 PvZ2DiagnosticMode::V77LegacyIpadGeometry ||
-            V80Enabled();
+            V80Enabled() ||
+            V85PerformanceEnabled();
     }
 
     bool V76Enabled() const {
@@ -7918,7 +8071,8 @@ public:
     void V52ObserveJniCallsite(
         const std::string& method_name) {
 
-        if (current_frame_number < 75u ||
+        if (V85PerformanceEnabled() ||
+            current_frame_number < 75u ||
             jit == nullptr) {
             return;
         }
@@ -11471,7 +11625,7 @@ public:
         // v83: verified Profile button-listener dispatcher. The static switch
         // at 0x1030b8f0 uses r1 as the button ID. This trap is after the
         // prologue and emulates only the replaced MOV r9,r0.
-        if (V83Enabled() &&
+        if (V83ButtonTrapEnabled() &&
             swi == kJniProbeSvcV83ButtonDispatchEntry) {
 
             const std::uint32_t button_this = regs[0];
@@ -11490,6 +11644,11 @@ public:
             v83_last_button_this = button_this;
             v83_last_button_lr = caller_lr;
             v83_last_button_frame = current_frame_number;
+
+            if (V85PerformanceEnabled()) {
+                V85RecordGuestAction("buttonId=" + std::to_string(button_id));
+                return;
+            }
 
             Append(
                 "V83 BUTTON DISPATCH #" +
@@ -15242,6 +15401,8 @@ public:
                             for (const V72TouchEvent& event :
                                  events) {
 
+                                if (V85PerformanceEnabled()) V85RecordTouchProcess(event);
+
                                 if (V82Enabled()) {
                                     ++v82_touch_serial;
                                     v82_last_touch_x = event.x;
@@ -16044,6 +16205,10 @@ public:
 
                         PvZ2HostSetKeyboardVisible(
                             show);
+
+                        if (V85PerformanceEnabled()) {
+                            V85RecordGuestAction(show ? "Device_ShowKeyboard" : "Device_HideKeyboard");
+                        }
 
                         if (show) {
                             ++v73_keyboard_show_calls;
@@ -17273,11 +17438,13 @@ public:
             ++supported_calls;
             ++malloc_calls;
 
-            V67TrackSmallAllocation(
-                address,
-                requested,
-                regs[14],
-                regs[13]);
+            if (!V85PerformanceEnabled()) {
+                V67TrackSmallAllocation(
+                    address,
+                    requested,
+                    regs[14],
+                    regs[13]);
+            }
 
             result.malloc_calls =
                 malloc_calls;
@@ -17317,7 +17484,8 @@ public:
         }
 
         if (name == "free") {
-            if (V67Enabled() || V69Enabled()) {
+            if (!V85PerformanceEnabled() &&
+                (V67Enabled() || V69Enabled())) {
                 v67_small_allocations.erase(
                     regs[0]);
                 v67_token_history.erase(
@@ -17351,7 +17519,8 @@ public:
                     old_address,
                     new_size);
 
-            if (V67Enabled() || V69Enabled()) {
+            if (!V85PerformanceEnabled() &&
+                (V67Enabled() || V69Enabled())) {
                 v67_small_allocations.erase(
                     old_address);
                 v67_token_history.erase(
@@ -25986,6 +26155,12 @@ public:
     }
 
     void Append(const std::string& line) {
+        if (V85PerformanceEnabled() && !V85KeepLogLine(line)) {
+            ++v85_log_lines_suppressed;
+            return;
+        }
+        if (V85PerformanceEnabled()) ++v85_log_lines_kept;
+
         // Guest-derived strings can contain arbitrary bytes. Keep the trace
         // valid UTF-8/ASCII so one bad Android log/method string cannot make
         // the entire diagnostic disappear in NSStringFromStd.
@@ -26650,30 +26825,27 @@ bool JniProbePrepareRuntime(
             return true;
         };
 
+    // v85 keeps only the functional resource-registry/wrapper traps from
+    // this old combined block. Startup/GameState/registry probes are skipped.
     if (!patch_resource_native_miss(
-            0x0086f674u,
-            0xe1a04002u,
-            kJniProbeSvcResourceRegistryEntry) ||
+            0x0086f674u, 0xe1a04002u, kJniProbeSvcResourceRegistryEntry) ||
         !patch_resource_native_miss(
-            0x0086f8a0u,
-            0xe3a00000u,
-            kJniProbeSvcResourceRegistryMissGroup) ||
+            0x0086f8a0u, 0xe3a00000u, kJniProbeSvcResourceRegistryMissGroup) ||
         !patch_resource_native_miss(
-            0x0086fa78u,
-            0xe3a00000u,
-            kJniProbeSvcResourceRegistryMissGlobal) ||
+            0x0086fa78u, 0xe3a00000u, kJniProbeSvcResourceRegistryMissGlobal) ||
         !patch_resource_native_miss(
-            0x0086fa84u,
-            0xe59a0014u,
-            kJniProbeSvcResourceRegistryGlobalValue) ||
+            0x0086fa84u, 0xe59a0014u, kJniProbeSvcResourceRegistryGlobalValue) ||
         !patch_resource_native_miss(
-            0x0087a708u,
-            0xea000018u,
-            kJniProbeSvcResourceWrapperDirectReturn) ||
+            0x0087a708u, 0xea000018u, kJniProbeSvcResourceWrapperDirectReturn) ||
         !patch_resource_native_miss(
-            0x0087a76cu,
-            0xe3a00000u,
-            kJniProbeSvcResourceWrapperExhausted) ||
+            0x0087a76cu, 0xe3a00000u, kJniProbeSvcResourceWrapperExhausted)) {
+        error =
+            "v85 functional resource-registry bridge signature mismatch for PvZ2 1.5.252752.";
+        return false;
+    }
+
+    if (!callbacks.V85PerformanceEnabled()) {
+        if (
         !patch_resource_native_miss(
             0x002747d8u,
             0xe1a04000u,
@@ -26811,11 +26983,12 @@ bool JniProbePrepareRuntime(
          !patch_resource_native_miss(
               0x00a83af8u,
               0xe6ef0075u,
-              kJniProbeSvcV57TrieCompare))) {
-
-        error =
-            "v57 ctype/deep-scout resource/state/StartupLogo/registry/trie instrumentation profile did not match the verified PvZ2 1.5.252752 ARM code.";
-        return false;
+              kJniProbeSvcV57TrieCompare))
+        ) {
+            error =
+                "v57 ctype/deep-scout resource/state/StartupLogo/registry/trie instrumentation profile did not match the verified PvZ2 1.5.252752 ARM code.";
+            return false;
+        }
     }
 
     if ((callbacks.V62Enabled() ||
@@ -26856,6 +27029,7 @@ bool JniProbePrepareRuntime(
     }
 
     if (callbacks.V69Enabled() &&
+        !callbacks.V85PerformanceEnabled() &&
         (!patch_resource_native_miss(
              0x00abd8c8u,
              0xe1a00005u,
@@ -26898,7 +27072,8 @@ bool JniProbePrepareRuntime(
         return false;
     }
 
-    if ((callbacks.V67Enabled() ||
+    if (!callbacks.V85PerformanceEnabled() &&
+        (callbacks.V67Enabled() ||
          callbacks.V69Enabled()) &&
         (!patch_resource_native_miss(
              0x00abedd4u,
@@ -26992,7 +27167,7 @@ bool JniProbePrepareRuntime(
         return false;
     }
 
-    if (callbacks.V83Enabled() &&
+    if (callbacks.V83ButtonTrapEnabled() &&
         !patch_resource_native_miss(
             0x0030b8f8u,
             0xe1a09000u,
@@ -27119,6 +27294,11 @@ bool JniProbePrepareRuntime(
         callbacks.Append(
             "V83 PROFILE BUTTON DISPATCH: v83 restored the V80 2048x1536 pixel touch control and proved buttonId=5 can dispatch even when the raw +0x28/+0x2c/+0x30/+0x34 radar rectangle does not contain the screen-space tap. Those raw fields are therefore local/transformed, not absolute hitboxes. The passive dispatcher trap remains enabled and does not alter rendering, widget geometry or GameState.");
     }
+    if (callbacks.V85PerformanceEnabled()) {
+        callbacks.Append(
+            "V85 PERF BASELINE: Points=Pixels 2048x1536 permanent; functional scheduler/resource/zlib/ETC1/GLES/UI_IPAD/touch/keyboard/USERFS bridges kept; historical render/Profile/startup probes disabled; heap and scheduler semantics unchanged.");
+    }
+
     if (callbacks.V84FinalBlitEnabled()) {
         callbacks.Append(
             "V84 FINAL-BLIT TRACE: v80 intentionally ignored guest FBO 0. v83 showed a 1024x768 screenMatrix upload immediately before rebinding guest FBO 0 while the viewport stayed 2048x1536. v84 records the actual final/default-FBO vertex bounds, textures and active screenMatrix without changing GL state.");
@@ -27349,7 +27529,8 @@ void PvZ2QueueTouchEvent(
                 previous_x,
                 previous_y,
                 phase,
-                timestamp_ms});
+                timestamp_ms,
+                V85SteadyNowNs()});
     }
 
     gV72QueuedTouches.fetch_add(
@@ -28774,10 +28955,11 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                     callbacks.V62Enabled() ||
                                     callbacks.V63Enabled();
                                 const bool log_wait =
-                                    !res_stream_pump_boundary ||
-                                    !compact_probe ||
-                                    async_round <= 32u ||
-                                    (async_round % 5000u) == 0u;
+                                    !callbacks.V85PerformanceEnabled() &&
+                                    (!res_stream_pump_boundary ||
+                                     !compact_probe ||
+                                     async_round <= 32u ||
+                                     (async_round % 5000u) == 0u);
 
                                 if (log_wait) {
                                     callbacks.Append(
@@ -30704,13 +30886,23 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             callbacks
                                 .v73_text_events_delivered;
 
-                    if (!run_lifecycle(
+                    const std::uint64_t v85_draw_begin_ns =
+                        callbacks.V85PerformanceEnabled() ? V85SteadyNowNs() : 0u;
+                    const bool draw_ok =
+                        run_lifecycle(
                             "Native_onDrawFrame",
                             kNativeOnDrawFrame,
                             kSurfaceThis,
                             0,
                             0,
-                            true)) {
+                            true);
+                    if (callbacks.V85PerformanceEnabled()) {
+                        callbacks.V85RecordGuestDraw(
+                            frame_number,
+                            V85SteadyNowNs() - v85_draw_begin_ns);
+                    }
+
+                    if (!draw_ok) {
 
                         if (callbacks.host_gles_ready) {
                             const char* partial =
@@ -30748,7 +30940,8 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                         return result;
                     }
 
-                    if (should_capture_state_graph(
+                    if (!callbacks.V85PerformanceEnabled() &&
+                        should_capture_state_graph(
                             frame_number)) {
                         callbacks.V52CaptureStateGraph(
                             frame_number);
@@ -30758,7 +30951,8 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                 frame_number));
                     }
 
-                    if (callbacks.host_gles_ready &&
+                    if (!callbacks.V85PerformanceEnabled() &&
+                        callbacks.host_gles_ready &&
                         sample) {
 
                         const char* stats =
@@ -31114,11 +31308,19 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             std::uint32_t live_height = 0u;
                             std::size_t live_size = 0u;
 
+                            const std::uint64_t v85_capture_begin_ns =
+                                callbacks.V85PerformanceEnabled() ? V85SteadyNowNs() : 0u;
                             const std::uint8_t* live_rgba =
                                 PvZ2HostGLESCopyDisplayRGBA(
                                     &live_width,
                                     &live_height,
                                     &live_size);
+                            if (callbacks.V85PerformanceEnabled()) {
+                                callbacks.V85RecordCapture(
+                                    frame_number,
+                                    V85SteadyNowNs() - v85_capture_begin_ns,
+                                    live_size);
+                            }
 
                             if (live_rgba != nullptr &&
                                 live_size != 0u) {
@@ -31159,6 +31361,10 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             std::chrono::milliseconds(
                                 16));
                     }
+                }
+
+                if (callbacks.V85PerformanceEnabled()) {
+                    callbacks.Append(callbacks.V85PerformanceSummary());
                 }
 
                 if (callbacks.V72Enabled()) {
