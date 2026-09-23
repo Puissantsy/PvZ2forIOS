@@ -425,7 +425,7 @@ bool PvZ2HostKeyboardFirstResponder() {
     self.captionLabel.clipsToBounds =
         YES;
     self.captionLabel.text =
-        @"PvZ2 v85 — starting…\nPerformance baseline";
+        @"PvZ2 v86 — starting…\n128 MiB heap + hot-log fix";
 
     self.stopButton =
         [UIButton
@@ -1350,7 +1350,7 @@ bool PvZ2HostKeyboardFirstResponder() {
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — v85 Performance Baseline";
+        @"PvZ2forIOS — v86 Heap + Performance Fix";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -1359,7 +1359,7 @@ bool PvZ2HostKeyboardFirstResponder() {
         NO;
 
     title.text =
-        @"PvZ2forIOS — v85 Performance Baseline";
+        @"PvZ2forIOS — v86 Heap + Performance Fix";
 
     title.font =
         [UIFont
@@ -1375,7 +1375,7 @@ bool PvZ2HostKeyboardFirstResponder() {
         NO;
 
     explanation.text =
-        @"v85 keeps the validated 2048×1536 Points=Pixels render contract and all functional bridges, but removes old startup/Profile/render provenance probes from the hot path. It records only guest draw, framebuffer capture/copy, UIKit presentation and touch→guest latency. Heap size and scheduler semantics are unchanged.";
+        @"v86 follows the real iPad v85 result: the 64 MiB guest heap reached 67,104,288 / 67,108,864 bytes immediately before the post-PLAYER memset OOB. This mode raises only the guest heap to 128 MiB and fixes residual V22/V30/V38/V61 hot logging. Points=Pixels, functional bridges and scheduler semantics stay unchanged; v85 timing probes remain active.";
 
     explanation.numberOfLines = 0;
 
@@ -1438,6 +1438,7 @@ bool PvZ2HostKeyboardFirstResponder() {
                     @"V84 P=PX",
                     @"V84 Android",
                     @"V85 Perf",
+                    @"V86 Heap+Perf",
                     @"V66 Waits",
                     @"V65 Cond",
                     @"Ctype Scout"
@@ -1446,7 +1447,7 @@ bool PvZ2HostKeyboardFirstResponder() {
     self.diagnosticModeControl.translatesAutoresizingMaskIntoConstraints =
         NO;
     self.diagnosticModeControl.selectedSegmentIndex =
-        12;
+        13;
 
     UIStackView *mainButtons =
         [[UIStackView alloc]
@@ -2092,6 +2093,7 @@ bool PvZ2HostKeyboardFirstResponder() {
             @"V84_POINTS_EQUAL_PIXELS",
             @"V84_ANDROID_GRAPHICS_CONTRACT",
             @"V85_PERFORMANCE_BASELINE",
+            @"V86_HEAP_PERFORMANCE_FIX",
             @"V66_BLOCKING_WAIT_SCHEDULER",
             @"V65_CONDITION_VARIABLE_SCHEDULER",
             @"CTYPE_COMPAT_DEEP_SCOUT"
@@ -2110,7 +2112,7 @@ bool PvZ2HostKeyboardFirstResponder() {
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. mode=%@. Start with V85 Perf. Points=Pixels 2048x1536, UI_IPAD, touch/keyboard, VFS/OBB, scheduler, zlib, ETC1, GLES and USERFS stay enabled; old high-volume probes are disabled and the heap is unchanged.",
+                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. mode=%@. Start with V86 Heap+Perf. It keeps the validated 2048x1536 Points=Pixels/UI_IPAD/input/resource path, raises only the full-load guest heap from 64 to 128 MiB, and suppresses residual hot scheduler logs before formatting. Scheduler semantics are unchanged.",
                     modeNames[modeIndex]]];
 
     [self
@@ -2235,15 +2237,20 @@ bool PvZ2HostKeyboardFirstResponder() {
             @"V85_PERFORMANCE_BASELINE";
     } else if (selectedMode == 13) {
         diagnosticMode =
+            PvZ2DiagnosticMode::V86HeapPerformanceFix;
+        diagnosticModeName =
+            @"V86_HEAP_PERFORMANCE_FIX";
+    } else if (selectedMode == 14) {
+        diagnosticMode =
             PvZ2DiagnosticMode::V66BlockingWaitScheduler;
         diagnosticModeName =
             @"V66_BLOCKING_WAIT_SCHEDULER";
-    } else if (selectedMode == 14) {
+    } else if (selectedMode == 15) {
         diagnosticMode =
             PvZ2DiagnosticMode::V65ConditionVariableScheduler;
         diagnosticModeName =
             @"V65_CONDITION_VARIABLE_SCHEDULER";
-    } else if (selectedMode == 15) {
+    } else if (selectedMode == 16) {
         diagnosticMode =
             PvZ2DiagnosticMode::CtypeCompatDeepScout;
         diagnosticModeName =
@@ -2257,7 +2264,7 @@ bool PvZ2HostKeyboardFirstResponder() {
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v85 Performance Baseline started mode=%@; PID=%d ===",
+                    @"=== PvZ2 v86 Heap + Performance Fix started mode=%@; PID=%d ===",
                     diagnosticModeName,
                     getpid()]];
 
@@ -2307,7 +2314,9 @@ bool PvZ2HostKeyboardFirstResponder() {
         std::memory_order_release);
     gV85PerformanceBaselineActive.store(
         diagnosticMode ==
-            PvZ2DiagnosticMode::V85PerformanceBaseline,
+                PvZ2DiagnosticMode::V85PerformanceBaseline ||
+        diagnosticMode ==
+                PvZ2DiagnosticMode::V86HeapPerformanceFix,
         std::memory_order_release);
     gPvZ2KeyboardFirstResponder.store(
         false,
@@ -2338,7 +2347,9 @@ bool PvZ2HostKeyboardFirstResponder() {
        diagnosticMode ==
           PvZ2DiagnosticMode::V84AndroidGraphicsContract ||
        diagnosticMode ==
-          PvZ2DiagnosticMode::V85PerformanceBaseline)) {
+          PvZ2DiagnosticMode::V85PerformanceBaseline ||
+       diagnosticMode ==
+          PvZ2DiagnosticMode::V86HeapPerformanceFix)) {
 
         PvZ2ResetInteractiveInput();
         gPvZ2KeyboardHostReady.store(
@@ -2475,7 +2486,9 @@ bool PvZ2HostKeyboardFirstResponder() {
                                diagnosticMode ==
                                    PvZ2DiagnosticMode::V84AndroidGraphicsContract ||
                                diagnosticMode ==
-                                   PvZ2DiagnosticMode::V85PerformanceBaseline) &&
+                                   PvZ2DiagnosticMode::V85PerformanceBaseline ||
+                               diagnosticMode ==
+                                   PvZ2DiagnosticMode::V86HeapPerformanceFix) &&
                             selfRef.liveController != nil) {
 
                             [selfRef.liveController
@@ -2514,7 +2527,9 @@ bool PvZ2HostKeyboardFirstResponder() {
        diagnosticMode ==
           PvZ2DiagnosticMode::V84AndroidGraphicsContract ||
        diagnosticMode ==
-          PvZ2DiagnosticMode::V85PerformanceBaseline)) {
+          PvZ2DiagnosticMode::V85PerformanceBaseline ||
+       diagnosticMode ==
+          PvZ2DiagnosticMode::V86HeapPerformanceFix)) {
 
                 liveFrameCallback =
                     [](
@@ -2861,14 +2876,16 @@ bool PvZ2HostKeyboardFirstResponder() {
                                diagnosticMode ==
                                    PvZ2DiagnosticMode::V84AndroidGraphicsContract ||
                                diagnosticMode ==
-                                   PvZ2DiagnosticMode::V85PerformanceBaseline) &&
+                                   PvZ2DiagnosticMode::V85PerformanceBaseline ||
+                               diagnosticMode ==
+                                   PvZ2DiagnosticMode::V86HeapPerformanceFix) &&
                             selfRef.liveController != nil) {
 
                             [selfRef.liveController
                                 finishRunWithMessage:
                                     [NSString
                                         stringWithFormat:
-                                            @"PvZ2 v85 LIVE — run finished after %u guest frames.\nClose to inspect the performance log.",
+                                            @"PvZ2 v86 LIVE — run finished after %u guest frames.\nClose to inspect the performance/heap log.",
                                             result.draw_frames_completed]];
 
                         } else if (!result.final_frame_png_path.empty()) {
@@ -2940,14 +2957,16 @@ bool PvZ2HostKeyboardFirstResponder() {
                                diagnosticMode ==
                                    PvZ2DiagnosticMode::V84AndroidGraphicsContract ||
                                diagnosticMode ==
-                                   PvZ2DiagnosticMode::V85PerformanceBaseline) &&
+                                   PvZ2DiagnosticMode::V85PerformanceBaseline ||
+                               diagnosticMode ==
+                                   PvZ2DiagnosticMode::V86HeapPerformanceFix) &&
                             selfRef.liveController != nil) {
 
                             [selfRef.liveController
                                 finishRunWithMessage:
                                     [NSString
                                         stringWithFormat:
-                                            @"PvZ2 v85 LIVE — guest run stopped.\n%@\nClose to inspect the performance log.",
+                                            @"PvZ2 v86 LIVE — guest run stopped.\n%@\nClose to inspect the performance/heap log.",
                                             message]];
 
                         } else {

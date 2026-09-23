@@ -227,6 +227,12 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // transform/profile/startup hot-path diagnostics. Only lightweight
     // wall-clock performance/input timing remains enabled.
     V85PerformanceBaseline = 29u,
+
+    // v86: keep the v85 measurements/functional bridges, but raise only the
+    // full-load guest heap to 128 MiB after the real iPad reached 67,104,288
+    // bytes high-water in a 64 MiB arena immediately before the post-PLAYER
+    // __aeabi_memset OOB stop. Also hard-disable residual hot scheduler logs.
+    V86HeapPerformanceFix = 30u,
 };
 
 struct PvZ2JniProbeResult {

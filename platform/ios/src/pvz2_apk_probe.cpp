@@ -980,6 +980,7 @@ constexpr std::uint32_t kJniProbeStackBase = 0x20000000u;
 constexpr std::uint32_t kJniProbeStackSize = 0x00100000u;
 constexpr std::uint32_t kJniProbeHeapBase = 0x30000000u;
 constexpr std::uint32_t kJniProbeHeapSize = 0x04000000u;
+constexpr std::uint32_t kJniProbeHeapSizeV86 = 0x08000000u;
 constexpr std::uint32_t kJniProbeTrampolineBase = 0x40000000u;
 constexpr std::uint32_t kJniProbeTrampolineSize = 0x00100000u;
 constexpr std::uint32_t kJniProbeJniBase = 0x50000000u;
@@ -1509,11 +1510,18 @@ std::string JniProbeSymbolName(
 
 class JniProbeGuestMemory {
 public:
+    explicit JniProbeGuestMemory(
+        std::uint32_t heap_size = kJniProbeHeapSize)
+        : heap(
+              std::max<std::uint32_t>(
+                  heap_size,
+                  1u),
+              0) {}
+
     std::vector<std::uint8_t> image;
     std::vector<std::uint8_t> stack =
         std::vector<std::uint8_t>(kJniProbeStackSize, 0);
-    std::vector<std::uint8_t> heap =
-        std::vector<std::uint8_t>(kJniProbeHeapSize, 0);
+    std::vector<std::uint8_t> heap;
     std::vector<std::uint8_t> trampolines =
         std::vector<std::uint8_t>(kJniProbeTrampolineSize, 0);
     std::vector<std::uint8_t> jni =
@@ -1790,10 +1798,13 @@ public:
                 heap_next,
                 safe_alignment);
 
+        const std::uint32_t heap_capacity =
+            HeapCapacity();
+
         if (aligned == 0xffffffffu ||
-            aligned > kJniProbeHeapSize ||
+            aligned > heap_capacity ||
             requested >
-                kJniProbeHeapSize -
+                heap_capacity -
                     aligned) {
             return 0;
         }
@@ -1925,6 +1936,13 @@ public:
             address -
                 kJniProbeHeapBase,
             size);
+    }
+
+    std::uint32_t HeapCapacity() const {
+        return static_cast<std::uint32_t>(
+            std::min<std::size_t>(
+                heap.size(),
+                std::numeric_limits<std::uint32_t>::max()));
     }
 
     std::uint32_t HeapHighWater() const {
@@ -3894,7 +3912,7 @@ public:
             describe_region("guest-stack", kJniProbeStackBase);
         } else if (
             plain >= kJniProbeHeapBase &&
-            plain < kJniProbeHeapBase + kJniProbeHeapSize) {
+            plain < kJniProbeHeapBase + mem.HeapCapacity()) {
             describe_region("guest-heap", kJniProbeHeapBase);
         } else if (
             plain >= kJniProbeTrampolineBase &&
@@ -6546,6 +6564,8 @@ public:
             return "V84_ANDROID_GRAPHICS_CONTRACT";
         case PvZ2DiagnosticMode::V85PerformanceBaseline:
             return "V85_PERFORMANCE_BASELINE";
+        case PvZ2DiagnosticMode::V86HeapPerformanceFix:
+            return "V86_HEAP_PERFORMANCE_FIX";
         }
         return "UNKNOWN";
     }
@@ -6632,8 +6652,16 @@ public:
         return out.str();
     }
 
+    bool V86Enabled() const {
+        return diagnostic_mode ==
+            PvZ2DiagnosticMode::V86HeapPerformanceFix;
+    }
+
     bool V85PerformanceEnabled() const {
-        return diagnostic_mode == PvZ2DiagnosticMode::V85PerformanceBaseline;
+        return
+            diagnostic_mode ==
+                PvZ2DiagnosticMode::V85PerformanceBaseline ||
+            V86Enabled();
     }
 
     std::string V85FormatMs(std::uint64_t ns) const {
@@ -6660,6 +6688,37 @@ public:
                line.find("V72 INTERACTIVE SUMMARY") != std::string::npos ||
                line.find("V73 KEYBOARD SUMMARY") != std::string::npos ||
                line.find("USERFS") != std::string::npos;
+    }
+
+    bool V86KeepLogLine(const std::string& line) const {
+        if (line.rfind("V85 PERF", 0u) == 0u ||
+            line.rfind("V86 PERF", 0u) == 0u) {
+            return true;
+        }
+
+        // Preserve an actual allocator failure, but not the periodic heap
+        // telemetry. This makes a future 128 MiB exhaustion immediately
+        // visible without reviving the malloc hot log.
+        if (line.rfind("V27 HEAP", 0u) == 0u &&
+            line.find(" -> 0x00000000") != std::string::npos) {
+            return true;
+        }
+
+        return
+            line.find("failed=YES") != std::string::npos ||
+            line.find("FAILED") != std::string::npos ||
+            line.find("FAIL-FAST") != std::string::npos ||
+            line.find("ERROR") != std::string::npos ||
+            line.find("EXCEPTION") != std::string::npos ||
+            line.find("exception") != std::string::npos ||
+            line.find("EXECUTION BUDGET") != std::string::npos ||
+            line.find("attempted to write outside") != std::string::npos ||
+            line.find("guest-memory fault") != std::string::npos ||
+            line.find("unsupported") != std::string::npos ||
+            line.find("UNSUPPORTED") != std::string::npos ||
+            line.find("V75 UI PACKAGE REMAP") != std::string::npos ||
+            line.find("V72 INTERACTIVE SUMMARY") != std::string::npos ||
+            line.find("V73 KEYBOARD SUMMARY") != std::string::npos;
     }
 
     void V85RecordGuestDraw(std::uint32_t frame, std::uint64_t elapsed_ns) {
@@ -8330,7 +8389,7 @@ public:
                         static_cast<
                             std::uint64_t>(
                             kJniProbeHeapBase) +
-                        kJniProbeHeapSize ||
+                        mem.HeapCapacity() ||
                     visited.size() >= 48u ||
                     mem.Ptr(value, 4u) ==
                         nullptr) {
@@ -17642,7 +17701,7 @@ public:
                         if (a >= kJniProbeHeapBase &&
                             a < static_cast<std::uint64_t>(
                                     kJniProbeHeapBase) +
-                                    kJniProbeHeapSize) {
+                                    mem.HeapCapacity()) {
                             return "heap";
                         }
 
@@ -20585,6 +20644,31 @@ public:
                         ")");
                 }
                 return;
+            }
+
+            if (V86Enabled()) {
+                Append(
+                    "V86 PERF MEMSET OOB name=" +
+                    name +
+                    " dest=0x" +
+                    JniProbeHex(destination) +
+                    " size=" +
+                    std::to_string(size) +
+                    " value=" +
+                    std::to_string(value) +
+                    " PC=0x" +
+                    JniProbeHex(jit ? jit->Regs()[15] : 0u) +
+                    " LR=0x" +
+                    JniProbeHex(jit ? jit->Regs()[14] : 0u) +
+                    " heap{capacity=" +
+                    std::to_string(mem.HeapCapacity()) +
+                    ",highWater=" +
+                    std::to_string(mem.HeapHighWater()) +
+                    ",live=" +
+                    std::to_string(mem.HeapLiveBytes()) +
+                    ",allocs=" +
+                    std::to_string(mem.HeapLiveAllocations()) +
+                    "}");
             }
 
             result.message =
@@ -26155,11 +26239,19 @@ public:
     }
 
     void Append(const std::string& line) {
-        if (V85PerformanceEnabled() && !V85KeepLogLine(line)) {
-            ++v85_log_lines_suppressed;
-            return;
+        if (V86Enabled()) {
+            if (!V86KeepLogLine(line)) {
+                ++v85_log_lines_suppressed;
+                return;
+            }
+            ++v85_log_lines_kept;
+        } else if (V85PerformanceEnabled()) {
+            if (!V85KeepLogLine(line)) {
+                ++v85_log_lines_suppressed;
+                return;
+            }
+            ++v85_log_lines_kept;
         }
-        if (V85PerformanceEnabled()) ++v85_log_lines_kept;
 
         // Guest-derived strings can contain arbitrary bytes. Keep the trace
         // valid UTF-8/ASCII so one bad Android log/method string cannot make
@@ -27294,7 +27386,10 @@ bool JniProbePrepareRuntime(
         callbacks.Append(
             "V83 PROFILE BUTTON DISPATCH: v83 restored the V80 2048x1536 pixel touch control and proved buttonId=5 can dispatch even when the raw +0x28/+0x2c/+0x30/+0x34 radar rectangle does not contain the screen-space tap. Those raw fields are therefore local/transformed, not absolute hitboxes. The passive dispatcher trap remains enabled and does not alter rendering, widget geometry or GameState.");
     }
-    if (callbacks.V85PerformanceEnabled()) {
+    if (callbacks.V86Enabled()) {
+        callbacks.Append(
+            "V86 PERF HEAP: Points=Pixels 2048x1536 permanent; guest heap=128 MiB (v85 was 64 MiB); functional scheduler/resource/zlib/ETC1/GLES/UI_IPAD/touch/keyboard/USERFS bridges kept; scheduler semantics unchanged; residual V22/V30/V38/V61 hot slice logs disabled before formatting.");
+    } else if (callbacks.V85PerformanceEnabled()) {
         callbacks.Append(
             "V85 PERF BASELINE: Points=Pixels 2048x1536 permanent; functional scheduler/resource/zlib/ETC1/GLES/UI_IPAD/touch/keyboard/USERFS bridges kept; historical render/Profile/startup probes disabled; heap and scheduler semantics unchanged.");
     }
@@ -27818,7 +27913,14 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
             return result;
         }
 
-        JniProbeGuestMemory memory;
+        const std::uint32_t guest_heap_size =
+            diagnostic_mode ==
+                    PvZ2DiagnosticMode::V86HeapPerformanceFix
+                ? kJniProbeHeapSizeV86
+                : kJniProbeHeapSize;
+
+        JniProbeGuestMemory memory(
+            guest_heap_size);
         PvZ2JniCallbacks callbacks(
             memory,
             result,
@@ -29559,12 +29661,13 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                     callbacks.V62Enabled() ||
                                     callbacks.V63Enabled();
                                 const bool log_worker_slice =
-                                    !compact_worker_log ||
-                                    !res_stream_pump_boundary ||
-                                    worker_state.runtime_completed ||
-                                    worker_state.runtime_failed ||
-                                    async_round <= 32u ||
-                                    (async_round % 5000u) == 0u;
+                                    !callbacks.V86Enabled() &&
+                                    (!compact_worker_log ||
+                                     !res_stream_pump_boundary ||
+                                     worker_state.runtime_completed ||
+                                     worker_state.runtime_failed ||
+                                     async_round <= 32u ||
+                                     (async_round % 5000u) == 0u);
 
                                 if (log_worker_slice) {
                                     callbacks.Append(
@@ -29681,23 +29784,26 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                 if (object_changed) {
                                     future_changed = true;
 
-                                    callbacks.Append(
+                                    if (!callbacks.V86Enabled()) {
+                                        callbacks.Append(
                                         "V30 WAIT OBJECT PROGRESS by tid=" +
                                         std::to_string(
                                             worker_state.id) +
                                         ": " +
                                         async_future_snapshot(
                                             future));
+                                    }
 
                                     break;
                                 }
 
                                 if (res_stream_pump_boundary &&
                                     worker_slices_this_round >= 1u) {
-                                    if (!(callbacks.V62Enabled() ||
-                                          callbacks.V63Enabled()) ||
-                                        async_round <= 32u ||
-                                        (async_round % 5000u) == 0u) {
+                                    if (!callbacks.V86Enabled() &&
+                                        (!(callbacks.V62Enabled() ||
+                                           callbacks.V63Enabled()) ||
+                                         async_round <= 32u ||
+                                         (async_round % 5000u) == 0u)) {
                                         callbacks.Append(
                                             "V61 RES-STREAM PUMP SLICE tid=" +
                                             std::to_string(worker_state.id) +
@@ -30332,11 +30438,12 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             ++ran;
                             ++boundary_worker_slices;
 
-                            if (boundary_worker_slices <= 24u ||
-                                (boundary_worker_slices %
-                                 100u) == 0u ||
-                                worker_state.runtime_completed ||
-                                worker_state.runtime_failed) {
+                            if (!callbacks.V86Enabled() &&
+                                (boundary_worker_slices <= 24u ||
+                                 (boundary_worker_slices %
+                                  100u) == 0u ||
+                                 worker_state.runtime_completed ||
+                                 worker_state.runtime_failed)) {
 
                                 callbacks.Append(
                                     "V38 BOUNDARY WORKER SLICE phase=" +
