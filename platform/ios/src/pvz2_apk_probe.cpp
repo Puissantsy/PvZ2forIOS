@@ -923,6 +923,178 @@ bool InspectAndMapElf(
 
 } // namespace
 
+namespace {
+
+constexpr std::uint64_t ProbeCap(PvZ2ProbeCapability capability) {
+    return static_cast<std::uint64_t>(capability);
+}
+
+constexpr std::uint64_t kCapLive =
+    ProbeCap(PvZ2ProbeCapability::LivePresentation);
+constexpr std::uint64_t kCapCpuFrame =
+    ProbeCap(PvZ2ProbeCapability::CpuLiveFrame);
+constexpr std::uint64_t kCapTransform =
+    ProbeCap(PvZ2ProbeCapability::TransformProbe);
+constexpr std::uint64_t kCapHitTest =
+    ProbeCap(PvZ2ProbeCapability::HitTestTrace);
+constexpr std::uint64_t kCapLogicalTouch =
+    ProbeCap(PvZ2ProbeCapability::LogicalTouch);
+constexpr std::uint64_t kCapProfile =
+    ProbeCap(PvZ2ProbeCapability::ProfileProbe);
+constexpr std::uint64_t kCapPerf =
+    ProbeCap(PvZ2ProbeCapability::PerformanceBaseline);
+constexpr std::uint64_t kCapHeap128 =
+    ProbeCap(PvZ2ProbeCapability::Heap128);
+constexpr std::uint64_t kCapMutex =
+    ProbeCap(PvZ2ProbeCapability::PreemptiveMutex);
+constexpr std::uint64_t kCapAdaptive =
+    ProbeCap(PvZ2ProbeCapability::AdaptiveMutex);
+constexpr std::uint64_t kCapHeavyProfiler =
+    ProbeCap(PvZ2ProbeCapability::HeavyPerformanceProfiler);
+constexpr std::uint64_t kCapHostCost =
+    ProbeCap(PvZ2ProbeCapability::HostCostProfiler);
+constexpr std::uint64_t kCapDirect =
+    ProbeCap(PvZ2ProbeCapability::DirectPresentation);
+constexpr std::uint64_t kCapIndexedRelro =
+    ProbeCap(PvZ2ProbeCapability::IndexedAllocatorRelro);
+constexpr std::uint64_t kCapLongRun =
+    ProbeCap(PvZ2ProbeCapability::LongRunInteractive);
+constexpr std::uint64_t kCapReturnProvenance =
+    ProbeCap(PvZ2ProbeCapability::ReturnProvenance);
+
+constexpr std::uint64_t kCapsTransformBase =
+    kCapLive | kCapCpuFrame | kCapTransform |
+    kCapHitTest | kCapProfile;
+constexpr std::uint64_t kCapsPerfBase =
+    kCapLive | kCapCpuFrame | kCapPerf;
+constexpr std::uint64_t kCapsV86 =
+    kCapsPerfBase | kCapHeap128;
+constexpr std::uint64_t kCapsV87 =
+    kCapsV86 | kCapMutex;
+constexpr std::uint64_t kCapsV88 =
+    kCapsV87 | kCapAdaptive;
+constexpr std::uint64_t kCapsV89 =
+    kCapsV88 | kCapHeavyProfiler | kCapHostCost;
+constexpr std::uint64_t kCapsV90 =
+    (kCapsV88 & ~kCapCpuFrame) | kCapHostCost | kCapDirect;
+constexpr std::uint64_t kCapsV91 =
+    kCapsV90 | kCapIndexedRelro;
+constexpr std::uint64_t kCapsV92 =
+    kCapsV91 | kCapLongRun;
+constexpr std::uint64_t kCapsV93 =
+    kCapsV92 | kCapReturnProvenance;
+
+constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
+    {PvZ2DiagnosticMode::PassiveRegistry, "PASSIVE_REGISTRY", nullptr, 0u, false},
+    {PvZ2DiagnosticMode::GateAScout, "GATE_A_SCOUT", nullptr, 0u, false},
+    {PvZ2DiagnosticMode::FullMatrix, "V56_BASELINE", "V56 Base", 0u, true},
+    {PvZ2DiagnosticMode::CtypeCompatNativePath, "CTYPE_COMPAT_NATIVE_PATH", nullptr, 0u, false},
+    {PvZ2DiagnosticMode::CtypeCompatDeepScout, "CTYPE_COMPAT_DEEP_SCOUT", "Ctype Scout", 0u, true},
+    {PvZ2DiagnosticMode::V62TaskProvenanceControlA, "V62_TASK_PROVENANCE_CONTROL_A", nullptr, 0u, false},
+    {PvZ2DiagnosticMode::V62PumpMutexCoherentB, "V62_PUMP_MUTEX_COHERENT_B", nullptr, 0u, false},
+    {PvZ2DiagnosticMode::V63CriticalSectionScheduler, "V63_CRITICAL_SECTION_SCHEDULER", nullptr, 0u, false},
+    {PvZ2DiagnosticMode::V64ReleaseBoundaryScheduler, "V64_RELEASE_BOUNDARY_SCHEDULER", nullptr, 0u, false},
+    {PvZ2DiagnosticMode::V65ConditionVariableScheduler, "V65_CONDITION_VARIABLE_SCHEDULER", "V65 Cond", 0u, true},
+    {PvZ2DiagnosticMode::V66BlockingWaitScheduler, "V66_BLOCKING_WAIT_SCHEDULER", "V66 Waits", 0u, true},
+    {PvZ2DiagnosticMode::V67CompletionTokenProvenance, "V67_COMPLETION_TOKEN_PROVENANCE", nullptr, 0u, false},
+    {PvZ2DiagnosticMode::V68CompletionTokenSemantics, "V68_COMPLETION_TOKEN_SEMANTICS", nullptr, 0u, false},
+    {PvZ2DiagnosticMode::V69TaskResourceLifecycle, "V69_TASKRESOURCE_LIFECYCLE", nullptr, 0u, false},
+    {PvZ2DiagnosticMode::V70ZlibStreamOwnership, "V70_ZLIB_STREAM_OWNERSHIP", nullptr, 0u, false},
+    {PvZ2DiagnosticMode::V71Etc1TextureBridge, "V71_ETC1_TEXTURE_BRIDGE", nullptr, 0u, false},
+    {PvZ2DiagnosticMode::V72LiveTouchBridge, "V72_LIVE_TOUCH_BRIDGE", nullptr, 0u, false},
+    {PvZ2DiagnosticMode::V73KeyboardFullscreenBridge, "V73_KEYBOARD_FULLSCREEN_BRIDGE", nullptr, 0u, false},
+    {PvZ2DiagnosticMode::V74RetinaInputPolish, "V74_RETINA_INPUT_POLISH", "V74 Retina", kCapLive | kCapCpuFrame, true},
+    {PvZ2DiagnosticMode::V75IpadUiPackage, "V75_IPAD_UI_PACKAGE", "V75 iPad UI", kCapLive | kCapCpuFrame | kCapProfile, true},
+    {PvZ2DiagnosticMode::V76IosScaleContract, "V76_IOS_SCALE_CONTRACT", "V76 iOS Scale", kCapLive | kCapCpuFrame, true},
+    {PvZ2DiagnosticMode::V77LegacyIpadGeometry, "V77_LEGACY_IPAD_GEOMETRY", "V77 Legacy iPad", kCapLive | kCapCpuFrame | kCapProfile, true},
+    {PvZ2DiagnosticMode::V80GlobalTransformProbe, "V80_GLOBAL_TRANSFORM_PROBE", "V80 Transform", kCapsTransformBase, true},
+    {PvZ2DiagnosticMode::V81HitTestLogicalPoints, "V81_HITTEST_LOGICAL_POINTS", "V81 HitTest", kCapsTransformBase | kCapLogicalTouch, true},
+    {PvZ2DiagnosticMode::V82ProfileLayoutRadar, "V82_PROFILE_LAYOUT_RADAR", "V82 Radar", kCapsTransformBase | kCapLogicalTouch, true},
+    {PvZ2DiagnosticMode::V83ProfileButtonDispatch, "V83_PROFILE_BUTTON_DISPATCH", "V83 Buttons", kCapsTransformBase, true},
+    {PvZ2DiagnosticMode::V84FinalBlitTrace, "V84_FINAL_BLIT_TRACE", "V84 Blit", kCapsTransformBase, true},
+    {PvZ2DiagnosticMode::V84PointsEqualPixels, "V84_POINTS_EQUAL_PIXELS", "V84 P=PX", kCapsTransformBase, true},
+    {PvZ2DiagnosticMode::V84AndroidGraphicsContract, "V84_ANDROID_GRAPHICS_CONTRACT", "V84 Android", kCapsTransformBase, true},
+    {PvZ2DiagnosticMode::V85PerformanceBaseline, "V85_PERFORMANCE_BASELINE", "V85 Perf", kCapsPerfBase, true},
+    {PvZ2DiagnosticMode::V86HeapPerformanceFix, "V86_HEAP_PERFORMANCE_FIX", "V86 Heap+Perf", kCapsV86, true},
+    {PvZ2DiagnosticMode::V87PreemptiveMutexScheduler, "V87_PREEMPTIVE_MUTEX_SCHEDULER", "V87 Mutex", kCapsV87, true},
+    {PvZ2DiagnosticMode::V88AdaptiveMutexStartup, "V88_ADAPTIVE_MUTEX_STARTUP", "V88 Adaptive", kCapsV88, true},
+    {PvZ2DiagnosticMode::V89PerformanceProfiler, "V89_PERFORMANCE_PROFILER", "V89 Profiler", kCapsV89, true},
+    {PvZ2DiagnosticMode::V90DirectPresentationProfiler, "V90_DIRECT_PRESENTATION_PROFILER", "V90 Direct", kCapsV90, true},
+    {PvZ2DiagnosticMode::V91IndexedAllocatorRelro, "V91_INDEXED_ALLOCATOR_RELRO", "V91 Alloc+RELRO", kCapsV91, true},
+    {PvZ2DiagnosticMode::V92LongRunInteractive, "V92_LONG_RUN_INTERACTIVE", "V92 Long Run", kCapsV92, true},
+    {PvZ2DiagnosticMode::V93ReturnProvenance, "V93_RETURN_PROVENANCE", "V93 Return", kCapsV93, true},
+};
+
+constexpr PvZ2DiagnosticMode kSelectableDiagnosticModes[] = {
+    PvZ2DiagnosticMode::FullMatrix,
+    PvZ2DiagnosticMode::V74RetinaInputPolish,
+    PvZ2DiagnosticMode::V75IpadUiPackage,
+    PvZ2DiagnosticMode::V76IosScaleContract,
+    PvZ2DiagnosticMode::V77LegacyIpadGeometry,
+    PvZ2DiagnosticMode::V80GlobalTransformProbe,
+    PvZ2DiagnosticMode::V81HitTestLogicalPoints,
+    PvZ2DiagnosticMode::V82ProfileLayoutRadar,
+    PvZ2DiagnosticMode::V83ProfileButtonDispatch,
+    PvZ2DiagnosticMode::V84FinalBlitTrace,
+    PvZ2DiagnosticMode::V84PointsEqualPixels,
+    PvZ2DiagnosticMode::V84AndroidGraphicsContract,
+    PvZ2DiagnosticMode::V85PerformanceBaseline,
+    PvZ2DiagnosticMode::V86HeapPerformanceFix,
+    PvZ2DiagnosticMode::V87PreemptiveMutexScheduler,
+    PvZ2DiagnosticMode::V88AdaptiveMutexStartup,
+    PvZ2DiagnosticMode::V89PerformanceProfiler,
+    PvZ2DiagnosticMode::V90DirectPresentationProfiler,
+    PvZ2DiagnosticMode::V91IndexedAllocatorRelro,
+    PvZ2DiagnosticMode::V92LongRunInteractive,
+    PvZ2DiagnosticMode::V93ReturnProvenance,
+    PvZ2DiagnosticMode::V66BlockingWaitScheduler,
+    PvZ2DiagnosticMode::V65ConditionVariableScheduler,
+    PvZ2DiagnosticMode::CtypeCompatDeepScout,
+};
+
+} // namespace
+
+const PvZ2DiagnosticModeDescriptor*
+PvZ2DescribeDiagnosticMode(PvZ2DiagnosticMode mode) {
+    for (const auto& descriptor : kDiagnosticModes) {
+        if (descriptor.mode == mode) {
+            return &descriptor;
+        }
+    }
+    return nullptr;
+}
+
+bool PvZ2DiagnosticModeHasCapability(
+    PvZ2DiagnosticMode mode,
+    PvZ2ProbeCapability capability) {
+
+    const auto* descriptor =
+        PvZ2DescribeDiagnosticMode(mode);
+    if (descriptor == nullptr) {
+        return false;
+    }
+
+    const std::uint64_t mask =
+        static_cast<std::uint64_t>(capability);
+    return mask == 0u ||
+        (descriptor->capabilities & mask) == mask;
+}
+
+std::size_t PvZ2SelectableDiagnosticModeCount() {
+    return
+        sizeof(kSelectableDiagnosticModes) /
+        sizeof(kSelectableDiagnosticModes[0]);
+}
+
+const PvZ2DiagnosticModeDescriptor*
+PvZ2SelectableDiagnosticModeAt(std::size_t index) {
+    if (index >= PvZ2SelectableDiagnosticModeCount()) {
+        return nullptr;
+    }
+    return PvZ2DescribeDiagnosticMode(
+        kSelectableDiagnosticModes[index]);
+}
+
 PvZ2ApkProbeResult InspectAndMapPvZ2Apk(
     const std::uint8_t* apk_data,
     std::size_t apk_size) {
@@ -2950,6 +3122,11 @@ public:
     std::uint32_t v93_last_saved_pc_after = 0u;
     std::uint32_t v93_last_stack_base = 0u;
     std::array<std::uint32_t, 16> v93_last_stack_words{};
+    bool v93_last_exception_valid = false;
+    std::uint32_t v93_last_exception_pc = 0u;
+    std::uint32_t v93_last_exception_sp = 0u;
+    std::uint32_t v93_last_exception_cpsr = 0u;
+    std::uint32_t v93_last_exception_sp_minus_4 = 0u;
 
     enum class ReturnMode {
         JniOnLoad,
@@ -7947,104 +8124,25 @@ public:
     }
 
     const char* V56ModeName() const {
-        switch (diagnostic_mode) {
-        case PvZ2DiagnosticMode::PassiveRegistry: return "PASSIVE_REGISTRY";
-        case PvZ2DiagnosticMode::GateAScout: return "GATE_A_SCOUT";
-        case PvZ2DiagnosticMode::FullMatrix: return "V56_BASELINE";
-        case PvZ2DiagnosticMode::CtypeCompatNativePath:
-            return "CTYPE_COMPAT_NATIVE_PATH";
-        case PvZ2DiagnosticMode::CtypeCompatDeepScout:
-            return "CTYPE_COMPAT_DEEP_SCOUT";
-        case PvZ2DiagnosticMode::V62TaskProvenanceControlA:
-            return "V62_TASK_PROVENANCE_CONTROL_A";
-        case PvZ2DiagnosticMode::V62PumpMutexCoherentB:
-            return "V62_PUMP_MUTEX_COHERENT_B";
-        case PvZ2DiagnosticMode::V63CriticalSectionScheduler:
-            return "V63_CRITICAL_SECTION_SCHEDULER";
-        case PvZ2DiagnosticMode::V64ReleaseBoundaryScheduler:
-            return "V64_RELEASE_BOUNDARY_SCHEDULER";
-        case PvZ2DiagnosticMode::V65ConditionVariableScheduler:
-            return "V65_CONDITION_VARIABLE_SCHEDULER";
-        case PvZ2DiagnosticMode::V66BlockingWaitScheduler:
-            return "V66_BLOCKING_WAIT_SCHEDULER";
-        case PvZ2DiagnosticMode::V67CompletionTokenProvenance:
-            return "V67_COMPLETION_TOKEN_PROVENANCE";
-        case PvZ2DiagnosticMode::V68CompletionTokenSemantics:
-            return "V68_COMPLETION_TOKEN_SEMANTICS";
-        case PvZ2DiagnosticMode::V69TaskResourceLifecycle:
-            return "V69_TASKRESOURCE_LIFECYCLE";
-        case PvZ2DiagnosticMode::V70ZlibStreamOwnership:
-            return "V70_ZLIB_STREAM_OWNERSHIP";
-        case PvZ2DiagnosticMode::V71Etc1TextureBridge:
-            return "V71_ETC1_TEXTURE_BRIDGE";
-        case PvZ2DiagnosticMode::V72LiveTouchBridge:
-            return "V72_LIVE_TOUCH_BRIDGE";
-        case PvZ2DiagnosticMode::V73KeyboardFullscreenBridge:
-            return "V73_KEYBOARD_FULLSCREEN_BRIDGE";
-        case PvZ2DiagnosticMode::V74RetinaInputPolish:
-            return "V74_RETINA_INPUT_POLISH";
-        case PvZ2DiagnosticMode::V75IpadUiPackage:
-            return "V75_IPAD_UI_PACKAGE";
-        case PvZ2DiagnosticMode::V76IosScaleContract:
-            return "V76_IOS_SCALE_CONTRACT";
-        case PvZ2DiagnosticMode::V77LegacyIpadGeometry:
-            return "V77_LEGACY_IPAD_GEOMETRY";
-        case PvZ2DiagnosticMode::V80GlobalTransformProbe:
-            return "V80_GLOBAL_TRANSFORM_PROBE";
-        case PvZ2DiagnosticMode::V81HitTestLogicalPoints:
-            return "V81_HITTEST_LOGICAL_POINTS";
-        case PvZ2DiagnosticMode::V82ProfileLayoutRadar:
-            return "V82_PROFILE_LAYOUT_RADAR";
-        case PvZ2DiagnosticMode::V83ProfileButtonDispatch:
-            return "V83_PROFILE_BUTTON_DISPATCH";
-        case PvZ2DiagnosticMode::V84FinalBlitTrace:
-            return "V84_FINAL_BLIT_TRACE";
-        case PvZ2DiagnosticMode::V84PointsEqualPixels:
-            return "V84_POINTS_EQUAL_PIXELS";
-        case PvZ2DiagnosticMode::V84AndroidGraphicsContract:
-            return "V84_ANDROID_GRAPHICS_CONTRACT";
-        case PvZ2DiagnosticMode::V85PerformanceBaseline:
-            return "V85_PERFORMANCE_BASELINE";
-        case PvZ2DiagnosticMode::V86HeapPerformanceFix:
-            return "V86_HEAP_PERFORMANCE_FIX";
-        case PvZ2DiagnosticMode::V87PreemptiveMutexScheduler:
-            return "V87_PREEMPTIVE_MUTEX_SCHEDULER";
-        case PvZ2DiagnosticMode::V88AdaptiveMutexStartup:
-            return "V88_ADAPTIVE_MUTEX_STARTUP";
-        case PvZ2DiagnosticMode::V89PerformanceProfiler:
-            return "V89_PERFORMANCE_PROFILER";
-        case PvZ2DiagnosticMode::V90DirectPresentationProfiler:
-            return "V90_DIRECT_PRESENTATION_PROFILER";
-        case PvZ2DiagnosticMode::V91IndexedAllocatorRelro:
-            return "V91_INDEXED_ALLOCATOR_RELRO";
-        case PvZ2DiagnosticMode::V92LongRunInteractive:
-            return "V92_LONG_RUN_INTERACTIVE";
-        case PvZ2DiagnosticMode::V93ReturnProvenance:
-            return "V93_RETURN_PROVENANCE";
-        }
-        return "UNKNOWN";
+        const auto* descriptor =
+            PvZ2DescribeDiagnosticMode(
+                diagnostic_mode);
+        return descriptor != nullptr
+            ? descriptor->internal_name
+            : "UNKNOWN";
     }
 
     bool V79ProfileProbeEnabled() const {
-        return
-            diagnostic_mode ==
-                PvZ2DiagnosticMode::V75IpadUiPackage ||
-            diagnostic_mode ==
-                PvZ2DiagnosticMode::V77LegacyIpadGeometry ||
-            diagnostic_mode ==
-                PvZ2DiagnosticMode::V80GlobalTransformProbe ||
-            diagnostic_mode ==
-                PvZ2DiagnosticMode::V81HitTestLogicalPoints ||
-            diagnostic_mode ==
-                PvZ2DiagnosticMode::V82ProfileLayoutRadar ||
-            diagnostic_mode ==
-                PvZ2DiagnosticMode::V83ProfileButtonDispatch ||
-            diagnostic_mode ==
-                PvZ2DiagnosticMode::V84FinalBlitTrace ||
-            diagnostic_mode ==
-                PvZ2DiagnosticMode::V84PointsEqualPixels ||
-            diagnostic_mode ==
-                PvZ2DiagnosticMode::V84AndroidGraphicsContract;
+        return PvZ2DiagnosticModeHasCapability(
+            diagnostic_mode,
+            PvZ2ProbeCapability::ProfileProbe);
+    }
+
+    bool HasCapability(
+        PvZ2ProbeCapability capability) const {
+        return PvZ2DiagnosticModeHasCapability(
+            diagnostic_mode,
+            capability);
     }
 
     const char* V79ProfileSiteName(
@@ -8108,69 +8206,53 @@ public:
     }
 
     bool V93Enabled() const {
-        return
-            diagnostic_mode ==
-                PvZ2DiagnosticMode::V93ReturnProvenance;
+        return HasCapability(
+            PvZ2ProbeCapability::ReturnProvenance);
     }
 
     bool V92Enabled() const {
-        return
-            diagnostic_mode ==
-                PvZ2DiagnosticMode::V92LongRunInteractive ||
-            V93Enabled();
+        return HasCapability(
+            PvZ2ProbeCapability::LongRunInteractive);
     }
 
     bool V91Enabled() const {
-        return
-            diagnostic_mode ==
-                PvZ2DiagnosticMode::V91IndexedAllocatorRelro ||
-            V92Enabled();
+        return HasCapability(
+            PvZ2ProbeCapability::IndexedAllocatorRelro);
     }
 
     bool V90Enabled() const {
-        return
-            diagnostic_mode ==
-                PvZ2DiagnosticMode::V90DirectPresentationProfiler ||
-            V91Enabled();
+        return HasCapability(
+            PvZ2ProbeCapability::DirectPresentation);
     }
 
     bool V89Enabled() const {
-        return
-            diagnostic_mode ==
-                PvZ2DiagnosticMode::V89PerformanceProfiler;
+        return HasCapability(
+            PvZ2ProbeCapability::HeavyPerformanceProfiler);
     }
 
     bool V89HostCostEnabled() const {
-        return V89Enabled() || V90Enabled();
+        return HasCapability(
+            PvZ2ProbeCapability::HostCostProfiler);
     }
 
     bool V88Enabled() const {
-        return
-            diagnostic_mode ==
-                PvZ2DiagnosticMode::V88AdaptiveMutexStartup ||
-            V89Enabled() ||
-            V90Enabled();
+        return HasCapability(
+            PvZ2ProbeCapability::AdaptiveMutex);
     }
 
     bool V87Enabled() const {
-        return
-            diagnostic_mode ==
-                PvZ2DiagnosticMode::V87PreemptiveMutexScheduler ||
-            V88Enabled();
+        return HasCapability(
+            PvZ2ProbeCapability::PreemptiveMutex);
     }
 
     bool V86Enabled() const {
-        return
-            diagnostic_mode ==
-                PvZ2DiagnosticMode::V86HeapPerformanceFix ||
-            V87Enabled();
+        return HasCapability(
+            PvZ2ProbeCapability::Heap128);
     }
 
     bool V85PerformanceEnabled() const {
-        return
-            diagnostic_mode ==
-                PvZ2DiagnosticMode::V85PerformanceBaseline ||
-            V86Enabled();
+        return HasCapability(
+            PvZ2ProbeCapability::PerformanceBaseline);
     }
 
     std::string V85FormatMs(std::uint64_t ns) const {
@@ -8180,62 +8262,92 @@ public:
         return out.str();
     }
 
-    bool V85KeepLogLine(const std::string& line) const {
-        if (line.rfind("V85 PERF", 0u) == 0u) return true;
-        if (line.rfind("V93 ", 0u) == 0u) return true;
-        return line.find("FAILED") != std::string::npos ||
-               line.find("failed") != std::string::npos ||
-               line.find("ERROR") != std::string::npos ||
-               line.find("error") != std::string::npos ||
-               line.find("exception") != std::string::npos ||
-               line.find("EXCEPTION") != std::string::npos ||
-               line.find("EXECUTION BUDGET") != std::string::npos ||
-               line.find("unsupported") != std::string::npos ||
-               line.find("UNSUPPORTED") != std::string::npos ||
-               line.find(" out of ") != std::string::npos ||
-               line.find("NULL") != std::string::npos ||
-               line.find("V75 UI PACKAGE REMAP") != std::string::npos ||
-               line.find("V72 INTERACTIVE SUMMARY") != std::string::npos ||
-               line.find("V73 KEYBOARD SUMMARY") != std::string::npos ||
-               line.find("USERFS") != std::string::npos;
-    }
+    enum class ProbeLogClass {
+        Legacy,
+        Critical,
+        Diagnostic,
+        Telemetry,
+        Verbose,
+    };
 
-    bool V86KeepLogLine(const std::string& line) const {
-        if (line.rfind("V85 PERF", 0u) == 0u ||
-            line.rfind("V86 PERF", 0u) == 0u ||
-            line.rfind("V87 MUTEX", 0u) == 0u ||
-            line.rfind("V87 SCHEDULER", 0u) == 0u ||
-            line.rfind("V88 STARTUP", 0u) == 0u ||
-            line.rfind("V88 SCHEDULER", 0u) == 0u ||
-            line.rfind("V89 ", 0u) == 0u ||
-            line.rfind("V90 ", 0u) == 0u ||
-            line.rfind("V91 ", 0u) == 0u) {
-            return true;
-        }
+    bool KeepLegacyPerformanceLogLine(
+        const std::string& line) const {
 
-        // Preserve an actual allocator failure, but not the periodic heap
-        // telemetry. This makes a future 128 MiB exhaustion immediately
-        // visible without reviving the malloc hot log.
-        if (line.rfind("V27 HEAP", 0u) == 0u &&
-            line.find(" -> 0x00000000") != std::string::npos) {
-            return true;
+        if (V86Enabled()) {
+            if (line.rfind("V85 PERF", 0u) == 0u ||
+                line.rfind("V86 PERF", 0u) == 0u ||
+                line.rfind("V87 MUTEX", 0u) == 0u ||
+                line.rfind("V87 SCHEDULER", 0u) == 0u ||
+                line.rfind("V88 STARTUP", 0u) == 0u ||
+                line.rfind("V88 SCHEDULER", 0u) == 0u ||
+                line.rfind("V89 ", 0u) == 0u ||
+                line.rfind("V90 ", 0u) == 0u ||
+                line.rfind("V91 ", 0u) == 0u ||
+                line.rfind("V92 ", 0u) == 0u ||
+                line.rfind("V93 ", 0u) == 0u) {
+                return true;
+            }
+
+            if (line.rfind("V27 HEAP", 0u) == 0u &&
+                line.find(" -> 0x00000000") !=
+                    std::string::npos) {
+                return true;
+            }
+
+            return
+                line.find("failed=YES") != std::string::npos ||
+                line.find("FAILED") != std::string::npos ||
+                line.find("FAIL-FAST") != std::string::npos ||
+                line.find("ERROR") != std::string::npos ||
+                line.find("EXCEPTION") != std::string::npos ||
+                line.find("exception") != std::string::npos ||
+                line.find("EXECUTION BUDGET") != std::string::npos ||
+                line.find("attempted to write outside") != std::string::npos ||
+                line.find("guest-memory fault") != std::string::npos ||
+                line.find("unsupported") != std::string::npos ||
+                line.find("UNSUPPORTED") != std::string::npos ||
+                line.find("V75 UI PACKAGE REMAP") != std::string::npos ||
+                line.find("V72 INTERACTIVE SUMMARY") != std::string::npos ||
+                line.find("V73 KEYBOARD SUMMARY") != std::string::npos;
         }
 
         return
-            line.find("failed=YES") != std::string::npos ||
+            line.rfind("V85 PERF", 0u) == 0u ||
             line.find("FAILED") != std::string::npos ||
-            line.find("FAIL-FAST") != std::string::npos ||
+            line.find("failed") != std::string::npos ||
             line.find("ERROR") != std::string::npos ||
-            line.find("EXCEPTION") != std::string::npos ||
+            line.find("error") != std::string::npos ||
             line.find("exception") != std::string::npos ||
+            line.find("EXCEPTION") != std::string::npos ||
             line.find("EXECUTION BUDGET") != std::string::npos ||
-            line.find("attempted to write outside") != std::string::npos ||
-            line.find("guest-memory fault") != std::string::npos ||
             line.find("unsupported") != std::string::npos ||
             line.find("UNSUPPORTED") != std::string::npos ||
+            line.find(" out of ") != std::string::npos ||
+            line.find("NULL") != std::string::npos ||
             line.find("V75 UI PACKAGE REMAP") != std::string::npos ||
             line.find("V72 INTERACTIVE SUMMARY") != std::string::npos ||
-            line.find("V73 KEYBOARD SUMMARY") != std::string::npos;
+            line.find("V73 KEYBOARD SUMMARY") != std::string::npos ||
+            line.find("USERFS") != std::string::npos;
+    }
+
+    bool ShouldKeepLogLine(
+        ProbeLogClass log_class,
+        const std::string& line) const {
+
+        if (log_class == ProbeLogClass::Critical ||
+            log_class == ProbeLogClass::Diagnostic) {
+            return true;
+        }
+
+        if (!V85PerformanceEnabled()) {
+            return log_class != ProbeLogClass::Verbose;
+        }
+
+        if (log_class == ProbeLogClass::Verbose) {
+            return false;
+        }
+
+        return KeepLegacyPerformanceLogLine(line);
     }
 
     void V85RecordGuestDraw(std::uint32_t frame, std::uint64_t elapsed_ns) {
@@ -9127,7 +9239,47 @@ public:
                     v93_last_stack_words[i]);
         }
 
-        out << "}}";
+        out << "}";
+
+        if (v93_last_exception_valid) {
+            out
+                << ",exception{PC=0x"
+                << JniProbeHex(
+                    v93_last_exception_pc)
+                << ",SP=0x"
+                << JniProbeHex(
+                    v93_last_exception_sp)
+                << ",CPSR=0x"
+                << JniProbeHex(
+                    v93_last_exception_cpsr)
+                << ",SPminus4=0x"
+                << JniProbeHex(
+                    v93_last_exception_sp_minus_4)
+                << ",bit0="
+                << (v93_last_exception_sp_minus_4 & 1u)
+                << ",inImage="
+                << (V93GuestImageTarget(
+                        v93_last_exception_sp_minus_4)
+                        ? "YES"
+                        : "NO")
+                << "}";
+        }
+
+        out << "}";
+        return out.str();
+    }
+
+    std::string V93DiagnosticCheck() const {
+        std::ostringstream out;
+        out
+            << "V93 DIAGNOSTIC CHECK returnProvenance="
+            << (v93_target_free_calls != 0u
+                    ? "SEEN"
+                    : "NOT_TRIGGERED")
+            << " exceptionReturnWord="
+            << (v93_last_exception_valid
+                    ? "SEEN"
+                    : "NOT_TRIGGERED");
         return out.str();
     }
 
@@ -9145,7 +9297,7 @@ public:
         V91RepairImportIntegrity(
             reason);
 
-        Append(
+        AppendDiagnostic(
             std::string{
                 V93Enabled()
                     ? "V93 TERMINAL reason="
@@ -9155,10 +9307,15 @@ public:
             (reason != nullptr
                 ? reason
                 : "unknown"));
-        Append(mem.V91AllocatorIndexSummary());
-        Append(V91RelroSummary());
+        AppendDiagnostic(
+            mem.V91AllocatorIndexSummary());
+        AppendDiagnostic(
+            V91RelroSummary());
         if (V93Enabled()) {
-            Append(V93ReturnSummary());
+            AppendDiagnostic(
+                V93ReturnSummary());
+            AppendDiagnostic(
+                V93DiagnosticCheck());
         }
     }
 
@@ -20168,7 +20325,7 @@ public:
                         v93_saved_pc_before);
 
                 if (notable) {
-                    Append(
+                    AppendDiagnostic(
                         "V93 FREE-RETURN #" +
                         std::to_string(
                             v93_target_free_calls) +
@@ -28724,6 +28881,20 @@ public:
         const std::uint32_t return_pc =
             lr & ~1u;
 
+        if (V93Enabled() &&
+            exception ==
+                Dynarmic::A32::Exception::UndefinedInstruction &&
+            sp >= 4u) {
+            v93_last_exception_valid = true;
+            v93_last_exception_pc = pc;
+            v93_last_exception_sp = sp;
+            v93_last_exception_cpsr =
+                jit ? jit->Cpsr() : 0u;
+            v93_last_exception_sp_minus_4 =
+                mem.Read32Guest(
+                    sp - 4u);
+        }
+
         std::ostringstream out;
         out
             << "Dynarmic exception "
@@ -28780,6 +28951,16 @@ public:
             }
 
             out << "}";
+
+            if (V93Enabled() &&
+                v93_last_exception_valid) {
+                out
+                    << " v93ReturnWordAtSPMinus4=0x"
+                    << JniProbeHex(
+                        v93_last_exception_sp_minus_4)
+                    << " bit0="
+                    << (v93_last_exception_sp_minus_4 & 1u);
+            }
 
             if (return_pc >= 8u) {
                 out
@@ -28877,7 +29058,7 @@ public:
         const std::string diagnostic =
             out.str();
 
-        Append(
+        AppendCritical(
             "V23 EXCEPTION: " +
             diagnostic);
 
@@ -28991,7 +29172,7 @@ public:
                                              ? "V90"
                                              : "V89")));
                 result.message=tag+" Hard Stop requested by user.";
-                Append(tag+" HARD STOP frame="+std::to_string(current_frame_number)+" tid="+std::to_string(current_probe_thread_id)+" PC="+V46DescribeGuestAddress(pc)+" LR="+V46DescribeGuestAddress(lr)+" CPSR=0x"+JniProbeHex(cpsr));
+                AppendCritical(tag+" HARD STOP frame="+std::to_string(current_frame_number)+" tid="+std::to_string(current_probe_thread_id)+" PC="+V46DescribeGuestAddress(pc)+" LR="+V46DescribeGuestAddress(lr)+" CPSR=0x"+JniProbeHex(cpsr));
                 if(V89Enabled())V89EmitTerminalSummaries("user-hard-stop");
                 if(V90Enabled())V90EmitTerminalSummaries("user-hard-stop");
                 if(V91Enabled())V91EmitTerminalSummary("user-hard-stop");
@@ -29108,60 +29289,81 @@ public:
         return ticks_left;
     }
 
-    void Append(const std::string& line) {
-        if (V86Enabled()) {
-            if (!V86KeepLogLine(line)) {
-                ++v85_log_lines_suppressed;
-                return;
-            }
-            ++v85_log_lines_kept;
-        } else if (V85PerformanceEnabled()) {
-            if (!V85KeepLogLine(line)) {
-                ++v85_log_lines_suppressed;
-                return;
-            }
+    void AppendWithClass(
+        ProbeLogClass log_class,
+        const std::string& line) {
+
+        if (!ShouldKeepLogLine(
+                log_class,
+                line)) {
+            ++v85_log_lines_suppressed;
+            return;
+        }
+
+        if (V85PerformanceEnabled()) {
             ++v85_log_lines_kept;
         }
 
         // Guest-derived strings can contain arbitrary bytes. Keep the trace
-        // valid UTF-8/ASCII so one bad Android log/method string cannot make
-        // the entire diagnostic disappear in NSStringFromStd.
-        constexpr char hex[] = "0123456789abcdef";
-        std::string safe;
-        safe.reserve(
-            std::min<std::size_t>(
-                line.size() * 2u,
-                8192u));
-
-        const std::size_t limit =
-            std::min<std::size_t>(
-                line.size(),
-                4096u);
-
-        for (std::size_t i = 0; i < limit; ++i) {
-            const unsigned char ch =
-                static_cast<unsigned char>(line[i]);
-
-            if ((ch >= 0x20u && ch <= 0x7eu) ||
-                ch == '\t') {
-                safe.push_back(
-                    static_cast<char>(ch));
-            } else {
-                safe += "\\x";
-                safe.push_back(hex[(ch >> 4) & 0x0fu]);
-                safe.push_back(hex[ch & 0x0fu]);
+            // valid UTF-8/ASCII so one bad Android log/method string cannot make
+            // the entire diagnostic disappear in NSStringFromStd.
+            constexpr char hex[] = "0123456789abcdef";
+            std::string safe;
+            safe.reserve(
+                std::min<std::size_t>(
+                    line.size() * 2u,
+                    8192u));
+    
+            const std::size_t limit =
+                std::min<std::size_t>(
+                    line.size(),
+                    4096u);
+    
+            for (std::size_t i = 0; i < limit; ++i) {
+                const unsigned char ch =
+                    static_cast<unsigned char>(line[i]);
+    
+                if ((ch >= 0x20u && ch <= 0x7eu) ||
+                    ch == '\t') {
+                    safe.push_back(
+                        static_cast<char>(ch));
+                } else {
+                    safe += "\\x";
+                    safe.push_back(hex[(ch >> 4) & 0x0fu]);
+                    safe.push_back(hex[ch & 0x0fu]);
+                }
+            }
+    
+            if (line.size() > limit) {
+                safe += "...<truncated>";
+            }
+    
+            trace << safe << '\n';
+    
+            if (progress_callback) {
+                progress_callback(safe);
             }
         }
+    
+    
+    void Append(const std::string& line) {
+        AppendWithClass(
+            ProbeLogClass::Legacy,
+            line);
+    }
 
-        if (line.size() > limit) {
-            safe += "...<truncated>";
-        }
+    void AppendDiagnostic(
+        const std::string& line) {
+        AppendWithClass(
+            ProbeLogClass::Diagnostic,
+            line);
+    }
 
-        trace << safe << '\n';
-
-        if (progress_callback) {
-            progress_callback(safe);
-        }
+    void AppendCritical(
+        const std::string& line) {
+        AppendWithClass(
+            ProbeLogClass::Critical,
+            line);
     }
 
     std::string Trace() const {
