@@ -425,7 +425,7 @@ bool PvZ2HostKeyboardFirstResponder() {
     self.captionLabel.clipsToBounds =
         YES;
     self.captionLabel.text =
-        @"PvZ2 v88 — starting…\nadaptive startup scheduler";
+        @"PvZ2 v89 — starting…\nperformance/provenance profiler";
 
     self.stopButton =
         [UIButton
@@ -593,7 +593,7 @@ bool PvZ2HostKeyboardFirstResponder() {
 
     self.inputEnabled = NO;
     self.captionLabel.text =
-        @"v74 LIVE — stop requested; finishing the current guest frame…";
+        @"PvZ2 v89 LIVE — HARD STOP requested; interrupting guest at the next Dynarmic checkpoint…";
     self.stopButton.enabled = NO;
     PvZ2RequestInteractiveStop();
 }
@@ -1350,7 +1350,7 @@ bool PvZ2HostKeyboardFirstResponder() {
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — v88 Adaptive Startup Scheduler";
+        @"PvZ2forIOS — v89 Performance Profiler";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -1359,7 +1359,7 @@ bool PvZ2HostKeyboardFirstResponder() {
         NO;
 
     title.text =
-        @"PvZ2forIOS — v88 Adaptive Startup Scheduler";
+        @"PvZ2forIOS — v89 Performance Profiler";
 
     title.font =
         [UIFont
@@ -1375,7 +1375,7 @@ bool PvZ2HostKeyboardFirstResponder() {
         NO;
 
     explanation.text =
-        @"v88 keeps v87's blocking mutex/waiter correctness but fixes its startup over-preemption: during a real resource/future wait, a runnable mutex owner may execute a bounded 8-quantum burst before preemption. Lightweight STARTUP markers time constructors, JNI, GameAppInit and every lifecycle phase. Heap/render/input/audio paths remain unchanged.";
+        @"v89 preserves v88 scheduler/heap/resource/render/audio behavior for direct comparison. It adds immediate Hard Stop, PC/LR/tid profiling at scheduler boundaries, aggregate ETC1/VFS/zlib/GLES timing, and indirect BLX target provenance for the v88 ARM/Thumb crash.";
 
     explanation.numberOfLines = 0;
 
@@ -1441,6 +1441,7 @@ bool PvZ2HostKeyboardFirstResponder() {
                     @"V86 Heap+Perf",
                     @"V87 Mutex",
                     @"V88 Adaptive",
+                    @"V89 Profiler",
                     @"V66 Waits",
                     @"V65 Cond",
                     @"Ctype Scout"
@@ -1449,7 +1450,7 @@ bool PvZ2HostKeyboardFirstResponder() {
     self.diagnosticModeControl.translatesAutoresizingMaskIntoConstraints =
         NO;
     self.diagnosticModeControl.selectedSegmentIndex =
-        15;
+        16;
 
     UIStackView *mainButtons =
         [[UIStackView alloc]
@@ -2098,6 +2099,7 @@ bool PvZ2HostKeyboardFirstResponder() {
             @"V86_HEAP_PERFORMANCE_FIX",
             @"V87_PREEMPTIVE_MUTEX_SCHEDULER",
             @"V88_ADAPTIVE_MUTEX_STARTUP",
+            @"V89_PERFORMANCE_PROFILER",
             @"V66_BLOCKING_WAIT_SCHEDULER",
             @"V65_CONDITION_VARIABLE_SCHEDULER",
             @"CTYPE_COMPAT_DEEP_SCOUT"
@@ -2116,7 +2118,7 @@ bool PvZ2HostKeyboardFirstResponder() {
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. mode=%@. Start with V88 Adaptive. It keeps v87 mutex wait/handoff correctness but allows bounded 8-quantum worker bursts during concrete startup waits and records wall-clock startup phases.",
+                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. mode=%@. Start with V89 Profiler. It preserves v88 behavior while collecting bounded performance/provenance data; Hard Stop interrupts the active guest slice.",
                     modeNames[modeIndex]]];
 
     [self
@@ -2256,15 +2258,20 @@ bool PvZ2HostKeyboardFirstResponder() {
             @"V88_ADAPTIVE_MUTEX_STARTUP";
     } else if (selectedMode == 16) {
         diagnosticMode =
+            PvZ2DiagnosticMode::V89PerformanceProfiler;
+        diagnosticModeName =
+            @"V89_PERFORMANCE_PROFILER";
+    } else if (selectedMode == 17) {
+        diagnosticMode =
             PvZ2DiagnosticMode::V66BlockingWaitScheduler;
         diagnosticModeName =
             @"V66_BLOCKING_WAIT_SCHEDULER";
-    } else if (selectedMode == 17) {
+    } else if (selectedMode == 18) {
         diagnosticMode =
             PvZ2DiagnosticMode::V65ConditionVariableScheduler;
         diagnosticModeName =
             @"V65_CONDITION_VARIABLE_SCHEDULER";
-    } else if (selectedMode == 18) {
+    } else if (selectedMode == 19) {
         diagnosticMode =
             PvZ2DiagnosticMode::CtypeCompatDeepScout;
         diagnosticModeName =
@@ -2278,7 +2285,7 @@ bool PvZ2HostKeyboardFirstResponder() {
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v88 Adaptive Startup Scheduler started mode=%@; PID=%d ===",
+                    @"=== PvZ2 v89 Performance Profiler started mode=%@; PID=%d ===",
                     diagnosticModeName,
                     getpid()]];
 
@@ -2371,7 +2378,9 @@ bool PvZ2HostKeyboardFirstResponder() {
        diagnosticMode ==
           PvZ2DiagnosticMode::V87PreemptiveMutexScheduler ||
        diagnosticMode ==
-          PvZ2DiagnosticMode::V88AdaptiveMutexStartup)) {
+          PvZ2DiagnosticMode::V88AdaptiveMutexStartup ||
+       diagnosticMode ==
+          PvZ2DiagnosticMode::V89PerformanceProfiler)) {
 
         PvZ2ResetInteractiveInput();
         gPvZ2KeyboardHostReady.store(
@@ -2510,7 +2519,13 @@ bool PvZ2HostKeyboardFirstResponder() {
                                diagnosticMode ==
                                    PvZ2DiagnosticMode::V85PerformanceBaseline ||
                                diagnosticMode ==
-                                   PvZ2DiagnosticMode::V86HeapPerformanceFix) &&
+                                   PvZ2DiagnosticMode::V86HeapPerformanceFix ||
+                               diagnosticMode ==
+                                   PvZ2DiagnosticMode::V87PreemptiveMutexScheduler ||
+                               diagnosticMode ==
+                                   PvZ2DiagnosticMode::V88AdaptiveMutexStartup ||
+                               diagnosticMode ==
+                                   PvZ2DiagnosticMode::V89PerformanceProfiler) &&
                             selfRef.liveController != nil) {
 
                             [selfRef.liveController
@@ -2555,7 +2570,9 @@ bool PvZ2HostKeyboardFirstResponder() {
        diagnosticMode ==
           PvZ2DiagnosticMode::V87PreemptiveMutexScheduler ||
        diagnosticMode ==
-          PvZ2DiagnosticMode::V88AdaptiveMutexStartup)) {
+          PvZ2DiagnosticMode::V88AdaptiveMutexStartup ||
+       diagnosticMode ==
+          PvZ2DiagnosticMode::V89PerformanceProfiler)) {
 
                 liveFrameCallback =
                     [](
@@ -2904,14 +2921,20 @@ bool PvZ2HostKeyboardFirstResponder() {
                                diagnosticMode ==
                                    PvZ2DiagnosticMode::V85PerformanceBaseline ||
                                diagnosticMode ==
-                                   PvZ2DiagnosticMode::V86HeapPerformanceFix) &&
+                                   PvZ2DiagnosticMode::V86HeapPerformanceFix ||
+                               diagnosticMode ==
+                                   PvZ2DiagnosticMode::V87PreemptiveMutexScheduler ||
+                               diagnosticMode ==
+                                   PvZ2DiagnosticMode::V88AdaptiveMutexStartup ||
+                               diagnosticMode ==
+                                   PvZ2DiagnosticMode::V89PerformanceProfiler) &&
                             selfRef.liveController != nil) {
 
                             [selfRef.liveController
                                 finishRunWithMessage:
                                     [NSString
                                         stringWithFormat:
-                                            @"PvZ2 v86 LIVE — run finished after %u guest frames.\nClose to inspect the performance/heap log.",
+                                            @"PvZ2 v89 LIVE — run finished after %u guest frames.\nClose to inspect the performance/provenance log.",
                                             result.draw_frames_completed]];
 
                         } else if (!result.final_frame_png_path.empty()) {
@@ -2985,15 +3008,23 @@ bool PvZ2HostKeyboardFirstResponder() {
                                diagnosticMode ==
                                    PvZ2DiagnosticMode::V85PerformanceBaseline ||
                                diagnosticMode ==
-                                   PvZ2DiagnosticMode::V86HeapPerformanceFix) &&
+                                   PvZ2DiagnosticMode::V86HeapPerformanceFix ||
+                               diagnosticMode ==
+                                   PvZ2DiagnosticMode::V87PreemptiveMutexScheduler ||
+                               diagnosticMode ==
+                                   PvZ2DiagnosticMode::V88AdaptiveMutexStartup ||
+                               diagnosticMode ==
+                                   PvZ2DiagnosticMode::V89PerformanceProfiler) &&
                             selfRef.liveController != nil) {
 
-                            [selfRef.liveController
-                                finishRunWithMessage:
-                                    [NSString
-                                        stringWithFormat:
-                                            @"PvZ2 v86 LIVE — guest run stopped.\n%@\nClose to inspect the performance/heap log.",
-                                            message]];
+                            if (result.hard_stop_requested) {
+                                [selfRef.liveController finishRunWithMessage:
+                                    @"PvZ2 v89 LIVE — HARD STOPPED.\nGuest execution was interrupted at the next Dynarmic checkpoint. Close to inspect the preserved profiler log."];
+                            } else {
+                                [selfRef.liveController finishRunWithMessage:
+                                    [NSString stringWithFormat:
+                                        @"PvZ2 v89 LIVE — guest stopped/crashed.\n%@\nClose to inspect the performance/provenance log.", message]];
+                            }
 
                         } else {
                             [selfRef

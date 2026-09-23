@@ -244,6 +244,7 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // critical-section burst. Also retain lightweight wall-clock startup phase
     // markers so the next iPad log identifies where startup time is spent.
     V88AdaptiveMutexStartup = 32u,
+    V89PerformanceProfiler = 33u,
 };
 
 struct PvZ2JniProbeResult {
@@ -261,6 +262,7 @@ struct PvZ2JniProbeResult {
     std::uint32_t last_nonblack_frame_number = 0;
     std::uint64_t last_nonblack_pixels = 0;
     bool adaptive_frame_stop = false;
+    bool hard_stop_requested = false;
 
     // v53: passive exact startup state-machine tracing. Unlike the aborted
     // pre-first-draw experiment, these fields are observational only.

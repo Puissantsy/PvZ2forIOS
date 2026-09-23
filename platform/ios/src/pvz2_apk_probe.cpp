@@ -1237,6 +1237,8 @@ constexpr std::uint32_t kJniProbeSvcV82Candidate6Post = 0x00f0b3u;
 // v83: Profile button-listener dispatcher entry. The original instruction is
 // MOV r9,r0 at libPVZ2.so+0x0030b8f8, eight bytes after the function prologue.
 constexpr std::uint32_t kJniProbeSvcV83ButtonDispatchEntry = 0x00f0b4u;
+constexpr std::uint32_t kJniProbeSvcV89BlxTarget0 = 0x00f0c0u;
+constexpr std::uint32_t kJniProbeSvcV89BlxTarget1 = 0x00f0c1u;
 
 constexpr std::uint32_t kJniProbeSvcUnsupportedJniBase = 0x00e000u;
 constexpr std::uint32_t kJniProbeJniSlotCount = 256u;
@@ -2447,6 +2449,14 @@ public:
     std::uint32_t v85_last_touch_phase = 0u;
     std::int32_t v85_last_touch_x = 0;
     std::int32_t v85_last_touch_y = 0;
+
+    struct V89HostBucket { std::uint64_t calls=0u,total_ns=0u,max_ns=0u,bytes=0u; };
+    struct V89PcSample { std::uint64_t count=0u; std::uint32_t pc=0u,lr=0u,tid=0u; std::string phase; };
+    std::unordered_map<std::string,V89HostBucket> v89_host_buckets;
+    std::unordered_map<std::string,V89PcSample> v89_pc_samples;
+    std::unordered_map<std::uint32_t,std::uint64_t> v89_tid_samples;
+    std::uint64_t v89_quantum_samples=0u,v89_blx_events=0u,v89_blx_odd_targets=0u;
+    bool v89_terminal_summaries_emitted=false;
 
     // v81: detailed event serialization provenance. The host-side mapper logs
     // UIKit -> framebuffer-pixel -> logical-point candidates; this counter
@@ -7143,6 +7153,8 @@ public:
             return "V87_PREEMPTIVE_MUTEX_SCHEDULER";
         case PvZ2DiagnosticMode::V88AdaptiveMutexStartup:
             return "V88_ADAPTIVE_MUTEX_STARTUP";
+        case PvZ2DiagnosticMode::V89PerformanceProfiler:
+            return "V89_PERFORMANCE_PROFILER";
         }
         return "UNKNOWN";
     }
@@ -7229,9 +7241,12 @@ public:
         return out.str();
     }
 
+    bool V89Enabled() const {
+        return diagnostic_mode == PvZ2DiagnosticMode::V89PerformanceProfiler;
+    }
+
     bool V88Enabled() const {
-        return diagnostic_mode ==
-            PvZ2DiagnosticMode::V88AdaptiveMutexStartup;
+        return diagnostic_mode == PvZ2DiagnosticMode::V88AdaptiveMutexStartup || V89Enabled();
     }
 
     bool V87Enabled() const {
@@ -7287,7 +7302,8 @@ public:
             line.rfind("V87 MUTEX", 0u) == 0u ||
             line.rfind("V87 SCHEDULER", 0u) == 0u ||
             line.rfind("V88 STARTUP", 0u) == 0u ||
-            line.rfind("V88 SCHEDULER", 0u) == 0u) {
+            line.rfind("V88 SCHEDULER", 0u) == 0u ||
+            line.rfind("V89 ", 0u) == 0u) {
             return true;
         }
 
@@ -7400,6 +7416,52 @@ public:
             << "} logLines{kept=" << v85_log_lines_kept
             << ",suppressed=" << v85_log_lines_suppressed << "}";
         return out.str();
+    }
+
+    void V89RecordHostCost(const char* name,std::uint64_t begin,std::uint64_t bytes=0u) {
+        if(!V89Enabled()||begin==0u||name==nullptr)return;
+        const auto now=V85SteadyNowNs(),ns=now>=begin?now-begin:0u;
+        auto& b=v89_host_buckets[std::string{name}];
+        ++b.calls;b.total_ns+=ns;b.max_ns=std::max(b.max_ns,ns);b.bytes+=bytes;
+    }
+    void V89RecordQuantumSample() {
+        if(!V89Enabled()||jit==nullptr)return;
+        V89PcSample s;s.pc=jit->Regs()[15];s.lr=jit->Regs()[14];s.tid=current_probe_thread_id;
+        s.phase=current_lifecycle_name.empty()?"n/a":current_lifecycle_name;
+        std::ostringstream k;k<<s.phase<<"|"<<s.tid<<"|"<<JniProbeHex(s.pc)<<"|"<<JniProbeHex(s.lr);
+        auto& d=v89_pc_samples[k.str()];++d.count;d.pc=s.pc;d.lr=s.lr;d.tid=s.tid;d.phase=s.phase;
+        ++v89_tid_samples[s.tid];++v89_quantum_samples;
+    }
+    std::string V89HotPcSummary() const {
+        std::vector<V89PcSample> v;v.reserve(v89_pc_samples.size());for(const auto&e:v89_pc_samples)v.push_back(e.second);
+        std::sort(v.begin(),v.end(),[](const auto&a,const auto&b){if(a.count!=b.count)return a.count>b.count;if(a.tid!=b.tid)return a.tid<b.tid;return a.pc<b.pc;});
+        std::ostringstream o;o<<"V89 HOTPC SUMMARY samples="<<v89_quantum_samples<<" unique="<<v.size()<<" tids={";
+        bool first=true;for(const auto&[tid,count]:v89_tid_samples){if(!first)o<<",";first=false;o<<tid<<":"<<count;}o<<"}";
+        const auto lim=std::min<std::size_t>(48u,v.size());
+        for(std::size_t i=0;i<lim;++i)o<<"\nV89 HOTPC #"<<i+1<<" count="<<v[i].count<<" tid="<<v[i].tid<<" phase="<<v[i].phase<<" PC="<<V46DescribeGuestAddress(v[i].pc)<<" LR="<<V46DescribeGuestAddress(v[i].lr);
+        return o.str();
+    }
+    std::string V89HostCostSummary() const {
+        std::vector<std::pair<std::string,V89HostBucket>> v(v89_host_buckets.begin(),v89_host_buckets.end());
+        std::sort(v.begin(),v.end(),[](const auto&a,const auto&b){return a.second.total_ns>b.second.total_ns;});
+        std::ostringstream o;o<<std::fixed<<std::setprecision(3)<<"V89 HOSTCOST SUMMARY buckets="<<v.size();
+        for(const auto&[n,b]:v)o<<"\nV89 HOSTCOST bucket="<<n<<" calls="<<b.calls<<" totalMs="<<double(b.total_ns)/1e6<<" maxMs="<<double(b.max_ns)/1e6<<" bytes="<<b.bytes;
+        return o.str();
+    }
+    void V89RecordIndirectBlx(std::uint32_t src,std::uint32_t obj,std::uint32_t vt,std::uint32_t slot,std::uint32_t target) {
+        if(!V89Enabled())return;++v89_blx_events;const bool odd=(target&1u)!=0u;if(odd)++v89_blx_odd_targets;
+        if(!odd&&v89_blx_events>32u&&(v89_blx_events&(v89_blx_events-1u))!=0u)return;
+        const auto cpsr=jit?jit->Cpsr():0u;std::ostringstream o;
+        o<<"V89 INDIRECT BLX #"<<v89_blx_events<<(odd?" ODD-TARGET":"")<<" frame="<<current_frame_number<<" tid="<<current_probe_thread_id
+         <<" phase="<<(current_lifecycle_name.empty()?"n/a":current_lifecycle_name)<<" source="<<V46DescribeGuestAddress(src)
+         <<" object="<<V46DescribeGuestAddress(obj)<<" vtable="<<V46DescribeGuestAddress(vt)<<" slot=0x"<<JniProbeHex(slot)
+         <<" target="<<V46DescribeGuestAddress(target)<<" targetBit0="<<(target&1u)<<" cpsrT="<<((cpsr&0x20u)?1u:0u);
+        Append(o.str());
+    }
+    void V89EmitTerminalSummaries(const char* reason) {
+        if(!V89Enabled()||v89_terminal_summaries_emitted)return;v89_terminal_summaries_emitted=true;
+        Append(std::string{"V89 TERMINAL reason="}+(reason?reason:"unknown")+" blxEvents="+std::to_string(v89_blx_events)+" oddTargets="+std::to_string(v89_blx_odd_targets));
+        Append(V89HotPcSummary());Append(V89HostCostSummary());
     }
 
     bool V84FinalBlitEnabled() const {
@@ -12274,6 +12336,13 @@ public:
             default:
                 break;
             }
+        }
+
+        if(V89Enabled()&&(swi==kJniProbeSvcV89BlxTarget0||swi==kJniProbeSvcV89BlxTarget1)){
+            const auto obj=regs[0],vt=regs[1];
+            if(swi==kJniProbeSvcV89BlxTarget0){const auto t=mem.Read32Guest(vt);regs[1]=t;V89RecordIndirectBlx(kGuestBase+0x00894b2cu,obj,vt,0u,t);}
+            else{const auto t=mem.Read32Guest(vt+0x1cu);regs[2]=t;V89RecordIndirectBlx(kGuestBase+0x00894b3cu,obj,vt,0x1cu,t);}
+            return;
         }
 
         // v83: verified Profile button-listener dispatcher. The static switch
@@ -19257,6 +19326,7 @@ public:
                 return;
             }
 
+            const std::uint64_t v89_zlib_begin_ns=V89Enabled()?V85SteadyNowNs():0u;
             const int status =
                 name == "deflate"
                     ? ::deflate(
@@ -19272,6 +19342,7 @@ public:
             const std::uint32_t produced =
                 original_avail_out -
                 it->second.avail_out;
+            if(V89Enabled())V89RecordHostCost(name=="inflate"?"zlib.inflate":"zlib.deflate",v89_zlib_begin_ns,static_cast<std::uint64_t>(consumed)+produced);
 
             if (V70Enabled()) {
                 ++v70_zlib_calls;
@@ -23509,6 +23580,7 @@ public:
                     return;
                 }
 
+                const std::uint64_t v89_vfs_begin_ns=V89Enabled()&&bytes!=0u?V85SteadyNowNs():0u;
                 if (bytes != 0u) {
                     const std::uint8_t* source =
                         it->second.owned
@@ -23528,6 +23600,7 @@ public:
                         source,
                         static_cast<std::size_t>(
                             bytes));
+                    if(V89Enabled())V89RecordHostCost("vfs.read.memcpy",v89_vfs_begin_ns,bytes);
                 }
 
                 it->second.offset += bytes;
@@ -24944,6 +25017,7 @@ public:
                         }
                     }
 
+                    const std::uint64_t v89_tex_begin_ns=V89Enabled()?V85SteadyNowNs():0u;
                     glTexImage2D(
                         static_cast<GLenum>(
                             guest_arg(0u)),
@@ -24958,6 +25032,7 @@ public:
                         format,
                         type,
                         pixels);
+                    if(V89Enabled())V89RecordHostCost("gles.glTexImage2D",v89_tex_begin_ns,bytes);
                     regs[0] = 0u;
                 } else if (name == "glTexSubImage2D") {
                     ++gles_texture_uploads;
@@ -24991,6 +25066,7 @@ public:
                                       : 1u)
                             : nullptr;
 
+                    const std::uint64_t v89_subtex_begin_ns=V89Enabled()?V85SteadyNowNs():0u;
                     glTexSubImage2D(
                         static_cast<GLenum>(
                             guest_arg(0u)),
@@ -25005,6 +25081,7 @@ public:
                         format,
                         type,
                         pixels);
+                    if(V89Enabled())V89RecordHostCost("gles.glTexSubImage2D",v89_subtex_begin_ns,bytes);
                     regs[0] = 0u;
                 } else if (
                     name == "glCompressedTexImage2D") {
@@ -25068,6 +25145,7 @@ public:
                         std::vector<std::uint8_t>
                             decoded_rgb;
 
+                        const std::uint64_t v89_etc_begin_ns=V89Enabled()&&data!=nullptr?V85SteadyNowNs():0u;
                         const bool decoded =
                             data == nullptr
                                 ? false
@@ -25080,6 +25158,7 @@ public:
                                       width,
                                       height,
                                       decoded_rgb);
+                        if(V89Enabled()&&data!=nullptr)V89RecordHostCost("etc1.decode",v89_etc_begin_ns,image_size>0?static_cast<std::uint64_t>(image_size):0u);
 
                         if (data == nullptr) {
                             glTexImage2D(
@@ -25093,6 +25172,7 @@ public:
                                 GL_UNSIGNED_BYTE,
                                 nullptr);
                         } else if (decoded) {
+                            const std::uint64_t v89_etc_upload_begin_ns=V89Enabled()?V85SteadyNowNs():0u;
                             glTexImage2D(
                                 target,
                                 level,
@@ -25103,6 +25183,7 @@ public:
                                 GL_RGB,
                                 GL_UNSIGNED_BYTE,
                                 decoded_rgb.data());
+                            if(V89Enabled())V89RecordHostCost("gles.etc1Upload",v89_etc_upload_begin_ns,decoded_rgb.size());
 
                             ++v71_etc1_transcodes;
                             v71_etc1_compressed_bytes +=
@@ -26798,6 +26879,7 @@ public:
 
         result.message =
             diagnostic;
+        if(V89Enabled())V89EmitTerminalSummaries("guest-exception");
 
         if (jit) {
             jit->HaltExecution(
@@ -26807,6 +26889,16 @@ public:
 
     void AddTicks(std::uint64_t ticks) override {
         ticks_consumed += ticks;
+        if(V89Enabled()&&gV72StopRequested.load(std::memory_order_acquire)){
+            if(!result.hard_stop_requested){
+                result.hard_stop_requested=true;
+                const auto pc=jit?jit->Regs()[15]:0u,lr=jit?jit->Regs()[14]:0u,cpsr=jit?jit->Cpsr():0u;
+                result.message="V89 Hard Stop requested by user.";
+                Append("V89 HARD STOP frame="+std::to_string(current_frame_number)+" tid="+std::to_string(current_probe_thread_id)+" PC="+V46DescribeGuestAddress(pc)+" LR="+V46DescribeGuestAddress(lr)+" CPSR=0x"+JniProbeHex(cpsr));
+                V89EmitTerminalSummaries("user-hard-stop");
+            }
+            ticks_left=0u;if(jit)jit->HaltExecution(Dynarmic::HaltReason::UserDefined3);return;
+        }
 
         auto phase_name =
             [&]() -> std::string {
@@ -26853,6 +26945,7 @@ public:
             ticks_left = 0;
 
             if (soft_slice_timeout) {
+                if(V89Enabled())V89RecordQuantumSample();
                 if (jit) {
                     jit->HaltExecution(
                         Dynarmic::HaltReason::UserDefined4);
@@ -27948,6 +28041,10 @@ bool JniProbePrepareRuntime(
         return false;
     }
 
+    if(callbacks.V89Enabled()&&(!patch_resource_native_miss(0x00894b28u,0xe5911000u,kJniProbeSvcV89BlxTarget0)||!patch_resource_native_miss(0x00894b34u,0xe591201cu,kJniProbeSvcV89BlxTarget1))){
+        error="v89 BLX provenance signature mismatch at 0x10894b28/0x10894b34.";return false;
+    }
+
     callbacks.Append(
         "V48 RESFILE WRAPPER-FINAL BRIDGE: v45 internal hooks preserved; direct-group null returns are observed at 0x1087a708 and all-groups-exhausted nulls at 0x1087a76c with the exact wrapper ID still in r6.");
     callbacks.Append(
@@ -28064,7 +28161,9 @@ bool JniProbePrepareRuntime(
         callbacks.Append(
             "V83 PROFILE BUTTON DISPATCH: v83 restored the V80 2048x1536 pixel touch control and proved buttonId=5 can dispatch even when the raw +0x28/+0x2c/+0x30/+0x34 radar rectangle does not contain the screen-space tap. Those raw fields are therefore local/transformed, not absolute hitboxes. The passive dispatcher trap remains enabled and does not alter rendering, widget geometry or GameState.");
     }
-    if (callbacks.V88Enabled()) {
+    if(callbacks.V89Enabled()){
+        callbacks.Append("V89 PROFILER: v88 scheduler/heap/resource/audio/render/input semantics preserved; Hard Stop, quantum PC/LR/tid aggregation, ETC1/VFS/zlib/GLES host-cost buckets and BLX target provenance enabled.");
+    } else if (callbacks.V88Enabled()) {
         callbacks.Append(
             "V88 SCHEDULER: v87 blocking mutex/waiter semantics preserved; concrete startup waits allow a bounded 8-quantum (6M tick) critical-section burst before preemption, replacing v87 one-quantum over-preemption. Startup wall-clock phase markers are enabled.");
     } else if (callbacks.V87Enabled()) {
@@ -28606,7 +28705,9 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
              diagnostic_mode ==
                     PvZ2DiagnosticMode::V87PreemptiveMutexScheduler ||
              diagnostic_mode ==
-                    PvZ2DiagnosticMode::V88AdaptiveMutexStartup)
+                    PvZ2DiagnosticMode::V88AdaptiveMutexStartup ||
+             diagnostic_mode ==
+                    PvZ2DiagnosticMode::V89PerformanceProfiler)
                 ? kJniProbeHeapSizeV86
                 : kJniProbeHeapSize;
 
@@ -32454,6 +32555,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                     }
                 }
 
+                if(callbacks.V89Enabled())callbacks.V89EmitTerminalSummaries("normal-frame-loop-exit");
                 if (callbacks.V87Enabled()) {
                     callbacks.Append(
                         callbacks.V87MutexSummary());
