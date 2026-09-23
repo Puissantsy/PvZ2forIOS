@@ -2295,7 +2295,7 @@ void PvZ2HostNotifyDirectFrame(
             [NSString
                 stringWithFormat:
                     @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. mode=%@. Start with V93 Return. It preserves v92 long-run behavior and records the saved return PC around the exact delete/free path before and after host FreeHeap, with no recovery or guest-code patch.",
-                    selectedModeName]]];
+                    selectedModeName]];
 
     [self
         presentViewController:
