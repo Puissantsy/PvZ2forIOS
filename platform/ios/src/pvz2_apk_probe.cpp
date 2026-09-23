@@ -56,6 +56,7 @@ constexpr std::uint16_t kElfTypeDyn = 3;
 constexpr std::uint16_t kElfMachineArm = 40;
 constexpr std::uint32_t kPtLoad = 1;
 constexpr std::uint32_t kPtDynamic = 2;
+constexpr std::uint32_t kPtGnuRelro = 0x6474e552u;
 constexpr std::uint32_t kShtDynsym = 11;
 constexpr std::uint32_t kShtArmExidx = 0x70000001u;
 constexpr std::uint32_t kShtRel = 9;
@@ -1259,6 +1260,12 @@ struct JniProbeLoadedElf {
     std::uint32_t jni_onload = 0;
     std::uint32_t init_array = 0;
     std::uint32_t init_array_size = 0;
+
+    // v91: GNU_RELRO is part of the ELF loader contract. The real Android
+    // linker makes this range read-only after relocation; the synthetic
+    // runtime previously left the whole image writable.
+    std::uint32_t gnu_relro_vaddr = 0u;
+    std::uint32_t gnu_relro_size = 0u;
 };
 
 bool BuildJniProbeElf(
@@ -1298,6 +1305,13 @@ bool BuildJniProbeElf(
             return false;
         }
 
+        if (ph->type == kPtGnuRelro) {
+            loaded.gnu_relro_vaddr =
+                ph->vaddr;
+            loaded.gnu_relro_size =
+                ph->memsz;
+        }
+
         if (ph->type == kPtLoad) {
             if (ph->filesz > ph->memsz ||
                 !RangeOk(ph->offset, ph->filesz, elf.size())) {
@@ -1315,6 +1329,19 @@ bool BuildJniProbeElf(
     if (loads.size() != 2 || image_end != 0x00df9700ull) {
         error = "JNI probe ELF load profile does not match PvZ2 1.5.252752.";
         return false;
+    }
+
+    if (loaded.gnu_relro_size != 0u) {
+        const std::uint64_t relro_end =
+            static_cast<std::uint64_t>(
+                loaded.gnu_relro_vaddr) +
+            loaded.gnu_relro_size;
+
+        if (relro_end > image_end) {
+            error =
+                "JNI probe GNU_RELRO range exceeds the mapped image.";
+            return false;
+        }
     }
 
     loaded.image.assign(static_cast<std::size_t>(image_end), 0);
@@ -1542,6 +1569,37 @@ public:
         heap_retired_allocations;
     std::map<std::uint32_t, std::uint32_t> heap_free_blocks;
 
+    // v91 allocator: preserve the old address-ordered first-fit result exactly
+    // while avoiding a full std::map walk. Free blocks stay authoritative in
+    // heap_free_blocks; this is only an address-bucket max index.
+    static constexpr std::uint32_t kV91BucketShift = 12u;
+    static constexpr std::uint32_t kV91BucketSize =
+        1u << kV91BucketShift;
+    static constexpr std::size_t kV91AlignmentClassCount = 8u;
+
+    bool v91_allocator_index_enabled = false;
+    std::uint32_t v91_bucket_count = 0u;
+    std::uint32_t v91_tree_base = 0u;
+    std::array<std::vector<std::uint32_t>,
+               kV91AlignmentClassCount>
+        v91_fit_trees;
+    std::uint64_t v91_index_queries = 0u;
+    std::uint64_t v91_index_hits = 0u;
+    std::uint64_t v91_index_fallbacks = 0u;
+    std::uint64_t v91_index_inconsistencies = 0u;
+    std::uint64_t v91_local_scan_total = 0u;
+    std::uint64_t v91_local_scan_max = 0u;
+    std::uint64_t v91_bucket_refreshes = 0u;
+
+    // v91 loader protection. This is armed only after all relocation/import
+    // and static compatibility patches have been installed.
+    std::uint32_t v91_relro_begin = 0u;
+    std::uint32_t v91_relro_end = 0u;
+    bool v91_relro_armed = false;
+    std::uint64_t v91_memory_blocked_writes = 0u;
+    std::uint32_t v91_first_blocked_address = 0u;
+    std::uint32_t v91_first_blocked_size = 0u;
+
     // v90: exact first-fit scan-depth accounting plus sparse wall-time
     // sampling. Wall time is sampled once per 1024 alloc/free calls so this
     // profiler does not become the allocator bottleneck it is measuring.
@@ -1751,33 +1809,125 @@ public:
                static_cast<std::uint64_t>(Read32Guest(address + 4)) << 32;
     }
 
-    void Write8Guest(std::uint32_t address, std::uint8_t value) {
-        if (auto* p = Ptr(address, 1)) {
+    void V91ConfigureRelro(
+        std::uint32_t begin,
+        std::uint32_t size) {
+
+        v91_relro_begin = begin;
+        const std::uint64_t end =
+            static_cast<std::uint64_t>(begin) +
+            size;
+        v91_relro_end =
+            end <= std::numeric_limits<std::uint32_t>::max()
+                ? static_cast<std::uint32_t>(end)
+                : 0u;
+        v91_relro_armed = false;
+    }
+
+    void V91ArmRelro() {
+        v91_relro_armed =
+            v91_relro_begin != 0u &&
+            v91_relro_end >
+                v91_relro_begin;
+    }
+
+    bool V91RelroArmed() const {
+        return v91_relro_armed;
+    }
+
+    bool V91OverlapsRelro(
+        std::uint32_t address,
+        std::size_t size) const {
+
+        if (!v91_relro_armed ||
+            size == 0u ||
+            v91_relro_begin == 0u ||
+            v91_relro_end <=
+                v91_relro_begin) {
+            return false;
+        }
+
+        const std::uint64_t begin = address;
+        const std::uint64_t end =
+            begin + size;
+        return
+            begin <
+                v91_relro_end &&
+            end >
+                v91_relro_begin;
+    }
+
+    void V91RecordBlockedWrite(
+        std::uint32_t address,
+        std::size_t size) {
+
+        ++v91_memory_blocked_writes;
+        if (v91_first_blocked_address == 0u) {
+            v91_first_blocked_address =
+                address;
+            v91_first_blocked_size =
+                static_cast<std::uint32_t>(
+                    std::min<std::size_t>(
+                        size,
+                        0xffffffffu));
+        }
+    }
+
+    void Write8GuestUnchecked(
+        std::uint32_t address,
+        std::uint8_t value) {
+        if (auto* p = Ptr(address, 1u)) {
             *p = value;
         }
     }
 
+    void Write32GuestUnchecked(
+        std::uint32_t address,
+        std::uint32_t value) {
+        if (auto* p = Ptr(address, 4u)) {
+            Write32(p, value);
+        }
+    }
+
+    void Write8Guest(std::uint32_t address, std::uint8_t value) {
+        if (V91OverlapsRelro(address, 1u)) {
+            V91RecordBlockedWrite(address, 1u);
+            return;
+        }
+        Write8GuestUnchecked(address, value);
+    }
+
     void Write16Guest(std::uint32_t address, std::uint16_t value) {
-        Write8Guest(address, static_cast<std::uint8_t>(value));
-        Write8Guest(address + 1, static_cast<std::uint8_t>(value >> 8));
+        if (V91OverlapsRelro(address, 2u)) {
+            V91RecordBlockedWrite(address, 2u);
+            return;
+        }
+        if (auto* p = Ptr(address, 2u)) {
+            p[0] = static_cast<std::uint8_t>(value);
+            p[1] = static_cast<std::uint8_t>(value >> 8u);
+        }
     }
 
     void Write32Guest(std::uint32_t address, std::uint32_t value) {
-        if (auto* p = Ptr(address, 4)) {
-            Write32(p, value);
+        if (V91OverlapsRelro(address, 4u)) {
+            V91RecordBlockedWrite(address, 4u);
             return;
         }
-
-        for (int i = 0; i < 4; ++i) {
-            Write8Guest(
-                address + static_cast<std::uint32_t>(i),
-                static_cast<std::uint8_t>(value >> (i * 8)));
-        }
+        Write32GuestUnchecked(address, value);
     }
 
     void Write64Guest(std::uint32_t address, std::uint64_t value) {
-        Write32Guest(address, static_cast<std::uint32_t>(value));
-        Write32Guest(address + 4, static_cast<std::uint32_t>(value >> 32));
+        if (V91OverlapsRelro(address, 8u)) {
+            V91RecordBlockedWrite(address, 8u);
+            return;
+        }
+        if (auto* p = Ptr(address, 8u)) {
+            for (std::uint32_t i = 0u; i < 8u; ++i) {
+                p[i] =
+                    static_cast<std::uint8_t>(
+                        value >> (i * 8u));
+            }
+        }
     }
 
     std::uint32_t AlignHeapOffset(
@@ -1806,6 +1956,447 @@ public:
             : 0xffffffffu;
     }
 
+    int V91AlignmentClass(
+        std::uint32_t alignment) const {
+
+        switch (alignment) {
+        case 1u: return 0;
+        case 2u: return 1;
+        case 4u: return 2;
+        case 8u: return 3;
+        case 16u: return 4;
+        case 32u: return 5;
+        case 64u: return 6;
+        case 128u: return 7;
+        default: return -1;
+        }
+    }
+
+    std::uint32_t V91ClassAlignment(
+        std::size_t klass) const {
+        return
+            klass <
+                kV91AlignmentClassCount
+                ? (1u << klass)
+                : 1u;
+    }
+
+    std::uint32_t V91BlockUsable(
+        std::uint32_t offset,
+        std::uint32_t size,
+        std::uint32_t alignment) const {
+
+        const std::uint32_t aligned =
+            AlignHeapOffset(
+                offset,
+                alignment);
+
+        if (aligned == 0xffffffffu ||
+            aligned < offset) {
+            return 0u;
+        }
+
+        const std::uint32_t prefix =
+            aligned - offset;
+
+        return
+            prefix <= size
+                ? size - prefix
+                : 0u;
+    }
+
+    void V91BuildAllocatorIndex() {
+        if (!v91_allocator_index_enabled) {
+            return;
+        }
+
+        v91_bucket_count =
+            static_cast<std::uint32_t>(
+                (heap.size() +
+                 kV91BucketSize - 1u) /
+                kV91BucketSize);
+
+        v91_tree_base = 1u;
+        while (v91_tree_base <
+               std::max<std::uint32_t>(
+                   v91_bucket_count,
+                   1u)) {
+            v91_tree_base <<= 1u;
+        }
+
+        for (auto& tree : v91_fit_trees) {
+            tree.assign(
+                static_cast<std::size_t>(
+                    v91_tree_base) *
+                    2u,
+                0u);
+        }
+
+        for (const auto& entry :
+             heap_free_blocks) {
+            const std::uint32_t bucket =
+                entry.first >>
+                kV91BucketShift;
+
+            if (bucket >=
+                v91_bucket_count) {
+                continue;
+            }
+
+            for (std::size_t klass = 0u;
+                 klass <
+                     kV91AlignmentClassCount;
+                 ++klass) {
+
+                auto& leaf =
+                    v91_fit_trees[klass][
+                        v91_tree_base +
+                        bucket];
+
+                leaf =
+                    std::max(
+                        leaf,
+                        V91BlockUsable(
+                            entry.first,
+                            entry.second,
+                            V91ClassAlignment(
+                                klass)));
+            }
+        }
+
+        for (std::size_t klass = 0u;
+             klass <
+                 kV91AlignmentClassCount;
+             ++klass) {
+
+            auto& tree =
+                v91_fit_trees[klass];
+
+            for (std::uint32_t node =
+                     v91_tree_base;
+                 node-- > 1u;) {
+                tree[node] =
+                    std::max(
+                        tree[node * 2u],
+                        tree[node * 2u + 1u]);
+            }
+        }
+    }
+
+    void EnableV91AllocatorIndex(
+        bool enabled) {
+
+        v91_allocator_index_enabled =
+            enabled;
+
+        if (enabled) {
+            V91BuildAllocatorIndex();
+        } else {
+            for (auto& tree :
+                 v91_fit_trees) {
+                tree.clear();
+            }
+            v91_bucket_count = 0u;
+            v91_tree_base = 0u;
+        }
+    }
+
+    void V91RefreshBucket(
+        std::uint32_t bucket) {
+
+        if (!v91_allocator_index_enabled ||
+            bucket >=
+                v91_bucket_count ||
+            v91_tree_base == 0u) {
+            return;
+        }
+
+        ++v91_bucket_refreshes;
+
+        std::array<std::uint32_t,
+                   kV91AlignmentClassCount>
+            maxima{};
+
+        const std::uint32_t begin =
+            bucket <<
+            kV91BucketShift;
+        const std::uint64_t raw_end =
+            static_cast<std::uint64_t>(
+                begin) +
+            kV91BucketSize;
+        const std::uint32_t end =
+            static_cast<std::uint32_t>(
+                std::min<std::uint64_t>(
+                    raw_end,
+                    heap.size()));
+
+        for (auto it =
+                 heap_free_blocks.lower_bound(
+                     begin);
+             it != heap_free_blocks.end() &&
+             it->first < end;
+             ++it) {
+
+            for (std::size_t klass = 0u;
+                 klass <
+                     kV91AlignmentClassCount;
+                 ++klass) {
+                maxima[klass] =
+                    std::max(
+                        maxima[klass],
+                        V91BlockUsable(
+                            it->first,
+                            it->second,
+                            V91ClassAlignment(
+                                klass)));
+            }
+        }
+
+        for (std::size_t klass = 0u;
+             klass <
+                 kV91AlignmentClassCount;
+             ++klass) {
+
+            auto& tree =
+                v91_fit_trees[klass];
+
+            std::uint32_t node =
+                v91_tree_base +
+                bucket;
+            tree[node] =
+                maxima[klass];
+
+            while (node > 1u) {
+                node >>= 1u;
+                tree[node] =
+                    std::max(
+                        tree[node * 2u],
+                        tree[node * 2u + 1u]);
+            }
+        }
+    }
+
+    void V91RefreshOffsetBucket(
+        std::uint32_t offset) {
+
+        if (v91_allocator_index_enabled) {
+            V91RefreshBucket(
+                offset >>
+                    kV91BucketShift);
+        }
+    }
+
+    using V91FreeIterator =
+        std::map<std::uint32_t,
+                 std::uint32_t>::iterator;
+
+    void V91EraseFreeBlock(
+        V91FreeIterator it) {
+
+        if (it ==
+            heap_free_blocks.end()) {
+            return;
+        }
+
+        const std::uint32_t offset =
+            it->first;
+        heap_free_blocks.erase(it);
+        V91RefreshOffsetBucket(offset);
+    }
+
+    void V91SetFreeBlock(
+        std::uint32_t offset,
+        std::uint32_t size) {
+
+        heap_free_blocks[offset] =
+            size;
+        V91RefreshOffsetBucket(offset);
+    }
+
+    V91FreeIterator V91FindFirstFit(
+        std::uint32_t requested,
+        std::uint32_t alignment,
+        std::uint64_t& scan_steps) {
+
+        const int klass =
+            V91AlignmentClass(
+                alignment);
+
+        if (!v91_allocator_index_enabled ||
+            klass < 0 ||
+            v91_tree_base == 0u) {
+
+            if (v91_allocator_index_enabled) {
+                ++v91_index_fallbacks;
+            }
+
+            for (auto it =
+                     heap_free_blocks.begin();
+                 it !=
+                     heap_free_blocks.end();
+                 ++it) {
+
+                if (v90_allocator_profile) {
+                    ++scan_steps;
+                }
+
+                if (V91BlockUsable(
+                        it->first,
+                        it->second,
+                        alignment) >=
+                    requested) {
+                    return it;
+                }
+            }
+
+            return heap_free_blocks.end();
+        }
+
+        ++v91_index_queries;
+
+        const auto& tree =
+            v91_fit_trees[
+                static_cast<std::size_t>(
+                    klass)];
+
+        if (tree.size() <= 1u ||
+            tree[1u] <
+                requested) {
+            return heap_free_blocks.end();
+        }
+
+        std::uint32_t node = 1u;
+
+        while (node <
+               v91_tree_base) {
+
+            const std::uint32_t left =
+                node * 2u;
+
+            if (tree[left] >=
+                requested) {
+                node = left;
+            } else {
+                node = left + 1u;
+            }
+        }
+
+        const std::uint32_t bucket =
+            node -
+            v91_tree_base;
+
+        if (bucket >=
+            v91_bucket_count) {
+            ++v91_index_inconsistencies;
+            ++v91_index_fallbacks;
+            return heap_free_blocks.end();
+        }
+
+        const std::uint32_t begin =
+            bucket <<
+            kV91BucketShift;
+        const std::uint64_t raw_end =
+            static_cast<std::uint64_t>(
+                begin) +
+            kV91BucketSize;
+        const std::uint32_t end =
+            static_cast<std::uint32_t>(
+                std::min<std::uint64_t>(
+                    raw_end,
+                    heap.size()));
+
+        std::uint64_t local_scan = 0u;
+
+        for (auto it =
+                 heap_free_blocks.lower_bound(
+                     begin);
+             it != heap_free_blocks.end() &&
+             it->first < end;
+             ++it) {
+
+            if (v90_allocator_profile) {
+                ++scan_steps;
+            }
+            ++local_scan;
+
+            if (V91BlockUsable(
+                    it->first,
+                    it->second,
+                    alignment) >=
+                requested) {
+
+                ++v91_index_hits;
+                v91_local_scan_total +=
+                    local_scan;
+                v91_local_scan_max =
+                    std::max(
+                        v91_local_scan_max,
+                        local_scan);
+                return it;
+            }
+        }
+
+        // A segment-tree candidate must contain a fitting start-address block.
+        // Never trade correctness for speed: if the index ever disagrees,
+        // count it and fall back to the exact legacy scan.
+        ++v91_index_inconsistencies;
+        ++v91_index_fallbacks;
+
+        for (auto it =
+                 heap_free_blocks.begin();
+             it !=
+                 heap_free_blocks.end();
+             ++it) {
+
+            ++scan_steps;
+
+            if (V91BlockUsable(
+                    it->first,
+                    it->second,
+                    alignment) >=
+                requested) {
+                return it;
+            }
+        }
+
+        return heap_free_blocks.end();
+    }
+
+    std::string V91AllocatorIndexSummary() const {
+        std::ostringstream out;
+        out << std::fixed
+            << std::setprecision(3)
+            << "V91 INDEX SUMMARY"
+            << " enabled="
+            << (v91_allocator_index_enabled
+                    ? "YES"
+                    : "NO")
+            << " queries="
+            << v91_index_queries
+            << " hits="
+            << v91_index_hits
+            << " fallbacks="
+            << v91_index_fallbacks
+            << " inconsistencies="
+            << v91_index_inconsistencies
+            << " localScanTotal="
+            << v91_local_scan_total
+            << " localScanAvg="
+            << (v91_index_hits != 0u
+                    ? static_cast<double>(
+                          v91_local_scan_total) /
+                          static_cast<double>(
+                              v91_index_hits)
+                    : 0.0)
+            << " localScanMax="
+            << v91_local_scan_max
+            << " bucketRefreshes="
+            << v91_bucket_refreshes
+            << " buckets="
+            << v91_bucket_count;
+        return out.str();
+    }
+
     void InsertFreeHeapBlock(
         std::uint32_t offset,
         std::uint32_t size) {
@@ -1817,7 +2408,9 @@ public:
         auto next =
             heap_free_blocks.lower_bound(offset);
 
-        if (next != heap_free_blocks.begin()) {
+        if (next !=
+            heap_free_blocks.begin()) {
+
             auto previous =
                 std::prev(next);
 
@@ -1829,7 +2422,7 @@ public:
                     previous->first;
                 size +=
                     previous->second;
-                heap_free_blocks.erase(
+                V91EraseFreeBlock(
                     previous);
             }
         }
@@ -1837,16 +2430,19 @@ public:
         next =
             heap_free_blocks.lower_bound(offset);
 
-        if (next != heap_free_blocks.end() &&
-            offset + size == next->first) {
+        if (next !=
+                heap_free_blocks.end() &&
+            offset + size ==
+                next->first) {
 
             size +=
                 next->second;
-            heap_free_blocks.erase(next);
+            V91EraseFreeBlock(next);
         }
 
-        heap_free_blocks[offset] =
-            size;
+        V91SetFreeBlock(
+            offset,
+            size);
 
         while (!heap_free_blocks.empty()) {
             auto tail =
@@ -1861,7 +2457,7 @@ public:
 
             heap_next =
                 tail->first;
-            heap_free_blocks.erase(tail);
+            V91EraseFreeBlock(tail);
         }
     }
 
@@ -1891,13 +2487,14 @@ public:
                 : 0u;
         std::uint64_t scan_steps = 0u;
 
-        for (auto it = heap_free_blocks.begin();
-             it != heap_free_blocks.end();
-             ++it) {
+        V91FreeIterator it =
+            V91FindFirstFit(
+                requested,
+                safe_alignment,
+                scan_steps);
 
-            if (v90_allocator_profile) {
-                ++scan_steps;
-            }
+        if (it !=
+            heap_free_blocks.end()) {
 
             const std::uint32_t block_begin =
                 it->first;
@@ -1907,42 +2504,40 @@ public:
                 AlignHeapOffset(
                     block_begin,
                     safe_alignment);
-
-            if (aligned == 0xffffffffu ||
-                aligned < block_begin) {
-                continue;
-            }
-
             const std::uint32_t prefix =
-                aligned - block_begin;
-
-            if (prefix > block_size ||
-                requested >
-                    block_size - prefix) {
-                continue;
-            }
-
+                aligned -
+                block_begin;
             const std::uint32_t block_end =
-                block_begin + block_size;
+                block_begin +
+                block_size;
             const std::uint32_t allocation_end =
-                aligned + requested;
+                aligned +
+                requested;
 
-            heap_free_blocks.erase(it);
+            V91EraseFreeBlock(it);
 
             if (prefix != 0u) {
-                heap_free_blocks[block_begin] =
-                    prefix;
+                V91SetFreeBlock(
+                    block_begin,
+                    prefix);
             }
-            if (allocation_end < block_end) {
-                heap_free_blocks[allocation_end] =
-                    block_end - allocation_end;
+
+            if (allocation_end <
+                block_end) {
+                V91SetFreeBlock(
+                    allocation_end,
+                    block_end -
+                        allocation_end);
             }
 
             const std::uint32_t address =
-                kJniProbeHeapBase + aligned;
+                kJniProbeHeapBase +
+                aligned;
+
             heap_allocations[address] =
                 requested;
-            heap_live_bytes += requested;
+            heap_live_bytes +=
+                requested;
 
             V90FinishAllocProfile(
                 scan_steps,
@@ -1956,38 +2551,47 @@ public:
             AlignHeapOffset(
                 heap_next,
                 safe_alignment);
+
         const std::uint32_t heap_capacity =
             HeapCapacity();
 
         if (aligned == 0xffffffffu ||
             aligned > heap_capacity ||
             requested >
-                heap_capacity - aligned) {
+                heap_capacity -
+                    aligned) {
+
             V90FinishAllocProfile(
                 scan_steps,
                 false,
                 sampled,
                 sample_begin_ns);
-            return 0;
+            return 0u;
         }
 
-        heap_next = aligned + requested;
+        heap_next =
+            aligned +
+            requested;
         heap_high_water =
             std::max(
                 heap_high_water,
                 heap_next);
 
         const std::uint32_t address =
-            kJniProbeHeapBase + aligned;
+            kJniProbeHeapBase +
+            aligned;
+
         heap_allocations[address] =
             requested;
-        heap_live_bytes += requested;
+        heap_live_bytes +=
+            requested;
 
         V90FinishAllocProfile(
             scan_steps,
             false,
             sampled,
             sample_begin_ns);
+
         return address;
     }
 
@@ -2300,6 +2904,33 @@ public:
     const JniProbeLoadedElf* loaded_elf = nullptr;
     std::unordered_map<std::uint32_t, JniProbeImportBinding>
         imports_by_svc;
+
+    struct V91ProtectedImport {
+        std::uint32_t expected = 0u;
+        std::string name;
+        std::uint32_t relocation_type = 0u;
+    };
+
+    std::map<std::uint32_t, V91ProtectedImport>
+        v91_protected_imports;
+    std::uint32_t v91_relro_begin = 0u;
+    std::uint32_t v91_relro_end = 0u;
+    bool v91_relro_armed = false;
+    std::uint64_t v91_relro_write_attempts = 0u;
+    std::uint64_t v91_integrity_repairs = 0u;
+    bool v91_first_relro_write_seen = false;
+    std::uint32_t v91_first_write_pc = 0u;
+    std::uint32_t v91_first_write_lr = 0u;
+    std::uint32_t v91_first_write_tid = 0u;
+    std::uint32_t v91_first_write_dst = 0u;
+    std::uint32_t v91_first_write_size = 0u;
+    std::uint64_t v91_first_write_value = 0u;
+    bool v91_first_write_value_known = false;
+    std::string v91_first_write_kind;
+    std::string v91_first_write_phase;
+    std::uint32_t v91_free_got = 0u;
+    std::uint32_t v91_free_expected = 0u;
+    bool v91_terminal_summary_emitted = false;
 
     enum class ReturnMode {
         JniOnLoad,
@@ -7365,6 +7996,8 @@ public:
             return "V89_PERFORMANCE_PROFILER";
         case PvZ2DiagnosticMode::V90DirectPresentationProfiler:
             return "V90_DIRECT_PRESENTATION_PROFILER";
+        case PvZ2DiagnosticMode::V91IndexedAllocatorRelro:
+            return "V91_INDEXED_ALLOCATOR_RELRO";
         }
         return "UNKNOWN";
     }
@@ -7451,10 +8084,17 @@ public:
         return out.str();
     }
 
+    bool V91Enabled() const {
+        return
+            diagnostic_mode ==
+                PvZ2DiagnosticMode::V91IndexedAllocatorRelro;
+    }
+
     bool V90Enabled() const {
         return
             diagnostic_mode ==
-                PvZ2DiagnosticMode::V90DirectPresentationProfiler;
+                PvZ2DiagnosticMode::V90DirectPresentationProfiler ||
+            V91Enabled();
     }
 
     bool V89Enabled() const {
@@ -7530,7 +8170,8 @@ public:
             line.rfind("V88 STARTUP", 0u) == 0u ||
             line.rfind("V88 SCHEDULER", 0u) == 0u ||
             line.rfind("V89 ", 0u) == 0u ||
-            line.rfind("V90 ", 0u) == 0u) {
+            line.rfind("V90 ", 0u) == 0u ||
+            line.rfind("V91 ", 0u) == 0u) {
             return true;
         }
 
@@ -7913,6 +8554,462 @@ public:
         }
         o<<"}";
         return o.str();
+    }
+
+    void V91ConfigureRelro(
+        const JniProbeLoadedElf& loaded) {
+
+        if (!V91Enabled() ||
+            loaded.gnu_relro_size == 0u) {
+            return;
+        }
+
+        v91_relro_begin =
+            kGuestBase +
+            loaded.gnu_relro_vaddr;
+        v91_relro_end =
+            v91_relro_begin +
+            loaded.gnu_relro_size;
+
+        mem.V91ConfigureRelro(
+            v91_relro_begin,
+            loaded.gnu_relro_size);
+
+        Append(
+            "V91 RELRO CONFIG range=0x" +
+            JniProbeHex(v91_relro_begin) +
+            "..0x" +
+            JniProbeHex(v91_relro_end) +
+            " size=" +
+            std::to_string(
+                loaded.gnu_relro_size));
+    }
+
+    void V91RegisterProtectedImport(
+        std::uint32_t address,
+        std::uint32_t expected,
+        const std::string& name,
+        std::uint32_t relocation_type) {
+
+        if (!V91Enabled()) {
+            return;
+        }
+
+        const std::uint64_t end =
+            static_cast<std::uint64_t>(
+                address) +
+            4u;
+
+        if (address <
+                v91_relro_begin ||
+            end >
+                v91_relro_end) {
+            return;
+        }
+
+        v91_protected_imports[address] =
+            V91ProtectedImport{
+                expected,
+                name,
+                relocation_type};
+
+        if (name == "free") {
+            v91_free_got =
+                address;
+            v91_free_expected =
+                expected;
+        }
+    }
+
+    std::string V91PhaseName() const {
+        switch (return_mode) {
+        case ReturnMode::Constructor:
+            return
+                "constructor[" +
+                std::to_string(
+                    current_constructor_index) +
+                "]";
+        case ReturnMode::GameAppInitialize:
+            return "Native_GameAppInitialize";
+        case ReturnMode::Lifecycle:
+            return
+                current_lifecycle_name.empty()
+                    ? "lifecycle"
+                    : current_lifecycle_name;
+        case ReturnMode::JniOnLoad:
+        default:
+            return "JNI_OnLoad";
+        }
+    }
+
+    const V91ProtectedImport*
+    V91ImportAt(
+        std::uint32_t address,
+        std::size_t size,
+        std::uint32_t* slot_address = nullptr) const {
+
+        if (size == 0u ||
+            v91_protected_imports.empty()) {
+            return nullptr;
+        }
+
+        const std::uint64_t begin =
+            address;
+        const std::uint64_t end =
+            begin + size;
+
+        auto it =
+            v91_protected_imports.lower_bound(
+                address >= 3u
+                    ? address - 3u
+                    : 0u);
+
+        for (; it !=
+                 v91_protected_imports.end();
+             ++it) {
+
+            const std::uint64_t slot_begin =
+                it->first;
+            const std::uint64_t slot_end =
+                slot_begin + 4u;
+
+            if (slot_begin >= end) {
+                break;
+            }
+
+            if (slot_end > begin) {
+                if (slot_address != nullptr) {
+                    *slot_address =
+                        it->first;
+                }
+                return &it->second;
+            }
+        }
+
+        return nullptr;
+    }
+
+    bool V91AllowRelroWrite(
+        std::uint32_t address,
+        std::size_t size,
+        const char* kind,
+        std::uint64_t value = 0u,
+        bool value_known = false) {
+
+        if (!V91Enabled() ||
+            !v91_relro_armed ||
+            !mem.V91OverlapsRelro(
+                address,
+                size)) {
+            return true;
+        }
+
+        ++v91_relro_write_attempts;
+
+        if (!v91_first_relro_write_seen) {
+            v91_first_relro_write_seen =
+                true;
+            v91_first_write_pc =
+                jit != nullptr
+                    ? jit->Regs()[15]
+                    : 0u;
+            v91_first_write_lr =
+                jit != nullptr
+                    ? jit->Regs()[14]
+                    : 0u;
+            v91_first_write_tid =
+                current_probe_thread_id;
+            v91_first_write_dst =
+                address;
+            v91_first_write_size =
+                static_cast<std::uint32_t>(
+                    std::min<std::size_t>(
+                        size,
+                        0xffffffffu));
+            v91_first_write_value =
+                value;
+            v91_first_write_value_known =
+                value_known;
+            v91_first_write_kind =
+                kind != nullptr
+                    ? kind
+                    : "unknown";
+            v91_first_write_phase =
+                V91PhaseName();
+
+            std::uint32_t slot_address = 0u;
+            const auto* slot =
+                V91ImportAt(
+                    address,
+                    size,
+                    &slot_address);
+
+            std::ostringstream out;
+            out
+                << "V91 RELRO BLOCK first kind="
+                << v91_first_write_kind
+                << " phase="
+                << v91_first_write_phase
+                << " tid="
+                << v91_first_write_tid
+                << " PC=0x"
+                << JniProbeHex(
+                    v91_first_write_pc)
+                << " LR=0x"
+                << JniProbeHex(
+                    v91_first_write_lr)
+                << " dst=0x"
+                << JniProbeHex(address)
+                << " size="
+                << size;
+
+            if (value_known) {
+                out
+                    << " new=0x"
+                    << std::hex
+                    << value
+                    << std::dec;
+            }
+
+            if (slot != nullptr) {
+                out
+                    << " import="
+                    << slot->name
+                    << " slot=0x"
+                    << JniProbeHex(
+                        slot_address)
+                    << " expected=0x"
+                    << JniProbeHex(
+                        slot->expected)
+                    << " current=0x"
+                    << JniProbeHex(
+                        mem.Read32Guest(
+                            slot_address));
+            }
+
+            Append(out.str());
+        }
+
+        // GNU_RELRO is read-only in the real Bionic process after relocation.
+        // Suppressing this synthetic write is therefore an ABI-fidelity fix,
+        // not a resource/game-state fabrication.
+        return false;
+    }
+
+    void V91RepairImportIntegrity(
+        const char* reason) {
+
+        if (!V91Enabled() ||
+            !v91_relro_armed) {
+            return;
+        }
+
+        for (const auto& entry :
+             v91_protected_imports) {
+
+            const std::uint32_t current =
+                mem.Read32Guest(
+                    entry.first);
+
+            if (current ==
+                entry.second.expected) {
+                continue;
+            }
+
+            ++v91_integrity_repairs;
+
+            Append(
+                "V91 RELRO REPAIR reason=" +
+                std::string{
+                    reason != nullptr
+                        ? reason
+                        : "unknown"} +
+                " import=" +
+                entry.second.name +
+                " slot=0x" +
+                JniProbeHex(entry.first) +
+                " current=0x" +
+                JniProbeHex(current) +
+                " expected=0x" +
+                JniProbeHex(
+                    entry.second.expected));
+
+            mem.Write32GuestUnchecked(
+                entry.first,
+                entry.second.expected);
+        }
+    }
+
+    bool V91ArmRelro() {
+
+        if (!V91Enabled()) {
+            return true;
+        }
+
+        if (v91_relro_begin == 0u ||
+            v91_relro_end <=
+                v91_relro_begin) {
+
+            Append(
+                "V91 RELRO ERROR: missing/invalid PT_GNU_RELRO metadata.");
+            return false;
+        }
+
+        if (v91_free_got == 0u ||
+            v91_free_expected == 0u) {
+            Append(
+                "V91 RELRO ERROR: free R_ARM_JUMP_SLOT was not registered.");
+            return false;
+        }
+
+        // Exact 1.5.252752 signature recovered from the supplied APK.
+        if (v91_free_got !=
+            kGuestBase + 0x00d01c20u) {
+            Append(
+                "V91 RELRO ERROR: free GOT moved unexpectedly to 0x" +
+                JniProbeHex(v91_free_got));
+            return false;
+        }
+
+        // Verify/repair once before sealing, then reject later writes.
+        for (const auto& entry :
+             v91_protected_imports) {
+            const std::uint32_t current =
+                mem.Read32Guest(
+                    entry.first);
+
+            if (current !=
+                entry.second.expected) {
+
+                ++v91_integrity_repairs;
+                Append(
+                    "V91 RELRO PREARM REPAIR import=" +
+                    entry.second.name +
+                    " slot=0x" +
+                    JniProbeHex(entry.first) +
+                    " current=0x" +
+                    JniProbeHex(current) +
+                    " expected=0x" +
+                    JniProbeHex(
+                        entry.second.expected));
+
+                mem.Write32GuestUnchecked(
+                    entry.first,
+                    entry.second.expected);
+            }
+        }
+
+        mem.V91ArmRelro();
+        v91_relro_armed =
+            mem.V91RelroArmed();
+
+        Append(
+            "V91 RELRO ARMED range=0x" +
+            JniProbeHex(v91_relro_begin) +
+            "..0x" +
+            JniProbeHex(v91_relro_end) +
+            " protectedImports=" +
+            std::to_string(
+                v91_protected_imports.size()) +
+            " freeGOT=0x" +
+            JniProbeHex(v91_free_got) +
+            " freeExpected=0x" +
+            JniProbeHex(
+                v91_free_expected));
+
+        return v91_relro_armed;
+    }
+
+    std::string V91RelroSummary() const {
+        std::ostringstream out;
+        const std::uint32_t free_current =
+            v91_free_got != 0u
+                ? mem.Read32Guest(
+                      v91_free_got)
+                : 0u;
+
+        out
+            << "V91 RELRO SUMMARY armed="
+            << (v91_relro_armed
+                    ? "YES"
+                    : "NO")
+            << " range=0x"
+            << JniProbeHex(v91_relro_begin)
+            << "..0x"
+            << JniProbeHex(v91_relro_end)
+            << " imports="
+            << v91_protected_imports.size()
+            << " attempts="
+            << v91_relro_write_attempts
+            << " memBlocked="
+            << mem.v91_memory_blocked_writes
+            << " repairs="
+            << v91_integrity_repairs
+            << " free{slot=0x"
+            << JniProbeHex(v91_free_got)
+            << ",expected=0x"
+            << JniProbeHex(v91_free_expected)
+            << ",current=0x"
+            << JniProbeHex(free_current)
+            << "}";
+
+        if (v91_first_relro_write_seen) {
+            out
+                << " first{kind="
+                << v91_first_write_kind
+                << ",phase="
+                << v91_first_write_phase
+                << ",tid="
+                << v91_first_write_tid
+                << ",PC=0x"
+                << JniProbeHex(
+                    v91_first_write_pc)
+                << ",LR=0x"
+                << JniProbeHex(
+                    v91_first_write_lr)
+                << ",dst=0x"
+                << JniProbeHex(
+                    v91_first_write_dst)
+                << ",size="
+                << v91_first_write_size
+                << "}";
+        } else if (
+            mem.v91_memory_blocked_writes !=
+                0u) {
+            out
+                << " firstMemOnly{dst=0x"
+                << JniProbeHex(
+                    mem.v91_first_blocked_address)
+                << ",size="
+                << mem.v91_first_blocked_size
+                << "}";
+        }
+
+        return out.str();
+    }
+
+    void V91EmitTerminalSummary(
+        const char* reason) {
+
+        if (!V91Enabled() ||
+            v91_terminal_summary_emitted) {
+            return;
+        }
+
+        v91_terminal_summary_emitted =
+            true;
+
+        V91RepairImportIntegrity(
+            reason);
+
+        Append(
+            std::string{
+                "V91 TERMINAL reason="} +
+            (reason != nullptr
+                ? reason
+                : "unknown"));
+        Append(mem.V91AllocatorIndexSummary());
+        Append(V91RelroSummary());
     }
 
     void V90EmitTerminalSummaries(const char* reason) {
@@ -9929,7 +11026,55 @@ public:
     }
 
     std::uint32_t MemoryRead32(std::uint32_t address) override {
-        return mem.Read32Guest(address);
+        const std::uint32_t value =
+            mem.Read32Guest(address);
+
+        // v91: final safety net for the recurrent crash. The PLT loads free
+        // directly from this GOT word. Guest stores and host bridges are
+        // already RELRO-guarded, but an unforeseen host-side direct pointer
+        // write could bypass those callbacks. Verify only the known free slot
+        // here so ordinary guest memory reads do not pay a map lookup.
+        if (V91Enabled() &&
+            v91_relro_armed &&
+            address == v91_free_got &&
+            v91_free_got != 0u &&
+            value != v91_free_expected) {
+
+            ++v91_integrity_repairs;
+
+            Append(
+                "V91 RELRO READ REPAIR phase=" +
+                V91PhaseName() +
+                " tid=" +
+                std::to_string(
+                    current_probe_thread_id) +
+                " PC=0x" +
+                JniProbeHex(
+                    jit != nullptr
+                        ? jit->Regs()[15]
+                        : 0u) +
+                " LR=0x" +
+                JniProbeHex(
+                    jit != nullptr
+                        ? jit->Regs()[14]
+                        : 0u) +
+                " freeSlot=0x" +
+                JniProbeHex(
+                    v91_free_got) +
+                " current=0x" +
+                JniProbeHex(value) +
+                " expected=0x" +
+                JniProbeHex(
+                    v91_free_expected));
+
+            mem.Write32GuestUnchecked(
+                v91_free_got,
+                v91_free_expected);
+
+            return v91_free_expected;
+        }
+
+        return value;
     }
 
     std::uint64_t MemoryRead64(std::uint32_t address) override {
@@ -9939,6 +11084,15 @@ public:
     void MemoryWrite8(
         std::uint32_t address,
         std::uint8_t value) override {
+        if (!V91AllowRelroWrite(
+                address,
+                1u,
+                "STR8",
+                value,
+                true)) {
+            return;
+        }
+
         const std::uint8_t old =
             mem.Read8(address);
         mem.Write8Guest(address, value);
@@ -9957,6 +11111,15 @@ public:
     void MemoryWrite16(
         std::uint32_t address,
         std::uint16_t value) override {
+        if (!V91AllowRelroWrite(
+                address,
+                2u,
+                "STR16",
+                value,
+                true)) {
+            return;
+        }
+
         const std::uint16_t old =
             mem.Read16Guest(address);
         mem.Write16Guest(address, value);
@@ -9975,6 +11138,15 @@ public:
     void MemoryWrite32(
         std::uint32_t address,
         std::uint32_t value) override {
+        if (!V91AllowRelroWrite(
+                address,
+                4u,
+                "STR32",
+                value,
+                true)) {
+            return;
+        }
+
         const std::uint32_t old =
             mem.Read32Guest(address);
         mem.Write32Guest(address, value);
@@ -9993,6 +11165,15 @@ public:
     void MemoryWrite64(
         std::uint32_t address,
         std::uint64_t value) override {
+        if (!V91AllowRelroWrite(
+                address,
+                8u,
+                "STR64",
+                value,
+                true)) {
+            return;
+        }
+
         const std::uint64_t old =
             mem.Read64Guest(address);
         mem.Write64Guest(address, value);
@@ -10018,6 +11199,15 @@ public:
         std::uint32_t address,
         std::uint8_t value,
         [[maybe_unused]] std::uint8_t expected) override {
+        if (!V91AllowRelroWrite(
+                address,
+                1u,
+                "STREX8",
+                value,
+                true)) {
+            return true;
+        }
+
         const std::uint8_t old =
             mem.Read8(address);
         mem.Write8Guest(address, value);
@@ -10038,6 +11228,15 @@ public:
         std::uint32_t address,
         std::uint16_t value,
         [[maybe_unused]] std::uint16_t expected) override {
+        if (!V91AllowRelroWrite(
+                address,
+                2u,
+                "STREX16",
+                value,
+                true)) {
+            return true;
+        }
+
         const std::uint16_t old =
             mem.Read16Guest(address);
         mem.Write16Guest(address, value);
@@ -10058,6 +11257,15 @@ public:
         std::uint32_t address,
         std::uint32_t value,
         [[maybe_unused]] std::uint32_t expected) override {
+        if (!V91AllowRelroWrite(
+                address,
+                4u,
+                "STREX32",
+                value,
+                true)) {
+            return true;
+        }
+
         const std::uint32_t old =
             mem.Read32Guest(address);
         mem.Write32Guest(address, value);
@@ -10078,6 +11286,15 @@ public:
         std::uint32_t address,
         std::uint64_t value,
         [[maybe_unused]] std::uint64_t expected) override {
+        if (!V91AllowRelroWrite(
+                address,
+                8u,
+                "STREX64",
+                value,
+                true)) {
+            return true;
+        }
+
         const std::uint64_t old =
             mem.Read64Guest(address);
         mem.Write64Guest(address, value);
@@ -18249,16 +19466,36 @@ public:
 
                     if (array_ptr &&
                         buffer_ptr) {
-                        if (set_region) {
-                            std::memmove(
-                                array_ptr,
-                                buffer_ptr,
-                                bytes);
-                        } else {
-                            std::memmove(
-                                buffer_ptr,
-                                array_ptr,
-                                bytes);
+
+                        const std::uint32_t
+                            array_address =
+                                data_it->second +
+                                start *
+                                    size_it->second;
+                        const std::uint32_t
+                            write_destination =
+                                set_region
+                                    ? array_address
+                                    : buffer;
+
+                        if (V91AllowRelroWrite(
+                                write_destination,
+                                bytes,
+                                set_region
+                                    ? "JNI.SetPrimitiveArrayRegion"
+                                    : "JNI.GetPrimitiveArrayRegion")) {
+
+                            if (set_region) {
+                                std::memmove(
+                                    array_ptr,
+                                    buffer_ptr,
+                                    bytes);
+                            } else {
+                                std::memmove(
+                                    buffer_ptr,
+                                    array_ptr,
+                                    bytes);
+                            }
                         }
                     }
                 }
@@ -18964,6 +20201,15 @@ public:
                 return;
             }
 
+            if (!V91AllowRelroWrite(
+                    destination,
+                    size,
+                    name.c_str())) {
+                regs[0] = destination;
+                ++supported_calls;
+                return;
+            }
+
             std::memmove(dst, src, size);
             regs[0] = destination;
             ++supported_calls;
@@ -19521,6 +20767,17 @@ public:
                 return;
             }
 
+            if (!V91AllowRelroWrite(
+                    destination,
+                    guest_capacity,
+                    name.c_str())) {
+                regs[0] =
+                    static_cast<std::uint32_t>(
+                        Z_BUF_ERROR);
+                ++supported_calls;
+                return;
+            }
+
             uLongf host_length =
                 guest_capacity;
 
@@ -19791,6 +21048,21 @@ public:
             const std::uint32_t original_avail_out =
                 mem.Read32Guest(
                     guest_stream + 16);
+
+            if (original_avail_out != 0u &&
+                !V91AllowRelroWrite(
+                    original_next_out,
+                    original_avail_out,
+                    name == "deflate"
+                        ? "zlib.deflate-output"
+                        : "zlib.inflate-output")) {
+
+                regs[0] =
+                    static_cast<std::uint32_t>(
+                        Z_BUF_ERROR);
+                ++supported_calls;
+                return;
+            }
 
             if (!sync_zstream_from_guest(
                     guest_stream,
@@ -20482,6 +21754,14 @@ public:
                 return;
             }
 
+            if (!V91AllowRelroWrite(
+                    regs[0],
+                    bytes,
+                    name.c_str())) {
+                ++supported_calls;
+                return;
+            }
+
             std::memmove(
                 dst,
                 src,
@@ -20505,6 +21785,18 @@ public:
 
                 jit->HaltExecution(
                     Dynarmic::HaltReason::UserDefined2);
+                return;
+            }
+
+            if (!V91AllowRelroWrite(
+                    destination,
+                    static_cast<std::size_t>(
+                        count) * 4u,
+                    "wmemset",
+                    value,
+                    true)) {
+                regs[0] = destination;
+                ++supported_calls;
                 return;
             }
 
@@ -21615,7 +22907,12 @@ public:
             if (regs[1]) {
                 if (auto* p =
                         mem.Ptr(regs[1], 64)) {
-                    std::memset(p, 0, 64);
+                    if (V91AllowRelroWrite(
+                            regs[1],
+                            64u,
+                            "pthread_getattr_np")) {
+                        std::memset(p, 0, 64);
+                    }
                 }
             }
 
@@ -21848,6 +23145,17 @@ public:
 
             if (auto* p =
                     mem.Ptr(destination, size)) {
+
+                if (!V91AllowRelroWrite(
+                        destination,
+                        size,
+                        name.c_str(),
+                        value,
+                        true)) {
+                    regs[0] = destination;
+                    ++supported_calls;
+                    return;
+                }
 
                 std::memset(p, value, size);
                 regs[0] = destination;
@@ -23277,14 +24585,19 @@ public:
                                 destination,
                                 capacity)) {
 
-                        if (copy != 0u) {
-                            std::memcpy(
-                                output,
-                                formatted.data(),
-                                copy);
-                        }
+                        if (V91AllowRelroWrite(
+                                destination,
+                                capacity,
+                                "format-output")) {
+                            if (copy != 0u) {
+                                std::memcpy(
+                                    output,
+                                    formatted.data(),
+                                    copy);
+                            }
 
-                        output[copy] = 0u;
+                            output[copy] = 0u;
+                        }
                     }
                 }
 
@@ -23540,14 +24853,20 @@ public:
                                     it->second.base +
                                     it->second.offset);
 
-                    std::memcpy(
-                        mem.Ptr(
+                    if (V91AllowRelroWrite(
                             dst,
                             static_cast<std::size_t>(
-                                bytes)),
-                        source,
-                        static_cast<std::size_t>(
-                            bytes));
+                                bytes),
+                            "VFS.fread")) {
+                        std::memcpy(
+                            mem.Ptr(
+                                dst,
+                                static_cast<std::size_t>(
+                                    bytes)),
+                            source,
+                            static_cast<std::size_t>(
+                                bytes));
+                    }
                 }
 
                 it->second.offset += bytes;
@@ -24071,14 +25390,20 @@ public:
                                     it->second.base +
                                     it->second.offset);
 
-                    std::memcpy(
-                        mem.Ptr(
+                    if (V91AllowRelroWrite(
                             dst,
                             static_cast<std::size_t>(
-                                bytes)),
-                        source,
-                        static_cast<std::size_t>(
-                            bytes));
+                                bytes),
+                            "VFS.read")) {
+                        std::memcpy(
+                            mem.Ptr(
+                                dst,
+                                static_cast<std::size_t>(
+                                    bytes)),
+                            source,
+                            static_cast<std::size_t>(
+                                bytes));
+                    }
                     if(V89HostCostEnabled())V89RecordHostCost("vfs.read.memcpy",v89_vfs_begin_ns,bytes);
                 }
 
@@ -24901,11 +26226,18 @@ public:
                                     guest_arg(3u),
                                     static_cast<std::size_t>(
                                         capacity))) {
-                            std::memcpy(
-                                out,
-                                buffer.data(),
-                                copy);
-                            out[copy] = 0u;
+
+                            if (V91AllowRelroWrite(
+                                    guest_arg(3u),
+                                    static_cast<std::size_t>(
+                                        capacity),
+                                    "GLES.info-log")) {
+                                std::memcpy(
+                                    out,
+                                    buffer.data(),
+                                    copy);
+                                out[copy] = 0u;
+                            }
                         }
                     }
 
@@ -27360,6 +28692,7 @@ public:
             diagnostic;
         if(V89Enabled())V89EmitTerminalSummaries("guest-exception");
         if(V90Enabled())V90EmitTerminalSummaries("guest-exception");
+        if(V91Enabled())V91EmitTerminalSummary("guest-exception");
 
         if (jit) {
             jit->HaltExecution(
@@ -27373,11 +28706,17 @@ public:
             if(!result.hard_stop_requested){
                 result.hard_stop_requested=true;
                 const auto pc=jit?jit->Regs()[15]:0u,lr=jit?jit->Regs()[14]:0u,cpsr=jit?jit->Cpsr():0u;
-                const std::string tag=V90Enabled()?"V90":"V89";
+                const std::string tag=
+                    V91Enabled()
+                        ? "V91"
+                        : (V90Enabled()
+                               ? "V90"
+                               : "V89");
                 result.message=tag+" Hard Stop requested by user.";
                 Append(tag+" HARD STOP frame="+std::to_string(current_frame_number)+" tid="+std::to_string(current_probe_thread_id)+" PC="+V46DescribeGuestAddress(pc)+" LR="+V46DescribeGuestAddress(lr)+" CPSR=0x"+JniProbeHex(cpsr));
                 if(V89Enabled())V89EmitTerminalSummaries("user-hard-stop");
                 if(V90Enabled())V90EmitTerminalSummaries("user-hard-stop");
+                if(V91Enabled())V91EmitTerminalSummary("user-hard-stop");
             }
             ticks_left=0u;if(jit)jit->HaltExecution(Dynarmic::HaltReason::UserDefined3);return;
         }
@@ -27932,6 +29271,7 @@ bool JniProbePrepareRuntime(
 
     memory.image = loaded.image;
     callbacks.loaded_elf = &loaded;
+    callbacks.V91ConfigureRelro(loaded);
 
     callbacks.Append(
         "V46 ADDRESS MAP READY: guestBase=0x" +
@@ -28027,6 +29367,12 @@ bool JniProbePrepareRuntime(
                     rel.offset,
                     shim);
 
+                callbacks.V91RegisterProtectedImport(
+                    kGuestBase + rel.offset,
+                    shim,
+                    name,
+                    type);
+
                 callbacks.Append(
                     "installed guest-native pthread_once shim at 0x" +
                     JniProbeHex(shim));
@@ -28056,6 +29402,12 @@ bool JniProbePrepareRuntime(
                 rel.offset,
                 trampoline);
 
+            callbacks.V91RegisterProtectedImport(
+                kGuestBase + rel.offset,
+                trampoline,
+                name,
+                type);
+
             callbacks.imports_by_svc.emplace(
                 svc,
                 JniProbeImportBinding{
@@ -28080,6 +29432,12 @@ bool JniProbePrepareRuntime(
                 memory.image.data() +
                 rel.offset,
                 object);
+
+            callbacks.V91RegisterProtectedImport(
+                kGuestBase + rel.offset,
+                object,
+                name,
+                type);
 
             if (callbacks.V57CtypeEnabled() &&
                 (name == "_toupper_tab_" ||
@@ -28656,7 +30014,9 @@ bool JniProbePrepareRuntime(
         callbacks.Append(
             "V83 PROFILE BUTTON DISPATCH: v83 restored the V80 2048x1536 pixel touch control and proved buttonId=5 can dispatch even when the raw +0x28/+0x2c/+0x30/+0x34 radar rectangle does not contain the screen-space tap. Those raw fields are therefore local/transformed, not absolute hitboxes. The passive dispatcher trap remains enabled and does not alter rendering, widget geometry or GameState.");
     }
-    if(callbacks.V90Enabled()){
+    if(callbacks.V91Enabled()){
+        callbacks.Append("V91 RUNTIME: v90 direct GPU/scheduler/resource/input behavior preserved; guest allocator uses exact-first-fit address indexing; ELF GNU_RELRO/import GOT is sealed after synthetic relocation with bounded first-writer provenance.");
+    } else if(callbacks.V90Enabled()){
         callbacks.Append("V90 PROFILER: v88 scheduler + 128 MiB heap + functional resource/input path preserved; v89 BLX/quantum hot probes disabled; direct 1:1 shared-EAGL presentation, total-frame pacing, cmap full-scan timing, allocator fragmentation counters and worker wall-time aggregation enabled.");
     } else if(callbacks.V89Enabled()){
         callbacks.Append("V89 PROFILER: v88 scheduler/heap/resource/audio/render/input semantics preserved; Hard Stop, quantum PC/LR/tid aggregation, ETC1/VFS/zlib/GLES host-cost buckets and BLX target provenance enabled.");
@@ -28832,6 +30192,13 @@ bool JniProbePrepareRuntime(
 
     callbacks.vm_object = vm_object;
     callbacks.env_object = env_object;
+
+    if (callbacks.V91Enabled() &&
+        !callbacks.V91ArmRelro()) {
+        error =
+            "v91 could not arm the ELF GNU_RELRO protection.";
+        return false;
+    }
 
     return true;
 }
@@ -29206,7 +30573,9 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
              diagnostic_mode ==
                     PvZ2DiagnosticMode::V89PerformanceProfiler ||
              diagnostic_mode ==
-                    PvZ2DiagnosticMode::V90DirectPresentationProfiler)
+                    PvZ2DiagnosticMode::V90DirectPresentationProfiler ||
+             diagnostic_mode ==
+                    PvZ2DiagnosticMode::V91IndexedAllocatorRelro)
                 ? kJniProbeHeapSizeV86
                 : kJniProbeHeapSize;
 
@@ -29214,7 +30583,12 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
             guest_heap_size);
         memory.EnableV90AllocatorProfiling(
             diagnostic_mode ==
-                PvZ2DiagnosticMode::V90DirectPresentationProfiler);
+                PvZ2DiagnosticMode::V90DirectPresentationProfiler ||
+            diagnostic_mode ==
+                PvZ2DiagnosticMode::V91IndexedAllocatorRelro);
+        memory.EnableV91AllocatorIndex(
+            diagnostic_mode ==
+                PvZ2DiagnosticMode::V91IndexedAllocatorRelro);
 
         PvZ2JniCallbacks callbacks(
             memory,
@@ -33127,6 +34501,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
 
                 if(callbacks.V89Enabled())callbacks.V89EmitTerminalSummaries("normal-frame-loop-exit");
                 if(callbacks.V90Enabled())callbacks.V90EmitTerminalSummaries("normal-frame-loop-exit");
+                if(callbacks.V91Enabled())callbacks.V91EmitTerminalSummary("normal-frame-loop-exit");
                 if (callbacks.V87Enabled()) {
                     callbacks.Append(
                         callbacks.V87MutexSummary());

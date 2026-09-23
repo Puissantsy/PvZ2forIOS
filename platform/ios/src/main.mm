@@ -530,7 +530,7 @@ void PvZ2HostNotifyDirectFrame(
     self.captionLabel.clipsToBounds =
         YES;
     self.captionLabel.text =
-        @"PvZ2 v90 — starting…\ndirect GPU + deterministic profiler";
+        @"PvZ2 v91 — starting…\nindexed allocator + RELRO";
 
     self.stopButton =
         [UIButton
@@ -1297,7 +1297,7 @@ void PvZ2HostNotifyDirectFrame(
         self.captionLabel.text =
             [NSString
                 stringWithFormat:
-                    @"PvZ2 v90 LIVE • frame %lu • %@\n%lu×%lu guest • direct GPU 1:1",
+                    @"PvZ2 v91 LIVE • frame %lu • %@\n%lu×%lu guest • direct GPU 1:1",
                     (unsigned long)frame,
                     touchState,
                     (unsigned long)width,
@@ -1527,7 +1527,7 @@ void PvZ2HostNotifyDirectFrame(
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — v90 Direct Presentation Profiler";
+        @"PvZ2forIOS — v91 Indexed Allocator + RELRO";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -1536,7 +1536,7 @@ void PvZ2HostNotifyDirectFrame(
         NO;
 
     title.text =
-        @"PvZ2forIOS — v90 Direct Presentation Profiler";
+        @"PvZ2forIOS — v91 Indexed Allocator + RELRO";
 
     title.font =
         [UIFont
@@ -1552,7 +1552,7 @@ void PvZ2HostNotifyDirectFrame(
         NO;
 
     explanation.text =
-        @"v90 keeps the deterministic v88 scheduler/128 MiB heap/resource/input baseline, removes v89's hot BLX/quantum profiler from this mode, presents every guest frame directly through a shared EAGL context, fixes total-frame pacing, and measures font cmap scans, allocator fragmentation and worker time with aggregate probes.";
+        @"v91 keeps the v90 direct-GPU/scheduler/resource/input baseline. It preserves exact guest first-fit allocation addresses with an indexed lookup, emulates GNU_RELRO for relocated imports, and records bounded allocator/RELRO diagnostics.";
 
     explanation.numberOfLines = 0;
 
@@ -1620,6 +1620,7 @@ void PvZ2HostNotifyDirectFrame(
                     @"V88 Adaptive",
                     @"V89 Profiler",
                     @"V90 Direct",
+                    @"V91 Alloc+RELRO",
                     @"V66 Waits",
                     @"V65 Cond",
                     @"Ctype Scout"
@@ -1628,7 +1629,7 @@ void PvZ2HostNotifyDirectFrame(
     self.diagnosticModeControl.translatesAutoresizingMaskIntoConstraints =
         NO;
     self.diagnosticModeControl.selectedSegmentIndex =
-        17;
+        18;
 
     UIStackView *mainButtons =
         [[UIStackView alloc]
@@ -2279,6 +2280,7 @@ void PvZ2HostNotifyDirectFrame(
             @"V88_ADAPTIVE_MUTEX_STARTUP",
             @"V89_PERFORMANCE_PROFILER",
             @"V90_DIRECT_PRESENTATION_PROFILER",
+            @"V91_INDEXED_ALLOCATOR_RELRO",
             @"V66_BLOCKING_WAIT_SCHEDULER",
             @"V65_CONDITION_VARIABLE_SCHEDULER",
             @"CTYPE_COMPAT_DEEP_SCOUT"
@@ -2297,7 +2299,7 @@ void PvZ2HostNotifyDirectFrame(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. mode=%@. Start with V90 Direct. It presents every guest frame on-GPU, removes the v89 BLX/quantum hot probes, uses total-frame pacing, and collects low-overhead font/allocator/worker timings.",
+                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. mode=%@. Start with V91 Alloc+RELRO. It keeps v90 direct GPU presentation, replaces the pathological heap scan with exact indexed first-fit, and seals the ELF RELRO/GOT while recording the first blocked corruption attempt.",
                     modeNames[modeIndex]]];
 
     [self
@@ -2447,15 +2449,20 @@ void PvZ2HostNotifyDirectFrame(
             @"V90_DIRECT_PRESENTATION_PROFILER";
     } else if (selectedMode == 18) {
         diagnosticMode =
+            PvZ2DiagnosticMode::V91IndexedAllocatorRelro;
+        diagnosticModeName =
+            @"V91_INDEXED_ALLOCATOR_RELRO";
+    } else if (selectedMode == 19) {
+        diagnosticMode =
             PvZ2DiagnosticMode::V66BlockingWaitScheduler;
         diagnosticModeName =
             @"V66_BLOCKING_WAIT_SCHEDULER";
-    } else if (selectedMode == 19) {
+    } else if (selectedMode == 20) {
         diagnosticMode =
             PvZ2DiagnosticMode::V65ConditionVariableScheduler;
         diagnosticModeName =
             @"V65_CONDITION_VARIABLE_SCHEDULER";
-    } else if (selectedMode == 20) {
+    } else if (selectedMode == 21) {
         diagnosticMode =
             PvZ2DiagnosticMode::CtypeCompatDeepScout;
         diagnosticModeName =
@@ -2469,7 +2476,7 @@ void PvZ2HostNotifyDirectFrame(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v90 Direct Presentation Profiler started mode=%@; PID=%d ===",
+                    @"=== PvZ2 v91 Indexed Allocator + RELRO started mode=%@; PID=%d ===",
                     diagnosticModeName,
                     getpid()]];
 
@@ -2529,11 +2536,15 @@ void PvZ2HostNotifyDirectFrame(
         diagnosticMode ==
                 PvZ2DiagnosticMode::V89PerformanceProfiler ||
         diagnosticMode ==
-                PvZ2DiagnosticMode::V90DirectPresentationProfiler,
+                PvZ2DiagnosticMode::V90DirectPresentationProfiler ||
+        diagnosticMode ==
+                PvZ2DiagnosticMode::V91IndexedAllocatorRelro,
         std::memory_order_release);
     gV90DirectPresentationActive.store(
         diagnosticMode ==
-            PvZ2DiagnosticMode::V90DirectPresentationProfiler,
+                PvZ2DiagnosticMode::V90DirectPresentationProfiler ||
+        diagnosticMode ==
+                PvZ2DiagnosticMode::V91IndexedAllocatorRelro,
         std::memory_order_release);
     gPvZ2KeyboardFirstResponder.store(
         false,
@@ -2574,7 +2585,9 @@ void PvZ2HostNotifyDirectFrame(
        diagnosticMode ==
           PvZ2DiagnosticMode::V89PerformanceProfiler ||
        diagnosticMode ==
-          PvZ2DiagnosticMode::V90DirectPresentationProfiler)) {
+          PvZ2DiagnosticMode::V90DirectPresentationProfiler ||
+       diagnosticMode ==
+          PvZ2DiagnosticMode::V91IndexedAllocatorRelro)) {
 
         PvZ2ResetInteractiveInput();
         gPvZ2KeyboardHostReady.store(
@@ -2721,7 +2734,9 @@ void PvZ2HostNotifyDirectFrame(
                                diagnosticMode ==
                                    PvZ2DiagnosticMode::V89PerformanceProfiler ||
                                diagnosticMode ==
-                                   PvZ2DiagnosticMode::V90DirectPresentationProfiler) &&
+                                   PvZ2DiagnosticMode::V90DirectPresentationProfiler ||
+                               diagnosticMode ==
+                                   PvZ2DiagnosticMode::V91IndexedAllocatorRelro) &&
                             selfRef.liveController != nil) {
 
                             [selfRef.liveController
@@ -3125,14 +3140,16 @@ void PvZ2HostNotifyDirectFrame(
                                diagnosticMode ==
                                    PvZ2DiagnosticMode::V89PerformanceProfiler ||
                                diagnosticMode ==
-                                   PvZ2DiagnosticMode::V90DirectPresentationProfiler) &&
+                                   PvZ2DiagnosticMode::V90DirectPresentationProfiler ||
+                               diagnosticMode ==
+                                   PvZ2DiagnosticMode::V91IndexedAllocatorRelro) &&
                             selfRef.liveController != nil) {
 
                             [selfRef.liveController
                                 finishRunWithMessage:
                                     [NSString
                                         stringWithFormat:
-                                            @"PvZ2 v90 LIVE — run finished after %u guest frames.\nClose to inspect the direct-presentation/performance log.",
+                                            @"PvZ2 v91 LIVE — run finished after %u guest frames.\nClose to inspect the allocator/RELRO/performance log.",
                                             result.draw_frames_completed]];
 
                         } else if (!result.final_frame_png_path.empty()) {
@@ -3214,16 +3231,18 @@ void PvZ2HostNotifyDirectFrame(
                                diagnosticMode ==
                                    PvZ2DiagnosticMode::V89PerformanceProfiler ||
                                diagnosticMode ==
-                                   PvZ2DiagnosticMode::V90DirectPresentationProfiler) &&
+                                   PvZ2DiagnosticMode::V90DirectPresentationProfiler ||
+                               diagnosticMode ==
+                                   PvZ2DiagnosticMode::V91IndexedAllocatorRelro) &&
                             selfRef.liveController != nil) {
 
                             if (result.hard_stop_requested) {
                                 [selfRef.liveController finishRunWithMessage:
-                                    @"PvZ2 v90 LIVE — HARD STOPPED.\nGuest execution was interrupted at the next Dynarmic checkpoint. Close to inspect the preserved profiler log."];
+                                    @"PvZ2 v91 LIVE — HARD STOPPED.\nGuest execution was interrupted at the next Dynarmic checkpoint. Close to inspect the preserved profiler log."];
                             } else {
                                 [selfRef.liveController finishRunWithMessage:
                                     [NSString stringWithFormat:
-                                        @"PvZ2 v90 LIVE — guest stopped/crashed.\n%@\nClose to inspect the direct-presentation/performance log.", message]];
+                                        @"PvZ2 v91 LIVE — guest stopped/crashed.\n%@\nClose to inspect the allocator/RELRO/performance log.", message]];
                             }
 
                         } else {

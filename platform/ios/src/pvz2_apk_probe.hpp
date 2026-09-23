@@ -260,6 +260,12 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // deterministic performance probes without inheriting v89's BLX/HOTPC
     // hot-path instrumentation.
     V90DirectPresentationProfiler = 34u,
+
+    // v91: preserve v90 direct-GPU/runtime behavior, replace only the
+    // pathological linear guest-heap first-fit scan with an address-indexed
+    // equivalent first-fit, and emulate ELF GNU_RELRO protection for resolved
+    // import/GOT state with bounded corruption provenance.
+    V91IndexedAllocatorRelro = 35u,
 };
 
 struct PvZ2JniProbeResult {
