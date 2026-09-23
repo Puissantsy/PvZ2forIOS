@@ -2932,6 +2932,25 @@ public:
     std::uint32_t v91_free_expected = 0u;
     bool v91_terminal_summary_emitted = false;
 
+    // v93: non-invasive provenance for the exact delete->free chain whose
+    // caller returns through POP {...,pc} at 0x10868b30. At the free SVC the
+    // caller's saved PC is still present at SP+36. Capture it before and after
+    // host FreeHeap without modifying guest stack/code.
+    std::uint64_t v93_target_free_calls = 0u;
+    std::uint64_t v93_odd_saved_pc_calls = 0u;
+    std::uint64_t v93_invalid_saved_pc_calls = 0u;
+    std::uint64_t v93_saved_pc_changed_by_free = 0u;
+    bool v93_last_sample_valid = false;
+    std::uint32_t v93_last_frame = 0u;
+    std::uint32_t v93_last_free_ptr = 0u;
+    std::uint32_t v93_last_sp = 0u;
+    std::uint32_t v93_last_lr = 0u;
+    std::uint32_t v93_last_cpsr = 0u;
+    std::uint32_t v93_last_saved_pc_before = 0u;
+    std::uint32_t v93_last_saved_pc_after = 0u;
+    std::uint32_t v93_last_stack_base = 0u;
+    std::array<std::uint32_t, 16> v93_last_stack_words{};
+
     enum class ReturnMode {
         JniOnLoad,
         Constructor,
@@ -8000,6 +8019,8 @@ public:
             return "V91_INDEXED_ALLOCATOR_RELRO";
         case PvZ2DiagnosticMode::V92LongRunInteractive:
             return "V92_LONG_RUN_INTERACTIVE";
+        case PvZ2DiagnosticMode::V93ReturnProvenance:
+            return "V93_RETURN_PROVENANCE";
         }
         return "UNKNOWN";
     }
@@ -8086,10 +8107,17 @@ public:
         return out.str();
     }
 
+    bool V93Enabled() const {
+        return
+            diagnostic_mode ==
+                PvZ2DiagnosticMode::V93ReturnProvenance;
+    }
+
     bool V92Enabled() const {
         return
             diagnostic_mode ==
-                PvZ2DiagnosticMode::V92LongRunInteractive;
+                PvZ2DiagnosticMode::V92LongRunInteractive ||
+            V93Enabled();
     }
 
     bool V91Enabled() const {
@@ -8154,6 +8182,7 @@ public:
 
     bool V85KeepLogLine(const std::string& line) const {
         if (line.rfind("V85 PERF", 0u) == 0u) return true;
+        if (line.rfind("V93 ", 0u) == 0u) return true;
         return line.find("FAILED") != std::string::npos ||
                line.find("failed") != std::string::npos ||
                line.find("ERROR") != std::string::npos ||
@@ -9011,6 +9040,97 @@ public:
         return out.str();
     }
 
+    bool V93GuestImageTarget(
+        std::uint32_t raw_address) const {
+
+        if (loaded_elf == nullptr) {
+            return false;
+        }
+
+        const std::uint32_t address =
+            raw_address & ~1u;
+        if (address < kGuestBase) {
+            return false;
+        }
+
+        const std::uint64_t offset =
+            static_cast<std::uint64_t>(
+                address - kGuestBase);
+        return
+            offset <
+            static_cast<std::uint64_t>(
+                loaded_elf->image.size());
+    }
+
+    std::string V93ReturnSummary() const {
+        std::ostringstream out;
+        out
+            << "V93 RETURN SUMMARY targetFreeCalls="
+            << v93_target_free_calls
+            << " oddSavedPC="
+            << v93_odd_saved_pc_calls
+            << " invalidSavedPC="
+            << v93_invalid_saved_pc_calls
+            << " changedByFree="
+            << v93_saved_pc_changed_by_free;
+
+        if (!v93_last_sample_valid) {
+            out << " last=NONE";
+            return out.str();
+        }
+
+        const bool before_in_image =
+            V93GuestImageTarget(
+                v93_last_saved_pc_before);
+        const bool after_in_image =
+            V93GuestImageTarget(
+                v93_last_saved_pc_after);
+
+        out
+            << " last{frame="
+            << v93_last_frame
+            << ",freePtr=0x"
+            << JniProbeHex(v93_last_free_ptr)
+            << ",SP=0x"
+            << JniProbeHex(v93_last_sp)
+            << ",LR=0x"
+            << JniProbeHex(v93_last_lr)
+            << ",CPSR=0x"
+            << JniProbeHex(v93_last_cpsr)
+            << ",savedBefore=0x"
+            << JniProbeHex(
+                v93_last_saved_pc_before)
+            << ",beforeBit0="
+            << (v93_last_saved_pc_before & 1u)
+            << ",beforeInImage="
+            << (before_in_image ? "YES" : "NO")
+            << ",savedAfter=0x"
+            << JniProbeHex(
+                v93_last_saved_pc_after)
+            << ",afterBit0="
+            << (v93_last_saved_pc_after & 1u)
+            << ",afterInImage="
+            << (after_in_image ? "YES" : "NO")
+            << ",stackBase=0x"
+            << JniProbeHex(v93_last_stack_base)
+            << ",stackWords={";
+
+        for (std::size_t i = 0u;
+             i < v93_last_stack_words.size();
+             ++i) {
+            if (i != 0u) {
+                out << ",";
+            }
+            out
+                << "0x"
+                << JniProbeHex(
+                    v93_last_stack_words[i]);
+        }
+
+        out << "}}";
+        return out.str();
+    }
+
     void V91EmitTerminalSummary(
         const char* reason) {
 
@@ -9027,14 +9147,19 @@ public:
 
         Append(
             std::string{
-                V92Enabled()
-                    ? "V92 TERMINAL reason="
-                    : "V91 TERMINAL reason="} +
+                V93Enabled()
+                    ? "V93 TERMINAL reason="
+                    : (V92Enabled()
+                           ? "V92 TERMINAL reason="
+                           : "V91 TERMINAL reason=")} +
             (reason != nullptr
                 ? reason
                 : "unknown"));
         Append(mem.V91AllocatorIndexSummary());
         Append(V91RelroSummary());
+        if (V93Enabled()) {
+            Append(V93ReturnSummary());
+        }
     }
 
     void V90EmitTerminalSummaries(const char* reason) {
@@ -19956,7 +20081,131 @@ public:
                     regs[0]);
             }
 
+            constexpr std::uint32_t
+                kV93DeleteReturnGuest =
+                    kGuestBase + 0x00868b54u;
+            const bool v93_target_free =
+                V93Enabled() &&
+                regs[14] ==
+                    kV93DeleteReturnGuest;
+            std::uint32_t
+                v93_saved_pc_before = 0u;
+
+            if (v93_target_free) {
+                ++v93_target_free_calls;
+                v93_last_sample_valid = true;
+                v93_last_frame =
+                    current_frame_number;
+                v93_last_free_ptr =
+                    regs[0];
+                v93_last_sp =
+                    regs[13];
+                v93_last_lr =
+                    regs[14];
+                v93_last_cpsr =
+                    jit ? jit->Cpsr() : 0u;
+
+                // Function 0x108689c8 pushed six registers (24 bytes) and
+                // reserved 16 local bytes. Its epilogue adds SP,#16 then
+                // pops {r4,r5,r6,r7,r8,pc}; therefore the saved PC that the
+                // POP will consume is still at the current SP+36 here.
+                v93_saved_pc_before =
+                    mem.Read32Guest(
+                        regs[13] + 36u);
+                v93_last_saved_pc_before =
+                    v93_saved_pc_before;
+
+                if ((v93_saved_pc_before &
+                     1u) != 0u) {
+                    ++v93_odd_saved_pc_calls;
+                }
+                if (!V93GuestImageTarget(
+                        v93_saved_pc_before)) {
+                    ++v93_invalid_saved_pc_calls;
+                }
+
+                v93_last_stack_base =
+                    regs[13] >= 16u
+                        ? regs[13] - 16u
+                        : regs[13];
+                for (std::size_t i = 0u;
+                     i <
+                         v93_last_stack_words
+                             .size();
+                     ++i) {
+                    v93_last_stack_words[i] =
+                        mem.Read32Guest(
+                            v93_last_stack_base +
+                            static_cast<std::uint32_t>(
+                                i * 4u));
+                }
+            }
+
             mem.FreeHeap(regs[0]);
+
+            if (v93_target_free) {
+                const std::uint32_t
+                    saved_pc_after =
+                        mem.Read32Guest(
+                            v93_last_sp +
+                            36u);
+                v93_last_saved_pc_after =
+                    saved_pc_after;
+
+                const bool changed =
+                    saved_pc_after !=
+                    v93_saved_pc_before;
+                if (changed) {
+                    ++v93_saved_pc_changed_by_free;
+                }
+
+                const bool notable =
+                    v93_target_free_calls <= 4u ||
+                    changed ||
+                    ((v93_saved_pc_before &
+                      1u) != 0u) ||
+                    !V93GuestImageTarget(
+                        v93_saved_pc_before);
+
+                if (notable) {
+                    Append(
+                        "V93 FREE-RETURN #" +
+                        std::to_string(
+                            v93_target_free_calls) +
+                        " frame=" +
+                        std::to_string(
+                            current_frame_number) +
+                        " freePtr=0x" +
+                        JniProbeHex(
+                            v93_last_free_ptr) +
+                        " SP=0x" +
+                        JniProbeHex(
+                            v93_last_sp) +
+                        " LR=0x" +
+                        JniProbeHex(
+                            v93_last_lr) +
+                        " savedBefore=0x" +
+                        JniProbeHex(
+                            v93_saved_pc_before) +
+                        " bit0=" +
+                        std::to_string(
+                            v93_saved_pc_before &
+                            1u) +
+                        " inImage=" +
+                        (V93GuestImageTarget(
+                             v93_saved_pc_before)
+                             ? std::string{"YES"}
+                             : std::string{"NO"}) +
+                        " savedAfter=0x" +
+                        JniProbeHex(
+                            saved_pc_after) +
+                        " changedByFree=" +
+                        (changed
+                             ? std::string{"YES"}
+                             : std::string{"NO"}));
+                }
+            }
+
             regs[0] = 0;
             ++supported_calls;
             ++free_calls;
@@ -28732,13 +28981,15 @@ public:
                 result.hard_stop_requested=true;
                 const auto pc=jit?jit->Regs()[15]:0u,lr=jit?jit->Regs()[14]:0u,cpsr=jit?jit->Cpsr():0u;
                 const std::string tag=
-                    V92Enabled()
-                        ? "V92"
-                        : (V91Enabled()
+                    V93Enabled()
+                        ? "V93"
+                        : (V92Enabled()
+                               ? "V92"
+                               : (V91Enabled()
                                ? "V91"
-                               : (V90Enabled()
-                                      ? "V90"
-                                      : "V89"));
+                                      : (V90Enabled()
+                                             ? "V90"
+                                             : "V89")));
                 result.message=tag+" Hard Stop requested by user.";
                 Append(tag+" HARD STOP frame="+std::to_string(current_frame_number)+" tid="+std::to_string(current_probe_thread_id)+" PC="+V46DescribeGuestAddress(pc)+" LR="+V46DescribeGuestAddress(lr)+" CPSR=0x"+JniProbeHex(cpsr));
                 if(V89Enabled())V89EmitTerminalSummaries("user-hard-stop");
@@ -30041,7 +30292,9 @@ bool JniProbePrepareRuntime(
         callbacks.Append(
             "V83 PROFILE BUTTON DISPATCH: v83 restored the V80 2048x1536 pixel touch control and proved buttonId=5 can dispatch even when the raw +0x28/+0x2c/+0x30/+0x34 radar rectangle does not contain the screen-space tap. Those raw fields are therefore local/transformed, not absolute hitboxes. The passive dispatcher trap remains enabled and does not alter rendering, widget geometry or GameState.");
     }
-    if(callbacks.V92Enabled()){
+    if(callbacks.V93Enabled()){
+        callbacks.Append("V93 RETURN PROVENANCE: complete v92 long-run runtime preserved. The exact delete->free path returning through 0x10868b30 is observed non-invasively inside the host free callback: saved PC at guest SP+36 is captured before and after FreeHeap. No guest instruction, return address, allocator result, scheduler state or recovery behavior is changed.");
+    } else if(callbacks.V92Enabled()){
         callbacks.Append("V92 LONG-RUN: complete v91 allocator/RELRO/direct-GPU/input runtime preserved; the legacy 600-frame probe ceiling is disabled and execution continues until Hard Stop or a real failure. Periodic performance logging is throttled for sustained play.");
     } else if(callbacks.V91Enabled()){
         callbacks.Append("V91 RUNTIME: v90 direct GPU/scheduler/resource/input behavior preserved; guest allocator uses exact-first-fit address indexing; ELF GNU_RELRO/import GOT is sealed after synthetic relocation with bounded first-writer provenance.");
@@ -30606,7 +30859,9 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
              diagnostic_mode ==
                     PvZ2DiagnosticMode::V91IndexedAllocatorRelro ||
              diagnostic_mode ==
-                    PvZ2DiagnosticMode::V92LongRunInteractive)
+                    PvZ2DiagnosticMode::V92LongRunInteractive ||
+             diagnostic_mode ==
+                    PvZ2DiagnosticMode::V93ReturnProvenance)
                 ? kJniProbeHeapSizeV86
                 : kJniProbeHeapSize;
 
@@ -30618,12 +30873,16 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
             diagnostic_mode ==
                 PvZ2DiagnosticMode::V91IndexedAllocatorRelro ||
             diagnostic_mode ==
-                PvZ2DiagnosticMode::V92LongRunInteractive);
+                PvZ2DiagnosticMode::V92LongRunInteractive ||
+            diagnostic_mode ==
+                PvZ2DiagnosticMode::V93ReturnProvenance);
         memory.EnableV91AllocatorIndex(
             diagnostic_mode ==
                 PvZ2DiagnosticMode::V91IndexedAllocatorRelro ||
             diagnostic_mode ==
-                PvZ2DiagnosticMode::V92LongRunInteractive);
+                PvZ2DiagnosticMode::V92LongRunInteractive ||
+            diagnostic_mode ==
+                PvZ2DiagnosticMode::V93ReturnProvenance);
 
         PvZ2JniCallbacks callbacks(
             memory,
@@ -33997,7 +34256,9 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                         if (v92_long_run) {
                             result.hard_stop_requested = true;
                             result.message =
-                                "V92 Hard Stop requested by user.";
+                                V93Enabled()
+                                    ? "V93 Hard Stop requested by user."
+                                    : "V92 Hard Stop requested by user.";
                         }
 
                         callbacks.Append(
@@ -34534,7 +34795,9 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                         if (v92_long_run) {
                             result.hard_stop_requested = true;
                             result.message =
-                                "V92 Hard Stop requested by user.";
+                                V93Enabled()
+                                    ? "V93 Hard Stop requested by user."
+                                    : "V92 Hard Stop requested by user.";
                         }
 
                         callbacks.Append(

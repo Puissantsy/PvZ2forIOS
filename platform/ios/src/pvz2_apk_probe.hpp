@@ -271,6 +271,11 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // 600-frame probe ceiling so the game can remain interactively alive until
     // the user requests Hard Stop or a real guest/runtime failure occurs.
     V92LongRunInteractive = 36u,
+
+    // v93: inherit the complete v92 long-run runtime and add non-invasive
+    // provenance around the exact free/delete return path implicated by the
+    // recurrent 0x1086fcea Thumb-state crash. No guest recovery is applied.
+    V93ReturnProvenance = 37u,
 };
 
 struct PvZ2JniProbeResult {
