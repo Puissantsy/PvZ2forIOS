@@ -278,6 +278,46 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     V93ReturnProvenance = 37u,
 };
 
+enum class PvZ2ProbeCapability : std::uint64_t {
+    None = 0u,
+    LivePresentation = 1ull << 0,
+    CpuLiveFrame = 1ull << 1,
+    TransformProbe = 1ull << 2,
+    HitTestTrace = 1ull << 3,
+    LogicalTouch = 1ull << 4,
+    ProfileProbe = 1ull << 5,
+    PerformanceBaseline = 1ull << 6,
+    Heap128 = 1ull << 7,
+    PreemptiveMutex = 1ull << 8,
+    AdaptiveMutex = 1ull << 9,
+    HeavyPerformanceProfiler = 1ull << 10,
+    HostCostProfiler = 1ull << 11,
+    DirectPresentation = 1ull << 12,
+    IndexedAllocatorRelro = 1ull << 13,
+    LongRunInteractive = 1ull << 14,
+    ReturnProvenance = 1ull << 15,
+};
+
+struct PvZ2DiagnosticModeDescriptor {
+    PvZ2DiagnosticMode mode;
+    const char* internal_name;
+    const char* ui_name;
+    std::uint64_t capabilities;
+    bool selectable;
+};
+
+const PvZ2DiagnosticModeDescriptor*
+PvZ2DescribeDiagnosticMode(PvZ2DiagnosticMode mode);
+
+bool PvZ2DiagnosticModeHasCapability(
+    PvZ2DiagnosticMode mode,
+    PvZ2ProbeCapability capability);
+
+std::size_t PvZ2SelectableDiagnosticModeCount();
+
+const PvZ2DiagnosticModeDescriptor*
+PvZ2SelectableDiagnosticModeAt(std::size_t index);
+
 struct PvZ2JniProbeResult {
     bool ok = false;
     bool reached_jni_onload = false;
