@@ -7998,6 +7998,8 @@ public:
             return "V90_DIRECT_PRESENTATION_PROFILER";
         case PvZ2DiagnosticMode::V91IndexedAllocatorRelro:
             return "V91_INDEXED_ALLOCATOR_RELRO";
+        case PvZ2DiagnosticMode::V92LongRunInteractive:
+            return "V92_LONG_RUN_INTERACTIVE";
         }
         return "UNKNOWN";
     }
@@ -8084,10 +8086,17 @@ public:
         return out.str();
     }
 
+    bool V92Enabled() const {
+        return
+            diagnostic_mode ==
+                PvZ2DiagnosticMode::V92LongRunInteractive;
+    }
+
     bool V91Enabled() const {
         return
             diagnostic_mode ==
-                PvZ2DiagnosticMode::V91IndexedAllocatorRelro;
+                PvZ2DiagnosticMode::V91IndexedAllocatorRelro ||
+            V92Enabled();
     }
 
     bool V90Enabled() const {
@@ -8205,7 +8214,14 @@ public:
         ++v85_guest_draw_samples;
         v85_guest_draw_total_ns += elapsed_ns;
         v85_guest_draw_max_ns = std::max(v85_guest_draw_max_ns, elapsed_ns);
-        if (frame <= 5u || (frame % 30u) == 0u) {
+        const bool interesting =
+            V92Enabled()
+                ? (frame <= 5u ||
+                   (frame % 600u) == 0u ||
+                   elapsed_ns >= 250000000ull)
+                : (frame <= 5u ||
+                   (frame % 30u) == 0u);
+        if (interesting) {
             Append("V85 PERF guest frame=" + std::to_string(frame) +
                    " guestDrawMs=" + V85FormatMs(elapsed_ns));
         }
@@ -8486,13 +8502,20 @@ public:
                 :0u;
 
         const bool interesting=
-            frame<=5u ||
-            (frame%30u)==0u ||
-            guest_ns>=250000000ull ||
-            v90_frame_worker_wait_ns>=250000000ull ||
-            v90_frame_boundary_worker_ns>=250000000ull ||
-            v90_frame_font_ns!=0u ||
-            alloc_scan_steps>=4096u;
+            V92Enabled()
+                ? (frame<=5u ||
+                   (frame%600u)==0u ||
+                   guest_ns>=250000000ull ||
+                   v90_frame_worker_wait_ns>=250000000ull ||
+                   v90_frame_boundary_worker_ns>=250000000ull ||
+                   v90_frame_font_ns>=250000000ull)
+                : (frame<=5u ||
+                   (frame%30u)==0u ||
+                   guest_ns>=250000000ull ||
+                   v90_frame_worker_wait_ns>=250000000ull ||
+                   v90_frame_boundary_worker_ns>=250000000ull ||
+                   v90_frame_font_ns!=0u ||
+                   alloc_scan_steps>=4096u);
 
         if(interesting){
             std::ostringstream o;
@@ -9004,7 +9027,9 @@ public:
 
         Append(
             std::string{
-                "V91 TERMINAL reason="} +
+                V92Enabled()
+                    ? "V92 TERMINAL reason="
+                    : "V91 TERMINAL reason="} +
             (reason != nullptr
                 ? reason
                 : "unknown"));
@@ -28707,11 +28732,13 @@ public:
                 result.hard_stop_requested=true;
                 const auto pc=jit?jit->Regs()[15]:0u,lr=jit?jit->Regs()[14]:0u,cpsr=jit?jit->Cpsr():0u;
                 const std::string tag=
-                    V91Enabled()
-                        ? "V91"
-                        : (V90Enabled()
-                               ? "V90"
-                               : "V89");
+                    V92Enabled()
+                        ? "V92"
+                        : (V91Enabled()
+                               ? "V91"
+                               : (V90Enabled()
+                                      ? "V90"
+                                      : "V89"));
                 result.message=tag+" Hard Stop requested by user.";
                 Append(tag+" HARD STOP frame="+std::to_string(current_frame_number)+" tid="+std::to_string(current_probe_thread_id)+" PC="+V46DescribeGuestAddress(pc)+" LR="+V46DescribeGuestAddress(lr)+" CPSR=0x"+JniProbeHex(cpsr));
                 if(V89Enabled())V89EmitTerminalSummaries("user-hard-stop");
@@ -30014,7 +30041,9 @@ bool JniProbePrepareRuntime(
         callbacks.Append(
             "V83 PROFILE BUTTON DISPATCH: v83 restored the V80 2048x1536 pixel touch control and proved buttonId=5 can dispatch even when the raw +0x28/+0x2c/+0x30/+0x34 radar rectangle does not contain the screen-space tap. Those raw fields are therefore local/transformed, not absolute hitboxes. The passive dispatcher trap remains enabled and does not alter rendering, widget geometry or GameState.");
     }
-    if(callbacks.V91Enabled()){
+    if(callbacks.V92Enabled()){
+        callbacks.Append("V92 LONG-RUN: complete v91 allocator/RELRO/direct-GPU/input runtime preserved; the legacy 600-frame probe ceiling is disabled and execution continues until Hard Stop or a real failure. Periodic performance logging is throttled for sustained play.");
+    } else if(callbacks.V91Enabled()){
         callbacks.Append("V91 RUNTIME: v90 direct GPU/scheduler/resource/input behavior preserved; guest allocator uses exact-first-fit address indexing; ELF GNU_RELRO/import GOT is sealed after synthetic relocation with bounded first-writer provenance.");
     } else if(callbacks.V90Enabled()){
         callbacks.Append("V90 PROFILER: v88 scheduler + 128 MiB heap + functional resource/input path preserved; v89 BLX/quantum hot probes disabled; direct 1:1 shared-EAGL presentation, total-frame pacing, cmap full-scan timing, allocator fragmentation counters and worker wall-time aggregation enabled.");
@@ -30575,7 +30604,9 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
              diagnostic_mode ==
                     PvZ2DiagnosticMode::V90DirectPresentationProfiler ||
              diagnostic_mode ==
-                    PvZ2DiagnosticMode::V91IndexedAllocatorRelro)
+                    PvZ2DiagnosticMode::V91IndexedAllocatorRelro ||
+             diagnostic_mode ==
+                    PvZ2DiagnosticMode::V92LongRunInteractive)
                 ? kJniProbeHeapSizeV86
                 : kJniProbeHeapSize;
 
@@ -30585,10 +30616,14 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
             diagnostic_mode ==
                 PvZ2DiagnosticMode::V90DirectPresentationProfiler ||
             diagnostic_mode ==
-                PvZ2DiagnosticMode::V91IndexedAllocatorRelro);
+                PvZ2DiagnosticMode::V91IndexedAllocatorRelro ||
+            diagnostic_mode ==
+                PvZ2DiagnosticMode::V92LongRunInteractive);
         memory.EnableV91AllocatorIndex(
             diagnostic_mode ==
-                PvZ2DiagnosticMode::V91IndexedAllocatorRelro);
+                PvZ2DiagnosticMode::V91IndexedAllocatorRelro ||
+            diagnostic_mode ==
+                PvZ2DiagnosticMode::V92LongRunInteractive);
 
         PvZ2JniCallbacks callbacks(
             memory,
@@ -33835,9 +33870,25 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
 
                 constexpr std::uint32_t
                     kV36FrameCount = 600u;
+                const bool v92_long_run =
+                    callbacks.V92Enabled();
 
                 auto should_sample_frame =
-                    [](std::uint32_t frame) {
+                    [v92_long_run](std::uint32_t frame) {
+                        if (v92_long_run) {
+                            return
+                                frame <= 3u ||
+                                frame == 5u ||
+                                frame == 10u ||
+                                frame == 15u ||
+                                frame == 30u ||
+                                frame == 60u ||
+                                frame == 120u ||
+                                frame == 300u ||
+                                frame == 600u ||
+                                (frame >= 3600u &&
+                                 (frame % 3600u) == 0u);
+                        }
                         return
                             frame <= 3u ||
                             frame == 5u ||
@@ -33929,7 +33980,8 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                         std::memory_order_acquire);
 
                 for (std::uint32_t frame = 0u;
-                     frame < kV36FrameCount;
+                     v92_long_run ||
+                         frame < kV36FrameCount;
                      ++frame) {
 
                     const std::uint32_t frame_number =
@@ -33941,6 +33993,12 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                     if (callbacks.V72Enabled() &&
                         gV72StopRequested.load(
                             std::memory_order_acquire)) {
+
+                        if (v92_long_run) {
+                            result.hard_stop_requested = true;
+                            result.message =
+                                "V92 Hard Stop requested by user.";
+                        }
 
                         callbacks.Append(
                             "V72 INTERACTIVE STOP before frame " +
@@ -33965,9 +34023,11 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             "V39 FRAME SOAK: begin frame " +
                             std::to_string(
                                 frame_number) +
-                            "/" +
-                            std::to_string(
-                                kV36FrameCount));
+                            (v92_long_run
+                                ? std::string{" (long-run)"}
+                                : std::string{"/"} +
+                                      std::to_string(
+                                          kV36FrameCount)));
                     }
 
                     const std::uint64_t
@@ -34342,9 +34402,11 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             "V39 FRAME SOAK: returned frame " +
                             std::to_string(
                                 frame_number) +
-                            "/" +
-                            std::to_string(
-                                kV36FrameCount));
+                            (v92_long_run
+                                ? std::string{" (long-run)"}
+                                : std::string{"/"} +
+                                      std::to_string(
+                                          kV36FrameCount)));
 
                         // v52 adaptive stop: 600 remains the safety ceiling,
                         // not a mandatory wait. Once EA is fully black and 45
@@ -34469,6 +34531,12 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                         gV72StopRequested.load(
                             std::memory_order_acquire)) {
 
+                        if (v92_long_run) {
+                            result.hard_stop_requested = true;
+                            result.message =
+                                "V92 Hard Stop requested by user.";
+                        }
+
                         callbacks.Append(
                             "V72 INTERACTIVE STOP after frame " +
                             std::to_string(
@@ -34480,8 +34548,9 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                         break;
                     }
 
-                    if (frame_number !=
-                        kV36FrameCount) {
+                    if (v92_long_run ||
+                        frame_number !=
+                            kV36FrameCount) {
                         if (callbacks.V90Enabled()) {
                             constexpr std::uint64_t kV90TargetFrameNs =
                                 16666667ull;
@@ -34499,9 +34568,15 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                     }
                 }
 
-                if(callbacks.V89Enabled())callbacks.V89EmitTerminalSummaries("normal-frame-loop-exit");
-                if(callbacks.V90Enabled())callbacks.V90EmitTerminalSummaries("normal-frame-loop-exit");
-                if(callbacks.V91Enabled())callbacks.V91EmitTerminalSummary("normal-frame-loop-exit");
+                const char* frame_loop_reason =
+                    v92_long_run &&
+                    gV72StopRequested.load(
+                        std::memory_order_acquire)
+                        ? "user-stop-frame-boundary"
+                        : "normal-frame-loop-exit";
+                if(callbacks.V89Enabled())callbacks.V89EmitTerminalSummaries(frame_loop_reason);
+                if(callbacks.V90Enabled())callbacks.V90EmitTerminalSummaries(frame_loop_reason);
+                if(callbacks.V91Enabled())callbacks.V91EmitTerminalSummary(frame_loop_reason);
                 if (callbacks.V87Enabled()) {
                     callbacks.Append(
                         callbacks.V87MutexSummary());

@@ -266,6 +266,11 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // equivalent first-fit, and emulate ELF GNU_RELRO protection for resolved
     // import/GOT state with bounded corruption provenance.
     V91IndexedAllocatorRelro = 35u,
+
+    // v92: inherit the complete validated v91 runtime, but remove the legacy
+    // 600-frame probe ceiling so the game can remain interactively alive until
+    // the user requests Hard Stop or a real guest/runtime failure occurs.
+    V92LongRunInteractive = 36u,
 };
 
 struct PvZ2JniProbeResult {
