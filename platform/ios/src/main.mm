@@ -1598,40 +1598,45 @@ void PvZ2HostNotifyDirectFrame(
             selector:
                 @selector(selectApkForJni)];
 
+    NSMutableArray<NSString *> *diagnosticModeItems =
+        [NSMutableArray array];
+    NSInteger defaultDiagnosticModeIndex = 0;
+
+    const std::size_t diagnosticModeCount =
+        PvZ2SelectableDiagnosticModeCount();
+
+    for (std::size_t i = 0u;
+         i < diagnosticModeCount;
+         ++i) {
+        const auto* descriptor =
+            PvZ2SelectableDiagnosticModeAt(i);
+        if (descriptor == nullptr ||
+            descriptor->ui_name == nullptr) {
+            continue;
+        }
+
+        [diagnosticModeItems
+            addObject:
+                [NSString
+                    stringWithUTF8String:
+                        descriptor->ui_name]];
+
+        if (descriptor->mode ==
+            PvZ2DiagnosticMode::V93ReturnProvenance) {
+            defaultDiagnosticModeIndex =
+                static_cast<NSInteger>(i);
+        }
+    }
+
     self.diagnosticModeControl =
         [[UISegmentedControl alloc]
             initWithItems:
-                @[
-                    @"V56 Base",
-                    @"V74 Retina",
-                    @"V75 iPad UI",
-                    @"V76 iOS Scale",
-                    @"V77 Legacy iPad",
-                    @"V80 Transform",
-                    @"V81 HitTest",
-                    @"V82 Radar",
-                    @"V83 Buttons",
-                    @"V84 Blit",
-                    @"V84 P=PX",
-                    @"V84 Android",
-                    @"V85 Perf",
-                    @"V86 Heap+Perf",
-                    @"V87 Mutex",
-                    @"V88 Adaptive",
-                    @"V89 Profiler",
-                    @"V90 Direct",
-                    @"V91 Alloc+RELRO",
-                    @"V92 Long Run",
-                    @"V93 Return",
-                    @"V66 Waits",
-                    @"V65 Cond",
-                    @"Ctype Scout"
-                ]];
+                diagnosticModeItems];
 
     self.diagnosticModeControl.translatesAutoresizingMaskIntoConstraints =
         NO;
     self.diagnosticModeControl.selectedSegmentIndex =
-        20;
+        defaultDiagnosticModeIndex;
 
     UIStackView *mainButtons =
         [[UIStackView alloc]
@@ -2262,49 +2267,35 @@ void PvZ2HostNotifyDirectFrame(
     picker.modalPresentationStyle =
         UIModalPresentationFormSheet;
 
-    NSArray<NSString *> *modeNames =
-        @[
-            @"V56_BASELINE",
-            @"V74_RETINA_INPUT_POLISH",
-            @"V75_IPAD_UI_PACKAGE",
-            @"V76_IOS_SCALE_CONTRACT",
-            @"V77_LEGACY_IPAD_GEOMETRY",
-            @"V80_GLOBAL_TRANSFORM_PROBE",
-            @"V81_HITTEST_LOGICAL_POINTS",
-            @"V82_PROFILE_LAYOUT_RADAR",
-            @"V83_PROFILE_BUTTON_DISPATCH",
-            @"V84_FINAL_BLIT_TRACE",
-            @"V84_POINTS_EQUAL_PIXELS",
-            @"V84_ANDROID_GRAPHICS_CONTRACT",
-            @"V85_PERFORMANCE_BASELINE",
-            @"V86_HEAP_PERFORMANCE_FIX",
-            @"V87_PREEMPTIVE_MUTEX_SCHEDULER",
-            @"V88_ADAPTIVE_MUTEX_STARTUP",
-            @"V89_PERFORMANCE_PROFILER",
-            @"V90_DIRECT_PRESENTATION_PROFILER",
-            @"V91_INDEXED_ALLOCATOR_RELRO",
-            @"V92_LONG_RUN_INTERACTIVE",
-            @"V93_RETURN_PROVENANCE",
-            @"V66_BLOCKING_WAIT_SCHEDULER",
-            @"V65_CONDITION_VARIABLE_SCHEDULER",
-            @"CTYPE_COMPAT_DEEP_SCOUT"
-        ];
-
     NSInteger modeIndex =
         self.diagnosticModeControl.selectedSegmentIndex;
 
-    if (modeIndex < 0 ||
-        modeIndex >=
-            (NSInteger)modeNames.count) {
+    const auto* selectedDescriptor =
+        modeIndex >= 0
+            ? PvZ2SelectableDiagnosticModeAt(
+                  static_cast<std::size_t>(
+                      modeIndex))
+            : nullptr;
+
+    if (selectedDescriptor == nullptr) {
+        selectedDescriptor =
+            PvZ2SelectableDiagnosticModeAt(0u);
         modeIndex = 0;
     }
+
+    NSString *selectedModeName =
+        selectedDescriptor != nullptr
+            ? [NSString
+                  stringWithUTF8String:
+                      selectedDescriptor->internal_name]
+            : @"UNKNOWN";
 
     [self
         appendUI:
             [NSString
                 stringWithFormat:
                     @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. mode=%@. Start with V93 Return. It preserves v92 long-run behavior and records the saved return PC around the exact delete/free path before and after host FreeHeap, with no recovery or guest-code patch.",
-                    modeNames[modeIndex]]];
+                    selectedModeName]];
 
     [self
         presentViewController:
@@ -2361,127 +2352,30 @@ void PvZ2HostNotifyDirectFrame(
     NSInteger selectedMode =
         self.diagnosticModeControl.selectedSegmentIndex;
 
-    PvZ2DiagnosticMode diagnosticMode =
-        PvZ2DiagnosticMode::FullMatrix;
-    NSString *diagnosticModeName =
-        @"V56_BASELINE";
+    const auto* diagnosticDescriptor =
+        selectedMode >= 0
+            ? PvZ2SelectableDiagnosticModeAt(
+                  static_cast<std::size_t>(
+                      selectedMode))
+            : nullptr;
 
-    if (selectedMode == 1) {
-        diagnosticMode =
-            PvZ2DiagnosticMode::V74RetinaInputPolish;
-        diagnosticModeName =
-            @"V74_RETINA_INPUT_POLISH";
-    } else if (selectedMode == 2) {
-        diagnosticMode =
-            PvZ2DiagnosticMode::V75IpadUiPackage;
-        diagnosticModeName =
-            @"V75_IPAD_UI_PACKAGE";
-    } else if (selectedMode == 3) {
-        diagnosticMode =
-            PvZ2DiagnosticMode::V76IosScaleContract;
-        diagnosticModeName =
-            @"V76_IOS_SCALE_CONTRACT";
-    } else if (selectedMode == 4) {
-        diagnosticMode =
-            PvZ2DiagnosticMode::V77LegacyIpadGeometry;
-        diagnosticModeName =
-            @"V77_LEGACY_IPAD_GEOMETRY";
-    } else if (selectedMode == 5) {
-        diagnosticMode =
-            PvZ2DiagnosticMode::V80GlobalTransformProbe;
-        diagnosticModeName =
-            @"V80_GLOBAL_TRANSFORM_PROBE";
-    } else if (selectedMode == 6) {
-        diagnosticMode =
-            PvZ2DiagnosticMode::V81HitTestLogicalPoints;
-        diagnosticModeName =
-            @"V81_HITTEST_LOGICAL_POINTS";
-    } else if (selectedMode == 7) {
-        diagnosticMode =
-            PvZ2DiagnosticMode::V82ProfileLayoutRadar;
-        diagnosticModeName =
-            @"V82_PROFILE_LAYOUT_RADAR";
-    } else if (selectedMode == 8) {
-        diagnosticMode =
-            PvZ2DiagnosticMode::V83ProfileButtonDispatch;
-        diagnosticModeName =
-            @"V83_PROFILE_BUTTON_DISPATCH";
-    } else if (selectedMode == 9) {
-        diagnosticMode =
-            PvZ2DiagnosticMode::V84FinalBlitTrace;
-        diagnosticModeName =
-            @"V84_FINAL_BLIT_TRACE";
-    } else if (selectedMode == 10) {
-        diagnosticMode =
-            PvZ2DiagnosticMode::V84PointsEqualPixels;
-        diagnosticModeName =
-            @"V84_POINTS_EQUAL_PIXELS";
-    } else if (selectedMode == 11) {
-        diagnosticMode =
-            PvZ2DiagnosticMode::V84AndroidGraphicsContract;
-        diagnosticModeName =
-            @"V84_ANDROID_GRAPHICS_CONTRACT";
-    } else if (selectedMode == 12) {
-        diagnosticMode =
-            PvZ2DiagnosticMode::V85PerformanceBaseline;
-        diagnosticModeName =
-            @"V85_PERFORMANCE_BASELINE";
-    } else if (selectedMode == 13) {
-        diagnosticMode =
-            PvZ2DiagnosticMode::V86HeapPerformanceFix;
-        diagnosticModeName =
-            @"V86_HEAP_PERFORMANCE_FIX";
-    } else if (selectedMode == 14) {
-        diagnosticMode =
-            PvZ2DiagnosticMode::V87PreemptiveMutexScheduler;
-        diagnosticModeName =
-            @"V87_PREEMPTIVE_MUTEX_SCHEDULER";
-    } else if (selectedMode == 15) {
-        diagnosticMode =
-            PvZ2DiagnosticMode::V88AdaptiveMutexStartup;
-        diagnosticModeName =
-            @"V88_ADAPTIVE_MUTEX_STARTUP";
-    } else if (selectedMode == 16) {
-        diagnosticMode =
-            PvZ2DiagnosticMode::V89PerformanceProfiler;
-        diagnosticModeName =
-            @"V89_PERFORMANCE_PROFILER";
-    } else if (selectedMode == 17) {
-        diagnosticMode =
-            PvZ2DiagnosticMode::V90DirectPresentationProfiler;
-        diagnosticModeName =
-            @"V90_DIRECT_PRESENTATION_PROFILER";
-    } else if (selectedMode == 18) {
-        diagnosticMode =
-            PvZ2DiagnosticMode::V91IndexedAllocatorRelro;
-        diagnosticModeName =
-            @"V91_INDEXED_ALLOCATOR_RELRO";
-    } else if (selectedMode == 19) {
-        diagnosticMode =
-            PvZ2DiagnosticMode::V92LongRunInteractive;
-        diagnosticModeName =
-            @"V92_LONG_RUN_INTERACTIVE";
-    } else if (selectedMode == 20) {
-        diagnosticMode =
-            PvZ2DiagnosticMode::V93ReturnProvenance;
-        diagnosticModeName =
-            @"V93_RETURN_PROVENANCE";
-    } else if (selectedMode == 21) {
-        diagnosticMode =
-            PvZ2DiagnosticMode::V66BlockingWaitScheduler;
-        diagnosticModeName =
-            @"V66_BLOCKING_WAIT_SCHEDULER";
-    } else if (selectedMode == 22) {
-        diagnosticMode =
-            PvZ2DiagnosticMode::V65ConditionVariableScheduler;
-        diagnosticModeName =
-            @"V65_CONDITION_VARIABLE_SCHEDULER";
-    } else if (selectedMode == 23) {
-        diagnosticMode =
-            PvZ2DiagnosticMode::CtypeCompatDeepScout;
-        diagnosticModeName =
-            @"CTYPE_COMPAT_DEEP_SCOUT";
+    if (diagnosticDescriptor == nullptr) {
+        diagnosticDescriptor =
+            PvZ2DescribeDiagnosticMode(
+                PvZ2DiagnosticMode::FullMatrix);
     }
+
+    const PvZ2DiagnosticMode diagnosticMode =
+        diagnosticDescriptor != nullptr
+            ? diagnosticDescriptor->mode
+            : PvZ2DiagnosticMode::FullMatrix;
+
+    NSString *diagnosticModeName =
+        diagnosticDescriptor != nullptr
+            ? [NSString
+                  stringWithUTF8String:
+                      diagnosticDescriptor->internal_name]
+            : @"UNKNOWN";
 
     ResetPersistentLog();
     self.logView.text = @"";
@@ -2498,75 +2392,32 @@ void PvZ2HostNotifyDirectFrame(
         YES;
 
     gV80TransformProbeActive.store(
-        diagnosticMode ==
-            PvZ2DiagnosticMode::V80GlobalTransformProbe ||
-        diagnosticMode ==
-            PvZ2DiagnosticMode::V81HitTestLogicalPoints ||
-        diagnosticMode ==
-            PvZ2DiagnosticMode::V82ProfileLayoutRadar ||
-        diagnosticMode ==
-            PvZ2DiagnosticMode::V83ProfileButtonDispatch ||
-        diagnosticMode ==
-            PvZ2DiagnosticMode::V84FinalBlitTrace ||
-        diagnosticMode ==
-            PvZ2DiagnosticMode::V84PointsEqualPixels ||
-        diagnosticMode ==
-            PvZ2DiagnosticMode::V84AndroidGraphicsContract,
+        PvZ2DiagnosticModeHasCapability(
+            diagnosticMode,
+            PvZ2ProbeCapability::TransformProbe),
         std::memory_order_release);
     gV81HitTestTraceActive.store(
-        diagnosticMode ==
-            PvZ2DiagnosticMode::V80GlobalTransformProbe ||
-        diagnosticMode ==
-            PvZ2DiagnosticMode::V81HitTestLogicalPoints ||
-        diagnosticMode ==
-            PvZ2DiagnosticMode::V82ProfileLayoutRadar ||
-        diagnosticMode ==
-            PvZ2DiagnosticMode::V83ProfileButtonDispatch ||
-        diagnosticMode ==
-            PvZ2DiagnosticMode::V84FinalBlitTrace ||
-        diagnosticMode ==
-            PvZ2DiagnosticMode::V84PointsEqualPixels ||
-        diagnosticMode ==
-            PvZ2DiagnosticMode::V84AndroidGraphicsContract,
+        PvZ2DiagnosticModeHasCapability(
+            diagnosticMode,
+            PvZ2ProbeCapability::HitTestTrace),
         std::memory_order_release);
     gV81LogicalTouchActive.store(
-        diagnosticMode ==
-            PvZ2DiagnosticMode::V81HitTestLogicalPoints ||
-        diagnosticMode ==
-            PvZ2DiagnosticMode::V82ProfileLayoutRadar,
+        PvZ2DiagnosticModeHasCapability(
+            diagnosticMode,
+            PvZ2ProbeCapability::LogicalTouch),
         std::memory_order_release);
     gV81TouchMapTraceCount.store(
         0u,
         std::memory_order_release);
     gV85PerformanceBaselineActive.store(
-        diagnosticMode ==
-                PvZ2DiagnosticMode::V85PerformanceBaseline ||
-        diagnosticMode ==
-                PvZ2DiagnosticMode::V86HeapPerformanceFix ||
-        diagnosticMode ==
-                PvZ2DiagnosticMode::V87PreemptiveMutexScheduler ||
-        diagnosticMode ==
-                PvZ2DiagnosticMode::V88AdaptiveMutexStartup ||
-        diagnosticMode ==
-                PvZ2DiagnosticMode::V89PerformanceProfiler ||
-        diagnosticMode ==
-                PvZ2DiagnosticMode::V90DirectPresentationProfiler ||
-        diagnosticMode ==
-                PvZ2DiagnosticMode::V91IndexedAllocatorRelro ||
-        diagnosticMode ==
-                PvZ2DiagnosticMode::V92LongRunInteractive ||
-        diagnosticMode ==
-                PvZ2DiagnosticMode::V93ReturnProvenance,
+        PvZ2DiagnosticModeHasCapability(
+            diagnosticMode,
+            PvZ2ProbeCapability::PerformanceBaseline),
         std::memory_order_release);
     gV90DirectPresentationActive.store(
-        diagnosticMode ==
-                PvZ2DiagnosticMode::V90DirectPresentationProfiler ||
-        diagnosticMode ==
-                PvZ2DiagnosticMode::V91IndexedAllocatorRelro ||
-        diagnosticMode ==
-                PvZ2DiagnosticMode::V92LongRunInteractive ||
-        diagnosticMode ==
-                PvZ2DiagnosticMode::V93ReturnProvenance,
+        PvZ2DiagnosticModeHasCapability(
+            diagnosticMode,
+            PvZ2ProbeCapability::DirectPresentation),
         std::memory_order_release);
     gPvZ2KeyboardFirstResponder.store(
         false,
@@ -2574,46 +2425,9 @@ void PvZ2HostNotifyDirectFrame(
 
     [self refreshStatus];
 
-    if ((diagnosticMode ==
-         PvZ2DiagnosticMode::V74RetinaInputPolish ||
-     diagnosticMode ==
-         PvZ2DiagnosticMode::V75IpadUiPackage ||
-     diagnosticMode ==
-         PvZ2DiagnosticMode::V76IosScaleContract ||
-     diagnosticMode ==
-         PvZ2DiagnosticMode::V77LegacyIpadGeometry ||
-      diagnosticMode ==
-         PvZ2DiagnosticMode::V80GlobalTransformProbe ||
-      diagnosticMode ==
-         PvZ2DiagnosticMode::V81HitTestLogicalPoints ||
-      diagnosticMode ==
-         PvZ2DiagnosticMode::V82ProfileLayoutRadar ||
-       diagnosticMode ==
-          PvZ2DiagnosticMode::V83ProfileButtonDispatch ||
-       diagnosticMode ==
-          PvZ2DiagnosticMode::V84FinalBlitTrace ||
-       diagnosticMode ==
-          PvZ2DiagnosticMode::V84PointsEqualPixels ||
-       diagnosticMode ==
-          PvZ2DiagnosticMode::V84AndroidGraphicsContract ||
-       diagnosticMode ==
-          PvZ2DiagnosticMode::V85PerformanceBaseline ||
-       diagnosticMode ==
-          PvZ2DiagnosticMode::V86HeapPerformanceFix ||
-       diagnosticMode ==
-          PvZ2DiagnosticMode::V87PreemptiveMutexScheduler ||
-       diagnosticMode ==
-          PvZ2DiagnosticMode::V88AdaptiveMutexStartup ||
-       diagnosticMode ==
-          PvZ2DiagnosticMode::V89PerformanceProfiler ||
-       diagnosticMode ==
-          PvZ2DiagnosticMode::V90DirectPresentationProfiler ||
-       diagnosticMode ==
-          PvZ2DiagnosticMode::V91IndexedAllocatorRelro ||
-       diagnosticMode ==
-          PvZ2DiagnosticMode::V92LongRunInteractive ||
-       diagnosticMode ==
-          PvZ2DiagnosticMode::V93ReturnProvenance)) {
+    if (PvZ2DiagnosticModeHasCapability(
+            diagnosticMode,
+            PvZ2ProbeCapability::LivePresentation)) {
 
         PvZ2ResetInteractiveInput();
         gPvZ2KeyboardHostReady.store(
@@ -2727,46 +2541,9 @@ void PvZ2HostNotifyDirectFrame(
                                             : (obbError.localizedDescription
                                                 ?: @"failed")]];
 
-                        if ((diagnosticMode ==
-                                 PvZ2DiagnosticMode::V74RetinaInputPolish ||
-                             diagnosticMode ==
-                                 PvZ2DiagnosticMode::V75IpadUiPackage ||
-                             diagnosticMode ==
-                                 PvZ2DiagnosticMode::V76IosScaleContract ||
-                             diagnosticMode ==
-                                 PvZ2DiagnosticMode::V77LegacyIpadGeometry ||
-                              diagnosticMode ==
-                                  PvZ2DiagnosticMode::V80GlobalTransformProbe ||
-                              diagnosticMode ==
-                                  PvZ2DiagnosticMode::V81HitTestLogicalPoints ||
-                              diagnosticMode ==
-                                  PvZ2DiagnosticMode::V82ProfileLayoutRadar ||
-                               diagnosticMode ==
-                                   PvZ2DiagnosticMode::V83ProfileButtonDispatch ||
-                               diagnosticMode ==
-                                   PvZ2DiagnosticMode::V84FinalBlitTrace ||
-                               diagnosticMode ==
-                                   PvZ2DiagnosticMode::V84PointsEqualPixels ||
-                               diagnosticMode ==
-                                   PvZ2DiagnosticMode::V84AndroidGraphicsContract ||
-                               diagnosticMode ==
-                                   PvZ2DiagnosticMode::V85PerformanceBaseline ||
-                               diagnosticMode ==
-                                   PvZ2DiagnosticMode::V86HeapPerformanceFix ||
-                               diagnosticMode ==
-                                   PvZ2DiagnosticMode::V87PreemptiveMutexScheduler ||
-                               diagnosticMode ==
-                                   PvZ2DiagnosticMode::V88AdaptiveMutexStartup ||
-                               diagnosticMode ==
-                                   PvZ2DiagnosticMode::V89PerformanceProfiler ||
-                               diagnosticMode ==
-                                   PvZ2DiagnosticMode::V90DirectPresentationProfiler ||
-                               diagnosticMode ==
-                                   PvZ2DiagnosticMode::V91IndexedAllocatorRelro ||
-                               diagnosticMode ==
-                                   PvZ2DiagnosticMode::V92LongRunInteractive ||
-                               diagnosticMode ==
-                                   PvZ2DiagnosticMode::V93ReturnProvenance) &&
+                        if (PvZ2DiagnosticModeHasCapability(
+                                diagnosticMode,
+                                PvZ2ProbeCapability::LivePresentation) &&
                             selfRef.liveController != nil) {
 
                             [selfRef.liveController
@@ -2782,38 +2559,9 @@ void PvZ2HostNotifyDirectFrame(
 
             PvZ2LiveFrameCallback liveFrameCallback;
 
-            if ((diagnosticMode ==
-                 PvZ2DiagnosticMode::V74RetinaInputPolish ||
-             diagnosticMode ==
-                 PvZ2DiagnosticMode::V75IpadUiPackage ||
-             diagnosticMode ==
-                 PvZ2DiagnosticMode::V76IosScaleContract ||
-             diagnosticMode ==
-                 PvZ2DiagnosticMode::V77LegacyIpadGeometry ||
-      diagnosticMode ==
-         PvZ2DiagnosticMode::V80GlobalTransformProbe ||
-      diagnosticMode ==
-         PvZ2DiagnosticMode::V81HitTestLogicalPoints ||
-      diagnosticMode ==
-         PvZ2DiagnosticMode::V82ProfileLayoutRadar ||
-       diagnosticMode ==
-          PvZ2DiagnosticMode::V83ProfileButtonDispatch ||
-       diagnosticMode ==
-          PvZ2DiagnosticMode::V84FinalBlitTrace ||
-       diagnosticMode ==
-          PvZ2DiagnosticMode::V84PointsEqualPixels ||
-       diagnosticMode ==
-          PvZ2DiagnosticMode::V84AndroidGraphicsContract ||
-       diagnosticMode ==
-          PvZ2DiagnosticMode::V85PerformanceBaseline ||
-       diagnosticMode ==
-          PvZ2DiagnosticMode::V86HeapPerformanceFix ||
-       diagnosticMode ==
-          PvZ2DiagnosticMode::V87PreemptiveMutexScheduler ||
-       diagnosticMode ==
-          PvZ2DiagnosticMode::V88AdaptiveMutexStartup ||
-       diagnosticMode ==
-          PvZ2DiagnosticMode::V89PerformanceProfiler)) {
+            if (PvZ2DiagnosticModeHasCapability(
+                    diagnosticMode,
+                    PvZ2ProbeCapability::CpuLiveFrame)) {
 
                 liveFrameCallback =
                     [](
@@ -3137,52 +2885,14 @@ void PvZ2HostNotifyDirectFrame(
                             appendUI:
                                 @"SUCCESS STEP 3: PvZ2 completed the selected v84 render-contract run. Inspect V84 FINAL BLIT DRAW / V84 RENDER CONTRACT SUMMARY plus inherited V80 SCREENMATRIX, HOST PRESENT, touch and Profile markers."];
 
-                        if ((diagnosticMode ==
-                                 PvZ2DiagnosticMode::V74RetinaInputPolish ||
-                             diagnosticMode ==
-                                 PvZ2DiagnosticMode::V75IpadUiPackage ||
-                             diagnosticMode ==
-                                 PvZ2DiagnosticMode::V76IosScaleContract ||
-                             diagnosticMode ==
-                                 PvZ2DiagnosticMode::V77LegacyIpadGeometry ||
-                              diagnosticMode ==
-                                  PvZ2DiagnosticMode::V80GlobalTransformProbe ||
-                              diagnosticMode ==
-                                  PvZ2DiagnosticMode::V81HitTestLogicalPoints ||
-                              diagnosticMode ==
-                                  PvZ2DiagnosticMode::V82ProfileLayoutRadar ||
-                               diagnosticMode ==
-                                   PvZ2DiagnosticMode::V83ProfileButtonDispatch ||
-                               diagnosticMode ==
-                                   PvZ2DiagnosticMode::V84FinalBlitTrace ||
-                               diagnosticMode ==
-                                   PvZ2DiagnosticMode::V84PointsEqualPixels ||
-                               diagnosticMode ==
-                                   PvZ2DiagnosticMode::V84AndroidGraphicsContract ||
-                               diagnosticMode ==
-                                   PvZ2DiagnosticMode::V85PerformanceBaseline ||
-                               diagnosticMode ==
-                                   PvZ2DiagnosticMode::V86HeapPerformanceFix ||
-                               diagnosticMode ==
-                                   PvZ2DiagnosticMode::V87PreemptiveMutexScheduler ||
-                               diagnosticMode ==
-                                   PvZ2DiagnosticMode::V88AdaptiveMutexStartup ||
-                               diagnosticMode ==
-                                   PvZ2DiagnosticMode::V89PerformanceProfiler ||
-                               diagnosticMode ==
-                                   PvZ2DiagnosticMode::V90DirectPresentationProfiler ||
-                               diagnosticMode ==
-                                   PvZ2DiagnosticMode::V91IndexedAllocatorRelro ||
-                               diagnosticMode ==
-                                   PvZ2DiagnosticMode::V92LongRunInteractive ||
-                               diagnosticMode ==
-                                   PvZ2DiagnosticMode::V93ReturnProvenance) &&
+                        if (PvZ2DiagnosticModeHasCapability(
+                                diagnosticMode,
+                                PvZ2ProbeCapability::LivePresentation) &&
                             selfRef.liveController != nil) {
 
-                            if ((diagnosticMode ==
-                                     PvZ2DiagnosticMode::V92LongRunInteractive ||
-                                 diagnosticMode ==
-                                     PvZ2DiagnosticMode::V93ReturnProvenance) &&
+                            if (PvZ2DiagnosticModeHasCapability(
+                                    diagnosticMode,
+                                    PvZ2ProbeCapability::LongRunInteractive) &&
                                 result.hard_stop_requested) {
                                 [selfRef.liveController
                                     finishRunWithMessage:
@@ -3245,46 +2955,9 @@ void PvZ2HostNotifyDirectFrame(
                             NSStringFromStd(
                                 result.message);
 
-                        if ((diagnosticMode ==
-                                 PvZ2DiagnosticMode::V74RetinaInputPolish ||
-                             diagnosticMode ==
-                                 PvZ2DiagnosticMode::V75IpadUiPackage ||
-                             diagnosticMode ==
-                                 PvZ2DiagnosticMode::V76IosScaleContract ||
-                             diagnosticMode ==
-                                 PvZ2DiagnosticMode::V77LegacyIpadGeometry ||
-                              diagnosticMode ==
-                                  PvZ2DiagnosticMode::V80GlobalTransformProbe ||
-                              diagnosticMode ==
-                                  PvZ2DiagnosticMode::V81HitTestLogicalPoints ||
-                              diagnosticMode ==
-                                  PvZ2DiagnosticMode::V82ProfileLayoutRadar ||
-                               diagnosticMode ==
-                                   PvZ2DiagnosticMode::V83ProfileButtonDispatch ||
-                               diagnosticMode ==
-                                   PvZ2DiagnosticMode::V84FinalBlitTrace ||
-                               diagnosticMode ==
-                                   PvZ2DiagnosticMode::V84PointsEqualPixels ||
-                               diagnosticMode ==
-                                   PvZ2DiagnosticMode::V84AndroidGraphicsContract ||
-                               diagnosticMode ==
-                                   PvZ2DiagnosticMode::V85PerformanceBaseline ||
-                               diagnosticMode ==
-                                   PvZ2DiagnosticMode::V86HeapPerformanceFix ||
-                               diagnosticMode ==
-                                   PvZ2DiagnosticMode::V87PreemptiveMutexScheduler ||
-                               diagnosticMode ==
-                                   PvZ2DiagnosticMode::V88AdaptiveMutexStartup ||
-                               diagnosticMode ==
-                                   PvZ2DiagnosticMode::V89PerformanceProfiler ||
-                               diagnosticMode ==
-                                   PvZ2DiagnosticMode::V90DirectPresentationProfiler ||
-                               diagnosticMode ==
-                                   PvZ2DiagnosticMode::V91IndexedAllocatorRelro ||
-                               diagnosticMode ==
-                                   PvZ2DiagnosticMode::V92LongRunInteractive ||
-                               diagnosticMode ==
-                                   PvZ2DiagnosticMode::V93ReturnProvenance) &&
+                        if (PvZ2DiagnosticModeHasCapability(
+                                diagnosticMode,
+                                PvZ2ProbeCapability::LivePresentation) &&
                             selfRef.liveController != nil) {
 
                             if (result.hard_stop_requested) {
