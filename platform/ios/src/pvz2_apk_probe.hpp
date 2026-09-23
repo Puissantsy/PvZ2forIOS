@@ -77,6 +77,13 @@ void PvZ2HostSetKeyboardVisible(bool visible);
 bool PvZ2HostKeyboardVisible();
 bool PvZ2HostKeyboardFirstResponder();
 
+// v90: lightweight notification after direct GPU presentation. No framebuffer
+// pixels cross this boundary.
+void PvZ2HostNotifyDirectFrame(
+    std::uint32_t frame,
+    std::uint32_t width,
+    std::uint32_t height);
+
 void PvZ2RequestInteractiveStop();
 
 enum class PvZ2DiagnosticMode : std::uint32_t {
@@ -244,7 +251,15 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // critical-section burst. Also retain lightweight wall-clock startup phase
     // markers so the next iPad log identifies where startup time is spent.
     V88AdaptiveMutexStartup = 32u,
+
+    // v89 remains selectable as the heavy provenance control.
     V89PerformanceProfiler = 33u,
+
+    // v90 keeps the v88 scheduler/128 MiB heap/functional bridges, presents
+    // every completed guest frame directly on-GPU, and adds low-overhead
+    // deterministic performance probes without inheriting v89's BLX/HOTPC
+    // hot-path instrumentation.
+    V90DirectPresentationProfiler = 34u,
 };
 
 struct PvZ2JniProbeResult {

@@ -1,12 +1,15 @@
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
+#import <QuartzCore/CAEAGLLayer.h>
 #import <OpenGLES/EAGL.h>
+#import <OpenGLES/EAGLDrawable.h>
 #import <OpenGLES/ES2/gl.h>
 #import <OpenGLES/ES2/glext.h>
 
 #include "host_gles.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -29,7 +32,268 @@ std::uint64_t gLastNonBlackPixels = 0u;
 std::vector<std::uint8_t> gLiveReadbackPixels;
 std::vector<std::uint8_t> gLiveDisplayPixels;
 
+// v90 direct presentation. PvZ2 keeps rendering into gColorTexture using the
+// original guest context. A second context in the same sharegroup samples that
+// texture and presents it to the real CAEAGLLayer, so guest GL state is not
+// disturbed and no 12 MiB CPU readback is needed for live display.
+CAEAGLLayer *gPresentationLayer = nil;
+EAGLContext *gPresentationContext = nil;
+GLuint gPresentationFramebuffer = 0;
+GLuint gPresentationColorRenderbuffer = 0;
+GLuint gPresentationProgram = 0;
+GLuint gPresentationVbo = 0;
+GLint gPresentationSampler = -1;
+std::uint32_t gPresentationWidth = 0u;
+std::uint32_t gPresentationHeight = 0u;
+
+GLuint CompilePresentationShader(
+    GLenum type,
+    const char* source) {
+
+    const GLuint shader = glCreateShader(type);
+    if (shader == 0u) {
+        return 0u;
+    }
+
+    const GLchar* sources[] = {
+        reinterpret_cast<const GLchar*>(source)
+    };
+    glShaderSource(shader, 1, sources, nullptr);
+    glCompileShader(shader);
+
+    GLint ok = GL_FALSE;
+    glGetShaderiv(shader, GL_COMPILE_STATUS, &ok);
+    if (ok != GL_TRUE) {
+        glDeleteShader(shader);
+        return 0u;
+    }
+
+    return shader;
+}
+
+void DestroyPresentationResources() {
+    if (gPresentationContext != nil) {
+        [EAGLContext setCurrentContext:gPresentationContext];
+
+        if (gPresentationVbo != 0u) {
+            glDeleteBuffers(1, &gPresentationVbo);
+            gPresentationVbo = 0u;
+        }
+        if (gPresentationProgram != 0u) {
+            glDeleteProgram(gPresentationProgram);
+            gPresentationProgram = 0u;
+        }
+        if (gPresentationColorRenderbuffer != 0u) {
+            glDeleteRenderbuffers(
+                1,
+                &gPresentationColorRenderbuffer);
+            gPresentationColorRenderbuffer = 0u;
+        }
+        if (gPresentationFramebuffer != 0u) {
+            glDeleteFramebuffers(
+                1,
+                &gPresentationFramebuffer);
+            gPresentationFramebuffer = 0u;
+        }
+    }
+
+    gPresentationSampler = -1;
+    gPresentationWidth = 0u;
+    gPresentationHeight = 0u;
+    gPresentationContext = nil;
+
+    if (gContext != nil) {
+        [EAGLContext setCurrentContext:gContext];
+    } else {
+        [EAGLContext setCurrentContext:nil];
+    }
+}
+
+bool EnsurePresentationResources() {
+    if (gContext == nil ||
+        gPresentationLayer == nil ||
+        gColorTexture == 0u ||
+        gWidth == 0u ||
+        gHeight == 0u) {
+        return false;
+    }
+
+    if (gPresentationContext == nil) {
+        gPresentationContext =
+            [[EAGLContext alloc]
+                initWithAPI:kEAGLRenderingAPIOpenGLES2
+                sharegroup:gContext.sharegroup];
+        if (gPresentationContext == nil) {
+            return false;
+        }
+    }
+
+    if (![EAGLContext setCurrentContext:gPresentationContext]) {
+        return false;
+    }
+
+    if (gPresentationFramebuffer == 0u) {
+        glGenFramebuffers(
+            1,
+            &gPresentationFramebuffer);
+    }
+
+    if (gPresentationColorRenderbuffer == 0u) {
+        glGenRenderbuffers(
+            1,
+            &gPresentationColorRenderbuffer);
+        glBindRenderbuffer(
+            GL_RENDERBUFFER,
+            gPresentationColorRenderbuffer);
+
+        if (![gPresentationContext
+                renderbufferStorage:GL_RENDERBUFFER
+                fromDrawable:gPresentationLayer]) {
+            glDeleteRenderbuffers(
+                1,
+                &gPresentationColorRenderbuffer);
+            gPresentationColorRenderbuffer = 0u;
+            return false;
+        }
+
+        GLint width = 0;
+        GLint height = 0;
+        glGetRenderbufferParameteriv(
+            GL_RENDERBUFFER,
+            GL_RENDERBUFFER_WIDTH,
+            &width);
+        glGetRenderbufferParameteriv(
+            GL_RENDERBUFFER,
+            GL_RENDERBUFFER_HEIGHT,
+            &height);
+
+        if (width <= 0 || height <= 0) {
+            glDeleteRenderbuffers(
+                1,
+                &gPresentationColorRenderbuffer);
+            gPresentationColorRenderbuffer = 0u;
+            return false;
+        }
+
+        gPresentationWidth =
+            static_cast<std::uint32_t>(width);
+        gPresentationHeight =
+            static_cast<std::uint32_t>(height);
+
+        glBindFramebuffer(
+            GL_FRAMEBUFFER,
+            gPresentationFramebuffer);
+        glFramebufferRenderbuffer(
+            GL_FRAMEBUFFER,
+            GL_COLOR_ATTACHMENT0,
+            GL_RENDERBUFFER,
+            gPresentationColorRenderbuffer);
+
+        if (glCheckFramebufferStatus(GL_FRAMEBUFFER) !=
+            GL_FRAMEBUFFER_COMPLETE) {
+            glDeleteRenderbuffers(
+                1,
+                &gPresentationColorRenderbuffer);
+            gPresentationColorRenderbuffer = 0u;
+            return false;
+        }
+    }
+
+    if (gPresentationProgram == 0u) {
+        static const char* vertex_source =
+            "attribute vec2 aPosition;\n"
+            "attribute vec2 aTexCoord;\n"
+            "varying vec2 vTexCoord;\n"
+            "void main(){\n"
+            "  gl_Position=vec4(aPosition,0.0,1.0);\n"
+            "  vTexCoord=aTexCoord;\n"
+            "}\n";
+
+        static const char* fragment_source =
+            "precision mediump float;\n"
+            "uniform sampler2D uTexture;\n"
+            "varying vec2 vTexCoord;\n"
+            "void main(){\n"
+            "  vec4 c=texture2D(uTexture,vTexCoord);\n"
+            "  float a=c.a;\n"
+            "  vec3 rgb=(a<=0.0)?vec3(0.0):clamp(c.rgb/max(a,0.0039215686),0.0,1.0);\n"
+            "  gl_FragColor=vec4(rgb,1.0);\n"
+            "}\n";
+
+        const GLuint vertex =
+            CompilePresentationShader(
+                GL_VERTEX_SHADER,
+                vertex_source);
+        const GLuint fragment =
+            CompilePresentationShader(
+                GL_FRAGMENT_SHADER,
+                fragment_source);
+
+        if (vertex == 0u || fragment == 0u) {
+            if (vertex != 0u) glDeleteShader(vertex);
+            if (fragment != 0u) glDeleteShader(fragment);
+            return false;
+        }
+
+        gPresentationProgram = glCreateProgram();
+        glAttachShader(gPresentationProgram, vertex);
+        glAttachShader(gPresentationProgram, fragment);
+        glBindAttribLocation(
+            gPresentationProgram,
+            0u,
+            "aPosition");
+        glBindAttribLocation(
+            gPresentationProgram,
+            1u,
+            "aTexCoord");
+        glLinkProgram(gPresentationProgram);
+
+        glDeleteShader(vertex);
+        glDeleteShader(fragment);
+
+        GLint linked = GL_FALSE;
+        glGetProgramiv(
+            gPresentationProgram,
+            GL_LINK_STATUS,
+            &linked);
+        if (linked != GL_TRUE) {
+            glDeleteProgram(gPresentationProgram);
+            gPresentationProgram = 0u;
+            return false;
+        }
+
+        gPresentationSampler =
+            glGetUniformLocation(
+                gPresentationProgram,
+                "uTexture");
+    }
+
+    if (gPresentationVbo == 0u) {
+        // Both source texture and destination drawable use GL's bottom-left
+        // convention; unlike UIImage, the direct path needs no CPU row flip.
+        static const GLfloat quad[] = {
+            -1.0f, -1.0f, 0.0f, 0.0f,
+             1.0f, -1.0f, 1.0f, 0.0f,
+            -1.0f,  1.0f, 0.0f, 1.0f,
+             1.0f,  1.0f, 1.0f, 1.0f,
+        };
+
+        glGenBuffers(1, &gPresentationVbo);
+        glBindBuffer(
+            GL_ARRAY_BUFFER,
+            gPresentationVbo);
+        glBufferData(
+            GL_ARRAY_BUFFER,
+            sizeof(quad),
+            quad,
+            GL_STATIC_DRAW);
+    }
+
+    return true;
+}
+
 void DestroySurface() {
+    DestroyPresentationResources();
     if (gContext != nil) {
         [EAGLContext setCurrentContext:gContext];
 
@@ -257,6 +521,181 @@ extern "C" bool PvZ2HostGLESResize(
 
     return
         status == GL_FRAMEBUFFER_COMPLETE;
+}
+
+extern "C" void
+PvZ2HostGLESSetPresentationLayer(
+    void* ca_eagl_layer) {
+
+    CAEAGLLayer *layer =
+        (__bridge CAEAGLLayer *)ca_eagl_layer;
+
+    if (gPresentationLayer == layer) {
+        return;
+    }
+
+    DestroyPresentationResources();
+    gPresentationLayer = layer;
+}
+
+extern "C" void
+PvZ2HostGLESClearPresentationLayer(void) {
+    DestroyPresentationResources();
+    gPresentationLayer = nil;
+}
+
+extern "C" bool
+PvZ2HostGLESPresent(
+    std::uint32_t* drawable_width,
+    std::uint32_t* drawable_height) {
+
+    if (drawable_width != nullptr) {
+        *drawable_width = 0u;
+    }
+    if (drawable_height != nullptr) {
+        *drawable_height = 0u;
+    }
+
+    if (gContext == nil ||
+        gColorTexture == 0u ||
+        gWidth == 0u ||
+        gHeight == 0u ||
+        ![EAGLContext setCurrentContext:gContext]) {
+        return false;
+    }
+
+    // Apple sharegroups require producer commands to be flushed before a
+    // second context samples a texture modified by the producer.
+    glFlush();
+
+    if (!EnsurePresentationResources()) {
+        [EAGLContext setCurrentContext:gContext];
+        return false;
+    }
+
+    glBindFramebuffer(
+        GL_FRAMEBUFFER,
+        gPresentationFramebuffer);
+    glBindRenderbuffer(
+        GL_RENDERBUFFER,
+        gPresentationColorRenderbuffer);
+
+    // Clear the whole drawable, then render the 4:3 guest framebuffer
+    // aspect-fit inside it. The black bars match the old UIImage presentation.
+    glViewport(
+        0,
+        0,
+        static_cast<GLsizei>(gPresentationWidth),
+        static_cast<GLsizei>(gPresentationHeight));
+    glDisable(GL_BLEND);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_STENCIL_TEST);
+    glDisable(GL_SCISSOR_TEST);
+    glDisable(GL_CULL_FACE);
+    glColorMask(
+        GL_TRUE,
+        GL_TRUE,
+        GL_TRUE,
+        GL_TRUE);
+    glClearColor(
+        0.0f,
+        0.0f,
+        0.0f,
+        1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    const double scale =
+        std::min(
+            static_cast<double>(gPresentationWidth) /
+                static_cast<double>(gWidth),
+            static_cast<double>(gPresentationHeight) /
+                static_cast<double>(gHeight));
+
+    const GLsizei fitted_width =
+        static_cast<GLsizei>(
+            std::max<double>(
+                1.0,
+                std::floor(
+                    static_cast<double>(gWidth) *
+                        scale +
+                    0.5)));
+    const GLsizei fitted_height =
+        static_cast<GLsizei>(
+            std::max<double>(
+                1.0,
+                std::floor(
+                    static_cast<double>(gHeight) *
+                        scale +
+                    0.5)));
+    const GLint fitted_x =
+        (static_cast<GLint>(gPresentationWidth) -
+         fitted_width) /
+        2;
+    const GLint fitted_y =
+        (static_cast<GLint>(gPresentationHeight) -
+         fitted_height) /
+        2;
+
+    glViewport(
+        fitted_x,
+        fitted_y,
+        fitted_width,
+        fitted_height);
+
+    glUseProgram(gPresentationProgram);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(
+        GL_TEXTURE_2D,
+        gColorTexture);
+    if (gPresentationSampler >= 0) {
+        glUniform1i(
+            gPresentationSampler,
+            0);
+    }
+
+    glBindBuffer(
+        GL_ARRAY_BUFFER,
+        gPresentationVbo);
+    glEnableVertexAttribArray(0u);
+    glEnableVertexAttribArray(1u);
+    glVertexAttribPointer(
+        0u,
+        2,
+        GL_FLOAT,
+        GL_FALSE,
+        4 * sizeof(GLfloat),
+        reinterpret_cast<const void*>(0));
+    glVertexAttribPointer(
+        1u,
+        2,
+        GL_FLOAT,
+        GL_FALSE,
+        4 * sizeof(GLfloat),
+        reinterpret_cast<const void*>(
+            2 * sizeof(GLfloat)));
+    glDrawArrays(
+        GL_TRIANGLE_STRIP,
+        0,
+        4);
+
+    const BOOL presented =
+        [gPresentationContext
+            presentRenderbuffer:
+                GL_RENDERBUFFER];
+
+    if (drawable_width != nullptr) {
+        *drawable_width =
+            gPresentationWidth;
+    }
+    if (drawable_height != nullptr) {
+        *drawable_height =
+            gPresentationHeight;
+    }
+
+    // All guest GLES bridge calls continue on the original context.
+    [EAGLContext setCurrentContext:gContext];
+
+    return presented == YES;
 }
 
 extern "C" std::uint32_t

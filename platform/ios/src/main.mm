@@ -1,5 +1,7 @@
 #import <UIKit/UIKit.h>
 #import <Foundation/Foundation.h>
+#import <QuartzCore/CAEAGLLayer.h>
+#import <OpenGLES/EAGLDrawable.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 
 #include <dlfcn.h>
@@ -15,6 +17,7 @@
 #include <string>
 
 #include "dynarmic_smoke.hpp"
+#include "host_gles.hpp"
 #include "pvz2_apk_probe.hpp"
 
 extern "C" int csops(pid_t pid, unsigned int ops, void *useraddr, size_t usersize);
@@ -246,12 +249,60 @@ NSString *NSStringFromStd(
 
 } // namespace
 
+// v90: a real EAGL drawable replaces UIImageView as the live presentation
+// surface. Touches still belong to the parent controller; this view exists
+// only as the CAEAGLLayer backing store.
+@interface PvZ2DirectGLESView : UIView
+@end
+
+@implementation PvZ2DirectGLESView
+
++ (Class)layerClass {
+    return [CAEAGLLayer class];
+}
+
+- (instancetype)initWithFrame:
+        (CGRect)frame {
+
+    self =
+        [super initWithFrame:frame];
+
+    if (self != nil) {
+        self.opaque = YES;
+        self.backgroundColor =
+            UIColor.blackColor;
+        self.userInteractionEnabled =
+            NO;
+        self.contentScaleFactor =
+            UIScreen.mainScreen.scale;
+
+        CAEAGLLayer *layer =
+            (CAEAGLLayer *)self.layer;
+        layer.opaque = YES;
+        layer.contentsScale =
+            self.contentScaleFactor;
+        layer.drawableProperties =
+            @{
+                kEAGLDrawablePropertyRetainedBacking:
+                    @NO,
+                kEAGLDrawablePropertyColorFormat:
+                    kEAGLColorFormatRGBA8
+            };
+    }
+
+    return self;
+}
+
+@end
+
 @interface PvZ2LiveViewController :
     UIViewController
     <UITextFieldDelegate>
 
 @property(nonatomic, strong)
     UIImageView *imageView;
+@property(nonatomic, strong)
+    PvZ2DirectGLESView *directView;
 @property(nonatomic, strong)
     UILabel *captionLabel;
 @property(nonatomic, strong)
@@ -274,6 +325,13 @@ NSString *NSStringFromStd(
 - (void)updateFrameData:
         (NSData *)data
     width:
+        (NSUInteger)width
+    height:
+        (NSUInteger)height
+    frame:
+        (NSUInteger)frame;
+
+- (void)updateDirectFrameWidth:
         (NSUInteger)width
     height:
         (NSUInteger)height
@@ -311,6 +369,9 @@ static std::atomic<std::uint64_t>
 
 static std::atomic<bool>
     gV85PerformanceBaselineActive{false};
+
+static std::atomic<bool>
+    gV90DirectPresentationActive{false};
 
 static std::uint64_t V85HostNowNs() {
     return static_cast<std::uint64_t>(
@@ -372,6 +433,26 @@ bool PvZ2HostKeyboardFirstResponder() {
         std::memory_order_acquire);
 }
 
+void PvZ2HostNotifyDirectFrame(
+    std::uint32_t frame,
+    std::uint32_t width,
+    std::uint32_t height) {
+
+    dispatch_async(
+        dispatch_get_main_queue(),
+        ^{
+            PvZ2LiveViewController *controller =
+                gPvZ2LiveController;
+
+            if (controller != nil) {
+                [controller
+                    updateDirectFrameWidth:width
+                    height:height
+                    frame:frame];
+            }
+        });
+}
+
 @implementation PvZ2LiveViewController
 
 - (void)viewDidLoad {
@@ -402,6 +483,30 @@ bool PvZ2HostKeyboardFirstResponder() {
     self.imageView.multipleTouchEnabled =
         YES;
 
+    self.directView =
+        [[PvZ2DirectGLESView alloc]
+            initWithFrame:CGRectZero];
+    self.directView.translatesAutoresizingMaskIntoConstraints =
+        NO;
+
+    const BOOL v90Direct =
+        gV90DirectPresentationActive.load(
+            std::memory_order_acquire)
+            ? YES
+            : NO;
+
+    self.directView.hidden =
+        !v90Direct;
+    self.imageView.hidden =
+        v90Direct;
+
+    // v90 inherits the validated Points=Pixels 2048x1536 guest surface.
+    // Set this before the first present so touch mapping is ready immediately.
+    if (v90Direct) {
+        self.sourceWidth = 2048u;
+        self.sourceHeight = 1536u;
+    }
+
     self.captionLabel =
         [[UILabel alloc] init];
     self.captionLabel.translatesAutoresizingMaskIntoConstraints =
@@ -425,7 +530,7 @@ bool PvZ2HostKeyboardFirstResponder() {
     self.captionLabel.clipsToBounds =
         YES;
     self.captionLabel.text =
-        @"PvZ2 v89 — starting…\nperformance/provenance profiler";
+        @"PvZ2 v90 — starting…\ndirect GPU + deterministic profiler";
 
     self.stopButton =
         [UIButton
@@ -494,6 +599,7 @@ bool PvZ2HostKeyboardFirstResponder() {
         UITextAutocapitalizationTypeNone;
 
     [self.view addSubview:self.imageView];
+    [self.view addSubview:self.directView];
     [self.view addSubview:self.keyboardField];
     [self.view addSubview:self.captionLabel];
     [self.view addSubview:self.stopButton];
@@ -516,6 +622,15 @@ bool PvZ2HostKeyboardFirstResponder() {
             [self.imageView.trailingAnchor
                 constraintEqualToAnchor:self.view.trailingAnchor],
 
+            [self.directView.topAnchor
+                constraintEqualToAnchor:self.view.topAnchor],
+            [self.directView.bottomAnchor
+                constraintEqualToAnchor:self.view.bottomAnchor],
+            [self.directView.leadingAnchor
+                constraintEqualToAnchor:self.view.leadingAnchor],
+            [self.directView.trailingAnchor
+                constraintEqualToAnchor:self.view.trailingAnchor],
+
             [self.captionLabel.topAnchor
                 constraintEqualToAnchor:guide.topAnchor
                 constant:6.0],
@@ -536,6 +651,12 @@ bool PvZ2HostKeyboardFirstResponder() {
             [self.stopButton.heightAnchor
                 constraintEqualToConstant:36.0],
         ]];
+
+    if (v90Direct) {
+        PvZ2HostGLESSetPresentationLayer(
+            (__bridge void *)
+                self.directView.layer);
+    }
 }
 
 - (BOOL)prefersStatusBarHidden {
@@ -574,6 +695,11 @@ bool PvZ2HostKeyboardFirstResponder() {
         false,
         std::memory_order_release);
 
+    if (gV90DirectPresentationActive.load(
+            std::memory_order_acquire)) {
+        PvZ2HostGLESClearPresentationLayer();
+    }
+
     [super
         viewWillDisappear:
             animated];
@@ -593,7 +719,7 @@ bool PvZ2HostKeyboardFirstResponder() {
 
     self.inputEnabled = NO;
     self.captionLabel.text =
-        @"PvZ2 v89 LIVE — HARD STOP requested; interrupting guest at the next Dynarmic checkpoint…";
+        @"PvZ2 v90 LIVE — HARD STOP requested; interrupting guest at the next Dynarmic checkpoint…";
     self.stopButton.enabled = NO;
     PvZ2RequestInteractiveStop();
 }
@@ -818,16 +944,23 @@ bool PvZ2HostKeyboardFirstResponder() {
     previousY:
         (std::int32_t *)previousY {
 
+    UIView *presentationView =
+        gV90DirectPresentationActive.load(
+            std::memory_order_acquire)
+            ? (UIView *)self.directView
+            : (UIView *)self.imageView;
+
     if (!self.inputEnabled ||
         self.sourceWidth == 0u ||
         self.sourceHeight == 0u ||
-        (touch.view != self.imageView &&
+        presentationView == nil ||
+        (touch.view != presentationView &&
          touch.view != self.view)) {
         return NO;
     }
 
     const CGSize bounds =
-        self.imageView.bounds.size;
+        presentationView.bounds.size;
 
     if (bounds.width <= 0.0 ||
         bounds.height <= 0.0) {
@@ -866,7 +999,7 @@ bool PvZ2HostKeyboardFirstResponder() {
     const CGPoint point =
         [touch
             locationInView:
-                self.imageView];
+                presentationView];
 
     if (point.x < offsetX ||
         point.y < offsetY ||
@@ -880,7 +1013,7 @@ bool PvZ2HostKeyboardFirstResponder() {
     CGPoint previous =
         [touch
             previousLocationInView:
-                self.imageView];
+                presentationView];
 
     previous.x =
         std::clamp<CGFloat>(
@@ -1128,6 +1261,50 @@ bool PvZ2HostKeyboardFirstResponder() {
             event];
 }
 
+- (void)updateDirectFrameWidth:
+        (NSUInteger)width
+    height:
+        (NSUInteger)height
+    frame:
+        (NSUInteger)frame {
+
+    if (width == 0u ||
+        height == 0u) {
+        return;
+    }
+
+    self.sourceWidth = width;
+    self.sourceHeight = height;
+
+    if (frame >= 3u &&
+        !gPvZ2KeyboardHostReady.exchange(
+            true,
+            std::memory_order_acq_rel) &&
+        gPvZ2KeyboardRequested.load(
+            std::memory_order_acquire)) {
+        [self setHostKeyboardVisible:YES];
+    }
+
+    if (!self.runFinished) {
+        self.inputEnabled =
+            frame >= 3u;
+
+        NSString *touchState =
+            self.inputEnabled
+                ? @"TOUCH ENABLED"
+                : @"warming up…";
+
+        self.captionLabel.text =
+            [NSString
+                stringWithFormat:
+                    @"PvZ2 v90 LIVE • frame %lu • %@\n%lu×%lu guest • direct GPU 1:1",
+                    (unsigned long)frame,
+                    touchState,
+                    (unsigned long)width,
+                    (unsigned long)height];
+    }
+}
+
 - (void)updateFrameData:
         (NSData *)data
     width:
@@ -1350,7 +1527,7 @@ bool PvZ2HostKeyboardFirstResponder() {
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — v89 Performance Profiler";
+        @"PvZ2forIOS — v90 Direct Presentation Profiler";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -1359,7 +1536,7 @@ bool PvZ2HostKeyboardFirstResponder() {
         NO;
 
     title.text =
-        @"PvZ2forIOS — v89 Performance Profiler";
+        @"PvZ2forIOS — v90 Direct Presentation Profiler";
 
     title.font =
         [UIFont
@@ -1375,7 +1552,7 @@ bool PvZ2HostKeyboardFirstResponder() {
         NO;
 
     explanation.text =
-        @"v89 preserves v88 scheduler/heap/resource/render/audio behavior for direct comparison. It adds immediate Hard Stop, PC/LR/tid profiling at scheduler boundaries, aggregate ETC1/VFS/zlib/GLES timing, and indirect BLX target provenance for the v88 ARM/Thumb crash.";
+        @"v90 keeps the deterministic v88 scheduler/128 MiB heap/resource/input baseline, removes v89's hot BLX/quantum profiler from this mode, presents every guest frame directly through a shared EAGL context, fixes total-frame pacing, and measures font cmap scans, allocator fragmentation and worker time with aggregate probes.";
 
     explanation.numberOfLines = 0;
 
@@ -1442,6 +1619,7 @@ bool PvZ2HostKeyboardFirstResponder() {
                     @"V87 Mutex",
                     @"V88 Adaptive",
                     @"V89 Profiler",
+                    @"V90 Direct",
                     @"V66 Waits",
                     @"V65 Cond",
                     @"Ctype Scout"
@@ -1450,7 +1628,7 @@ bool PvZ2HostKeyboardFirstResponder() {
     self.diagnosticModeControl.translatesAutoresizingMaskIntoConstraints =
         NO;
     self.diagnosticModeControl.selectedSegmentIndex =
-        16;
+        17;
 
     UIStackView *mainButtons =
         [[UIStackView alloc]
@@ -2100,6 +2278,7 @@ bool PvZ2HostKeyboardFirstResponder() {
             @"V87_PREEMPTIVE_MUTEX_SCHEDULER",
             @"V88_ADAPTIVE_MUTEX_STARTUP",
             @"V89_PERFORMANCE_PROFILER",
+            @"V90_DIRECT_PRESENTATION_PROFILER",
             @"V66_BLOCKING_WAIT_SCHEDULER",
             @"V65_CONDITION_VARIABLE_SCHEDULER",
             @"CTYPE_COMPAT_DEEP_SCOUT"
@@ -2118,7 +2297,7 @@ bool PvZ2HostKeyboardFirstResponder() {
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. mode=%@. Start with V89 Profiler. It preserves v88 behavior while collecting bounded performance/provenance data; Hard Stop interrupts the active guest slice.",
+                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. mode=%@. Start with V90 Direct. It presents every guest frame on-GPU, removes the v89 BLX/quantum hot probes, uses total-frame pacing, and collects low-overhead font/allocator/worker timings.",
                     modeNames[modeIndex]]];
 
     [self
@@ -2263,15 +2442,20 @@ bool PvZ2HostKeyboardFirstResponder() {
             @"V89_PERFORMANCE_PROFILER";
     } else if (selectedMode == 17) {
         diagnosticMode =
+            PvZ2DiagnosticMode::V90DirectPresentationProfiler;
+        diagnosticModeName =
+            @"V90_DIRECT_PRESENTATION_PROFILER";
+    } else if (selectedMode == 18) {
+        diagnosticMode =
             PvZ2DiagnosticMode::V66BlockingWaitScheduler;
         diagnosticModeName =
             @"V66_BLOCKING_WAIT_SCHEDULER";
-    } else if (selectedMode == 18) {
+    } else if (selectedMode == 19) {
         diagnosticMode =
             PvZ2DiagnosticMode::V65ConditionVariableScheduler;
         diagnosticModeName =
             @"V65_CONDITION_VARIABLE_SCHEDULER";
-    } else if (selectedMode == 19) {
+    } else if (selectedMode == 20) {
         diagnosticMode =
             PvZ2DiagnosticMode::CtypeCompatDeepScout;
         diagnosticModeName =
@@ -2285,7 +2469,7 @@ bool PvZ2HostKeyboardFirstResponder() {
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v89 Performance Profiler started mode=%@; PID=%d ===",
+                    @"=== PvZ2 v90 Direct Presentation Profiler started mode=%@; PID=%d ===",
                     diagnosticModeName,
                     getpid()]];
 
@@ -2341,7 +2525,15 @@ bool PvZ2HostKeyboardFirstResponder() {
         diagnosticMode ==
                 PvZ2DiagnosticMode::V87PreemptiveMutexScheduler ||
         diagnosticMode ==
-                PvZ2DiagnosticMode::V88AdaptiveMutexStartup,
+                PvZ2DiagnosticMode::V88AdaptiveMutexStartup ||
+        diagnosticMode ==
+                PvZ2DiagnosticMode::V89PerformanceProfiler ||
+        diagnosticMode ==
+                PvZ2DiagnosticMode::V90DirectPresentationProfiler,
+        std::memory_order_release);
+    gV90DirectPresentationActive.store(
+        diagnosticMode ==
+            PvZ2DiagnosticMode::V90DirectPresentationProfiler,
         std::memory_order_release);
     gPvZ2KeyboardFirstResponder.store(
         false,
@@ -2380,7 +2572,9 @@ bool PvZ2HostKeyboardFirstResponder() {
        diagnosticMode ==
           PvZ2DiagnosticMode::V88AdaptiveMutexStartup ||
        diagnosticMode ==
-          PvZ2DiagnosticMode::V89PerformanceProfiler)) {
+          PvZ2DiagnosticMode::V89PerformanceProfiler ||
+       diagnosticMode ==
+          PvZ2DiagnosticMode::V90DirectPresentationProfiler)) {
 
         PvZ2ResetInteractiveInput();
         gPvZ2KeyboardHostReady.store(
@@ -2525,7 +2719,9 @@ bool PvZ2HostKeyboardFirstResponder() {
                                diagnosticMode ==
                                    PvZ2DiagnosticMode::V88AdaptiveMutexStartup ||
                                diagnosticMode ==
-                                   PvZ2DiagnosticMode::V89PerformanceProfiler) &&
+                                   PvZ2DiagnosticMode::V89PerformanceProfiler ||
+                               diagnosticMode ==
+                                   PvZ2DiagnosticMode::V90DirectPresentationProfiler) &&
                             selfRef.liveController != nil) {
 
                             [selfRef.liveController
@@ -2927,14 +3123,16 @@ bool PvZ2HostKeyboardFirstResponder() {
                                diagnosticMode ==
                                    PvZ2DiagnosticMode::V88AdaptiveMutexStartup ||
                                diagnosticMode ==
-                                   PvZ2DiagnosticMode::V89PerformanceProfiler) &&
+                                   PvZ2DiagnosticMode::V89PerformanceProfiler ||
+                               diagnosticMode ==
+                                   PvZ2DiagnosticMode::V90DirectPresentationProfiler) &&
                             selfRef.liveController != nil) {
 
                             [selfRef.liveController
                                 finishRunWithMessage:
                                     [NSString
                                         stringWithFormat:
-                                            @"PvZ2 v89 LIVE — run finished after %u guest frames.\nClose to inspect the performance/provenance log.",
+                                            @"PvZ2 v90 LIVE — run finished after %u guest frames.\nClose to inspect the direct-presentation/performance log.",
                                             result.draw_frames_completed]];
 
                         } else if (!result.final_frame_png_path.empty()) {
@@ -3014,16 +3212,18 @@ bool PvZ2HostKeyboardFirstResponder() {
                                diagnosticMode ==
                                    PvZ2DiagnosticMode::V88AdaptiveMutexStartup ||
                                diagnosticMode ==
-                                   PvZ2DiagnosticMode::V89PerformanceProfiler) &&
+                                   PvZ2DiagnosticMode::V89PerformanceProfiler ||
+                               diagnosticMode ==
+                                   PvZ2DiagnosticMode::V90DirectPresentationProfiler) &&
                             selfRef.liveController != nil) {
 
                             if (result.hard_stop_requested) {
                                 [selfRef.liveController finishRunWithMessage:
-                                    @"PvZ2 v89 LIVE — HARD STOPPED.\nGuest execution was interrupted at the next Dynarmic checkpoint. Close to inspect the preserved profiler log."];
+                                    @"PvZ2 v90 LIVE — HARD STOPPED.\nGuest execution was interrupted at the next Dynarmic checkpoint. Close to inspect the preserved profiler log."];
                             } else {
                                 [selfRef.liveController finishRunWithMessage:
                                     [NSString stringWithFormat:
-                                        @"PvZ2 v89 LIVE — guest stopped/crashed.\n%@\nClose to inspect the performance/provenance log.", message]];
+                                        @"PvZ2 v90 LIVE — guest stopped/crashed.\n%@\nClose to inspect the direct-presentation/performance log.", message]];
                             }
 
                         } else {

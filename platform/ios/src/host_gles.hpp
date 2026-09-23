@@ -14,6 +14,15 @@ bool PvZ2HostGLESBegin(std::uint32_t width, std::uint32_t height);
 // mappings remain valid across a GL-view scale-factor change.
 bool PvZ2HostGLESResize(std::uint32_t width, std::uint32_t height);
 
+// v90: present the validated offscreen guest framebuffer directly through a
+// CAEAGLLayer-backed renderbuffer. The layer is opaque here so this header
+// stays independent from Objective-C/UIKit types.
+void PvZ2HostGLESSetPresentationLayer(void* ca_eagl_layer);
+void PvZ2HostGLESClearPresentationLayer(void);
+bool PvZ2HostGLESPresent(
+    std::uint32_t* drawable_width,
+    std::uint32_t* drawable_height);
+
 std::uint32_t PvZ2HostGLESDefaultFramebuffer(void);
 const char* PvZ2HostGLESCapturePNG(void);
 const char* PvZ2HostGLESFrameStats(void);

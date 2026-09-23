@@ -1239,6 +1239,8 @@ constexpr std::uint32_t kJniProbeSvcV82Candidate6Post = 0x00f0b3u;
 constexpr std::uint32_t kJniProbeSvcV83ButtonDispatchEntry = 0x00f0b4u;
 constexpr std::uint32_t kJniProbeSvcV89BlxTarget0 = 0x00f0c0u;
 constexpr std::uint32_t kJniProbeSvcV89BlxTarget1 = 0x00f0c1u;
+constexpr std::uint32_t kJniProbeSvcV90FontScanBegin = 0x00f0c2u;
+constexpr std::uint32_t kJniProbeSvcV90FontScanEnd = 0x00f0c3u;
 
 constexpr std::uint32_t kJniProbeSvcUnsupportedJniBase = 0x00e000u;
 constexpr std::uint32_t kJniProbeJniSlotCount = 256u;
@@ -1540,6 +1542,149 @@ public:
         heap_retired_allocations;
     std::map<std::uint32_t, std::uint32_t> heap_free_blocks;
 
+    // v90: exact first-fit scan-depth accounting plus sparse wall-time
+    // sampling. Wall time is sampled once per 1024 alloc/free calls so this
+    // profiler does not become the allocator bottleneck it is measuring.
+    bool v90_allocator_profile = false;
+    std::uint64_t v90_alloc_calls_internal = 0u;
+    std::uint64_t v90_free_calls_internal = 0u;
+    std::uint64_t v90_alloc_from_free = 0u;
+    std::uint64_t v90_alloc_scan_total = 0u;
+    std::uint64_t v90_alloc_scan_max = 0u;
+    std::array<std::uint64_t, 6> v90_alloc_scan_hist{};
+    std::uint64_t v90_alloc_sample_count = 0u;
+    std::uint64_t v90_alloc_sample_ns = 0u;
+    std::uint64_t v90_alloc_sample_max_ns = 0u;
+    std::uint64_t v90_free_sample_count = 0u;
+    std::uint64_t v90_free_sample_ns = 0u;
+    std::uint64_t v90_free_sample_max_ns = 0u;
+    std::size_t v90_free_blocks_peak = 0u;
+
+    static std::uint64_t V90AllocatorNowNs() {
+        return static_cast<std::uint64_t>(
+            std::chrono::duration_cast<
+                std::chrono::nanoseconds>(
+                    std::chrono::steady_clock::now()
+                        .time_since_epoch())
+                .count());
+    }
+
+    void EnableV90AllocatorProfiling(
+        bool enabled) {
+        v90_allocator_profile = enabled;
+        if (enabled) {
+            v90_free_blocks_peak =
+                heap_free_blocks.size();
+        }
+    }
+
+    void V90ObserveFreeBlocks() {
+        if (!v90_allocator_profile) {
+            return;
+        }
+        v90_free_blocks_peak =
+            std::max(
+                v90_free_blocks_peak,
+                heap_free_blocks.size());
+    }
+
+    void V90FinishAllocProfile(
+        std::uint64_t scan_steps,
+        bool from_free,
+        bool sampled,
+        std::uint64_t begin_ns) {
+
+        if (!v90_allocator_profile) {
+            return;
+        }
+
+        v90_alloc_scan_total += scan_steps;
+        v90_alloc_scan_max =
+            std::max(
+                v90_alloc_scan_max,
+                scan_steps);
+
+        std::size_t bucket = 0u;
+        if (scan_steps == 0u) bucket = 0u;
+        else if (scan_steps <= 4u) bucket = 1u;
+        else if (scan_steps <= 16u) bucket = 2u;
+        else if (scan_steps <= 64u) bucket = 3u;
+        else if (scan_steps <= 256u) bucket = 4u;
+        else bucket = 5u;
+        ++v90_alloc_scan_hist[bucket];
+
+        if (from_free) {
+            ++v90_alloc_from_free;
+        }
+
+        V90ObserveFreeBlocks();
+
+        if (sampled) {
+            const std::uint64_t now =
+                V90AllocatorNowNs();
+            const std::uint64_t elapsed =
+                now >= begin_ns
+                    ? now - begin_ns
+                    : 0u;
+            ++v90_alloc_sample_count;
+            v90_alloc_sample_ns += elapsed;
+            v90_alloc_sample_max_ns =
+                std::max(
+                    v90_alloc_sample_max_ns,
+                    elapsed);
+        }
+    }
+
+    std::string V90AllocatorSummary() const {
+        std::ostringstream out;
+        out << std::fixed
+            << std::setprecision(3)
+            << "V90 ALLOC SUMMARY"
+            << " allocCalls=" << v90_alloc_calls_internal
+            << " freeCalls=" << v90_free_calls_internal
+            << " fromFree=" << v90_alloc_from_free
+            << " scanTotal=" << v90_alloc_scan_total
+            << " scanAvg="
+            << (v90_alloc_calls_internal != 0u
+                    ? static_cast<double>(v90_alloc_scan_total) /
+                          static_cast<double>(v90_alloc_calls_internal)
+                    : 0.0)
+            << " scanMax=" << v90_alloc_scan_max
+            << " scanHist{0=" << v90_alloc_scan_hist[0]
+            << ",1-4=" << v90_alloc_scan_hist[1]
+            << ",5-16=" << v90_alloc_scan_hist[2]
+            << ",17-64=" << v90_alloc_scan_hist[3]
+            << ",65-256=" << v90_alloc_scan_hist[4]
+            << ",257+=" << v90_alloc_scan_hist[5]
+            << "}"
+            << " freeBlocks{live=" << heap_free_blocks.size()
+            << ",peak=" << v90_free_blocks_peak
+            << "}"
+            << " allocSample{n=" << v90_alloc_sample_count
+            << ",avgUs="
+            << (v90_alloc_sample_count != 0u
+                    ? static_cast<double>(v90_alloc_sample_ns) /
+                          static_cast<double>(v90_alloc_sample_count) /
+                          1000.0
+                    : 0.0)
+            << ",maxUs="
+            << static_cast<double>(v90_alloc_sample_max_ns) /
+                   1000.0
+            << "}"
+            << " freeSample{n=" << v90_free_sample_count
+            << ",avgUs="
+            << (v90_free_sample_count != 0u
+                    ? static_cast<double>(v90_free_sample_ns) /
+                          static_cast<double>(v90_free_sample_count) /
+                          1000.0
+                    : 0.0)
+            << ",maxUs="
+            << static_cast<double>(v90_free_sample_max_ns) /
+                   1000.0
+            << "}";
+        return out.str();
+    }
+
     const std::uint8_t* Ptr(
         std::uint32_t address,
         std::size_t size = 1) const {
@@ -1728,16 +1873,31 @@ public:
             std::max<std::uint32_t>(
                 size,
                 1u);
-
         const std::uint32_t safe_alignment =
             std::max<std::uint32_t>(
                 alignment,
                 1u);
 
-        for (auto it =
-                 heap_free_blocks.begin();
+        const std::uint64_t profile_call =
+            v90_allocator_profile
+                ? ++v90_alloc_calls_internal
+                : 0u;
+        const bool sampled =
+            v90_allocator_profile &&
+            (profile_call & 0x3ffu) == 1u;
+        const std::uint64_t sample_begin_ns =
+            sampled
+                ? V90AllocatorNowNs()
+                : 0u;
+        std::uint64_t scan_steps = 0u;
+
+        for (auto it = heap_free_blocks.begin();
              it != heap_free_blocks.end();
              ++it) {
+
+            if (v90_allocator_profile) {
+                ++scan_steps;
+            }
 
             const std::uint32_t block_begin =
                 it->first;
@@ -1770,28 +1930,25 @@ public:
             heap_free_blocks.erase(it);
 
             if (prefix != 0u) {
-                heap_free_blocks[
-                    block_begin] =
+                heap_free_blocks[block_begin] =
                     prefix;
             }
-
-            if (allocation_end <
-                block_end) {
-                heap_free_blocks[
-                    allocation_end] =
-                    block_end -
-                    allocation_end;
+            if (allocation_end < block_end) {
+                heap_free_blocks[allocation_end] =
+                    block_end - allocation_end;
             }
 
             const std::uint32_t address =
-                kJniProbeHeapBase +
-                aligned;
-
+                kJniProbeHeapBase + aligned;
             heap_allocations[address] =
                 requested;
-            heap_live_bytes +=
-                requested;
+            heap_live_bytes += requested;
 
+            V90FinishAllocProfile(
+                scan_steps,
+                true,
+                sampled,
+                sample_begin_ns);
             return address;
         }
 
@@ -1799,34 +1956,38 @@ public:
             AlignHeapOffset(
                 heap_next,
                 safe_alignment);
-
         const std::uint32_t heap_capacity =
             HeapCapacity();
 
         if (aligned == 0xffffffffu ||
             aligned > heap_capacity ||
             requested >
-                heap_capacity -
-                    aligned) {
+                heap_capacity - aligned) {
+            V90FinishAllocProfile(
+                scan_steps,
+                false,
+                sampled,
+                sample_begin_ns);
             return 0;
         }
 
-        heap_next =
-            aligned + requested;
+        heap_next = aligned + requested;
         heap_high_water =
             std::max(
                 heap_high_water,
                 heap_next);
 
         const std::uint32_t address =
-            kJniProbeHeapBase +
-            aligned;
-
+            kJniProbeHeapBase + aligned;
         heap_allocations[address] =
             requested;
-        heap_live_bytes +=
-            requested;
+        heap_live_bytes += requested;
 
+        V90FinishAllocProfile(
+            scan_steps,
+            false,
+            sampled,
+            sample_begin_ns);
         return address;
     }
 
@@ -1914,18 +2075,38 @@ public:
     }
 
     void FreeHeap(std::uint32_t address) {
-        const auto it =
-            heap_allocations.find(
-                address);
+        const std::uint64_t profile_call =
+            v90_allocator_profile
+                ? ++v90_free_calls_internal
+                : 0u;
+        const bool sampled =
+            v90_allocator_profile &&
+            (profile_call & 0x3ffu) == 1u;
+        const std::uint64_t sample_begin_ns =
+            sampled
+                ? V90AllocatorNowNs()
+                : 0u;
 
-        if (it ==
-            heap_allocations.end()) {
+        const auto it =
+            heap_allocations.find(address);
+
+        if (it == heap_allocations.end()) {
+            if (sampled) {
+                const std::uint64_t elapsed =
+                    V90AllocatorNowNs() -
+                    sample_begin_ns;
+                ++v90_free_sample_count;
+                v90_free_sample_ns += elapsed;
+                v90_free_sample_max_ns =
+                    std::max(
+                        v90_free_sample_max_ns,
+                        elapsed);
+            }
             return;
         }
 
         const std::uint32_t size =
             it->second;
-
         heap_allocations.erase(it);
 
         if (heap_live_bytes >= size) {
@@ -1935,9 +2116,21 @@ public:
         }
 
         InsertFreeHeapBlock(
-            address -
-                kJniProbeHeapBase,
+            address - kJniProbeHeapBase,
             size);
+        V90ObserveFreeBlocks();
+
+        if (sampled) {
+            const std::uint64_t elapsed =
+                V90AllocatorNowNs() -
+                sample_begin_ns;
+            ++v90_free_sample_count;
+            v90_free_sample_ns += elapsed;
+            v90_free_sample_max_ns =
+                std::max(
+                    v90_free_sample_max_ns,
+                    elapsed);
+        }
     }
 
     std::uint32_t HeapCapacity() const {
@@ -2457,6 +2650,21 @@ public:
     std::unordered_map<std::uint32_t,std::uint64_t> v89_tid_samples;
     std::uint64_t v89_quantum_samples=0u,v89_blx_events=0u,v89_blx_odd_targets=0u;
     bool v89_terminal_summaries_emitted=false;
+
+    // v90 deterministic profiler state.
+    std::unordered_map<std::uint32_t,std::uint64_t> v90_font_begin_ns;
+    std::unordered_map<std::string,std::pair<std::uint64_t,std::uint64_t>>
+        v90_font_by_phase;
+    std::uint64_t v90_font_scans=0u,v90_font_total_ns=0u,v90_font_max_ns=0u,v90_font_unmatched=0u;
+    std::unordered_map<std::uint32_t,std::uint64_t> v90_worker_ns_by_tid;
+    std::uint64_t v90_worker_wait_ns_total=0u,v90_boundary_worker_ns_total=0u;
+    std::uint64_t v90_present_calls=0u,v90_present_failures=0u,v90_present_ns_total=0u,v90_present_max_ns=0u;
+    std::uint32_t v90_last_drawable_width=0u,v90_last_drawable_height=0u;
+    std::uint32_t v90_profile_frame=0u;
+    std::uint64_t v90_frame_worker_wait_ns=0u,v90_frame_boundary_worker_ns=0u,v90_frame_present_ns=0u,v90_frame_font_ns=0u;
+    std::uint64_t v90_frame_alloc_calls_begin=0u,v90_frame_alloc_scan_begin=0u;
+    std::uint64_t v90_frames_profiled=0u,v90_guest_ns_total=0u,v90_active_ns_total=0u;
+    bool v90_terminal_summaries_emitted=false;
 
     // v81: detailed event serialization provenance. The host-side mapper logs
     // UIKit -> framebuffer-pixel -> logical-point candidates; this counter
@@ -7155,6 +7363,8 @@ public:
             return "V88_ADAPTIVE_MUTEX_STARTUP";
         case PvZ2DiagnosticMode::V89PerformanceProfiler:
             return "V89_PERFORMANCE_PROFILER";
+        case PvZ2DiagnosticMode::V90DirectPresentationProfiler:
+            return "V90_DIRECT_PRESENTATION_PROFILER";
         }
         return "UNKNOWN";
     }
@@ -7241,12 +7451,28 @@ public:
         return out.str();
     }
 
+    bool V90Enabled() const {
+        return
+            diagnostic_mode ==
+                PvZ2DiagnosticMode::V90DirectPresentationProfiler;
+    }
+
     bool V89Enabled() const {
-        return diagnostic_mode == PvZ2DiagnosticMode::V89PerformanceProfiler;
+        return
+            diagnostic_mode ==
+                PvZ2DiagnosticMode::V89PerformanceProfiler;
+    }
+
+    bool V89HostCostEnabled() const {
+        return V89Enabled() || V90Enabled();
     }
 
     bool V88Enabled() const {
-        return diagnostic_mode == PvZ2DiagnosticMode::V88AdaptiveMutexStartup || V89Enabled();
+        return
+            diagnostic_mode ==
+                PvZ2DiagnosticMode::V88AdaptiveMutexStartup ||
+            V89Enabled() ||
+            V90Enabled();
     }
 
     bool V87Enabled() const {
@@ -7303,7 +7529,8 @@ public:
             line.rfind("V87 SCHEDULER", 0u) == 0u ||
             line.rfind("V88 STARTUP", 0u) == 0u ||
             line.rfind("V88 SCHEDULER", 0u) == 0u ||
-            line.rfind("V89 ", 0u) == 0u) {
+            line.rfind("V89 ", 0u) == 0u ||
+            line.rfind("V90 ", 0u) == 0u) {
             return true;
         }
 
@@ -7419,7 +7646,7 @@ public:
     }
 
     void V89RecordHostCost(const char* name,std::uint64_t begin,std::uint64_t bytes=0u) {
-        if(!V89Enabled()||begin==0u||name==nullptr)return;
+        if(!V89HostCostEnabled()||begin==0u||name==nullptr)return;
         const auto now=V85SteadyNowNs(),ns=now>=begin?now-begin:0u;
         auto& b=v89_host_buckets[std::string{name}];
         ++b.calls;b.total_ns+=ns;b.max_ns=std::max(b.max_ns,ns);b.bytes+=bytes;
@@ -7462,6 +7689,243 @@ public:
         if(!V89Enabled()||v89_terminal_summaries_emitted)return;v89_terminal_summaries_emitted=true;
         Append(std::string{"V89 TERMINAL reason="}+(reason?reason:"unknown")+" blxEvents="+std::to_string(v89_blx_events)+" oddTargets="+std::to_string(v89_blx_odd_targets));
         Append(V89HotPcSummary());Append(V89HostCostSummary());
+    }
+
+    std::string V90HostCostSummary() const {
+        std::vector<std::pair<std::string,V89HostBucket>> v(
+            v89_host_buckets.begin(),
+            v89_host_buckets.end());
+        std::sort(
+            v.begin(),
+            v.end(),
+            [](const auto& a,const auto& b){
+                return a.second.total_ns>b.second.total_ns;
+            });
+        std::ostringstream o;
+        o<<std::fixed<<std::setprecision(3)
+         <<"V90 HOSTCOST SUMMARY buckets="<<v.size();
+        for(const auto& [n,b]:v) {
+            o<<"\nV90 HOSTCOST bucket="<<n
+             <<" calls="<<b.calls
+             <<" totalMs="<<double(b.total_ns)/1e6
+             <<" maxMs="<<double(b.max_ns)/1e6
+             <<" bytes="<<b.bytes;
+        }
+        return o.str();
+    }
+
+    void V90BeginFrame(std::uint32_t frame) {
+        if(!V90Enabled())return;
+        v90_profile_frame=frame;
+        v90_frame_worker_wait_ns=0u;
+        v90_frame_boundary_worker_ns=0u;
+        v90_frame_present_ns=0u;
+        v90_frame_font_ns=0u;
+        v90_frame_alloc_calls_begin=
+            mem.v90_alloc_calls_internal;
+        v90_frame_alloc_scan_begin=
+            mem.v90_alloc_scan_total;
+    }
+
+    void V90RecordWorkerWall(
+        std::uint32_t tid,
+        std::uint64_t elapsed_ns,
+        bool boundary) {
+
+        if(!V90Enabled())return;
+        v90_worker_ns_by_tid[tid]+=elapsed_ns;
+        if(boundary){
+            v90_boundary_worker_ns_total+=elapsed_ns;
+            if(current_frame_number==v90_profile_frame)
+                v90_frame_boundary_worker_ns+=elapsed_ns;
+        } else {
+            v90_worker_wait_ns_total+=elapsed_ns;
+            if(current_frame_number==v90_profile_frame)
+                v90_frame_worker_wait_ns+=elapsed_ns;
+        }
+    }
+
+    void V90FontScanBegin() {
+        if(!V90Enabled())return;
+        v90_font_begin_ns[current_probe_thread_id]=
+            V85SteadyNowNs();
+    }
+
+    void V90FontScanEnd() {
+        if(!V90Enabled())return;
+        const auto it=
+            v90_font_begin_ns.find(
+                current_probe_thread_id);
+        if(it==v90_font_begin_ns.end()){
+            ++v90_font_unmatched;
+            return;
+        }
+
+        const auto now=V85SteadyNowNs();
+        const auto elapsed=
+            now>=it->second?now-it->second:0u;
+        v90_font_begin_ns.erase(it);
+        ++v90_font_scans;
+        v90_font_total_ns+=elapsed;
+        v90_font_max_ns=
+            std::max(v90_font_max_ns,elapsed);
+
+        const std::string phase=
+            current_lifecycle_name.empty()
+                ?"n/a"
+                :current_lifecycle_name;
+        auto& phase_bucket=
+            v90_font_by_phase[phase];
+        ++phase_bucket.first;
+        phase_bucket.second+=elapsed;
+
+        if(current_frame_number==v90_profile_frame)
+            v90_frame_font_ns+=elapsed;
+    }
+
+    void V90RecordPresent(
+        std::uint32_t frame,
+        std::uint64_t elapsed_ns,
+        bool ok,
+        std::uint32_t drawable_width,
+        std::uint32_t drawable_height) {
+
+        if(!V90Enabled())return;
+        ++v90_present_calls;
+        if(!ok)++v90_present_failures;
+        v90_present_ns_total+=elapsed_ns;
+        v90_present_max_ns=
+            std::max(
+                v90_present_max_ns,
+                elapsed_ns);
+        v90_last_drawable_width=
+            drawable_width;
+        v90_last_drawable_height=
+            drawable_height;
+        if(frame==v90_profile_frame)
+            v90_frame_present_ns+=elapsed_ns;
+
+        if(!ok &&
+           (v90_present_failures<=4u ||
+            (v90_present_failures&
+             (v90_present_failures-1u))==0u)) {
+            Append(
+                "V90 PRESENT FAIL frame="+
+                std::to_string(frame)+
+                " failures="+
+                std::to_string(v90_present_failures));
+        }
+    }
+
+    void V90EndFrame(
+        std::uint32_t frame,
+        std::uint64_t guest_ns,
+        std::uint64_t active_ns) {
+
+        if(!V90Enabled())return;
+        ++v90_frames_profiled;
+        v90_guest_ns_total+=guest_ns;
+        v90_active_ns_total+=active_ns;
+
+        const std::uint64_t main_approx_ns=
+            guest_ns>=v90_frame_worker_wait_ns
+                ?guest_ns-v90_frame_worker_wait_ns
+                :0u;
+        const std::uint64_t alloc_calls=
+            mem.v90_alloc_calls_internal>=
+                    v90_frame_alloc_calls_begin
+                ?mem.v90_alloc_calls_internal-
+                    v90_frame_alloc_calls_begin
+                :0u;
+        const std::uint64_t alloc_scan_steps=
+            mem.v90_alloc_scan_total>=
+                    v90_frame_alloc_scan_begin
+                ?mem.v90_alloc_scan_total-
+                    v90_frame_alloc_scan_begin
+                :0u;
+
+        const bool interesting=
+            frame<=5u ||
+            (frame%30u)==0u ||
+            guest_ns>=250000000ull ||
+            v90_frame_worker_wait_ns>=250000000ull ||
+            v90_frame_boundary_worker_ns>=250000000ull ||
+            v90_frame_font_ns!=0u ||
+            alloc_scan_steps>=4096u;
+
+        if(interesting){
+            std::ostringstream o;
+            o<<std::fixed<<std::setprecision(3)
+             <<"V90 FRAME frame="<<frame
+             <<" guestMs="<<double(guest_ns)/1e6
+             <<" mainApproxMs="<<double(main_approx_ns)/1e6
+             <<" waitWorkerMs="<<double(v90_frame_worker_wait_ns)/1e6
+             <<" boundaryWorkerMs="<<double(v90_frame_boundary_worker_ns)/1e6
+             <<" fontMs="<<double(v90_frame_font_ns)/1e6
+             <<" presentMs="<<double(v90_frame_present_ns)/1e6
+             <<" activeFrameMs="<<double(active_ns)/1e6
+             <<" allocCalls="<<alloc_calls
+             <<" allocScanSteps="<<alloc_scan_steps
+             <<" freeBlocks="<<mem.heap_free_blocks.size();
+            Append(o.str());
+        }
+    }
+
+    std::string V90FrameSummary() const {
+        std::ostringstream o;
+        o<<std::fixed<<std::setprecision(3)
+         <<"V90 FRAME SUMMARY frames="<<v90_frames_profiled
+         <<" guestTotalMs="<<double(v90_guest_ns_total)/1e6
+         <<" activeTotalMs="<<double(v90_active_ns_total)/1e6
+         <<" waitWorkerTotalMs="<<double(v90_worker_wait_ns_total)/1e6
+         <<" boundaryWorkerTotalMs="<<double(v90_boundary_worker_ns_total)/1e6
+         <<" present{calls="<<v90_present_calls
+         <<",failures="<<v90_present_failures
+         <<",totalMs="<<double(v90_present_ns_total)/1e6
+         <<",maxMs="<<double(v90_present_max_ns)/1e6
+         <<",drawable="<<v90_last_drawable_width
+         <<"x"<<v90_last_drawable_height
+         <<"} workers={";
+        bool first=true;
+        for(const auto& [tid,ns]:v90_worker_ns_by_tid){
+            if(!first)o<<",";
+            first=false;
+            o<<tid<<":"<<double(ns)/1e6<<"ms";
+        }
+        o<<"}";
+        return o.str();
+    }
+
+    std::string V90FontSummary() const {
+        std::ostringstream o;
+        o<<std::fixed<<std::setprecision(3)
+         <<"V90 FONT SUMMARY scans="<<v90_font_scans
+         <<" totalMs="<<double(v90_font_total_ns)/1e6
+         <<" maxMs="<<double(v90_font_max_ns)/1e6
+         <<" unmatched="<<v90_font_unmatched
+         <<" phases={";
+        bool first=true;
+        for(const auto& [phase,bucket]:v90_font_by_phase){
+            if(!first)o<<",";
+            first=false;
+            o<<phase<<":"<<bucket.first
+             <<"/"<<double(bucket.second)/1e6<<"ms";
+        }
+        o<<"}";
+        return o.str();
+    }
+
+    void V90EmitTerminalSummaries(const char* reason) {
+        if(!V90Enabled()||
+           v90_terminal_summaries_emitted)return;
+        v90_terminal_summaries_emitted=true;
+        Append(
+            std::string{"V90 TERMINAL reason="}+
+            (reason?reason:"unknown"));
+        Append(V90FontSummary());
+        Append(V90FrameSummary());
+        Append(mem.V90AllocatorSummary());
+        Append(V90HostCostSummary());
     }
 
     bool V84FinalBlitEnabled() const {
@@ -12342,6 +12806,21 @@ public:
             const auto obj=regs[0],vt=regs[1];
             if(swi==kJniProbeSvcV89BlxTarget0){const auto t=mem.Read32Guest(vt);regs[1]=t;V89RecordIndirectBlx(kGuestBase+0x00894b2cu,obj,vt,0u,t);}
             else{const auto t=mem.Read32Guest(vt+0x1cu);regs[2]=t;V89RecordIndirectBlx(kGuestBase+0x00894b3cu,obj,vt,0x1cu,t);}
+            return;
+        }
+
+        if(V90Enabled()&&
+           (swi==kJniProbeSvcV90FontScanBegin||
+            swi==kJniProbeSvcV90FontScanEnd)){
+            if(swi==kJniProbeSvcV90FontScanBegin){
+                // Original @lib+0x00a4dc30: MOVW r6,#0xffff.
+                regs[6]=0xffffu;
+                V90FontScanBegin();
+            } else {
+                // Original @lib+0x00a4dc78: MOV r0,r4.
+                regs[0]=regs[4];
+                V90FontScanEnd();
+            }
             return;
         }
 
@@ -19326,7 +19805,7 @@ public:
                 return;
             }
 
-            const std::uint64_t v89_zlib_begin_ns=V89Enabled()?V85SteadyNowNs():0u;
+            const std::uint64_t v89_zlib_begin_ns=V89HostCostEnabled()?V85SteadyNowNs():0u;
             const int status =
                 name == "deflate"
                     ? ::deflate(
@@ -19342,7 +19821,7 @@ public:
             const std::uint32_t produced =
                 original_avail_out -
                 it->second.avail_out;
-            if(V89Enabled())V89RecordHostCost(name=="inflate"?"zlib.inflate":"zlib.deflate",v89_zlib_begin_ns,static_cast<std::uint64_t>(consumed)+produced);
+            if(V89HostCostEnabled())V89RecordHostCost(name=="inflate"?"zlib.inflate":"zlib.deflate",v89_zlib_begin_ns,static_cast<std::uint64_t>(consumed)+produced);
 
             if (V70Enabled()) {
                 ++v70_zlib_calls;
@@ -23580,7 +24059,7 @@ public:
                     return;
                 }
 
-                const std::uint64_t v89_vfs_begin_ns=V89Enabled()&&bytes!=0u?V85SteadyNowNs():0u;
+                const std::uint64_t v89_vfs_begin_ns=V89HostCostEnabled()&&bytes!=0u?V85SteadyNowNs():0u;
                 if (bytes != 0u) {
                     const std::uint8_t* source =
                         it->second.owned
@@ -23600,7 +24079,7 @@ public:
                         source,
                         static_cast<std::size_t>(
                             bytes));
-                    if(V89Enabled())V89RecordHostCost("vfs.read.memcpy",v89_vfs_begin_ns,bytes);
+                    if(V89HostCostEnabled())V89RecordHostCost("vfs.read.memcpy",v89_vfs_begin_ns,bytes);
                 }
 
                 it->second.offset += bytes;
@@ -25017,7 +25496,7 @@ public:
                         }
                     }
 
-                    const std::uint64_t v89_tex_begin_ns=V89Enabled()?V85SteadyNowNs():0u;
+                    const std::uint64_t v89_tex_begin_ns=V89HostCostEnabled()?V85SteadyNowNs():0u;
                     glTexImage2D(
                         static_cast<GLenum>(
                             guest_arg(0u)),
@@ -25032,7 +25511,7 @@ public:
                         format,
                         type,
                         pixels);
-                    if(V89Enabled())V89RecordHostCost("gles.glTexImage2D",v89_tex_begin_ns,bytes);
+                    if(V89HostCostEnabled())V89RecordHostCost("gles.glTexImage2D",v89_tex_begin_ns,bytes);
                     regs[0] = 0u;
                 } else if (name == "glTexSubImage2D") {
                     ++gles_texture_uploads;
@@ -25066,7 +25545,7 @@ public:
                                       : 1u)
                             : nullptr;
 
-                    const std::uint64_t v89_subtex_begin_ns=V89Enabled()?V85SteadyNowNs():0u;
+                    const std::uint64_t v89_subtex_begin_ns=V89HostCostEnabled()?V85SteadyNowNs():0u;
                     glTexSubImage2D(
                         static_cast<GLenum>(
                             guest_arg(0u)),
@@ -25081,7 +25560,7 @@ public:
                         format,
                         type,
                         pixels);
-                    if(V89Enabled())V89RecordHostCost("gles.glTexSubImage2D",v89_subtex_begin_ns,bytes);
+                    if(V89HostCostEnabled())V89RecordHostCost("gles.glTexSubImage2D",v89_subtex_begin_ns,bytes);
                     regs[0] = 0u;
                 } else if (
                     name == "glCompressedTexImage2D") {
@@ -25145,7 +25624,7 @@ public:
                         std::vector<std::uint8_t>
                             decoded_rgb;
 
-                        const std::uint64_t v89_etc_begin_ns=V89Enabled()&&data!=nullptr?V85SteadyNowNs():0u;
+                        const std::uint64_t v89_etc_begin_ns=V89HostCostEnabled()&&data!=nullptr?V85SteadyNowNs():0u;
                         const bool decoded =
                             data == nullptr
                                 ? false
@@ -25158,7 +25637,7 @@ public:
                                       width,
                                       height,
                                       decoded_rgb);
-                        if(V89Enabled()&&data!=nullptr)V89RecordHostCost("etc1.decode",v89_etc_begin_ns,image_size>0?static_cast<std::uint64_t>(image_size):0u);
+                        if(V89HostCostEnabled()&&data!=nullptr)V89RecordHostCost("etc1.decode",v89_etc_begin_ns,image_size>0?static_cast<std::uint64_t>(image_size):0u);
 
                         if (data == nullptr) {
                             glTexImage2D(
@@ -25172,7 +25651,7 @@ public:
                                 GL_UNSIGNED_BYTE,
                                 nullptr);
                         } else if (decoded) {
-                            const std::uint64_t v89_etc_upload_begin_ns=V89Enabled()?V85SteadyNowNs():0u;
+                            const std::uint64_t v89_etc_upload_begin_ns=V89HostCostEnabled()?V85SteadyNowNs():0u;
                             glTexImage2D(
                                 target,
                                 level,
@@ -25183,7 +25662,7 @@ public:
                                 GL_RGB,
                                 GL_UNSIGNED_BYTE,
                                 decoded_rgb.data());
-                            if(V89Enabled())V89RecordHostCost("gles.etc1Upload",v89_etc_upload_begin_ns,decoded_rgb.size());
+                            if(V89HostCostEnabled())V89RecordHostCost("gles.etc1Upload",v89_etc_upload_begin_ns,decoded_rgb.size());
 
                             ++v71_etc1_transcodes;
                             v71_etc1_compressed_bytes +=
@@ -26880,6 +27359,7 @@ public:
         result.message =
             diagnostic;
         if(V89Enabled())V89EmitTerminalSummaries("guest-exception");
+        if(V90Enabled())V90EmitTerminalSummaries("guest-exception");
 
         if (jit) {
             jit->HaltExecution(
@@ -26889,13 +27369,15 @@ public:
 
     void AddTicks(std::uint64_t ticks) override {
         ticks_consumed += ticks;
-        if(V89Enabled()&&gV72StopRequested.load(std::memory_order_acquire)){
+        if((V89Enabled()||V90Enabled())&&gV72StopRequested.load(std::memory_order_acquire)){
             if(!result.hard_stop_requested){
                 result.hard_stop_requested=true;
                 const auto pc=jit?jit->Regs()[15]:0u,lr=jit?jit->Regs()[14]:0u,cpsr=jit?jit->Cpsr():0u;
-                result.message="V89 Hard Stop requested by user.";
-                Append("V89 HARD STOP frame="+std::to_string(current_frame_number)+" tid="+std::to_string(current_probe_thread_id)+" PC="+V46DescribeGuestAddress(pc)+" LR="+V46DescribeGuestAddress(lr)+" CPSR=0x"+JniProbeHex(cpsr));
-                V89EmitTerminalSummaries("user-hard-stop");
+                const std::string tag=V90Enabled()?"V90":"V89";
+                result.message=tag+" Hard Stop requested by user.";
+                Append(tag+" HARD STOP frame="+std::to_string(current_frame_number)+" tid="+std::to_string(current_probe_thread_id)+" PC="+V46DescribeGuestAddress(pc)+" LR="+V46DescribeGuestAddress(lr)+" CPSR=0x"+JniProbeHex(cpsr));
+                if(V89Enabled())V89EmitTerminalSummaries("user-hard-stop");
+                if(V90Enabled())V90EmitTerminalSummaries("user-hard-stop");
             }
             ticks_left=0u;if(jit)jit->HaltExecution(Dynarmic::HaltReason::UserDefined3);return;
         }
@@ -28045,6 +28527,19 @@ bool JniProbePrepareRuntime(
         error="v89 BLX provenance signature mismatch at 0x10894b28/0x10894b34.";return false;
     }
 
+    if(callbacks.V90Enabled()&&
+       (!patch_resource_native_miss(
+            0x00a4dc30u,
+            0xe30f6fffu,
+            kJniProbeSvcV90FontScanBegin) ||
+        !patch_resource_native_miss(
+            0x00a4dc78u,
+            0xe1a00004u,
+            kJniProbeSvcV90FontScanEnd))) {
+        error="v90 font cmap scan signature mismatch at 0x10a4dc30/0x10a4dc78.";
+        return false;
+    }
+
     callbacks.Append(
         "V48 RESFILE WRAPPER-FINAL BRIDGE: v45 internal hooks preserved; direct-group null returns are observed at 0x1087a708 and all-groups-exhausted nulls at 0x1087a76c with the exact wrapper ID still in r6.");
     callbacks.Append(
@@ -28161,7 +28656,9 @@ bool JniProbePrepareRuntime(
         callbacks.Append(
             "V83 PROFILE BUTTON DISPATCH: v83 restored the V80 2048x1536 pixel touch control and proved buttonId=5 can dispatch even when the raw +0x28/+0x2c/+0x30/+0x34 radar rectangle does not contain the screen-space tap. Those raw fields are therefore local/transformed, not absolute hitboxes. The passive dispatcher trap remains enabled and does not alter rendering, widget geometry or GameState.");
     }
-    if(callbacks.V89Enabled()){
+    if(callbacks.V90Enabled()){
+        callbacks.Append("V90 PROFILER: v88 scheduler + 128 MiB heap + functional resource/input path preserved; v89 BLX/quantum hot probes disabled; direct 1:1 shared-EAGL presentation, total-frame pacing, cmap full-scan timing, allocator fragmentation counters and worker wall-time aggregation enabled.");
+    } else if(callbacks.V89Enabled()){
         callbacks.Append("V89 PROFILER: v88 scheduler/heap/resource/audio/render/input semantics preserved; Hard Stop, quantum PC/LR/tid aggregation, ETC1/VFS/zlib/GLES host-cost buckets and BLX target provenance enabled.");
     } else if (callbacks.V88Enabled()) {
         callbacks.Append(
@@ -28707,12 +29204,18 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
              diagnostic_mode ==
                     PvZ2DiagnosticMode::V88AdaptiveMutexStartup ||
              diagnostic_mode ==
-                    PvZ2DiagnosticMode::V89PerformanceProfiler)
+                    PvZ2DiagnosticMode::V89PerformanceProfiler ||
+             diagnostic_mode ==
+                    PvZ2DiagnosticMode::V90DirectPresentationProfiler)
                 ? kJniProbeHeapSizeV86
                 : kJniProbeHeapSize;
 
         JniProbeGuestMemory memory(
             guest_heap_size);
+        memory.EnableV90AllocatorProfiling(
+            diagnostic_mode ==
+                PvZ2DiagnosticMode::V90DirectPresentationProfiler);
+
         PvZ2JniCallbacks callbacks(
             memory,
             result,
@@ -30246,8 +30749,16 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                 std::uint32_t persistent_held_chunks = 0u;
 
                                 for (;;) {
+                                    const std::uint64_t v90_worker_begin_ns =
+                                        callbacks.V90Enabled() ? V85SteadyNowNs() : 0u;
                                     const Dynarmic::HaltReason worker_halt =
                                         jit.Run();
+                                    if (callbacks.V90Enabled()) {
+                                        callbacks.V90RecordWorkerWall(
+                                            worker_state.id,
+                                            V85SteadyNowNs() - v90_worker_begin_ns,
+                                            false);
+                                    }
 
                                     worker_state.regs = jit.Regs();
                                     worker_state.ext_regs = jit.ExtRegs();
@@ -31237,8 +31748,16 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             std::uint32_t persistent_held_chunks = 0u;
 
                             for (;;) {
+                                const std::uint64_t v90_worker_begin_ns =
+                                    callbacks.V90Enabled() ? V85SteadyNowNs() : 0u;
                                 const Dynarmic::HaltReason worker_halt =
                                     jit.Run();
+                                if (callbacks.V90Enabled()) {
+                                    callbacks.V90RecordWorkerWall(
+                                        worker_state.id,
+                                        V85SteadyNowNs() - v90_worker_begin_ns,
+                                        true);
+                                }
 
                                 worker_state.regs =
                                     jit.Regs();
@@ -32042,6 +32561,9 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                     const std::uint32_t frame_number =
                         frame + 1u;
 
+                    const std::uint64_t v90_frame_loop_begin_ns =
+                        callbacks.V90Enabled() ? V85SteadyNowNs() : 0u;
+
                     if (callbacks.V72Enabled() &&
                         gV72StopRequested.load(
                             std::memory_order_acquire)) {
@@ -32062,6 +32584,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
 
                     callbacks.current_frame_number =
                         frame_number;
+                    callbacks.V90BeginFrame(frame_number);
 
                     if (sample) {
                         callbacks.Append(
@@ -32088,10 +32611,14 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             0,
                             0,
                             true);
+                    const std::uint64_t v85_draw_elapsed_ns =
+                        callbacks.V85PerformanceEnabled()
+                            ? V85SteadyNowNs() - v85_draw_begin_ns
+                            : 0u;
                     if (callbacks.V85PerformanceEnabled()) {
                         callbacks.V85RecordGuestDraw(
                             frame_number,
-                            V85SteadyNowNs() - v85_draw_begin_ns);
+                            v85_draw_elapsed_ns);
                     }
 
                     if (!draw_ok) {
@@ -32113,6 +32640,30 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
 
                     result.draw_frames_completed =
                         frame_number;
+
+                    if (callbacks.V90Enabled() &&
+                        callbacks.host_gles_ready) {
+                        std::uint32_t drawable_width = 0u;
+                        std::uint32_t drawable_height = 0u;
+                        const std::uint64_t present_begin_ns = V85SteadyNowNs();
+                        const bool presented =
+                            PvZ2HostGLESPresent(
+                                &drawable_width,
+                                &drawable_height);
+                        callbacks.V90RecordPresent(
+                            frame_number,
+                            V85SteadyNowNs() - present_begin_ns,
+                            presented,
+                            drawable_width,
+                            drawable_height);
+                        if (presented) {
+                            ++v72_live_frames;
+                            PvZ2HostNotifyDirectFrame(
+                                frame_number,
+                                callbacks.host_surface_width,
+                                callbacks.host_surface_height);
+                        }
+                    }
 
                     // Start() can be reached while a frame is executing
                     // (analytics/live-config/telemetry requests do this).
@@ -32466,6 +33017,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                     }
 
                     if (callbacks.V72Enabled() &&
+                        !callbacks.V90Enabled() &&
                         callbacks.host_gles_ready &&
                         live_frame) {
 
@@ -32532,6 +33084,13 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                         }
                     }
 
+                    if (callbacks.V90Enabled()) {
+                        callbacks.V90EndFrame(
+                            frame_number,
+                            v85_draw_elapsed_ns,
+                            V85SteadyNowNs() - v90_frame_loop_begin_ns);
+                    }
+
                     if (callbacks.V72Enabled() &&
                         gV72StopRequested.load(
                             std::memory_order_acquire)) {
@@ -32549,13 +33108,25 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
 
                     if (frame_number !=
                         kV36FrameCount) {
-                        std::this_thread::sleep_for(
-                            std::chrono::milliseconds(
-                                16));
+                        if (callbacks.V90Enabled()) {
+                            constexpr std::uint64_t kV90TargetFrameNs =
+                                16666667ull;
+                            const std::uint64_t elapsed_ns =
+                                V85SteadyNowNs() - v90_frame_loop_begin_ns;
+                            if (elapsed_ns < kV90TargetFrameNs) {
+                                std::this_thread::sleep_for(
+                                    std::chrono::nanoseconds(
+                                        kV90TargetFrameNs - elapsed_ns));
+                            }
+                        } else {
+                            std::this_thread::sleep_for(
+                                std::chrono::milliseconds(16));
+                        }
                     }
                 }
 
                 if(callbacks.V89Enabled())callbacks.V89EmitTerminalSummaries("normal-frame-loop-exit");
+                if(callbacks.V90Enabled())callbacks.V90EmitTerminalSummaries("normal-frame-loop-exit");
                 if (callbacks.V87Enabled()) {
                     callbacks.Append(
                         callbacks.V87MutexSummary());
