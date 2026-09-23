@@ -34256,7 +34256,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                         if (v92_long_run) {
                             result.hard_stop_requested = true;
                             result.message =
-                                V93Enabled()
+                                callbacks.V93Enabled()
                                     ? "V93 Hard Stop requested by user."
                                     : "V92 Hard Stop requested by user.";
                         }
@@ -34795,7 +34795,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                         if (v92_long_run) {
                             result.hard_stop_requested = true;
                             result.message =
-                                V93Enabled()
+                                callbacks.V93Enabled()
                                     ? "V93 Hard Stop requested by user."
                                     : "V92 Hard Stop requested by user.";
                         }
