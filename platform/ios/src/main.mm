@@ -414,7 +414,7 @@ bool PvZ2HostKeyboardFirstResponder() {
     self.captionLabel.clipsToBounds =
         YES;
     self.captionLabel.text =
-        @"PvZ2 v83 — starting…\nProfile button dispatcher + pixel touch";
+        @"PvZ2 v84 — starting…\nRender contract / final blit A/B";
 
     self.stopButton =
         [UIButton
@@ -1339,7 +1339,7 @@ bool PvZ2HostKeyboardFirstResponder() {
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — v83 Profile Button Dispatch";
+        @"PvZ2forIOS — v84 Render Contract A/B";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -1348,7 +1348,7 @@ bool PvZ2HostKeyboardFirstResponder() {
         NO;
 
     title.text =
-        @"PvZ2forIOS — v83 Profile Button Dispatch";
+        @"PvZ2forIOS — v84 Render Contract A/B";
 
     title.font =
         [UIFont
@@ -1364,7 +1364,7 @@ bool PvZ2HostKeyboardFirstResponder() {
         NO;
 
     explanation.text =
-        @"v83 keeps the v82 Profile/action radar but returns touch delivery to the V80 2048×1536 pixel control, because v82 proved candidate5 starts at y=1158 and is unreachable in a 1024×768 guest touch space. A verified trap now records the real Profile button dispatcher ID before its native switch. Rendering, UI_IPAD, screenMatrix/FBO, widget geometry, GameState and the v39 height,width surface order remain unchanged.";
+        @"v84 targets the global oversized/cropped framebuffer before continuing gameplay. V84 Blit is the exact v83 graphics control plus final-FBO draw tracing. V84 P=PX changes only Graphics_GetScreenSizeInPoints from 1024×768 to 2048×1536. V84 Android additionally reproduces the APK AndroidSurfaceView scale contract: CanSet=true, scale starts at 0.5 and Set only stores the value. All modes keep UI_IPAD, the 2048×1536 FBO, v39 height,width ordering, touch/keyboard and natural GameState behavior.";
 
     explanation.numberOfLines = 0;
 
@@ -1423,6 +1423,9 @@ bool PvZ2HostKeyboardFirstResponder() {
                     @"V81 HitTest",
                     @"V82 Radar",
                     @"V83 Buttons",
+                    @"V84 Blit",
+                    @"V84 P=PX",
+                    @"V84 Android",
                     @"V66 Waits",
                     @"V65 Cond",
                     @"Ctype Scout"
@@ -1431,7 +1434,7 @@ bool PvZ2HostKeyboardFirstResponder() {
     self.diagnosticModeControl.translatesAutoresizingMaskIntoConstraints =
         NO;
     self.diagnosticModeControl.selectedSegmentIndex =
-        8;
+        10;
 
     UIStackView *mainButtons =
         [[UIStackView alloc]
@@ -2073,6 +2076,9 @@ bool PvZ2HostKeyboardFirstResponder() {
             @"V81_HITTEST_LOGICAL_POINTS",
             @"V82_PROFILE_LAYOUT_RADAR",
             @"V83_PROFILE_BUTTON_DISPATCH",
+            @"V84_FINAL_BLIT_TRACE",
+            @"V84_POINTS_EQUAL_PIXELS",
+            @"V84_ANDROID_GRAPHICS_CONTRACT",
             @"V66_BLOCKING_WAIT_SCHEDULER",
             @"V65_CONDITION_VARIABLE_SCHEDULER",
             @"CTYPE_COMPAT_DEEP_SCOUT"
@@ -2091,7 +2097,7 @@ bool PvZ2HostKeyboardFirstResponder() {
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. mode=%@. Leave V83 Buttons selected. It delivers the V80 pixel-space 2048x1536 coordinates, keeps the v82 radar, and logs the real Profile button ID whenever the native dispatcher fires. Tap around the Profile; rendering and v39 surface geometry are unchanged.",
+                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. mode=%@. Start with V84 P=PX. It changes only Android Graphics_GetScreenSizeInPoints to 2048x1536 while keeping the same framebuffer, viewport, UI_IPAD, touch and v39 surface order. V84 Blit is the no-mutation control; V84 Android adds the original APK GL-view-scale field semantics without resizing the host FBO.",
                     modeNames[modeIndex]]];
 
     [self
@@ -2196,15 +2202,30 @@ bool PvZ2HostKeyboardFirstResponder() {
             @"V83_PROFILE_BUTTON_DISPATCH";
     } else if (selectedMode == 9) {
         diagnosticMode =
+            PvZ2DiagnosticMode::V84FinalBlitTrace;
+        diagnosticModeName =
+            @"V84_FINAL_BLIT_TRACE";
+    } else if (selectedMode == 10) {
+        diagnosticMode =
+            PvZ2DiagnosticMode::V84PointsEqualPixels;
+        diagnosticModeName =
+            @"V84_POINTS_EQUAL_PIXELS";
+    } else if (selectedMode == 11) {
+        diagnosticMode =
+            PvZ2DiagnosticMode::V84AndroidGraphicsContract;
+        diagnosticModeName =
+            @"V84_ANDROID_GRAPHICS_CONTRACT";
+    } else if (selectedMode == 12) {
+        diagnosticMode =
             PvZ2DiagnosticMode::V66BlockingWaitScheduler;
         diagnosticModeName =
             @"V66_BLOCKING_WAIT_SCHEDULER";
-    } else if (selectedMode == 10) {
+    } else if (selectedMode == 13) {
         diagnosticMode =
             PvZ2DiagnosticMode::V65ConditionVariableScheduler;
         diagnosticModeName =
             @"V65_CONDITION_VARIABLE_SCHEDULER";
-    } else if (selectedMode == 11) {
+    } else if (selectedMode == 14) {
         diagnosticMode =
             PvZ2DiagnosticMode::CtypeCompatDeepScout;
         diagnosticModeName =
@@ -2218,7 +2239,7 @@ bool PvZ2HostKeyboardFirstResponder() {
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v83 Profile Button Dispatch Probe started mode=%@; PID=%d ===",
+                    @"=== PvZ2 v84 Render Contract / Final Blit Probe started mode=%@; PID=%d ===",
                     diagnosticModeName,
                     getpid()]];
 
@@ -2233,7 +2254,13 @@ bool PvZ2HostKeyboardFirstResponder() {
         diagnosticMode ==
             PvZ2DiagnosticMode::V82ProfileLayoutRadar ||
         diagnosticMode ==
-            PvZ2DiagnosticMode::V83ProfileButtonDispatch,
+            PvZ2DiagnosticMode::V83ProfileButtonDispatch ||
+        diagnosticMode ==
+            PvZ2DiagnosticMode::V84FinalBlitTrace ||
+        diagnosticMode ==
+            PvZ2DiagnosticMode::V84PointsEqualPixels ||
+        diagnosticMode ==
+            PvZ2DiagnosticMode::V84AndroidGraphicsContract,
         std::memory_order_release);
     gV81HitTestTraceActive.store(
         diagnosticMode ==
@@ -2243,7 +2270,13 @@ bool PvZ2HostKeyboardFirstResponder() {
         diagnosticMode ==
             PvZ2DiagnosticMode::V82ProfileLayoutRadar ||
         diagnosticMode ==
-            PvZ2DiagnosticMode::V83ProfileButtonDispatch,
+            PvZ2DiagnosticMode::V83ProfileButtonDispatch ||
+        diagnosticMode ==
+            PvZ2DiagnosticMode::V84FinalBlitTrace ||
+        diagnosticMode ==
+            PvZ2DiagnosticMode::V84PointsEqualPixels ||
+        diagnosticMode ==
+            PvZ2DiagnosticMode::V84AndroidGraphicsContract,
         std::memory_order_release);
     gV81LogicalTouchActive.store(
         diagnosticMode ==
@@ -2275,7 +2308,13 @@ bool PvZ2HostKeyboardFirstResponder() {
       diagnosticMode ==
          PvZ2DiagnosticMode::V82ProfileLayoutRadar ||
        diagnosticMode ==
-          PvZ2DiagnosticMode::V83ProfileButtonDispatch)) {
+          PvZ2DiagnosticMode::V83ProfileButtonDispatch ||
+       diagnosticMode ==
+          PvZ2DiagnosticMode::V84FinalBlitTrace ||
+       diagnosticMode ==
+          PvZ2DiagnosticMode::V84PointsEqualPixels ||
+       diagnosticMode ==
+          PvZ2DiagnosticMode::V84AndroidGraphicsContract)) {
 
         PvZ2ResetInteractiveInput();
         gPvZ2KeyboardHostReady.store(
@@ -2404,7 +2443,13 @@ bool PvZ2HostKeyboardFirstResponder() {
                               diagnosticMode ==
                                   PvZ2DiagnosticMode::V82ProfileLayoutRadar ||
                                diagnosticMode ==
-                                   PvZ2DiagnosticMode::V83ProfileButtonDispatch) &&
+                                   PvZ2DiagnosticMode::V83ProfileButtonDispatch ||
+                               diagnosticMode ==
+                                   PvZ2DiagnosticMode::V84FinalBlitTrace ||
+                               diagnosticMode ==
+                                   PvZ2DiagnosticMode::V84PointsEqualPixels ||
+                               diagnosticMode ==
+                                   PvZ2DiagnosticMode::V84AndroidGraphicsContract) &&
                             selfRef.liveController != nil) {
 
                             [selfRef.liveController
@@ -2435,7 +2480,13 @@ bool PvZ2HostKeyboardFirstResponder() {
       diagnosticMode ==
          PvZ2DiagnosticMode::V82ProfileLayoutRadar ||
        diagnosticMode ==
-          PvZ2DiagnosticMode::V83ProfileButtonDispatch)) {
+          PvZ2DiagnosticMode::V83ProfileButtonDispatch ||
+       diagnosticMode ==
+          PvZ2DiagnosticMode::V84FinalBlitTrace ||
+       diagnosticMode ==
+          PvZ2DiagnosticMode::V84PointsEqualPixels ||
+       diagnosticMode ==
+          PvZ2DiagnosticMode::V84AndroidGraphicsContract)) {
 
                 liveFrameCallback =
                     [](
@@ -2715,7 +2766,7 @@ bool PvZ2HostKeyboardFirstResponder() {
                     if (result.ok) {
                         [selfRef
                             appendUI:
-                                @"SUCCESS STEP 3: PvZ2 completed the selected v81 hit-test run. Inspect V81 TOUCH MAP / TOUCH DELIVER plus inherited V80 SCREENMATRIX, TRANSFORM DRAW, HOST PRESENT and keyboard markers. V77/v39 rendering geometry was not changed."];
+                                @"SUCCESS STEP 3: PvZ2 completed the selected v84 render-contract run. Inspect V84 FINAL BLIT DRAW / V84 RENDER CONTRACT SUMMARY plus inherited V80 SCREENMATRIX, HOST PRESENT, touch and Profile markers."];
 
                         if ((diagnosticMode ==
                                  PvZ2DiagnosticMode::V74RetinaInputPolish ||
@@ -2732,14 +2783,20 @@ bool PvZ2HostKeyboardFirstResponder() {
                               diagnosticMode ==
                                   PvZ2DiagnosticMode::V82ProfileLayoutRadar ||
                                diagnosticMode ==
-                                   PvZ2DiagnosticMode::V83ProfileButtonDispatch) &&
+                                   PvZ2DiagnosticMode::V83ProfileButtonDispatch ||
+                               diagnosticMode ==
+                                   PvZ2DiagnosticMode::V84FinalBlitTrace ||
+                               diagnosticMode ==
+                                   PvZ2DiagnosticMode::V84PointsEqualPixels ||
+                               diagnosticMode ==
+                                   PvZ2DiagnosticMode::V84AndroidGraphicsContract) &&
                             selfRef.liveController != nil) {
 
                             [selfRef.liveController
                                 finishRunWithMessage:
                                     [NSString
                                         stringWithFormat:
-                                            @"PvZ2 v83 LIVE — run finished after %u guest frames.\nClose to inspect the log. Pixel-space taps, Profile radar and native button-dispatch IDs are recorded.",
+                                            @"PvZ2 v84 LIVE — run finished after %u guest frames.\nClose to inspect the log. Final-blit geometry and the selected Android graphics contract are recorded.",
                                             result.draw_frames_completed]];
 
                         } else if (!result.final_frame_png_path.empty()) {
@@ -2803,14 +2860,20 @@ bool PvZ2HostKeyboardFirstResponder() {
                               diagnosticMode ==
                                   PvZ2DiagnosticMode::V82ProfileLayoutRadar ||
                                diagnosticMode ==
-                                   PvZ2DiagnosticMode::V83ProfileButtonDispatch) &&
+                                   PvZ2DiagnosticMode::V83ProfileButtonDispatch ||
+                               diagnosticMode ==
+                                   PvZ2DiagnosticMode::V84FinalBlitTrace ||
+                               diagnosticMode ==
+                                   PvZ2DiagnosticMode::V84PointsEqualPixels ||
+                               diagnosticMode ==
+                                   PvZ2DiagnosticMode::V84AndroidGraphicsContract) &&
                             selfRef.liveController != nil) {
 
                             [selfRef.liveController
                                 finishRunWithMessage:
                                     [NSString
                                         stringWithFormat:
-                                            @"PvZ2 v83 LIVE — guest run stopped.\n%@\nClose to inspect the full log.",
+                                            @"PvZ2 v84 LIVE — guest run stopped.\n%@\nClose to inspect the full log.",
                                             message]];
 
                         } else {

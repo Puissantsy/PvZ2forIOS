@@ -209,6 +209,17 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // 2048x1536 pixel control. Trace the verified Profile button dispatcher
     // switch so a hidden button can be identified by its real runtime ID.
     V83ProfileButtonDispatch = 25u,
+
+    // v84: isolate the global render-contract fault in one IPA.
+    V84FinalBlitTrace = 26u,
+
+    // AndroidSurfaceView.GetScreenSizeInPoints uses the actual view dimensions
+    // (the APK overrides DisplayMetrics density with 1.0 in this method).
+    V84PointsEqualPixels = 27u,
+
+    // Original APK AndroidSurfaceView contract: CanSet=true, scale field starts
+    // at 0.5, Get/Set are simple field access and Set never resizes the FBO.
+    V84AndroidGraphicsContract = 28u,
 };
 
 struct PvZ2JniProbeResult {

@@ -2361,6 +2361,24 @@ public:
     std::uint32_t v80_trace_frame = 0xffffffffu;
     std::uint32_t v80_traces_this_frame = 0u;
 
+    // v84: final/default-FBO composite tracing. v80 intentionally ignored
+    // guest FBO 0, which is exactly where the 1024x768 projection appears.
+    std::uint64_t v84_final_blit_draw_traces = 0u;
+    std::uint64_t v84_final_blit_canvas_1024 = 0u;
+    std::uint64_t v84_final_blit_canvas_2048 = 0u;
+    std::uint64_t v84_final_blit_canvas_other = 0u;
+    std::uint32_t v84_final_trace_frame = 0xffffffffu;
+    std::uint32_t v84_final_traces_this_frame = 0u;
+
+    // Exact APK AndroidSurfaceView scale-field semantics for the v84 Android
+    // contract mode. Constructor writes 0.5f; Get/Set simply load/store it.
+    std::uint32_t v84_android_view_scale_factor_bits = 0x3f000000u;
+    std::uint64_t v84_points_calls = 0u;
+    std::uint64_t v84_point_size_calls = 0u;
+    std::uint64_t v84_can_scale_calls = 0u;
+    std::uint64_t v84_get_scale_calls = 0u;
+    std::uint64_t v84_set_scale_calls = 0u;
+
     // v81: detailed event serialization provenance. The host-side mapper logs
     // UIKit -> framebuffer-pixel -> logical-point candidates; this counter
     // bounds the matching guest events actually written to ProcessEvents.
@@ -2613,10 +2631,13 @@ public:
 
         ++v80_array_draws_seen;
 
+        const bool final_blit =
+            gles_bound_guest_framebuffer == 0u;
+
         if (!V80Enabled() ||
             first < 0 ||
             count <= 0 ||
-            gles_bound_guest_framebuffer == 0u) {
+            (final_blit && !V84FinalBlitEnabled())) {
             return;
         }
 
@@ -2629,17 +2650,32 @@ public:
             (current_frame_number >= 108u &&
              (current_frame_number % 3u) == 0u);
 
-        if (!sample_frame ||
-            v80_transform_draw_traces >= 220u) {
+        if (!sample_frame) {
             return;
         }
 
-        if (v80_trace_frame != current_frame_number) {
-            v80_trace_frame = current_frame_number;
-            v80_traces_this_frame = 0u;
-        }
-        if (v80_traces_this_frame >= 10u) {
-            return;
+        if (final_blit) {
+            if (v84_final_blit_draw_traces >= 160u) {
+                return;
+            }
+            if (v84_final_trace_frame != current_frame_number) {
+                v84_final_trace_frame = current_frame_number;
+                v84_final_traces_this_frame = 0u;
+            }
+            if (v84_final_traces_this_frame >= 4u) {
+                return;
+            }
+        } else {
+            if (v80_transform_draw_traces >= 220u) {
+                return;
+            }
+            if (v80_trace_frame != current_frame_number) {
+                v80_trace_frame = current_frame_number;
+                v80_traces_this_frame = 0u;
+            }
+            if (v80_traces_this_frame >= 10u) {
+                return;
+            }
         }
 
         std::optional<GLuint> position_index;
@@ -2823,13 +2859,43 @@ public:
                 return value.str();
             };
 
-        ++v80_traces_this_frame;
-        ++v80_transform_draw_traces;
+        std::uint64_t trace_number = 0u;
+        const char* trace_label = nullptr;
+
+        if (final_blit) {
+            ++v84_final_traces_this_frame;
+            ++v84_final_blit_draw_traces;
+            trace_number = v84_final_blit_draw_traces;
+            trace_label = "V84 FINAL BLIT DRAW #";
+
+            if (have_matrix) {
+                const bool canvas_1024 =
+                    std::fabs(inferred_w - 1024.0) < 2.0 &&
+                    std::fabs(inferred_h - 768.0) < 2.0;
+                const bool canvas_2048 =
+                    std::fabs(inferred_w - 2048.0) < 2.0 &&
+                    std::fabs(inferred_h - 1536.0) < 2.0;
+                if (canvas_1024) {
+                    ++v84_final_blit_canvas_1024;
+                } else if (canvas_2048) {
+                    ++v84_final_blit_canvas_2048;
+                } else {
+                    ++v84_final_blit_canvas_other;
+                }
+            } else {
+                ++v84_final_blit_canvas_other;
+            }
+        } else {
+            ++v80_traces_this_frame;
+            ++v80_transform_draw_traces;
+            trace_number = v80_transform_draw_traces;
+            trace_label = "V80 TRANSFORM DRAW #";
+        }
 
         std::ostringstream diagnostic;
         diagnostic
-            << "V80 TRANSFORM DRAW #"
-            << v80_transform_draw_traces
+            << trace_label
+            << trace_number
             << " frame="
             << current_frame_number
             << " program="
@@ -2908,6 +2974,50 @@ public:
             << (PvZ2HostKeyboardFirstResponder()
                     ? "YES"
                     : "NO")
+            << "}";
+        return out.str();
+    }
+
+    std::string V84RenderContractSummary() const {
+        std::ostringstream out;
+        float scale = 0.0f;
+        std::uint32_t scale_bits =
+            V84AndroidContractEnabled()
+                ? v84_android_view_scale_factor_bits
+                : 0x3f800000u;
+        std::memcpy(&scale, &scale_bits, sizeof(scale));
+
+        out
+            << "V84 RENDER CONTRACT SUMMARY mode="
+            << V56ModeName()
+            << " points="
+            << (V84PointsPixelsEnabled()
+                    ? "2048x1536"
+                    : "1024x768")
+            << " pixels=2048x1536"
+            << " pointSize=2.0"
+            << " canSet="
+            << (V84AndroidContractEnabled() ? "true" : "false")
+            << " glViewScale="
+            << scale
+            << " calls{points="
+            << v84_points_calls
+            << ",pointSize="
+            << v84_point_size_calls
+            << ",canSet="
+            << v84_can_scale_calls
+            << ",getScale="
+            << v84_get_scale_calls
+            << ",setScale="
+            << v84_set_scale_calls
+            << "} finalBlits="
+            << v84_final_blit_draw_traces
+            << " finalCanvas{1024x768="
+            << v84_final_blit_canvas_1024
+            << ",2048x1536="
+            << v84_final_blit_canvas_2048
+            << ",other="
+            << v84_final_blit_canvas_other
             << "}";
         return out.str();
     }
@@ -6399,6 +6509,12 @@ public:
             return "V82_PROFILE_LAYOUT_RADAR";
         case PvZ2DiagnosticMode::V83ProfileButtonDispatch:
             return "V83_PROFILE_BUTTON_DISPATCH";
+        case PvZ2DiagnosticMode::V84FinalBlitTrace:
+            return "V84_FINAL_BLIT_TRACE";
+        case PvZ2DiagnosticMode::V84PointsEqualPixels:
+            return "V84_POINTS_EQUAL_PIXELS";
+        case PvZ2DiagnosticMode::V84AndroidGraphicsContract:
+            return "V84_ANDROID_GRAPHICS_CONTRACT";
         }
         return "UNKNOWN";
     }
@@ -6416,7 +6532,13 @@ public:
             diagnostic_mode ==
                 PvZ2DiagnosticMode::V82ProfileLayoutRadar ||
             diagnostic_mode ==
-                PvZ2DiagnosticMode::V83ProfileButtonDispatch;
+                PvZ2DiagnosticMode::V83ProfileButtonDispatch ||
+            diagnostic_mode ==
+                PvZ2DiagnosticMode::V84FinalBlitTrace ||
+            diagnostic_mode ==
+                PvZ2DiagnosticMode::V84PointsEqualPixels ||
+            diagnostic_mode ==
+                PvZ2DiagnosticMode::V84AndroidGraphicsContract;
     }
 
     const char* V79ProfileSiteName(
@@ -6479,10 +6601,35 @@ public:
         return out.str();
     }
 
+    bool V84FinalBlitEnabled() const {
+        return
+            diagnostic_mode ==
+                PvZ2DiagnosticMode::V84FinalBlitTrace ||
+            diagnostic_mode ==
+                PvZ2DiagnosticMode::V84PointsEqualPixels ||
+            diagnostic_mode ==
+                PvZ2DiagnosticMode::V84AndroidGraphicsContract;
+    }
+
+    bool V84PointsPixelsEnabled() const {
+        return
+            diagnostic_mode ==
+                PvZ2DiagnosticMode::V84PointsEqualPixels ||
+            diagnostic_mode ==
+                PvZ2DiagnosticMode::V84AndroidGraphicsContract;
+    }
+
+    bool V84AndroidContractEnabled() const {
+        return
+            diagnostic_mode ==
+                PvZ2DiagnosticMode::V84AndroidGraphicsContract;
+    }
+
     bool V83Enabled() const {
         return
             diagnostic_mode ==
-                PvZ2DiagnosticMode::V83ProfileButtonDispatch;
+                PvZ2DiagnosticMode::V83ProfileButtonDispatch ||
+            V84FinalBlitEnabled();
     }
 
     bool V82Enabled() const {
@@ -15422,14 +15569,22 @@ public:
                         const auto length_it =
                             jni_array_lengths.find(array);
 
+                        if (V84FinalBlitEnabled()) {
+                            ++v84_points_calls;
+                        }
+
                         const std::uint32_t points_w =
-                            V77Enabled()
-                                ? 1024u
-                                : 1180u;
+                            V84PointsPixelsEnabled()
+                                ? 2048u
+                                : (V77Enabled()
+                                       ? 1024u
+                                       : 1180u);
                         const std::uint32_t points_h =
-                            V77Enabled()
-                                ? 768u
-                                : 820u;
+                            V84PointsPixelsEnabled()
+                                ? 1536u
+                                : (V77Enabled()
+                                       ? 768u
+                                       : 820u);
 
                         if (data_it !=
                                 jni_array_data.end() &&
@@ -15449,9 +15604,11 @@ public:
                         regs[0] = 0u;
                         Append(
                             std::string{
-                                V77Enabled()
-                                    ? "V77 JNI bridge: "
-                                    : "JNI bridge: "} +
+                                V84FinalBlitEnabled()
+                                    ? "V84 JNI bridge: "
+                                    : (V77Enabled()
+                                           ? "V77 JNI bridge: "
+                                           : "JNI bridge: ")} +
                             "Graphics_GetScreenSizeInPoints -> " +
                             std::to_string(points_w) +
                             "x" +
@@ -15464,8 +15621,15 @@ public:
                             "Graphics_CanSetGLViewScaleFactor") {
 
                         ++v76_scale_can_calls;
+                        if (V84FinalBlitEnabled()) {
+                            ++v84_can_scale_calls;
+                        }
 
-                        if (V76Enabled()) {
+                        if (V84AndroidContractEnabled()) {
+                            regs[0] = 1u;
+                            Append(
+                                "V84 ANDROID CONTRACT Graphics_CanSetGLViewScaleFactor -> true (matches APK AndroidSurfaceView)");
+                        } else if (V76Enabled()) {
                             // Exact historical iOS semantic at ~0x00590010:
                             // [EAGLView respondsToSelector:@selector(contentScaleFactor)].
                             // EAGLView is a UIView and supports the property.
@@ -15518,8 +15682,15 @@ public:
                             "Graphics_GetPointSizeInPixels") {
 
                         regs[0] = 0x40000000u; // 2.0f
+                        if (V84FinalBlitEnabled()) {
+                            ++v84_point_size_calls;
+                        }
                         Append(
-                            "JNI bridge: Graphics_GetPointSizeInPixels -> 2.0");
+                            std::string{
+                                V84FinalBlitEnabled()
+                                    ? "V84 JNI bridge: "
+                                    : "JNI bridge: "} +
+                            "Graphics_GetPointSizeInPixels -> 2.0");
                         return true;
                     }
 
@@ -15528,11 +15699,16 @@ public:
                             "Graphics_GetGLViewScaleFactor") {
 
                         ++v76_scale_get_calls;
+                        if (V84FinalBlitEnabled()) {
+                            ++v84_get_scale_calls;
+                        }
 
                         regs[0] =
-                            V76Enabled()
-                                ? v76_gl_view_scale_factor_bits
-                                : 0x3f800000u;
+                            V84AndroidContractEnabled()
+                                ? v84_android_view_scale_factor_bits
+                                : (V76Enabled()
+                                       ? v76_gl_view_scale_factor_bits
+                                       : 0x3f800000u);
 
                         float value = 1.0f;
                         std::uint32_t value_bits = regs[0];
@@ -15543,9 +15719,11 @@ public:
 
                         Append(
                             std::string{
-                                V76Enabled()
-                                    ? "V76"
-                                    : "JNI bridge:"} +
+                                V84AndroidContractEnabled()
+                                    ? "V84 ANDROID CONTRACT"
+                                    : (V76Enabled()
+                                           ? "V76"
+                                           : "JNI bridge:")} +
                             " Graphics_GetGLViewScaleFactor call#" +
                             std::to_string(
                                 v76_scale_get_calls) +
@@ -15983,6 +16161,35 @@ public:
                             "removeScheduledNotificationsBySource",
                             "UI_DidRecieveFocus"
                         };
+
+                    if (family == 9 &&
+                        method_name ==
+                            "Graphics_SetGLViewScaleFactor" &&
+                        V84AndroidContractEnabled()) {
+
+                        const std::uint32_t bits =
+                            java_arg_word(0u);
+                        float scale = 0.0f;
+                        std::memcpy(
+                            &scale,
+                            &bits,
+                            sizeof(scale));
+
+                        v84_android_view_scale_factor_bits =
+                            bits;
+                        ++v84_set_scale_calls;
+                        regs[0] = 0u;
+
+                        Append(
+                            "V84 ANDROID CONTRACT Graphics_SetGLViewScaleFactor call#" +
+                            std::to_string(v84_set_scale_calls) +
+                            " requested=" +
+                            std::to_string(scale) +
+                            " bits=0x" +
+                            JniProbeHex(bits) +
+                            " -> stored only; hostResize=NO (matches APK iput)");
+                        return true;
+                    }
 
                     if (family == 9 &&
                         method_name ==
@@ -26910,7 +27117,19 @@ bool JniProbePrepareRuntime(
     }
     if (callbacks.V83Enabled()) {
         callbacks.Append(
-            "V83 PROFILE BUTTON DISPATCH: v82 measured candidate5 rawXYWH=(360,1158,368,110), proving it is unreachable when touches are capped to 1024x768. v83 restores the V80 2048x1536 pixel touch control and signature-checks a passive trap at dispatcher+0x8 (0x1030b8f8, MOV r9,r0). Static switch IDs with dedicated paths are 5,6,7,8,18,19,20; IDs 9..17 share the no-action return. Runtime r1 is logged before the native switch. Rendering, widget geometry and GameState are untouched.");
+            "V83 PROFILE BUTTON DISPATCH: v83 restored the V80 2048x1536 pixel touch control and proved buttonId=5 can dispatch even when the raw +0x28/+0x2c/+0x30/+0x34 radar rectangle does not contain the screen-space tap. Those raw fields are therefore local/transformed, not absolute hitboxes. The passive dispatcher trap remains enabled and does not alter rendering, widget geometry or GameState.");
+    }
+    if (callbacks.V84FinalBlitEnabled()) {
+        callbacks.Append(
+            "V84 FINAL-BLIT TRACE: v80 intentionally ignored guest FBO 0. v83 showed a 1024x768 screenMatrix upload immediately before rebinding guest FBO 0 while the viewport stayed 2048x1536. v84 records the actual final/default-FBO vertex bounds, textures and active screenMatrix without changing GL state.");
+        if (callbacks.V84PointsPixelsEnabled()) {
+            callbacks.Append(
+                "V84 POINTS=PIXELS: Graphics_GetScreenSizeInPoints now returns 2048x1536, matching the APK AndroidSurfaceView method which forces an effective density divisor of 1.0 before using view getWidth/getHeight. Pixels, FBO, viewport and v39 surface order remain 2048x1536.");
+        }
+        if (callbacks.V84AndroidContractEnabled()) {
+            callbacks.Append(
+                "V84 ANDROID GRAPHICS CONTRACT: additionally matches the APK AndroidSurfaceView scale field: CanSet=true; initial mViewScaleFactor=0.5; Get reads the field; Set stores the float only and NEVER resizes the host FBO. Graphics_GetPointSizeInPixels remains 2.0, representing the iPad host display density.");
+        }
     }
 
     if (callbacks.V64Enabled()) {
@@ -31006,6 +31225,10 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                     if (callbacks.V83Enabled()) {
                         callbacks.Append(
                             callbacks.V83ButtonSummary());
+                    }
+                    if (callbacks.V84FinalBlitEnabled()) {
+                        callbacks.Append(
+                            callbacks.V84RenderContractSummary());
                     }
                 }
 
