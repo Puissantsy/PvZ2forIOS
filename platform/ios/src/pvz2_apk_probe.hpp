@@ -233,6 +233,11 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // bytes high-water in a 64 MiB arena immediately before the post-PLAYER
     // __aeabi_memset OOB stop. Also hard-disable residual hot scheduler logs.
     V86HeapPerformanceFix = 30u,
+
+    // v87: replace the v63/v64 "run mutex owners until release" workaround
+    // with cooperative preemption plus real blocking mutex waiters. This mode
+    // deliberately keeps the v86 heap/render/input/resource baseline intact.
+    V87PreemptiveMutexScheduler = 31u,
 };
 
 struct PvZ2JniProbeResult {

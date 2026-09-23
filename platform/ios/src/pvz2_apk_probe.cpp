@@ -2179,6 +2179,11 @@ public:
     struct V63MutexState {
         std::uint32_t owner = 0xffffffffu;
         std::uint32_t depth = 0u;
+        // Bionic 4.x uses 0=normal, 1=recursive, 2=error-checking. Static
+        // mutexes remain type_unknown and keep the proven legacy recursive
+        // compatibility until their initializer is observed.
+        std::uint32_t type = 1u;
+        bool type_known = false;
     };
     std::unordered_map<std::uint32_t, V63MutexState> v63_mutexes;
     std::unordered_map<std::uint32_t, std::uint32_t> v63_thread_held_mutexes;
@@ -2189,6 +2194,24 @@ public:
     std::uint64_t v63_critical_continuations = 0;
     std::uint64_t v63_task_dispatch_events = 0;
     std::uint64_t v63_task_guard_failures = 0;
+
+    struct V87MutexWaitState {
+        std::uint32_t mutex = 0u;
+        std::uint32_t observed_owner = 0xffffffffu;
+        bool granted = false;
+        bool cond_reacquire = false;
+    };
+    std::unordered_map<std::uint32_t, std::uint32_t> v87_mutexattr_types;
+    std::unordered_map<std::uint32_t, V87MutexWaitState> v87_mutex_waits;
+    std::unordered_map<std::uint32_t, std::deque<std::uint32_t>> v87_mutex_waiters;
+    std::uint64_t v87_mutex_wait_calls = 0u;
+    std::uint64_t v87_mutex_handoffs = 0u;
+    std::uint64_t v87_mutex_resumes = 0u;
+    std::uint64_t v87_owner_preemptions = 0u;
+    std::uint64_t v87_priority_continuations = 0u;
+    std::uint64_t v87_deadlock_cycles = 0u;
+    std::uint32_t v87_last_mutex_error = 0u;
+    std::string v87_failure_message;
 
     // v64 release-boundary continuation. Once a worker exhausts its normal
     // quantum while owning a guest mutex, the scheduler arms this boundary.
@@ -4029,7 +4052,7 @@ public:
     void V64ArmReleaseBoundary(
         std::uint32_t thread_id) {
 
-        if (!V64Enabled()) {
+        if (!V64Enabled() || V87Enabled()) {
             return;
         }
 
@@ -4047,6 +4070,7 @@ public:
         std::uint32_t thread_id) {
 
         if (!V64Enabled() ||
+            V87Enabled() ||
             !v64_release_boundary_armed ||
             v64_release_boundary_thread != thread_id) {
             return;
@@ -4287,18 +4311,82 @@ public:
         V63MutexState& mutex_state =
             v63_mutexes[wait.mutex];
 
-        if (mutex_state.depth != 0u &&
-            mutex_state.owner !=
-                thread_id) {
-            return false;
-        }
+        if (V87Enabled()) {
+            auto mutex_wait =
+                v87_mutex_waits.find(thread_id);
 
-        if (mutex_state.depth == 0u) {
-            mutex_state.owner = thread_id;
-            mutex_state.depth = 1u;
-            ++v63_thread_held_mutexes[
-                thread_id];
-            ++v63_mutex_acquires;
+            if (mutex_wait !=
+                v87_mutex_waits.end()) {
+
+                if (!mutex_wait->second.cond_reacquire ||
+                    mutex_wait->second.mutex !=
+                        wait.mutex) {
+                    v87_failure_message =
+                        "v87 cond waiter has mismatched mutex wait state for tid=" +
+                        std::to_string(thread_id) +
+                        ".";
+                    result.message =
+                        v87_failure_message;
+                    Append(
+                        "V87 MUTEX ERROR " +
+                        v87_failure_message);
+                    return false;
+                }
+
+                if (!mutex_wait->second.granted) {
+                    return false;
+                }
+
+                if (mutex_state.depth == 0u ||
+                    mutex_state.owner !=
+                        thread_id) {
+                    v87_failure_message =
+                        "v87 cond mutex handoff invariant failed for tid=" +
+                        std::to_string(thread_id) +
+                        ".";
+                    result.message =
+                        v87_failure_message;
+                    Append(
+                        "V87 MUTEX ERROR " +
+                        v87_failure_message);
+                    return false;
+                }
+
+                V87EraseMutexWait(thread_id);
+            } else if (
+                mutex_state.depth != 0u &&
+                mutex_state.owner !=
+                    thread_id) {
+
+                if (!V87QueueMutexWait(
+                        thread_id,
+                        wait.mutex,
+                        true)) {
+                    return false;
+                }
+
+                return false;
+            } else if (mutex_state.depth == 0u) {
+                mutex_state.owner = thread_id;
+                mutex_state.depth = 1u;
+                ++v63_thread_held_mutexes[
+                    thread_id];
+                ++v63_mutex_acquires;
+            }
+        } else {
+            if (mutex_state.depth != 0u &&
+                mutex_state.owner !=
+                    thread_id) {
+                return false;
+            }
+
+            if (mutex_state.depth == 0u) {
+                mutex_state.owner = thread_id;
+                mutex_state.depth = 1u;
+                ++v63_thread_held_mutexes[
+                    thread_id];
+                ++v63_mutex_acquires;
+            }
         }
 
         const std::uint32_t cond =
@@ -5604,6 +5692,438 @@ public:
         return true;
     }
 
+    bool V65ThreadBlocked(
+        std::uint32_t thread_id) const {
+
+        return
+            V65Enabled() &&
+            v65_cond_waits.find(thread_id) !=
+                v65_cond_waits.end();
+    }
+
+    bool V87MutexWaitPending(
+        std::uint32_t thread_id) const {
+
+        return
+            V87Enabled() &&
+            v87_mutex_waits.find(thread_id) !=
+                v87_mutex_waits.end();
+    }
+
+    bool V87MutexWaitGranted(
+        std::uint32_t thread_id) const {
+
+        if (!V87Enabled()) {
+            return false;
+        }
+
+        const auto wait =
+            v87_mutex_waits.find(thread_id);
+
+        return
+            wait != v87_mutex_waits.end() &&
+            wait->second.granted;
+    }
+
+    std::uint32_t V87PreferredMutexOwner(
+        std::uint32_t waiter_tid) const {
+
+        if (!V87Enabled()) {
+            return 0xffffffffu;
+        }
+
+        std::unordered_set<std::uint32_t> seen;
+        std::uint32_t cursor = waiter_tid;
+
+        for (std::uint32_t depth = 0u;
+             depth < 64u;
+             ++depth) {
+
+            const auto wait =
+                v87_mutex_waits.find(cursor);
+
+            if (wait == v87_mutex_waits.end()) {
+                return 0xffffffffu;
+            }
+
+            const auto mutex =
+                v63_mutexes.find(
+                    wait->second.mutex);
+
+            if (mutex == v63_mutexes.end() ||
+                mutex->second.depth == 0u ||
+                mutex->second.owner == 0xffffffffu) {
+                return 0xffffffffu;
+            }
+
+            const std::uint32_t owner =
+                mutex->second.owner;
+
+            if (owner == waiter_tid ||
+                !seen.insert(owner).second) {
+                return owner;
+            }
+
+            if (v87_mutex_waits.find(owner) ==
+                v87_mutex_waits.end()) {
+                return owner;
+            }
+
+            cursor = owner;
+        }
+
+        return 0xffffffffu;
+    }
+
+    void V87EraseMutexWait(
+        std::uint32_t thread_id) {
+
+        const auto wait =
+            v87_mutex_waits.find(thread_id);
+
+        if (wait == v87_mutex_waits.end()) {
+            return;
+        }
+
+        const std::uint32_t mutex =
+            wait->second.mutex;
+
+        auto queue =
+            v87_mutex_waiters.find(mutex);
+
+        if (queue != v87_mutex_waiters.end()) {
+            auto& ids = queue->second;
+
+            ids.erase(
+                std::remove(
+                    ids.begin(),
+                    ids.end(),
+                    thread_id),
+                ids.end());
+
+            if (ids.empty()) {
+                v87_mutex_waiters.erase(queue);
+            }
+        }
+
+        v87_mutex_waits.erase(wait);
+    }
+
+    bool V87QueueMutexWait(
+        std::uint32_t thread_id,
+        std::uint32_t mutex,
+        bool cond_reacquire) {
+
+        if (!V87Enabled()) {
+            return false;
+        }
+
+        const auto existing =
+            v87_mutex_waits.find(thread_id);
+
+        if (existing != v87_mutex_waits.end()) {
+            return
+                existing->second.mutex == mutex &&
+                existing->second.cond_reacquire ==
+                    cond_reacquire;
+        }
+
+        const auto state =
+            v63_mutexes.find(mutex);
+
+        if (state == v63_mutexes.end() ||
+            state->second.depth == 0u ||
+            state->second.owner == 0xffffffffu) {
+            return false;
+        }
+
+        const std::uint32_t owner =
+            state->second.owner;
+
+        std::unordered_set<std::uint32_t> seen;
+        seen.insert(thread_id);
+        std::uint32_t cursor = owner;
+
+        while (cursor != 0xffffffffu) {
+            if (!seen.insert(cursor).second) {
+                ++v87_deadlock_cycles;
+
+                v87_failure_message =
+                    "v87 detected a mutex wait-for cycle: waiterTid=" +
+                    std::to_string(thread_id) +
+                    " mutex=" +
+                    V46DescribeGuestAddress(mutex) +
+                    " ownerTid=" +
+                    std::to_string(owner) +
+                    ".";
+
+                result.message =
+                    v87_failure_message;
+
+                Append(
+                    "V87 MUTEX DEADLOCK #" +
+                    std::to_string(v87_deadlock_cycles) +
+                    " " +
+                    v87_failure_message);
+
+                return false;
+            }
+
+            const auto owner_wait =
+                v87_mutex_waits.find(cursor);
+
+            if (owner_wait ==
+                v87_mutex_waits.end()) {
+                break;
+            }
+
+            const auto owner_mutex =
+                v63_mutexes.find(
+                    owner_wait->second.mutex);
+
+            if (owner_mutex ==
+                    v63_mutexes.end() ||
+                owner_mutex->second.depth == 0u) {
+                break;
+            }
+
+            cursor =
+                owner_mutex->second.owner;
+        }
+
+        V87MutexWaitState wait;
+        wait.mutex = mutex;
+        wait.observed_owner = owner;
+        wait.cond_reacquire = cond_reacquire;
+
+        v87_mutex_waits[thread_id] =
+            wait;
+
+        auto& queue =
+            v87_mutex_waiters[mutex];
+
+        if (std::find(
+                queue.begin(),
+                queue.end(),
+                thread_id) == queue.end()) {
+            queue.push_back(thread_id);
+        }
+
+        ++v87_mutex_wait_calls;
+
+        if (v87_mutex_wait_calls <= 32u ||
+            (v87_mutex_wait_calls &
+             (v87_mutex_wait_calls - 1u)) == 0u) {
+            Append(
+                "V87 MUTEX WAIT #" +
+                std::to_string(v87_mutex_wait_calls) +
+                " tid=" +
+                std::to_string(thread_id) +
+                " ownerTid=" +
+                std::to_string(owner) +
+                " mutex=" +
+                V46DescribeGuestAddress(mutex) +
+                " kind=" +
+                std::string{
+                    cond_reacquire
+                        ? "cond-reacquire"
+                        : "lock"});
+        }
+
+        return true;
+    }
+
+    std::uint32_t V87HandoffMutex(
+        std::uint32_t mutex,
+        V63MutexState& state) {
+
+        if (!V87Enabled() ||
+            state.depth != 0u) {
+            return 0xffffffffu;
+        }
+
+        auto queue =
+            v87_mutex_waiters.find(mutex);
+
+        if (queue ==
+            v87_mutex_waiters.end()) {
+            return 0xffffffffu;
+        }
+
+        while (!queue->second.empty()) {
+            const std::uint32_t tid =
+                queue->second.front();
+
+            queue->second.pop_front();
+
+            auto wait =
+                v87_mutex_waits.find(tid);
+
+            if (wait ==
+                    v87_mutex_waits.end() ||
+                wait->second.mutex != mutex ||
+                wait->second.granted) {
+                continue;
+            }
+
+            state.owner = tid;
+            state.depth = 1u;
+
+            ++v63_thread_held_mutexes[tid];
+            ++v63_mutex_acquires;
+
+            wait->second.granted = true;
+            ++v87_mutex_handoffs;
+
+            if (v87_mutex_handoffs <= 32u ||
+                (v87_mutex_handoffs &
+                 (v87_mutex_handoffs - 1u)) == 0u) {
+                Append(
+                    "V87 MUTEX HANDOFF #" +
+                    std::to_string(v87_mutex_handoffs) +
+                    " mutex=" +
+                    V46DescribeGuestAddress(mutex) +
+                    " -> tid=" +
+                    std::to_string(tid));
+            }
+
+            if (queue->second.empty()) {
+                v87_mutex_waiters.erase(queue);
+            }
+
+            return tid;
+        }
+
+        v87_mutex_waiters.erase(queue);
+        return 0xffffffffu;
+    }
+
+    bool V87PrepareMutexResume(
+        std::uint32_t thread_id,
+        bool& did_resume,
+        std::uint32_t& result_code) {
+
+        did_resume = false;
+        result_code = 0u;
+
+        if (!V87Enabled()) {
+            return true;
+        }
+
+        auto wait =
+            v87_mutex_waits.find(thread_id);
+
+        if (wait == v87_mutex_waits.end()) {
+            return true;
+        }
+
+        // pthread_cond_wait has its own resume path because the condition result
+        // code must survive until the mutex is reacquired.
+        if (wait->second.cond_reacquire) {
+            return true;
+        }
+
+        if (!wait->second.granted) {
+            return false;
+        }
+
+        const auto mutex =
+            v63_mutexes.find(
+                wait->second.mutex);
+
+        if (mutex == v63_mutexes.end() ||
+            mutex->second.depth == 0u ||
+            mutex->second.owner != thread_id) {
+
+            v87_failure_message =
+                "v87 mutex handoff invariant failed for tid=" +
+                std::to_string(thread_id) +
+                " mutex=" +
+                V46DescribeGuestAddress(
+                    wait->second.mutex) +
+                ".";
+
+            result.message =
+                v87_failure_message;
+
+            Append(
+                "V87 MUTEX ERROR " +
+                v87_failure_message);
+
+            return false;
+        }
+
+        const std::uint32_t mutex_address =
+            wait->second.mutex;
+
+        V87EraseMutexWait(thread_id);
+
+        did_resume = true;
+        result_code = 0u;
+        ++v87_mutex_resumes;
+
+        if (v87_mutex_resumes <= 32u ||
+            (v87_mutex_resumes &
+             (v87_mutex_resumes - 1u)) == 0u) {
+            Append(
+                "V87 MUTEX RESUME #" +
+                std::to_string(v87_mutex_resumes) +
+                " tid=" +
+                std::to_string(thread_id) +
+                " mutex=" +
+                V46DescribeGuestAddress(
+                    mutex_address));
+        }
+
+        return true;
+    }
+
+    void V87RecordOwnerPreemption(
+        std::uint32_t thread_id) {
+
+        if (!V87Enabled()) {
+            return;
+        }
+
+        ++v87_owner_preemptions;
+
+        if (v87_owner_preemptions <= 16u ||
+            (v87_owner_preemptions &
+             (v87_owner_preemptions - 1u)) == 0u) {
+            Append(
+                "V87 MUTEX PREEMPT #" +
+                std::to_string(v87_owner_preemptions) +
+                " tid=" +
+                std::to_string(thread_id) +
+                " held={" +
+                V63HeldMutexSummary(thread_id) +
+                "}");
+        }
+    }
+
+    std::string V87MutexSummary() const {
+
+        std::ostringstream out;
+
+        out
+            << "V87 MUTEX SUMMARY waits="
+            << v87_mutex_wait_calls
+            << " handoffs="
+            << v87_mutex_handoffs
+            << " resumes="
+            << v87_mutex_resumes
+            << " ownerPreemptions="
+            << v87_owner_preemptions
+            << " priorityContinuations="
+            << v87_priority_continuations
+            << " deadlockCycles="
+            << v87_deadlock_cycles
+            << " pendingWaiters="
+            << v87_mutex_waits.size();
+
+        return out.str();
+    }
+
     bool V63AcquireMutex(
         std::uint32_t mutex,
         bool is_trylock) {
@@ -5651,6 +6171,35 @@ public:
 
         if (state.owner ==
             current_probe_thread_id) {
+
+            if (V87Enabled() &&
+                state.type_known &&
+                state.type != 1u) {
+
+                if (is_trylock) {
+                    ++v63_mutex_busy;
+                    return false;
+                }
+
+                if (state.type == 2u) {
+                    v87_last_mutex_error = 35u; // EDEADLK
+                    Append(
+                        "V87 MUTEX ERRORCHECK RELOCK tid=" +
+                        std::to_string(
+                            current_probe_thread_id) +
+                        " mutex=" +
+                        V46DescribeGuestAddress(mutex) +
+                        " -> EDEADLK");
+                    return false;
+                }
+
+                V87QueueMutexWait(
+                    current_probe_thread_id,
+                    mutex,
+                    false);
+                return false;
+            }
+
             ++state.depth;
             ++v63_mutex_acquires;
 
@@ -5685,6 +6234,14 @@ public:
                     " mutex=" +
                     V46DescribeGuestAddress(mutex));
             }
+            return false;
+        }
+
+        if (V87Enabled()) {
+            V87QueueMutexWait(
+                current_probe_thread_id,
+                mutex,
+                false);
             return false;
         }
 
@@ -5771,6 +6328,18 @@ public:
             }
 
             state.owner = 0xffffffffu;
+
+            const std::uint32_t handoff_tid =
+                V87HandoffMutex(
+                    mutex,
+                    state);
+
+            if (handoff_tid == 0u &&
+                current_probe_thread_id != 0u &&
+                jit) {
+                jit->HaltExecution(
+                    Dynarmic::HaltReason::UserDefined4);
+            }
         }
 
         const std::uint32_t held_after =
@@ -5806,6 +6375,7 @@ public:
 
         const bool v64_safe_release =
             V64Enabled() &&
+            !V87Enabled() &&
             v64_release_boundary_armed &&
             v64_release_boundary_thread ==
                 current_probe_thread_id &&
@@ -6566,6 +7136,8 @@ public:
             return "V85_PERFORMANCE_BASELINE";
         case PvZ2DiagnosticMode::V86HeapPerformanceFix:
             return "V86_HEAP_PERFORMANCE_FIX";
+        case PvZ2DiagnosticMode::V87PreemptiveMutexScheduler:
+            return "V87_PREEMPTIVE_MUTEX_SCHEDULER";
         }
         return "UNKNOWN";
     }
@@ -6652,9 +7224,16 @@ public:
         return out.str();
     }
 
-    bool V86Enabled() const {
+    bool V87Enabled() const {
         return diagnostic_mode ==
-            PvZ2DiagnosticMode::V86HeapPerformanceFix;
+            PvZ2DiagnosticMode::V87PreemptiveMutexScheduler;
+    }
+
+    bool V86Enabled() const {
+        return
+            diagnostic_mode ==
+                PvZ2DiagnosticMode::V86HeapPerformanceFix ||
+            V87Enabled();
     }
 
     bool V85PerformanceEnabled() const {
@@ -6692,7 +7271,9 @@ public:
 
     bool V86KeepLogLine(const std::string& line) const {
         if (line.rfind("V85 PERF", 0u) == 0u ||
-            line.rfind("V86 PERF", 0u) == 0u) {
+            line.rfind("V86 PERF", 0u) == 0u ||
+            line.rfind("V87 MUTEX", 0u) == 0u ||
+            line.rfind("V87 SCHEDULER", 0u) == 0u) {
             return true;
         }
 
@@ -20110,20 +20691,71 @@ public:
             return;
         }
 
-        if (name == "pthread_mutexattr_init" ||
-            name == "pthread_mutexattr_settype" ||
-            name == "pthread_mutexattr_setpshared" ||
-            name == "pthread_mutexattr_destroy") {
-            regs[0] = 0;
+        if (name == "pthread_mutexattr_init") {
+            if (V87Enabled() &&
+                regs[0] != 0u) {
+                v87_mutexattr_types[regs[0]] = 0u;
+            }
+
+            regs[0] = 0u;
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "pthread_mutexattr_settype") {
+            if (V87Enabled() &&
+                regs[0] != 0u) {
+                v87_mutexattr_types[regs[0]] =
+                    regs[1];
+            }
+
+            regs[0] = 0u;
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "pthread_mutexattr_setpshared") {
+            regs[0] = 0u;
+            ++supported_calls;
+            return;
+        }
+
+        if (name == "pthread_mutexattr_destroy") {
+            if (V87Enabled()) {
+                v87_mutexattr_types.erase(regs[0]);
+            }
+
+            regs[0] = 0u;
             ++supported_calls;
             return;
         }
 
         if (name == "pthread_mutex_init") {
             if (V63Enabled()) {
-                v63_mutexes.erase(regs[0]);
+                V63MutexState state;
+
+                if (V87Enabled()) {
+                    state.type = 0u;
+                    state.type_known = true;
+
+                    if (regs[1] != 0u) {
+                        const auto attr =
+                            v87_mutexattr_types.find(
+                                regs[1]);
+
+                        if (attr !=
+                            v87_mutexattr_types.end()) {
+                            state.type =
+                                attr->second;
+                        }
+                    }
+                }
+
+                v63_mutexes[regs[0]] =
+                    state;
             }
-            regs[0] = 0;
+
+            regs[0] = 0u;
             ++supported_calls;
             return;
         }
@@ -20153,17 +20785,49 @@ public:
         if (name == "pthread_mutex_lock") {
             if (V63Enabled()) {
                 const std::uint32_t mutex_arg = regs[0];
+
+                v87_last_mutex_error = 0u;
+
                 const bool acquired =
                     V63AcquireMutex(
                         mutex_arg,
                         false);
-                regs[0] = acquired ? 0u : 16u;
+
                 ++supported_calls;
 
-                if (!acquired && jit) {
+                if (acquired) {
+                    regs[0] = 0u;
+                    return;
+                }
+
+                if (V87Enabled() &&
+                    v87_last_mutex_error != 0u) {
+                    regs[0] =
+                        v87_last_mutex_error;
+                    return;
+                }
+
+                if (V87Enabled() &&
+                    V87MutexWaitPending(
+                        current_probe_thread_id)) {
+
+                    regs[0] = 0u;
+
+                    if (jit) {
+                        jit->HaltExecution(
+                            Dynarmic::HaltReason::UserDefined4);
+                    }
+
+                    return;
+                }
+
+                regs[0] = 16u;
+
+                if (jit) {
                     jit->HaltExecution(
                         Dynarmic::HaltReason::UserDefined3);
                 }
+
                 return;
             }
 
@@ -27386,7 +28050,10 @@ bool JniProbePrepareRuntime(
         callbacks.Append(
             "V83 PROFILE BUTTON DISPATCH: v83 restored the V80 2048x1536 pixel touch control and proved buttonId=5 can dispatch even when the raw +0x28/+0x2c/+0x30/+0x34 radar rectangle does not contain the screen-space tap. Those raw fields are therefore local/transformed, not absolute hitboxes. The passive dispatcher trap remains enabled and does not alter rendering, widget geometry or GameState.");
     }
-    if (callbacks.V86Enabled()) {
+    if (callbacks.V87Enabled()) {
+        callbacks.Append(
+            "V87 SCHEDULER: v86 128 MiB heap/perf baseline preserved; mutex owners are preemptible; blocking locks sleep in FIFO waiter queues; unlock performs ownership handoff; explicit Bionic mutexattr types are retained; wait-for cycles fail-fast.");
+    } else if (callbacks.V86Enabled()) {
         callbacks.Append(
             "V86 PERF HEAP: Points=Pixels 2048x1536 permanent; guest heap=128 MiB (v85 was 64 MiB); functional scheduler/resource/zlib/ETC1/GLES/UI_IPAD/touch/keyboard/USERFS bridges kept; scheduler semantics unchanged; residual V22/V30/V38/V61 hot slice logs disabled before formatting.");
     } else if (callbacks.V85PerformanceEnabled()) {
@@ -27407,7 +28074,10 @@ bool JniProbePrepareRuntime(
         }
     }
 
-    if (callbacks.V64Enabled()) {
+    if (callbacks.V87Enabled()) {
+        callbacks.Append(
+            "V87 MUTEX POLICY: a boundary worker stops after one normal quantum even when it still owns guest mutexes. Contenders block instead of receiving EBUSY/fatal; the blocked main thread temporarily prioritizes the direct mutex owner until unlock handoff.");
+    } else if (callbacks.V64Enabled()) {
         callbacks.Append(
             "V64 RELEASE-BOUNDARY SCHEDULER: v63 guest pthread mutex ownership tracking is preserved, but a worker whose quantum expires while holding a mutex is armed to stop at the first later unlock that makes heldMutexes=0. It no longer waits for another whole quantum to happen to sample zero.");
         callbacks.Append(
@@ -27914,8 +28584,10 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
         }
 
         const std::uint32_t guest_heap_size =
-            diagnostic_mode ==
-                    PvZ2DiagnosticMode::V86HeapPerformanceFix
+            (diagnostic_mode ==
+                    PvZ2DiagnosticMode::V86HeapPerformanceFix ||
+             diagnostic_mode ==
+                    PvZ2DiagnosticMode::V87PreemptiveMutexScheduler)
                 ? kJniProbeHeapSizeV86
                 : kJniProbeHeapSize;
 
@@ -28994,12 +29666,19 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             const std::uint32_t wait_lr =
                                 jit.Regs()[14];
 
+                            const bool v87_main_mutex_wait =
+                                callbacks.V87Enabled() &&
+                                callbacks.V87MutexWaitPending(0u);
+
                             const char* current_wait_kind =
-                                wait_kind(
-                                    result.final_pc,
-                                    wait_lr);
+                                v87_main_mutex_wait
+                                    ? "mutex-wait"
+                                    : wait_kind(
+                                          result.final_pc,
+                                          wait_lr);
 
                             const bool concrete_wait =
+                                v87_main_mutex_wait ||
                                 std::strcmp(
                                     current_wait_kind,
                                     "timeslice") != 0;
@@ -29024,7 +29703,8 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
 
                             const std::uint32_t future =
                                 concrete_wait &&
-                                !res_stream_pump_boundary
+                                !res_stream_pump_boundary &&
+                                !v87_main_mutex_wait
                                     ? wait_object_for_pc(
                                           result.final_pc,
                                           wait_lr,
@@ -29128,7 +29808,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                 continue;
                             }
 
-                            const auto main_regs =
+                            auto main_regs =
                                 jit.Regs();
                             const auto main_ext_regs =
                                 jit.ExtRegs();
@@ -29146,11 +29826,31 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                     callbacks.deferred_threads.size(),
                                     64u);
 
-                            const std::size_t worker_start =
+                            std::size_t worker_start =
                                 worker_limit == 0u
                                     ? 0u
                                     : scheduler_worker_cursor %
                                           worker_limit;
+
+                            if (v87_main_mutex_wait &&
+                                worker_limit != 0u) {
+
+                                const std::uint32_t preferred_tid =
+                                    callbacks.V87PreferredMutexOwner(0u);
+
+                                for (std::size_t candidate = 0u;
+                                     candidate < worker_limit;
+                                     ++candidate) {
+
+                                    if (candidate <
+                                            callbacks.deferred_threads.size() &&
+                                        callbacks.deferred_threads[candidate].id ==
+                                            preferred_tid) {
+                                        worker_start = candidate;
+                                        break;
+                                    }
+                                }
+                            }
 
                             for (std::size_t worker_offset = 0u;
                                  worker_offset < worker_limit;
@@ -29171,6 +29871,25 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                 if (worker_state.runtime_completed ||
                                     worker_state.runtime_failed) {
                                     continue;
+                                }
+
+                                if (callbacks.V87Enabled() &&
+                                    worker_state.runtime_started) {
+
+                                    bool mutex_resumed = false;
+                                    std::uint32_t mutex_result = 0u;
+
+                                    if (!callbacks.V87PrepareMutexResume(
+                                            worker_state.id,
+                                            mutex_resumed,
+                                            mutex_result)) {
+                                        continue;
+                                    }
+
+                                    if (mutex_resumed) {
+                                        worker_state.regs[0] =
+                                            mutex_result;
+                                    }
                                 }
 
                                 if (callbacks.V66Enabled() &&
@@ -29368,10 +30087,52 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                             callbacks.V63Enabled() &&
                                             v63_held_mutexes != 0u;
 
-                                    if ((!owns_pump_mutex &&
-                                         !owns_any_v63_mutex) ||
-                                        worker_returned ||
+                                    if (worker_returned ||
                                         worker_fatal) {
+                                        break;
+                                    }
+
+                                    if (callbacks.V87Enabled()) {
+                                        if (callbacks.V87MutexWaitGranted(0u)) {
+                                            break;
+                                        }
+
+                                        const bool priority_owner_continue =
+                                            v87_main_mutex_wait &&
+                                            owns_any_v63_mutex &&
+                                            !callbacks.V87MutexWaitPending(
+                                                worker_state.id) &&
+                                            !callbacks.V65ThreadBlocked(
+                                                worker_state.id) &&
+                                            !callbacks.V66ThreadBlocked(
+                                                worker_state.id);
+
+                                        if (!priority_owner_continue) {
+                                            if (owns_any_v63_mutex) {
+                                                callbacks.V87RecordOwnerPreemption(
+                                                    worker_state.id);
+                                            }
+                                            break;
+                                        }
+
+                                        ++callbacks.v87_priority_continuations;
+
+                                        callbacks.control_returned = false;
+                                        callbacks.soft_slice_timeout = true;
+                                        callbacks.ticks_left =
+                                            kWorkerSliceTicks;
+                                        callbacks.ticks_consumed = 0u;
+                                        callbacks.next_tick_report =
+                                            std::numeric_limits<
+                                                std::uint64_t>::max();
+
+                                        result.message.clear();
+                                        clear_probe_halts();
+                                        continue;
+                                    }
+
+                                    if (!owns_pump_mutex &&
+                                        !owns_any_v63_mutex) {
                                         break;
                                     }
 
@@ -29781,6 +30542,11 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                     }
                                 }
 
+                                if (v87_main_mutex_wait &&
+                                    callbacks.V87MutexWaitGranted(0u)) {
+                                    break;
+                                }
+
                                 if (object_changed) {
                                     future_changed = true;
 
@@ -29813,6 +30579,44 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                     }
                                     break;
                                 }
+                            }
+
+                            if (v87_main_mutex_wait) {
+                                bool mutex_resumed = false;
+                                std::uint32_t mutex_result = 0u;
+
+                                if (!callbacks.V87PrepareMutexResume(
+                                        0u,
+                                        mutex_resumed,
+                                        mutex_result) ||
+                                    !mutex_resumed) {
+
+                                    callbacks.soft_slice_timeout = false;
+                                    callbacks.current_probe_thread_id = 0u;
+                                    result.lifecycle_failure_name =
+                                        name;
+
+                                    if (result.message.empty()) {
+                                        result.message =
+                                            "v87 main thread mutex wait made no handoff progress; preferredOwnerTid=" +
+                                            std::to_string(
+                                                callbacks.V87PreferredMutexOwner(
+                                                    0u)) +
+                                            ".";
+                                    }
+
+                                    callbacks.Append(
+                                        "V87 MUTEX MAIN-WAIT STOP " +
+                                        result.message);
+
+                                    result.trace =
+                                        callbacks.Trace();
+
+                                    return false;
+                                }
+
+                                main_regs[0] =
+                                    mutex_result;
                             }
 
                             clear_probe_halts();
@@ -30012,6 +30816,25 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                 continue;
                             }
 
+                            if (callbacks.V87Enabled() &&
+                                worker_state.runtime_started) {
+
+                                bool mutex_resumed = false;
+                                std::uint32_t mutex_result = 0u;
+
+                                if (!callbacks.V87PrepareMutexResume(
+                                        worker_state.id,
+                                        mutex_resumed,
+                                        mutex_result)) {
+                                    continue;
+                                }
+
+                                if (mutex_resumed) {
+                                    worker_state.regs[0] =
+                                        mutex_result;
+                                }
+                            }
+
                             if (callbacks.V66Enabled() &&
                                 worker_state.runtime_started) {
 
@@ -30207,10 +31030,21 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                               worker_state.id)
                                         : 0u;
 
-                                if (!callbacks.V63Enabled() ||
-                                    held == 0u ||
-                                    worker_returned ||
+                                if (worker_returned ||
                                     worker_fatal) {
+                                    break;
+                                }
+
+                                if (callbacks.V87Enabled()) {
+                                    if (held != 0u) {
+                                        callbacks.V87RecordOwnerPreemption(
+                                            worker_state.id);
+                                    }
+                                    break;
+                                }
+
+                                if (!callbacks.V63Enabled() ||
+                                    held == 0u) {
                                     break;
                                 }
 
@@ -31468,6 +32302,11 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             std::chrono::milliseconds(
                                 16));
                     }
+                }
+
+                if (callbacks.V87Enabled()) {
+                    callbacks.Append(
+                        callbacks.V87MutexSummary());
                 }
 
                 if (callbacks.V85PerformanceEnabled()) {
