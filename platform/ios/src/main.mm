@@ -530,7 +530,7 @@ void PvZ2HostNotifyDirectFrame(
     self.captionLabel.clipsToBounds =
         YES;
     self.captionLabel.text =
-        @"PvZ2 v108 — starting…\nSoundBank completion liveness + 32 kHz audio";
+        @"PvZ2 v109 — starting…\nLean Wwise hot path + v108 bank liveness";
 
     self.stopButton =
         [UIButton
@@ -719,7 +719,7 @@ void PvZ2HostNotifyDirectFrame(
 
     self.inputEnabled = NO;
     self.captionLabel.text =
-        @"PvZ2 v108 LIVE — HARD STOP requested; interrupting guest at the next Dynarmic checkpoint…";
+        @"PvZ2 v109 LIVE — HARD STOP requested; interrupting guest at the next Dynarmic checkpoint…";
     self.stopButton.enabled = NO;
     PvZ2RequestInteractiveStop();
 }
@@ -1297,7 +1297,7 @@ void PvZ2HostNotifyDirectFrame(
         self.captionLabel.text =
             [NSString
                 stringWithFormat:
-                    @"PvZ2 v108 LIVE • frame %lu • %@\n%lu×%lu guest • direct GPU 1:1 + audio",
+                    @"PvZ2 v109 LIVE • frame %lu • %@\n%lu×%lu guest • direct GPU 1:1 + audio",
                     (unsigned long)frame,
                     touchState,
                     (unsigned long)width,
@@ -1524,7 +1524,7 @@ void PvZ2HostNotifyDirectFrame(
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — v108 Bank Completion Liveness";
+        @"PvZ2forIOS — v109 Lean Audio Performance";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -1533,7 +1533,7 @@ void PvZ2HostNotifyDirectFrame(
         NO;
 
     title.text =
-        @"PvZ2forIOS — v108 Bank Completion Liveness";
+        @"PvZ2forIOS — v109 Lean Audio Performance";
 
     title.font =
         [UIFont
@@ -1549,7 +1549,7 @@ void PvZ2HostNotifyDirectFrame(
         NO;
 
     explanation.text =
-        @"v108 preserves the confirmed 32 kHz audio fix and traces the full asynchronous SoundBank teardown. During a synchronous UnloadBank wait, it may wake only the real Wwise AudioThread at the native 32 ms buffer cadence when the host PCM ring has drained and a CAkUsageSlot completion callback is still pending; it never fabricates the bank completion itself.";
+        @"v109 keeps every functional v108 audio/bank fix, but removes the retired v105 resampler SVC observer from Wwise's hot path and suppresses per-frame V88 lifecycle trace spam. V90 timing remains active so this build directly measures whether diagnostic overhead was amplifying the zombie/plant and PopCap-transition FPS drops.";
 
     explanation.numberOfLines = 0;
 
@@ -2221,14 +2221,14 @@ void PvZ2HostNotifyDirectFrame(
 
     const auto* selectedDescriptor =
         PvZ2DescribeDiagnosticMode(
-            PvZ2DiagnosticMode::V108BankCompletionLiveness);
+            PvZ2DiagnosticMode::V109LeanAudioPerformance);
 
     NSString *selectedModeName =
         selectedDescriptor != nullptr
             ? [NSString
                   stringWithUTF8String:
                       selectedDescriptor->internal_name]
-            : @"V108_BANK_COMPLETION_LIVENESS";
+            : @"V109_LEAN_AUDIO_PERFORMANCE";
 
     [self
         appendUI:
@@ -2291,10 +2291,10 @@ void PvZ2HostNotifyDirectFrame(
 
     const auto* diagnosticDescriptor =
         PvZ2DescribeDiagnosticMode(
-            PvZ2DiagnosticMode::V108BankCompletionLiveness);
+            PvZ2DiagnosticMode::V109LeanAudioPerformance);
 
     const PvZ2DiagnosticMode diagnosticMode =
-        PvZ2DiagnosticMode::V108BankCompletionLiveness;
+        PvZ2DiagnosticMode::V109LeanAudioPerformance;
 
     NSString *diagnosticModeName =
         diagnosticDescriptor != nullptr
@@ -2310,7 +2310,7 @@ void PvZ2HostNotifyDirectFrame(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v108 Bank Completion Liveness started mode=%@; PID=%d ===",
+                    @"=== PvZ2 v109 Lean Audio Performance started mode=%@; PID=%d ===",
                     diagnosticModeName,
                     getpid()]];
 
@@ -2824,14 +2824,14 @@ void PvZ2HostNotifyDirectFrame(
                                     finishRunWithMessage:
                                         [NSString
                                             stringWithFormat:
-                                                @"PvZ2 v108 LIVE — HARD STOPPED after %u guest frames.\nClose to inspect the v108 runtime log.",
+                                                @"PvZ2 v109 LIVE — HARD STOPPED after %u guest frames.\nClose to inspect the v109 runtime log.",
                                                 result.draw_frames_completed]];
                             } else {
                                 [selfRef.liveController
                                     finishRunWithMessage:
                                         [NSString
                                             stringWithFormat:
-                                                @"PvZ2 v108 LIVE — run finished after %u guest frames.\nClose to inspect the v108 runtime log.",
+                                                @"PvZ2 v109 LIVE — run finished after %u guest frames.\nClose to inspect the v109 runtime log.",
                                                 result.draw_frames_completed]];
                             }
 
@@ -2888,11 +2888,11 @@ void PvZ2HostNotifyDirectFrame(
 
                             if (result.hard_stop_requested) {
                                 [selfRef.liveController finishRunWithMessage:
-                                    @"PvZ2 v108 LIVE — HARD STOPPED.\nGuest execution was interrupted at the next Dynarmic checkpoint. Close to inspect the v108 runtime log."];
+                                    @"PvZ2 v109 LIVE — HARD STOPPED.\nGuest execution was interrupted at the next Dynarmic checkpoint. Close to inspect the v109 runtime log."];
                             } else {
                                 [selfRef.liveController finishRunWithMessage:
                                     [NSString stringWithFormat:
-                                        @"PvZ2 v108 LIVE — guest stopped/crashed.\n%@\nClose to inspect the v108 runtime log.", message]];
+                                        @"PvZ2 v109 LIVE — guest stopped/crashed.\n%@\nClose to inspect the v109 runtime log.", message]];
                             }
 
                         } else {

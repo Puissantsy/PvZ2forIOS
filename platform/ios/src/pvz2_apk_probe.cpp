@@ -994,6 +994,8 @@ constexpr std::uint64_t kCapSemaphoreWakeRepair =
     ProbeCap(PvZ2ProbeCapability::SemaphoreWakeRepair);
 constexpr std::uint64_t kCapBankCompletionLiveness =
     ProbeCap(PvZ2ProbeCapability::BankCompletionLiveness);
+constexpr std::uint64_t kCapLeanAudioPerformance =
+    ProbeCap(PvZ2ProbeCapability::LeanAudioPerformance);
 
 constexpr std::uint64_t kCapsTransformBase =
     kCapLive | kCapCpuFrame | kCapTransform |
@@ -1047,6 +1049,9 @@ constexpr std::uint64_t kCapsV107 =
     kCapsV106 | kCapSemaphoreWakeRepair;
 constexpr std::uint64_t kCapsV108 =
     kCapsV107 | kCapBankCompletionLiveness;
+constexpr std::uint64_t kCapsV109 =
+    (kCapsV108 & ~kCapWwiseResamplerProbe) |
+    kCapLeanAudioPerformance;
 
 constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::PassiveRegistry, "PASSIVE_REGISTRY", nullptr, 0u, false},
@@ -1102,12 +1107,13 @@ constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::V106AudioRateBankWait, "V106_AUDIO_RATE_BANK_WAIT", "V106 Audio+Bank", kCapsV106, true},
     {PvZ2DiagnosticMode::V107SemaphoreWakeRepair, "V107_SEMAPHORE_WAKE_REPAIR", "V107 Semaphore Wake", kCapsV107, true},
     {PvZ2DiagnosticMode::V108BankCompletionLiveness, "V108_BANK_COMPLETION_LIVENESS", "V108 Bank Completion", kCapsV108, true},
+    {PvZ2DiagnosticMode::V109LeanAudioPerformance, "V109_LEAN_AUDIO_PERFORMANCE", "V109 Lean Audio", kCapsV109, true},
 };
 
 constexpr PvZ2DiagnosticMode kSelectableDiagnosticModes[] = {
     // App-facing selection remains intentionally single-mode.
     // Historical descriptors stay registered for internal diagnostics.
-    PvZ2DiagnosticMode::V108BankCompletionLiveness,
+    PvZ2DiagnosticMode::V109LeanAudioPerformance,
 };
 
 } // namespace
@@ -8752,6 +8758,11 @@ public:
     }
 
 
+    bool V109Enabled() const {
+        return HasCapability(
+            PvZ2ProbeCapability::LeanAudioPerformance);
+    }
+
     bool V108Enabled() const {
         return HasCapability(
             PvZ2ProbeCapability::BankCompletionLiveness);
@@ -10199,6 +10210,7 @@ public:
     }
 
     const char* RuntimeModeTag() const {
+        if (V109Enabled()) return "V109";
         if (V108Enabled()) return "V108";
         if (V107Enabled()) return "V107";
         if (V106Enabled()) return "V106";
@@ -33603,6 +33615,10 @@ bool JniProbePrepareRuntime(
         callbacks.Append(
             "V83 PROFILE BUTTON DISPATCH: v83 restored the V80 2048x1536 pixel touch control and proved buttonId=5 can dispatch even when the raw +0x28/+0x2c/+0x30/+0x34 radar rectangle does not contain the screen-space tap. Those raw fields are therefore local/transformed, not absolute hitboxes. The passive dispatcher trap remains enabled and does not alter rendering, widget geometry or GameState.");
     }
+    if (callbacks.V109Enabled()) {
+        callbacks.AppendDiagnostic(
+            "V109 LEAN AUDIO PERFORMANCE: preserves the v106 32 kHz sink, v107 semaphore repair and v108 SoundBank completion liveness, but deliberately does not install the v105 CAkResampler Init/SetPitch/SwitchTo SVC probes. Hot Native_onDrawFrame/OpenSL callback V88 begin/end trace lines are also suppressed. V90 frame/worker/allocator/host-cost telemetry remains enabled so the iPad can measure the real runtime cost with scheduler semantics unchanged.");
+    }
     if (callbacks.V108Enabled()) {
         callbacks.AppendDiagnostic(
             "V108 BANK COMPLETION LIVENESS: v107 proved BankMgr wakes and dequeues the final UnloadBank command, but the synchronous completion callback can remain pending after KillBank while CAkUsageSlot still owns live references. Exact traps trace KillSlot -> ProcessMsgQueue(KillBank) -> CAkUsageSlot::Release -> UnloadCompletionNotification -> DefaultBankCallbackFunc. If and only if that real teardown is pending, the OpenSL ring is empty, no guest buffer callback is pending, and CAkAudioThread is asleep on its own event semaphore, a 32 ms liveness pulse wakes only CAkAudioThread so Wwise itself can finish releasing voices; the main UnloadBank completion semaphore is never fabricated.");
@@ -35551,12 +35567,20 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                         std::uint64_t lifecycle_ticks = 0;
                         std::uint32_t async_round = 0;
 
+                        const bool v109_hot_lifecycle =
+                            callbacks.V109Enabled() &&
+                            (std::strcmp(name, "Native_onDrawFrame") == 0 ||
+                             std::strcmp(name, "V100_OpenSL_BufferQueueCallback") == 0 ||
+                             std::strcmp(name, "V99_OpenSL_BufferQueueCallback") == 0);
+                        const bool v88_trace_lifecycle =
+                            callbacks.V88Enabled() &&
+                            !v109_hot_lifecycle;
                         const std::uint64_t v88_lifecycle_begin_ns =
-                            callbacks.V88Enabled()
+                            v88_trace_lifecycle
                                 ? V85SteadyNowNs()
                                 : 0u;
 
-                        if (callbacks.V88Enabled()) {
+                        if (v88_trace_lifecycle) {
                             callbacks.Append(
                                 "V88 STARTUP BEGIN phase=" +
                                 std::string{name});
@@ -35639,7 +35663,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                         lifecycle_ticks) +
                                     " scheduled ticks.");
 
-                                if (callbacks.V88Enabled()) {
+                                if (v88_trace_lifecycle) {
                                     callbacks.Append(
                                         "V88 STARTUP END phase=" +
                                         std::string{name} +

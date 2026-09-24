@@ -352,6 +352,11 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // CAkAudioThread progressing if a synchronous UnloadBank wait drains the
     // synthetic OpenSL ring before CAkUsageSlot can release its final refs.
     V108BankCompletionLiveness = 52u,
+
+    // v109: production-like performance pass. Keep every functional v108
+    // audio/bank fix, but remove the now-proven v105 resampler SVC observer
+    // from the hot Wwise path and suppress per-frame lifecycle trace spam.
+    V109LeanAudioPerformance = 53u,
 };
 
 enum class PvZ2ProbeCapability : std::uint64_t {
@@ -388,6 +393,7 @@ enum class PvZ2ProbeCapability : std::uint64_t {
     AudioRateBankWait = 1ull << 29,
     SemaphoreWakeRepair = 1ull << 30,
     BankCompletionLiveness = 1ull << 31,
+    LeanAudioPerformance = 1ull << 32,
 };
 
 struct PvZ2DiagnosticModeDescriptor {
