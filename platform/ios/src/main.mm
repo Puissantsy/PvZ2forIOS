@@ -530,7 +530,7 @@ void PvZ2HostNotifyDirectFrame(
     self.captionLabel.clipsToBounds =
         YES;
     self.captionLabel.text =
-        @"PvZ2 v95 — starting…\ncaller LR watch";
+        @"PvZ2 v96 — starting…\nmain-thread blocking + LR watch";
 
     self.stopButton =
         [UIButton
@@ -719,7 +719,7 @@ void PvZ2HostNotifyDirectFrame(
 
     self.inputEnabled = NO;
     self.captionLabel.text =
-        @"PvZ2 v95 LIVE — HARD STOP requested; interrupting guest at the next Dynarmic checkpoint…";
+        @"PvZ2 v96 LIVE — HARD STOP requested; interrupting guest at the next Dynarmic checkpoint…";
     self.stopButton.enabled = NO;
     PvZ2RequestInteractiveStop();
 }
@@ -1297,7 +1297,7 @@ void PvZ2HostNotifyDirectFrame(
         self.captionLabel.text =
             [NSString
                 stringWithFormat:
-                    @"PvZ2 v95 LIVE • frame %lu • %@\n%lu×%lu guest • direct GPU 1:1",
+                    @"PvZ2 v96 LIVE • frame %lu • %@\n%lu×%lu guest • direct GPU 1:1",
                     (unsigned long)frame,
                     touchState,
                     (unsigned long)width,
@@ -1527,7 +1527,7 @@ void PvZ2HostNotifyDirectFrame(
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — v95 Precise Caller LR Watch";
+        @"PvZ2forIOS — v96 Main Thread Blocking";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -1536,7 +1536,7 @@ void PvZ2HostNotifyDirectFrame(
         NO;
 
     title.text =
-        @"PvZ2forIOS — v95 Precise Caller LR Watch";
+        @"PvZ2forIOS — v96 Main Thread Blocking";
 
     title.font =
         [UIFont
@@ -1552,7 +1552,7 @@ void PvZ2HostNotifyDirectFrame(
         NO;
 
     explanation.text =
-        @"v95 restores the validated 128 MiB indexed-allocator runtime and replaces v94's broad caller-LR inference with exact non-invasive PUSH/POP provenance traps. It watches only the external saved LR expected to return to 0x1086f1fc; no recovery or stack rewrite is applied.";
+        @"v96 keeps the validated v95 runtime and precise LR watcher, then fixes lifecycle main-thread blocking for semaphores, condition variables and sleeps. A blocked tid=0 now stays frozen while deferred workers run until the real post/signal/timeout and required mutex reacquire complete.";
 
     explanation.numberOfLines = 0;
 
@@ -1622,7 +1622,7 @@ void PvZ2HostNotifyDirectFrame(
                         descriptor->ui_name]];
 
         if (descriptor->mode ==
-            PvZ2DiagnosticMode::V95PreciseCallerReturnWatch) {
+            PvZ2DiagnosticMode::V96MainThreadBlocking) {
             defaultDiagnosticModeIndex =
                 static_cast<NSInteger>(i);
         }
@@ -2384,7 +2384,7 @@ void PvZ2HostNotifyDirectFrame(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v95 Precise Caller LR Watch started mode=%@; PID=%d ===",
+                    @"=== PvZ2 v96 Main Thread Blocking started mode=%@; PID=%d ===",
                     diagnosticModeName,
                     getpid()]];
 
@@ -2898,14 +2898,14 @@ void PvZ2HostNotifyDirectFrame(
                                     finishRunWithMessage:
                                         [NSString
                                             stringWithFormat:
-                                                @"PvZ2 v95 LIVE — HARD STOPPED after %u guest frames.\nClose to inspect the caller-LR provenance log.",
+                                                @"PvZ2 v96 LIVE — HARD STOPPED after %u guest frames.\nClose to inspect the caller-LR provenance log.",
                                                 result.draw_frames_completed]];
                             } else {
                                 [selfRef.liveController
                                     finishRunWithMessage:
                                         [NSString
                                             stringWithFormat:
-                                                @"PvZ2 v95 LIVE — run finished after %u guest frames.\nClose to inspect the caller-LR/allocator/RELRO log.",
+                                                @"PvZ2 v96 LIVE — run finished after %u guest frames.\nClose to inspect the caller-LR/allocator/RELRO log.",
                                                 result.draw_frames_completed]];
                             }
 
@@ -2962,11 +2962,11 @@ void PvZ2HostNotifyDirectFrame(
 
                             if (result.hard_stop_requested) {
                                 [selfRef.liveController finishRunWithMessage:
-                                    @"PvZ2 v95 LIVE — HARD STOPPED.\nGuest execution was interrupted at the next Dynarmic checkpoint. Close to inspect the caller-LR provenance log."];
+                                    @"PvZ2 v96 LIVE — HARD STOPPED.\nGuest execution was interrupted at the next Dynarmic checkpoint. Close to inspect the caller-LR provenance log."];
                             } else {
                                 [selfRef.liveController finishRunWithMessage:
                                     [NSString stringWithFormat:
-                                        @"PvZ2 v95 LIVE — guest stopped/crashed.\n%@\nClose to inspect the caller-LR/allocator/RELRO log.", message]];
+                                        @"PvZ2 v96 LIVE — guest stopped/crashed.\n%@\nClose to inspect the caller-LR/allocator/RELRO log.", message]];
                             }
 
                         } else {

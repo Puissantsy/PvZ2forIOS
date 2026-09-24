@@ -286,6 +286,10 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // v95: restore capability-driven runtime inheritance and replace v94's
     // inferred memory-callback watch with exact PUSH/POP provenance traps.
     V95PreciseCallerReturnWatch = 39u,
+
+    // v96: preserve the v95 provenance watcher and give lifecycle tid=0
+    // real cooperative sem/cond/sleep blocking semantics.
+    V96MainThreadBlocking = 40u,
 };
 
 enum class PvZ2ProbeCapability : std::uint64_t {
@@ -309,6 +313,7 @@ enum class PvZ2ProbeCapability : std::uint64_t {
     CallerReturnWatch = 1ull << 16,
     AllocatorProfiling = 1ull << 17,
     PreciseCallerReturnWatch = 1ull << 18,
+    MainThreadBlocking = 1ull << 19,
 };
 
 struct PvZ2DiagnosticModeDescriptor {

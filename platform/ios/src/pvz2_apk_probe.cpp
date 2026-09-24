@@ -967,6 +967,8 @@ constexpr std::uint64_t kCapAllocatorProfiling =
     ProbeCap(PvZ2ProbeCapability::AllocatorProfiling);
 constexpr std::uint64_t kCapPreciseCallerReturnWatch =
     ProbeCap(PvZ2ProbeCapability::PreciseCallerReturnWatch);
+constexpr std::uint64_t kCapMainThreadBlocking =
+    ProbeCap(PvZ2ProbeCapability::MainThreadBlocking);
 
 constexpr std::uint64_t kCapsTransformBase =
     kCapLive | kCapCpuFrame | kCapTransform |
@@ -994,6 +996,8 @@ constexpr std::uint64_t kCapsV94 =
     kCapsV93 | kCapCallerReturnWatch;
 constexpr std::uint64_t kCapsV95 =
     kCapsV94 | kCapPreciseCallerReturnWatch;
+constexpr std::uint64_t kCapsV96 =
+    kCapsV95 | kCapMainThreadBlocking;
 
 constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::PassiveRegistry, "PASSIVE_REGISTRY", nullptr, 0u, false},
@@ -1036,6 +1040,7 @@ constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::V93ReturnProvenance, "V93_RETURN_PROVENANCE", "V93 Return", kCapsV93, true},
     {PvZ2DiagnosticMode::V94CallerReturnWatch, "V94_CALLER_RETURN_WATCH", "V94 LR Watch", kCapsV94, true},
     {PvZ2DiagnosticMode::V95PreciseCallerReturnWatch, "V95_PRECISE_CALLER_RETURN_WATCH", "V95 Precise LR", kCapsV95, true},
+    {PvZ2DiagnosticMode::V96MainThreadBlocking, "V96_MAIN_THREAD_BLOCKING", "V96 Main Waits", kCapsV96, true},
 };
 
 constexpr PvZ2DiagnosticMode kSelectableDiagnosticModes[] = {
@@ -1062,6 +1067,7 @@ constexpr PvZ2DiagnosticMode kSelectableDiagnosticModes[] = {
     PvZ2DiagnosticMode::V93ReturnProvenance,
     PvZ2DiagnosticMode::V94CallerReturnWatch,
     PvZ2DiagnosticMode::V95PreciseCallerReturnWatch,
+    PvZ2DiagnosticMode::V96MainThreadBlocking,
     PvZ2DiagnosticMode::V66BlockingWaitScheduler,
     PvZ2DiagnosticMode::V65ConditionVariableScheduler,
     PvZ2DiagnosticMode::CtypeCompatDeepScout,
@@ -5194,7 +5200,8 @@ public:
         std::uint32_t abstime) {
 
         if (!V65Enabled() ||
-            current_probe_thread_id == 0u) {
+            (current_probe_thread_id == 0u &&
+             !V96MainBlockingAllowed())) {
             return false;
         }
 
@@ -6502,7 +6509,8 @@ public:
         std::uint32_t abstime) {
 
         if (!V66Enabled() ||
-            current_probe_thread_id == 0u) {
+            (current_probe_thread_id == 0u &&
+             !V96MainBlockingAllowed())) {
             return false;
         }
 
@@ -6595,7 +6603,8 @@ public:
         const char* kind) {
 
         if (!V66Enabled() ||
-            current_probe_thread_id == 0u) {
+            (current_probe_thread_id == 0u &&
+             !V96MainBlockingAllowed())) {
             return false;
         }
 
@@ -7168,6 +7177,149 @@ public:
                     mutex_address));
         }
 
+        return true;
+    }
+
+    bool V96MainBlockingAllowed() const {
+        return
+            V96Enabled() &&
+            return_mode == ReturnMode::Lifecycle &&
+            current_probe_thread_id == 0u;
+    }
+
+    bool V65HasTimedWaiter() const {
+        if (!V65Enabled()) {
+            return false;
+        }
+
+        for (const auto& entry : v65_cond_waits) {
+            if (entry.second.timed &&
+                entry.second.deadline_realtime_ns != 0u) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    bool HasTimedBlockingWait() const {
+        return
+            V65HasTimedWaiter() ||
+            V66HasTimedSleeper();
+    }
+
+    bool V96MainBlockingPending() const {
+        return
+            V96Enabled() &&
+            (V65ThreadBlocked(0u) ||
+             V66ThreadBlocked(0u) ||
+             V87MutexWaitPending(0u));
+    }
+
+    const char* V96MainBlockingKind() const {
+        if (!V96Enabled()) {
+            return "none";
+        }
+
+        if (V65ThreadBlocked(0u)) {
+            return
+                V87MutexWaitPending(0u)
+                    ? "cond-reacquire"
+                    : "cond-wait";
+        }
+
+        if (v66_sleeps.find(0u) !=
+            v66_sleeps.end()) {
+            return "sleep";
+        }
+
+        if (v66_sem_waits.find(0u) !=
+            v66_sem_waits.end()) {
+            return "sem-wait";
+        }
+
+        if (V87MutexWaitPending(0u)) {
+            return "mutex-wait";
+        }
+
+        return "none";
+    }
+
+    bool V96PrepareMainBlockingResume(
+        bool& did_resume,
+        std::uint32_t& result_code) {
+
+        did_resume = false;
+        result_code = 0u;
+
+        if (!V96Enabled()) {
+            return true;
+        }
+
+        // Condition waits own the mutex-reacquire state machine. They must
+        // run before the generic mutex resume path so ETIMEDOUT/signal result
+        // codes survive until the same mutex has actually been reacquired.
+        if (V65ThreadBlocked(0u)) {
+            bool cond_resumed = false;
+            std::uint32_t cond_result = 0u;
+
+            if (!V65PrepareCondResume(
+                    0u,
+                    cond_resumed,
+                    cond_result)) {
+                return v87_failure_message.empty();
+            }
+
+            if (cond_resumed) {
+                did_resume = true;
+                result_code = cond_result;
+            }
+
+            return true;
+        }
+
+        if (V66ThreadBlocked(0u)) {
+            bool blocking_resumed = false;
+            std::uint32_t blocking_result = 0u;
+
+            if (!V66PrepareBlockingResume(
+                    0u,
+                    blocking_resumed,
+                    blocking_result)) {
+                return true;
+            }
+
+            if (blocking_resumed) {
+                did_resume = true;
+                result_code = blocking_result;
+            }
+
+            return true;
+        }
+
+        if (V87MutexWaitPending(0u)) {
+            bool mutex_resumed = false;
+            std::uint32_t mutex_result = 0u;
+
+            if (!V87PrepareMutexResume(
+                    0u,
+                    mutex_resumed,
+                    mutex_result)) {
+                return v87_failure_message.empty();
+            }
+
+            if (mutex_resumed) {
+                did_resume = true;
+                result_code = mutex_result;
+            }
+
+            return true;
+        }
+
+        // A pending main wait is never removed by notify/post alone; reaching
+        // this path means the blocking state was already consumed.
+        did_resume = true;
+        result_code = 0u;
         return true;
     }
 
@@ -8252,6 +8404,11 @@ public:
         return out.str();
     }
 
+    bool V96Enabled() const {
+        return HasCapability(
+            PvZ2ProbeCapability::MainThreadBlocking);
+    }
+
     bool V95Enabled() const {
         return HasCapability(
             PvZ2ProbeCapability::PreciseCallerReturnWatch);
@@ -8263,6 +8420,7 @@ public:
     }
 
     const char* RuntimeModeTag() const {
+        if (V96Enabled()) return "V96";
         if (V95Enabled()) return "V95";
         if (V94Enabled()) return "V94";
         if (V93Enabled()) return "V93";
@@ -8353,7 +8511,8 @@ public:
                 line.rfind("V92 ", 0u) == 0u ||
                 line.rfind("V93 ", 0u) == 0u ||
                 line.rfind("V94 ", 0u) == 0u ||
-                line.rfind("V95 ", 0u) == 0u) {
+                line.rfind("V95 ", 0u) == 0u ||
+                line.rfind("V96 ", 0u) == 0u) {
                 return true;
             }
 
@@ -21491,7 +21650,8 @@ public:
             name == "usleep") {
 
             if (V66Enabled() &&
-                current_probe_thread_id != 0u) {
+                (current_probe_thread_id != 0u ||
+                 V96MainBlockingAllowed())) {
 
                 std::uint64_t duration_ns = 0u;
 
@@ -23975,7 +24135,8 @@ public:
                 name == "pthread_cond_timedwait";
 
             if (V65Enabled() &&
-                current_probe_thread_id != 0u) {
+                (current_probe_thread_id != 0u ||
+                 V96MainBlockingAllowed())) {
 
                 const std::uint32_t cond =
                     regs[0];
@@ -24127,7 +24288,8 @@ public:
             }
 
             if (V66Enabled() &&
-                current_probe_thread_id != 0u) {
+                (current_probe_thread_id != 0u ||
+                 V96MainBlockingAllowed())) {
 
                 const bool timed =
                     name == "sem_timedwait";
@@ -31102,6 +31264,10 @@ bool JniProbePrepareRuntime(
         callbacks.Append(
             "V83 PROFILE BUTTON DISPATCH: v83 restored the V80 2048x1536 pixel touch control and proved buttonId=5 can dispatch even when the raw +0x28/+0x2c/+0x30/+0x34 radar rectangle does not contain the screen-space tap. Those raw fields are therefore local/transformed, not absolute hitboxes. The passive dispatcher trap remains enabled and does not alter rendering, widget geometry or GameState.");
     }
+    if (callbacks.V96Enabled()) {
+        callbacks.AppendDiagnostic(
+            "V96 MAIN BLOCKING: lifecycle tid=0 now uses real cooperative sem_wait/sem_timedwait, pthread_cond_wait/pthread_cond_timedwait and nanosleep/usleep blocking. While main is blocked only deferred workers run; condition resume is prepared before sem/sleep and generic mutex resume. v95 precise LR provenance remains active.");
+    }
     if(callbacks.V95Enabled()){
         callbacks.AppendDiagnostic("V95 PRECISE CALLER LR WATCH: v94 performance regression removed. Exact traps emulate PUSH@0x10868978 and POP@0x108689c4; only incoming LR=0x1086f1fc arms the saved-LR slot. STR/STREX and host SVC writes are observed only against that exact slot. Observation only: no stack repair, return rewrite or guest-code recovery.");
     } else if(callbacks.V94Enabled()){
@@ -32861,7 +33027,12 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             // worker must make progress. For an ordinary
                             // timeslice, resume the main guest immediately and
                             // do not inject a synthetic worker interleaving.
-                            if (callbacks.deferred_threads.empty()) {
+                            const bool v96_main_blocking_wait =
+                                callbacks.V96Enabled() &&
+                                callbacks.V96MainBlockingPending();
+
+                            if (callbacks.deferred_threads.empty() &&
+                                !v96_main_blocking_wait) {
                                 continue;
                             }
 
@@ -32875,13 +33046,16 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                 callbacks.V87MutexWaitPending(0u);
 
                             const char* current_wait_kind =
-                                v87_main_mutex_wait
-                                    ? "mutex-wait"
-                                    : wait_kind(
-                                          result.final_pc,
-                                          wait_lr);
+                                v96_main_blocking_wait
+                                    ? callbacks.V96MainBlockingKind()
+                                    : (v87_main_mutex_wait
+                                           ? "mutex-wait"
+                                           : wait_kind(
+                                                 result.final_pc,
+                                                 wait_lr));
 
                             const bool concrete_wait =
+                                v96_main_blocking_wait ||
                                 v87_main_mutex_wait ||
                                 std::strcmp(
                                     current_wait_kind,
@@ -32908,7 +33082,8 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             const std::uint32_t future =
                                 concrete_wait &&
                                 !res_stream_pump_boundary &&
-                                !v87_main_mutex_wait
+                                !v87_main_mutex_wait &&
+                                !v96_main_blocking_wait
                                     ? wait_object_for_pc(
                                           result.final_pc,
                                           wait_lr,
@@ -33021,9 +33196,29 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             const std::uint32_t main_fpscr =
                                 jit.Fpscr();
 
+                            if (v96_main_blocking_wait) {
+                                callbacks.AppendDiagnostic(
+                                    "V96 MAIN BLOCK ENTER kind=" +
+                                    std::string{current_wait_kind} +
+                                    " PC=0x" +
+                                    JniProbeHex(result.final_pc) +
+                                    " LR=0x" +
+                                    JniProbeHex(wait_lr));
+                            }
+
                             bool future_changed = false;
                             bool any_worker_ran = false;
                             std::size_t worker_slices_this_round = 0u;
+                            std::uint64_t v96_workers_only_rounds = 0u;
+
+                            for (;;) {
+                                future_changed = false;
+                                any_worker_ran = false;
+                                worker_slices_this_round = 0u;
+
+                                if (v96_main_blocking_wait) {
+                                    ++v96_workers_only_rounds;
+                                }
 
                             const std::size_t worker_limit =
                                 std::min<std::size_t>(
@@ -33036,7 +33231,8 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                     : scheduler_worker_cursor %
                                           worker_limit;
 
-                            if (v87_main_mutex_wait &&
+                            if (callbacks.V87Enabled() &&
+                                callbacks.V87MutexWaitPending(0u) &&
                                 worker_limit != 0u) {
 
                                 const std::uint32_t preferred_tid =
@@ -33362,7 +33558,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                         }
 
                                         const bool priority_owner_continue =
-                                            v87_main_mutex_wait &&
+                                            callbacks.V87MutexWaitPending(0u) &&
                                             owns_any_v63_mutex &&
                                             !worker_blocked;
 
@@ -33801,7 +33997,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                     }
                                 }
 
-                                if (v87_main_mutex_wait &&
+                                if (callbacks.V87MutexWaitPending(0u) &&
                                     callbacks.V87MutexWaitGranted(0u)) {
                                     break;
                                 }
@@ -33838,6 +34034,85 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                     }
                                     break;
                                 }
+                            }
+
+                            if (v96_main_blocking_wait) {
+                                bool main_resumed = false;
+                                std::uint32_t main_result = 0u;
+
+                                if (!callbacks.V96PrepareMainBlockingResume(
+                                        main_resumed,
+                                        main_result)) {
+                                    callbacks.soft_slice_timeout = false;
+                                    callbacks.current_probe_thread_id = 0u;
+                                    result.lifecycle_failure_name = name;
+
+                                    if (result.message.empty()) {
+                                        result.message =
+                                            "v96 main blocking resume invariant failed.";
+                                    }
+
+                                    callbacks.AppendCritical(
+                                        "V96 MAIN BLOCK ERROR " +
+                                        result.message);
+                                    result.trace = callbacks.Trace();
+                                    return false;
+                                }
+
+                                if (main_resumed) {
+                                    main_regs[0] = main_result;
+                                    callbacks.AppendDiagnostic(
+                                        "V96 MAIN BLOCK RESUME kind=" +
+                                        std::string{current_wait_kind} +
+                                        " rc=0x" +
+                                        JniProbeHex(main_result) +
+                                        " workersOnlyRounds=" +
+                                        std::to_string(
+                                            v96_workers_only_rounds));
+                                    break;
+                                }
+
+                                if (!any_worker_ran) {
+                                    if (callbacks.HasTimedBlockingWait()) {
+                                        std::this_thread::sleep_for(
+                                            std::chrono::milliseconds(1));
+                                        continue;
+                                    }
+
+                                    callbacks.soft_slice_timeout = false;
+                                    callbacks.current_probe_thread_id = 0u;
+                                    result.lifecycle_failure_name = name;
+                                    result.message =
+                                        "v96 main thread is blocked with no runnable deferred worker and no pending deadline; kind=" +
+                                        std::string{
+                                            callbacks.V96MainBlockingKind()} +
+                                        ".";
+                                    callbacks.AppendCritical(
+                                        "V96 MAIN BLOCK DEADLOCK " +
+                                        result.message);
+                                    result.trace = callbacks.Trace();
+                                    return false;
+                                }
+
+                                if (v96_workers_only_rounds >= 1000000ull) {
+                                    callbacks.soft_slice_timeout = false;
+                                    callbacks.current_probe_thread_id = 0u;
+                                    result.lifecycle_failure_name = name;
+                                    result.message =
+                                        "v96 workers-only wait exceeded 1000000 scheduling rounds; kind=" +
+                                        std::string{
+                                            callbacks.V96MainBlockingKind()} +
+                                        ".";
+                                    callbacks.AppendCritical(
+                                        "V96 MAIN BLOCK SAFETY STOP " +
+                                        result.message);
+                                    result.trace = callbacks.Trace();
+                                    return false;
+                                }
+
+                                // Main registers/CPSR/FPSCR remain frozen.
+                                // Run another worker-only scheduling round.
+                                continue;
                             }
 
                             if (v87_main_mutex_wait) {
@@ -33878,6 +34153,11 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                     mutex_result;
                             }
 
+                            // Non-v96 waits intentionally schedule only one
+                            // cooperative round before returning main a slice.
+                            break;
+                            }
+
                             clear_probe_halts();
 
                             jit.Regs() =
@@ -33898,9 +34178,14 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             callbacks.control_returned = false;
                             callbacks.soft_slice_timeout = true;
 
+                            if (v96_main_blocking_wait) {
+                                // The hard-wait loop above proved the blocking
+                                // primitive complete before restoring main.
+                                continue;
+                            }
+
                             if (!any_worker_ran) {
-                                if (callbacks.V66Enabled() &&
-                                    callbacks.V66HasTimedSleeper()) {
+                                if (callbacks.HasTimedBlockingWait()) {
                                     // All runnable workers may legitimately be
                                     // sleeping until a short host deadline.
                                     // Give steady/realtime clocks a chance to
