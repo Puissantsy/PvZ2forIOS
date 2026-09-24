@@ -986,6 +986,8 @@ constexpr std::uint64_t kCapAudioDrawFramePump =
     ProbeCap(PvZ2ProbeCapability::AudioDrawFramePump);
 constexpr std::uint64_t kCapAudioWorkerHandshake =
     ProbeCap(PvZ2ProbeCapability::AudioWorkerHandshake);
+constexpr std::uint64_t kCapWwiseResamplerProbe =
+    ProbeCap(PvZ2ProbeCapability::WwiseResamplerProbe);
 
 constexpr std::uint64_t kCapsTransformBase =
     kCapLive | kCapCpuFrame | kCapTransform |
@@ -1031,6 +1033,8 @@ constexpr std::uint64_t kCapsV103 =
     kCapsV102 | kCapAudioDrawFramePump;
 constexpr std::uint64_t kCapsV104 =
     kCapsV103 | kCapAudioWorkerHandshake;
+constexpr std::uint64_t kCapsV105 =
+    kCapsV104 | kCapWwiseResamplerProbe;
 
 constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::PassiveRegistry, "PASSIVE_REGISTRY", nullptr, 0u, false},
@@ -1082,12 +1086,13 @@ constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::V102AudioRealtimePump, "V102_AUDIO_REALTIME_PUMP", "V102 Audio Pump", kCapsV102, true},
     {PvZ2DiagnosticMode::V103AudioDrawFramePump, "V103_AUDIO_DRAWFRAME_PUMP", "V103 Audio Draw Pump", kCapsV103, true},
     {PvZ2DiagnosticMode::V104AudioWorkerHandshake, "V104_AUDIO_WORKER_HANDSHAKE", "V104 Audio Worker", kCapsV104, true},
+    {PvZ2DiagnosticMode::V105WwiseResamplerProbe, "V105_WWISE_RESAMPLER_PROBE", "V105 Wwise Resampler", kCapsV105, true},
 };
 
 constexpr PvZ2DiagnosticMode kSelectableDiagnosticModes[] = {
     // App-facing selection remains intentionally single-mode.
     // Historical descriptors stay registered for internal diagnostics.
-    PvZ2DiagnosticMode::V104AudioWorkerHandshake,
+    PvZ2DiagnosticMode::V105WwiseResamplerProbe,
 };
 
 } // namespace
@@ -1460,6 +1465,13 @@ constexpr std::uint32_t kJniProbeSvcV90FontScanBegin = 0x00f0c2u;
 constexpr std::uint32_t kJniProbeSvcV90FontScanEnd = 0x00f0c3u;
 constexpr std::uint32_t kJniProbeSvcV95WrapperPush = 0x00f0c4u;
 constexpr std::uint32_t kJniProbeSvcV95WrapperPop = 0x00f0c5u;
+
+// v105: low-frequency observational probes in the Wwise resampler lifecycle.
+// Each SVC replaces one verified ARM instruction and emulates that instruction
+// exactly after capturing state; no sample-rate/pitch value is modified.
+constexpr std::uint32_t kJniProbeSvcV105ResamplerInitState = 0x00f0c6u;
+constexpr std::uint32_t kJniProbeSvcV105SetPitchState = 0x00f0c7u;
+constexpr std::uint32_t kJniProbeSvcV105SwitchToState = 0x00f0c8u;
 
 constexpr std::uint32_t kJniProbeSvcUnsupportedJniBase = 0x00e000u;
 constexpr std::uint32_t kJniProbeJniSlotCount = 256u;
@@ -3294,6 +3306,13 @@ public:
     bool v104_pcm_prev_nonzero = false;
     std::uint64_t v104_pcm_repeat_run = 0u;
     std::uint64_t v104_pcm_repeat_total = 0u;
+
+    // v105: observe Wwise resampler state without changing audio semantics.
+    // These sites are lifecycle/configuration paths rather than Execute(), so
+    // the probe avoids adding an SVC to every mixed audio block.
+    std::uint64_t v105_resampler_init_calls = 0u;
+    std::uint64_t v105_set_pitch_calls = 0u;
+    std::uint64_t v105_switch_to_calls = 0u;
 
     // v61 safe cooperative boundary. Set only by the main Native_onDrawFrame
     // thread when the verified resource-stream pump has completed its
@@ -8561,6 +8580,183 @@ public:
     }
 
 
+    bool V105Enabled() const {
+        return HasCapability(
+            PvZ2ProbeCapability::WwiseResamplerProbe);
+    }
+
+    float V105FloatFromBits(
+        std::uint32_t bits) const {
+        float value = 0.0f;
+        std::memcpy(
+            &value,
+            &bits,
+            sizeof(value));
+        return value;
+    }
+
+    bool V105ShouldLogCounter(
+        std::uint64_t value) const {
+        return
+            value <= 128u ||
+            (value != 0u &&
+             (value & (value - 1u)) == 0u);
+    }
+
+    void V105LogResamplerState(
+        const char* site,
+        std::uint64_t count,
+        std::uint32_t resampler,
+        std::uint32_t format,
+        std::uint32_t target_hint,
+        std::uint32_t next_state_hint) {
+
+        if (!V105Enabled() ||
+            !V105ShouldLogCounter(count)) {
+            return;
+        }
+
+        constexpr std::uint32_t kPipelineRateGuest =
+            kGuestBase + 0x00d47d14u;
+
+        const std::uint32_t pbi =
+            resampler != 0u
+                ? mem.Read32Guest(
+                      resampler + 0x8cu)
+                : 0u;
+        const std::uint32_t pbi_rate =
+            pbi != 0u
+                ? mem.Read32Guest(
+                      pbi + 0x70u)
+                : 0u;
+        const std::uint32_t source =
+            pbi != 0u
+                ? mem.Read32Guest(
+                      pbi + 0x64u)
+                : 0u;
+        const std::uint32_t source_id =
+            source != 0u
+                ? mem.Read32Guest(source)
+                : 0u;
+        const std::uint32_t source_field18 =
+            source != 0u
+                ? mem.Read32Guest(
+                      source + 0x18u)
+                : 0u;
+        const std::uint32_t sound_context =
+            pbi != 0u
+                ? mem.Read32Guest(
+                      pbi + 0x60u)
+                : 0u;
+        const std::uint32_t sound_id =
+            sound_context != 0u
+                ? mem.Read32Guest(
+                      sound_context + 0x0cu)
+                : 0u;
+
+        const std::uint32_t format_rate =
+            format != 0u
+                ? mem.Read32Guest(format)
+                : pbi_rate;
+        const std::uint32_t pipeline_rate =
+            mem.Read32Guest(
+                kPipelineRateGuest);
+        const std::uint32_t ratio_bits =
+            resampler != 0u
+                ? mem.Read32Guest(
+                      resampler + 0x2cu)
+                : 0u;
+        const std::uint32_t pitch_bits =
+            resampler != 0u
+                ? mem.Read32Guest(
+                      resampler + 0x30u)
+                : 0u;
+        const std::uint32_t step_a =
+            resampler != 0u
+                ? mem.Read32Guest(
+                      resampler + 0x14u)
+                : 0u;
+        const std::uint32_t step_b =
+            resampler != 0u
+                ? mem.Read32Guest(
+                      resampler + 0x18u)
+                : 0u;
+        const std::uint32_t state =
+            resampler != 0u
+                ? mem.Read32Guest(
+                      resampler + 0x28u)
+                : 0u;
+        const std::uint32_t dsp_index =
+            resampler != 0u
+                ? mem.Read8(
+                      resampler + 0x34u)
+                : 0u;
+
+        AppendDiagnostic(
+            "V105 WWISE RESAMPLER " +
+            std::string{
+                site != nullptr
+                    ? site
+                    : "?"} +
+            " #" +
+            std::to_string(count) +
+            " frame=" +
+            std::to_string(
+                current_frame_number) +
+            " tid=" +
+            std::to_string(
+                current_probe_thread_id) +
+            " this=" +
+            V46DescribeGuestAddress(
+                resampler) +
+            " format=" +
+            V46DescribeGuestAddress(
+                format) +
+            " sourceHz=" +
+            std::to_string(format_rate) +
+            " pbiHz=" +
+            std::to_string(pbi_rate) +
+            " targetHintHz=" +
+            std::to_string(target_hint) +
+            " pipelineHz=" +
+            std::to_string(pipeline_rate) +
+            " ratio=" +
+            std::to_string(
+                V105FloatFromBits(
+                    ratio_bits)) +
+            " ratioBits=0x" +
+            JniProbeHex(ratio_bits) +
+            " pitchCents=" +
+            std::to_string(
+                V105FloatFromBits(
+                    pitch_bits)) +
+            " pitchBits=0x" +
+            JniProbeHex(pitch_bits) +
+            " stepA=" +
+            std::to_string(step_a) +
+            " stepB=" +
+            std::to_string(step_b) +
+            " stateNow=0x" +
+            JniProbeHex(state) +
+            " nextState=" +
+            (next_state_hint == 0xffffffffu
+                 ? std::string{"n/a"}
+                 : std::to_string(
+                       next_state_hint)) +
+            " dspIndex=" +
+            std::to_string(dsp_index) +
+            " pbi=" +
+            V46DescribeGuestAddress(pbi) +
+            " source=" +
+            V46DescribeGuestAddress(source) +
+            " sourceId=" +
+            std::to_string(source_id) +
+            " sourceField18=0x" +
+            JniProbeHex(source_field18) +
+            " soundId=" +
+            std::to_string(sound_id));
+    }
+
     bool V104Enabled() const {
         return HasCapability(
             PvZ2ProbeCapability::AudioWorkerHandshake);
@@ -9619,6 +9815,7 @@ public:
     }
 
     const char* RuntimeModeTag() const {
+        if (V105Enabled()) return "V105";
         if (V104Enabled()) return "V104";
         if (V103Enabled()) return "V103";
         if (V102Enabled()) return "V102";
@@ -9727,7 +9924,8 @@ public:
                 line.rfind("V101 ", 0u) == 0u ||
                 line.rfind("V102 ", 0u) == 0u ||
                 line.rfind("V103 ", 0u) == 0u ||
-                line.rfind("V104 ", 0u) == 0u) {
+                line.rfind("V104 ", 0u) == 0u ||
+                line.rfind("V105 ", 0u) == 0u) {
                 return true;
             }
 
@@ -16271,6 +16469,97 @@ public:
             default:
                 break;
             }
+        }
+
+        if (V105Enabled() &&
+            (swi == kJniProbeSvcV105ResamplerInitState ||
+             swi == kJniProbeSvcV105SetPitchState ||
+             swi == kJniProbeSvcV105SwitchToState)) {
+
+            if (swi ==
+                kJniProbeSvcV105ResamplerInitState) {
+                // Original @lib+0x00c141f8:
+                // STRB r0,[r4,#0x34]. GetDSPFunctionIndex has returned,
+                // so Init's source/target ratio, state and DSP choice are
+                // all final before we log them.
+                ++v105_resampler_init_calls;
+                const std::uint32_t resampler =
+                    regs[4];
+                const std::uint32_t format =
+                    regs[6];
+                const std::uint32_t target =
+                    regs[7];
+
+                mem.Write8Guest(
+                    resampler + 0x34u,
+                    static_cast<std::uint8_t>(
+                        regs[0]));
+
+                V105LogResamplerState(
+                    "INIT",
+                    v105_resampler_init_calls,
+                    resampler,
+                    format,
+                    target,
+                    0xffffffffu);
+                return;
+            }
+
+            if (swi ==
+                kJniProbeSvcV105SetPitchState) {
+                // Original @lib+0x00c14498:
+                // LDR r2,[r4,#0x14]. The rate step has already been
+                // calculated/stored, so this observes the final state.
+                ++v105_set_pitch_calls;
+                const std::uint32_t resampler =
+                    regs[4];
+
+                regs[2] =
+                    mem.Read32Guest(
+                        resampler + 0x14u);
+
+                const std::uint32_t next_state =
+                    regs[2] != regs[3]
+                        ? 2u
+                        : (regs[3] == 65536u
+                               ? 0u
+                               : 1u);
+
+                V105LogResamplerState(
+                    "SETPITCH",
+                    v105_set_pitch_calls,
+                    resampler,
+                    0u,
+                    0u,
+                    next_state);
+                return;
+            }
+
+            // Original @lib+0x00c145d8: STRB r0,[r4,#0x34].
+            // SwitchTo has already updated the base ratio, run SetPitch,
+            // and selected the new DSP function for r5's AkAudioFormat.
+            ++v105_switch_to_calls;
+            const std::uint32_t resampler =
+                regs[4];
+            const std::uint32_t format =
+                regs[5];
+            const std::uint32_t target =
+                mem.Read32Guest(
+                    regs[13] + 32u);
+
+            mem.Write8Guest(
+                resampler + 0x34u,
+                static_cast<std::uint8_t>(
+                    regs[0]));
+
+            V105LogResamplerState(
+                "SWITCHTO",
+                v105_switch_to_calls,
+                resampler,
+                format,
+                target,
+                0xffffffffu);
+            return;
         }
 
         if(V89Enabled()&&(swi==kJniProbeSvcV89BlxTarget0||swi==kJniProbeSvcV89BlxTarget1)){
@@ -32558,6 +32847,24 @@ bool JniProbePrepareRuntime(
         return false;
     }
 
+    if (callbacks.V105Enabled() &&
+        (!patch_resource_native_miss(
+             0x00c141f8u,
+             0xe5c40034u,
+             kJniProbeSvcV105ResamplerInitState) ||
+         !patch_resource_native_miss(
+             0x00c14498u,
+             0xe5942014u,
+             kJniProbeSvcV105SetPitchState) ||
+         !patch_resource_native_miss(
+             0x00c145d8u,
+             0xe5c40034u,
+             kJniProbeSvcV105SwitchToState))) {
+        error =
+            "v105 Wwise resampler signature mismatch at Init/SetPitch/SwitchTo; refusing to patch an unverified PvZ2 1.5.252752 instruction.";
+        return false;
+    }
+
     callbacks.Append(
         "V48 RESFILE WRAPPER-FINAL BRIDGE: v45 internal hooks preserved; direct-group null returns are observed at 0x1087a708 and all-groups-exhausted nulls at 0x1087a76c with the exact wrapper ID still in r6.");
     callbacks.Append(
@@ -32673,6 +32980,10 @@ bool JniProbePrepareRuntime(
     if (callbacks.V83Enabled()) {
         callbacks.Append(
             "V83 PROFILE BUTTON DISPATCH: v83 restored the V80 2048x1536 pixel touch control and proved buttonId=5 can dispatch even when the raw +0x28/+0x2c/+0x30/+0x34 radar rectangle does not contain the screen-space tap. Those raw fields are therefore local/transformed, not absolute hitboxes. The passive dispatcher trap remains enabled and does not alter rendering, widget geometry or GameState.");
+    }
+    if (callbacks.V105Enabled()) {
+        callbacks.AppendDiagnostic(
+            "V105 WWISE RESAMPLER PROBE: v104 audio scheduling and 48 kHz host sink are unchanged. Verified observational traps log CAkResampler::Init after sourceHz/targetHz ratio plus DSP selection, CAkResampler::SetPitch after fixed-point step calculation, and CAkResampler::SwitchTo after source-format transition plus DSP reselection. No rate, pitch, PCM, scheduler, renderer or VFS value is modified.");
     }
     if (callbacks.V104Enabled()) {
         callbacks.AppendDiagnostic(

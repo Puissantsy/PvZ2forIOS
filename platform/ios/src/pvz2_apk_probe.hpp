@@ -331,6 +331,12 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // CAkAudioThread worker before allowing another completion callback. This
     // restores the producer/consumer handshake instead of only pumping the sink.
     V104AudioWorkerHandshake = 48u,
+
+    // v105: observational Wwise resampler probe. Preserve the complete v104
+    // audio/runtime behavior while tracing source/target sample rates, base
+    // ratio, pitch fixed-point steps and source/sound IDs at low-frequency
+    // CAkResampler lifecycle points (Init, SetPitch and SwitchTo).
+    V105WwiseResamplerProbe = 49u,
 };
 
 enum class PvZ2ProbeCapability : std::uint64_t {
@@ -363,6 +369,7 @@ enum class PvZ2ProbeCapability : std::uint64_t {
     AudioRealtimePump = 1ull << 25,
     AudioDrawFramePump = 1ull << 26,
     AudioWorkerHandshake = 1ull << 27,
+    WwiseResamplerProbe = 1ull << 28,
 };
 
 struct PvZ2DiagnosticModeDescriptor {
