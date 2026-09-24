@@ -326,6 +326,11 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // asynchronous guest callback injection only while Native_onDrawFrame is
     // active. Startup/surface lifecycles retain the validated v101 scheduling.
     V103AudioDrawFramePump = 47u,
+
+    // v104: after each CoreAudio/OpenSL completion, schedule the actual Wwise
+    // CAkAudioThread worker before allowing another completion callback. This
+    // restores the producer/consumer handshake instead of only pumping the sink.
+    V104AudioWorkerHandshake = 48u,
 };
 
 enum class PvZ2ProbeCapability : std::uint64_t {
@@ -357,6 +362,7 @@ enum class PvZ2ProbeCapability : std::uint64_t {
     AudioClockContract = 1ull << 24,
     AudioRealtimePump = 1ull << 25,
     AudioDrawFramePump = 1ull << 26,
+    AudioWorkerHandshake = 1ull << 27,
 };
 
 struct PvZ2DiagnosticModeDescriptor {

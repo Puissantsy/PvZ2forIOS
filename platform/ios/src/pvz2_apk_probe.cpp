@@ -984,6 +984,8 @@ constexpr std::uint64_t kCapAudioRealtimePump =
     ProbeCap(PvZ2ProbeCapability::AudioRealtimePump);
 constexpr std::uint64_t kCapAudioDrawFramePump =
     ProbeCap(PvZ2ProbeCapability::AudioDrawFramePump);
+constexpr std::uint64_t kCapAudioWorkerHandshake =
+    ProbeCap(PvZ2ProbeCapability::AudioWorkerHandshake);
 
 constexpr std::uint64_t kCapsTransformBase =
     kCapLive | kCapCpuFrame | kCapTransform |
@@ -1027,6 +1029,8 @@ constexpr std::uint64_t kCapsV102 =
     kCapsV101 | kCapAudioRealtimePump;
 constexpr std::uint64_t kCapsV103 =
     kCapsV102 | kCapAudioDrawFramePump;
+constexpr std::uint64_t kCapsV104 =
+    kCapsV103 | kCapAudioWorkerHandshake;
 
 constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::PassiveRegistry, "PASSIVE_REGISTRY", nullptr, 0u, false},
@@ -1077,12 +1081,13 @@ constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::V101AudioClockContract, "V101_AUDIO_CLOCK_CONTRACT", "V101 Audio Clock", kCapsV101, true},
     {PvZ2DiagnosticMode::V102AudioRealtimePump, "V102_AUDIO_REALTIME_PUMP", "V102 Audio Pump", kCapsV102, true},
     {PvZ2DiagnosticMode::V103AudioDrawFramePump, "V103_AUDIO_DRAWFRAME_PUMP", "V103 Audio Draw Pump", kCapsV103, true},
+    {PvZ2DiagnosticMode::V104AudioWorkerHandshake, "V104_AUDIO_WORKER_HANDSHAKE", "V104 Audio Worker", kCapsV104, true},
 };
 
 constexpr PvZ2DiagnosticMode kSelectableDiagnosticModes[] = {
     // App-facing selection remains intentionally single-mode.
     // Historical descriptors stay registered for internal diagnostics.
-    PvZ2DiagnosticMode::V103AudioDrawFramePump,
+    PvZ2DiagnosticMode::V104AudioWorkerHandshake,
 };
 
 } // namespace
@@ -3276,6 +3281,19 @@ public:
     std::uint64_t v102_audio_inline_callbacks = 0u;
     std::uint64_t v102_audio_sink_busy_deferrals = 0u;
     std::uint64_t v102_audio_play_begin_ns = 0u;
+
+    // v104: the real Wwise audio producer is CAkAudioThread::EventMgrThreadFunc
+    // (libPVZ2.so+0x00bfdb70). OpenSL completion wakes its semaphore; v104 then
+    // gives that exact deferred worker the next cooperative slice before another
+    // completion can be delivered. PCM hashes prove whether stale non-zero
+    // blocks are still being recycled by the sink starvation path.
+    std::uint32_t v104_audio_worker_tid = 0u;
+    std::uint64_t v104_audio_worker_handshakes = 0u;
+    std::uint64_t v104_audio_worker_misses = 0u;
+    std::uint32_t v104_pcm_prev_hash = 0u;
+    bool v104_pcm_prev_nonzero = false;
+    std::uint64_t v104_pcm_repeat_run = 0u;
+    std::uint64_t v104_pcm_repeat_total = 0u;
 
     // v61 safe cooperative boundary. Set only by the main Native_onDrawFrame
     // thread when the verified resource-stream pump has completed its
@@ -8543,6 +8561,11 @@ public:
     }
 
 
+    bool V104Enabled() const {
+        return HasCapability(
+            PvZ2ProbeCapability::AudioWorkerHandshake);
+    }
+
     bool V103Enabled() const {
         return HasCapability(
             PvZ2ProbeCapability::AudioDrawFramePump);
@@ -9323,6 +9346,19 @@ public:
                 mem.Ptr(
                     guest_buffer,
                     bytes);
+
+            std::uint32_t v104_pcm_hash = 2166136261u;
+            bool v104_pcm_nonzero = false;
+            if (V104Enabled() && pcm != nullptr) {
+                for (std::uint32_t i = 0u; i < bytes; ++i) {
+                    const std::uint8_t value = pcm[i];
+                    v104_pcm_nonzero =
+                        v104_pcm_nonzero || value != 0u;
+                    v104_pcm_hash ^= value;
+                    v104_pcm_hash *= 16777619u;
+                }
+            }
+
             if (pcm == nullptr ||
                 !PvZ2HostAudioEnqueuePCM16(
                     pcm,
@@ -9332,6 +9368,41 @@ public:
             }
 
             ++v99_audio_enqueues;
+
+            if (V104Enabled()) {
+                const bool repeated_nonzero =
+                    v104_pcm_nonzero &&
+                    v104_pcm_prev_nonzero &&
+                    v104_pcm_hash == v104_pcm_prev_hash;
+
+                if (repeated_nonzero) {
+                    ++v104_pcm_repeat_run;
+                    ++v104_pcm_repeat_total;
+                    if (V99ShouldLogCounter(v104_pcm_repeat_run)) {
+                        AppendDiagnostic(
+                            "V104 AUDIO PCM REPEAT run=" +
+                            std::to_string(v104_pcm_repeat_run) +
+                            " total=" +
+                            std::to_string(v104_pcm_repeat_total) +
+                            " hash=0x" +
+                            JniProbeHex(v104_pcm_hash) +
+                            " src=" +
+                            V46DescribeGuestAddress(guest_buffer) +
+                            " bytes=" +
+                            std::to_string(bytes) +
+                            " frame=" +
+                            std::to_string(current_frame_number) +
+                            " tid=" +
+                            std::to_string(current_probe_thread_id));
+                    }
+                } else {
+                    v104_pcm_repeat_run = 1u;
+                }
+
+                v104_pcm_prev_hash = v104_pcm_hash;
+                v104_pcm_prev_nonzero = v104_pcm_nonzero;
+            }
+
             if (V99ShouldLogCounter(
                     v99_audio_enqueues)) {
                 const std::uint32_t frame_bytes =
@@ -9351,7 +9422,20 @@ public:
                     std::to_string(bytes) +
                     " queued=" +
                     std::to_string(
-                        PvZ2HostAudioQueuedBufferCount()));
+                        PvZ2HostAudioQueuedBufferCount()) +
+                    (V104Enabled()
+                         ? " src=" +
+                               V46DescribeGuestAddress(guest_buffer) +
+                               " hash=0x" +
+                               JniProbeHex(v104_pcm_hash) +
+                               " nonzero=" +
+                               std::string{
+                                   v104_pcm_nonzero
+                                       ? "YES"
+                                       : "NO"} +
+                               " frame=" +
+                               std::to_string(current_frame_number)
+                         : std::string{}));
             }
 
             regs[0] = 0u;
@@ -9535,6 +9619,7 @@ public:
     }
 
     const char* RuntimeModeTag() const {
+        if (V104Enabled()) return "V104";
         if (V103Enabled()) return "V103";
         if (V102Enabled()) return "V102";
         if (V101Enabled()) return "V101";
@@ -9641,7 +9726,8 @@ public:
                 line.rfind("V100 ", 0u) == 0u ||
                 line.rfind("V101 ", 0u) == 0u ||
                 line.rfind("V102 ", 0u) == 0u ||
-                line.rfind("V103 ", 0u) == 0u) {
+                line.rfind("V103 ", 0u) == 0u ||
+                line.rfind("V104 ", 0u) == 0u) {
                 return true;
             }
 
@@ -24722,6 +24808,21 @@ public:
                     argument,
                     phase});
 
+            constexpr std::uint32_t kV104AkAudioThreadEntryGuest =
+                kGuestBase + 0x00bfdb70u;
+            if (V104Enabled() &&
+                (start_routine & ~1u) ==
+                    kV104AkAudioThreadEntryGuest) {
+                v104_audio_worker_tid = thread_id;
+                AppendDiagnostic(
+                    "V104 AUDIO WORKER FOUND tid=" +
+                    std::to_string(thread_id) +
+                    " start=" +
+                    V46DescribeGuestAddress(start_routine) +
+                    " arg=" +
+                    V46DescribeGuestAddress(argument));
+            }
+
             Append(
                 "import pthread_create deferred: tid=" +
                 std::to_string(thread_id) +
@@ -24744,6 +24845,21 @@ public:
                 const std::uint32_t worker_entry = mem.Read32Guest(argument);
                 const std::uint32_t worker_object =
                     mem.Read32Guest(argument + 4u);
+
+                if (V104Enabled() &&
+                    (worker_entry & ~1u) ==
+                        (kGuestBase + 0x00bfdb70u)) {
+                    v104_audio_worker_tid = thread_id;
+                    AppendDiagnostic(
+                        "V104 AUDIO WORKER FOUND tid=" +
+                        std::to_string(thread_id) +
+                        " wrapperStart=" +
+                        V46DescribeGuestAddress(start_routine) +
+                        " entry=" +
+                        V46DescribeGuestAddress(worker_entry) +
+                        " this=" +
+                        V46DescribeGuestAddress(worker_object));
+                }
 
                 Append(
                     "V61 WORKER PAYLOAD tid=" + std::to_string(thread_id) +
@@ -32558,6 +32674,10 @@ bool JniProbePrepareRuntime(
         callbacks.Append(
             "V83 PROFILE BUTTON DISPATCH: v83 restored the V80 2048x1536 pixel touch control and proved buttonId=5 can dispatch even when the raw +0x28/+0x2c/+0x30/+0x34 radar rectangle does not contain the screen-space tap. Those raw fields are therefore local/transformed, not absolute hitboxes. The passive dispatcher trap remains enabled and does not alter rendering, widget geometry or GameState.");
     }
+    if (callbacks.V104Enabled()) {
+        callbacks.AppendDiagnostic(
+            "V104 AUDIO WORKER HANDSHAKE: static libPVZ2 analysis proves CAkSinkOpenSL::EnqueueBufferCallback ends by WakeupEventsConsumer and CAkAudioThread::EventMgrThreadFunc@+0x00bfdb70 runs CAkAudioMgr::Perform then sem_wait. Each realtime completion is therefore delivered one-at-a-time and immediately hands the cooperative scheduler to that exact Wwise worker. PCM FNV fingerprints detect non-zero stale-buffer repetition.");
+    }
     if (callbacks.V103Enabled()) {
         callbacks.AppendDiagnostic(
             "V103 AUDIO DRAW-FRAME GATE: v102 real-time CoreAudio completion telemetry is preserved, but asynchronous OpenSL guest callback injection is allowed only inside Native_onDrawFrame. Native_onSurfaceCreated and all other startup lifecycles retain the validated v101 scheduler/interleaving behavior; pre-frame/frame-boundary drains remain fallback.");
@@ -34300,8 +34420,11 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                 callbacks.v102_audio_forced_halt_pending = false;
                                 ++callbacks.v102_audio_inline_services;
 
-                                constexpr std::uint32_t
-                                    kMaxInlineCallbacks = 8u;
+                                const std::uint32_t
+                                    kMaxInlineCallbacks =
+                                        callbacks.V104Enabled()
+                                            ? 1u
+                                            : 8u;
                                 std::uint32_t delivered = 0u;
                                 bool success = true;
 
@@ -34633,13 +34756,15 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                 return false;
                             }
 
-                            // v102: a real CoreAudio buffer completion may have
-                            // requested this soft halt. Service it before the
+                            // v102/v104: a real CoreAudio buffer completion may
+                            // have requested this soft halt. Service it before the
                             // older wait/worker classifier so a long
                             // Native_onDrawFrame cannot starve Wwise until the
                             // visual frame returns. If this halt was caused by a
                             // different scheduler boundary, refresh the atomic
                             // host completion total here as well.
+                            bool v104_audio_wakeup_round = false;
+
                             if (callbacks.V102Enabled() &&
                                 !raw_arm_abi) {
                                 const bool audio_only_halt =
@@ -34666,13 +34791,24 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                         return false;
                                     }
 
-                                    // Only an AddTicks/CoreAudio preemption is
-                                    // consumed by the audio service itself. If
-                                    // the halt came from mutex/cond/sem/resource
-                                    // scheduling, continue below and preserve
-                                    // that wait's normal v96/v97 handling.
+                                    // v103 consumed an audio-only halt after
+                                    // invoking the OpenSL callback and resumed
+                                    // main immediately. v104 instead honors the
+                                    // real Wwise contract: that callback posts
+                                    // CAkAudioThread's semaphore, so schedule the
+                                    // exact audio worker before main resumes.
                                     if (audio_only_halt) {
-                                        continue;
+                                        if (callbacks.V104Enabled() &&
+                                            callbacks.v104_audio_worker_tid !=
+                                                0u) {
+                                            v104_audio_wakeup_round = true;
+                                        } else {
+                                            if (callbacks.V104Enabled()) {
+                                                ++callbacks
+                                                     .v104_audio_worker_misses;
+                                            }
+                                            continue;
+                                        }
                                     }
                                 }
                             }
@@ -34712,13 +34848,15 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                 callbacks.V87MutexWaitPending(0u);
 
                             const char* current_wait_kind =
-                                v96_main_blocking_wait
+                                v104_audio_wakeup_round
+                                    ? "audio-thread-wakeup"
+                                    : (v96_main_blocking_wait
                                     ? callbacks.V96MainBlockingKind()
                                     : (v87_main_mutex_wait
                                            ? "mutex-wait"
                                            : wait_kind(
                                                  result.final_pc,
-                                                 wait_lr));
+                                                 wait_lr)));
 
                             const bool concrete_wait =
                                 v96_main_blocking_wait ||
@@ -34747,6 +34885,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
 
                             const std::uint32_t future =
                                 concrete_wait &&
+                                !v104_audio_wakeup_round &&
                                 !res_stream_pump_boundary &&
                                 !v87_main_mutex_wait &&
                                 !v96_main_blocking_wait
@@ -34916,8 +35055,26 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                     ? 0u
                                     : scheduler_worker_cursor %
                                           worker_limit;
+                            bool v104_audio_worker_selected = false;
 
-                            if (callbacks.V87Enabled() &&
+                            if (v104_audio_wakeup_round &&
+                                worker_limit != 0u) {
+                                for (std::size_t candidate = 0u;
+                                     candidate < worker_limit;
+                                     ++candidate) {
+                                    if (candidate <
+                                            callbacks.deferred_threads.size() &&
+                                        callbacks.deferred_threads[candidate].id ==
+                                            callbacks.v104_audio_worker_tid) {
+                                        worker_start = candidate;
+                                        v104_audio_worker_selected = true;
+                                        break;
+                                    }
+                                }
+                            }
+
+                            if (!v104_audio_wakeup_round &&
+                                callbacks.V87Enabled() &&
                                 callbacks.V87MutexWaitPending(0u) &&
                                 worker_limit != 0u) {
 
@@ -34938,8 +35095,15 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                 }
                             }
 
+                            const std::size_t worker_scan_limit =
+                                v104_audio_wakeup_round
+                                    ? (v104_audio_worker_selected
+                                           ? 1u
+                                           : 0u)
+                                    : worker_limit;
+
                             for (std::size_t worker_offset = 0u;
-                                 worker_offset < worker_limit;
+                                 worker_offset < worker_scan_limit;
                                  ++worker_offset) {
 
                                 const std::size_t wi =
@@ -35588,6 +35752,41 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                             ? "YES" : "NO"));
                                 }
 
+                                if (v104_audio_wakeup_round &&
+                                    worker_state.id ==
+                                        callbacks.v104_audio_worker_tid &&
+                                    !worker_fatal) {
+                                    ++callbacks.v104_audio_worker_handshakes;
+                                    if (callbacks.V99ShouldLogCounter(
+                                            callbacks
+                                                .v104_audio_worker_handshakes)) {
+                                        callbacks.AppendDiagnostic(
+                                            "V104 AUDIO HANDSHAKE #" +
+                                            std::to_string(
+                                                callbacks
+                                                    .v104_audio_worker_handshakes) +
+                                            " workerTid=" +
+                                            std::to_string(worker_state.id) +
+                                            " PC=" +
+                                            callbacks
+                                                .V46DescribeGuestAddress(
+                                                    worker_state.regs[15]) +
+                                            " blocked=" +
+                                            std::string{
+                                                callbacks.V66ThreadBlocked(
+                                                    worker_state.id)
+                                                    ? "YES"
+                                                    : "NO"} +
+                                            " held={" +
+                                            callbacks.V63HeldMutexSummary(
+                                                worker_state.id) +
+                                            "} pendingCallbacks=" +
+                                            std::to_string(
+                                                callbacks
+                                                    .v99_audio_pending_callbacks));
+                                    }
+                                }
+
                                 if ((callbacks.V62Enabled() ||
                                      callbacks.V63Enabled()) &&
                                     worker_fatal) {
@@ -35681,6 +35880,12 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                             break;
                                         }
                                     }
+                                }
+
+                                if (v104_audio_wakeup_round &&
+                                    worker_state.id ==
+                                        callbacks.v104_audio_worker_tid) {
+                                    break;
                                 }
 
                                 if (callbacks.V87MutexWaitPending(0u) &&
@@ -36769,9 +36974,11 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             return true;
                         }
 
-                        constexpr std::uint32_t
+                        const std::uint32_t
                             kMaxAudioCallbacksPerBoundary =
-                                8u;
+                                callbacks.V104Enabled()
+                                    ? 1u
+                                    : 8u;
                         std::uint32_t delivered = 0u;
 
                         while (callbacks.v99_audio_pending_callbacks != 0u &&
