@@ -530,7 +530,7 @@ void PvZ2HostNotifyDirectFrame(
     self.captionLabel.clipsToBounds =
         YES;
     self.captionLabel.text =
-        @"PvZ2 v93 — starting…\nreturn provenance";
+        @"PvZ2 v94 — starting…\ncaller LR watch";
 
     self.stopButton =
         [UIButton
@@ -719,7 +719,7 @@ void PvZ2HostNotifyDirectFrame(
 
     self.inputEnabled = NO;
     self.captionLabel.text =
-        @"PvZ2 v93 LIVE — HARD STOP requested; interrupting guest at the next Dynarmic checkpoint…";
+        @"PvZ2 v94 LIVE — HARD STOP requested; interrupting guest at the next Dynarmic checkpoint…";
     self.stopButton.enabled = NO;
     PvZ2RequestInteractiveStop();
 }
@@ -1297,7 +1297,7 @@ void PvZ2HostNotifyDirectFrame(
         self.captionLabel.text =
             [NSString
                 stringWithFormat:
-                    @"PvZ2 v93 LIVE • frame %lu • %@\n%lu×%lu guest • direct GPU 1:1",
+                    @"PvZ2 v94 LIVE • frame %lu • %@\n%lu×%lu guest • direct GPU 1:1",
                     (unsigned long)frame,
                     touchState,
                     (unsigned long)width,
@@ -1622,7 +1622,7 @@ void PvZ2HostNotifyDirectFrame(
                         descriptor->ui_name]];
 
         if (descriptor->mode ==
-            PvZ2DiagnosticMode::V93ReturnProvenance) {
+            PvZ2DiagnosticMode::V94CallerReturnWatch) {
             defaultDiagnosticModeIndex =
                 static_cast<NSInteger>(i);
         }
@@ -2294,7 +2294,7 @@ void PvZ2HostNotifyDirectFrame(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. mode=%@. Start with V93 Return. It preserves v92 long-run behavior and records the saved return PC around the exact delete/free path before and after host FreeHeap, with no recovery or guest-code patch.",
+                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. mode=%@. Start with V94 LR Watch. It preserves v93 behavior and tracks the immediately outer saved-LR slot from PUSH to POP, including guest stores and host SVC writes. No recovery or stack patch is applied.",
                     selectedModeName]];
 
     [self
@@ -2384,7 +2384,7 @@ void PvZ2HostNotifyDirectFrame(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v93 Return Provenance started mode=%@; PID=%d ===",
+                    @"=== PvZ2 v94 Caller LR Watch started mode=%@; PID=%d ===",
                     diagnosticModeName,
                     getpid()]];
 
@@ -2898,14 +2898,14 @@ void PvZ2HostNotifyDirectFrame(
                                     finishRunWithMessage:
                                         [NSString
                                             stringWithFormat:
-                                                @"PvZ2 v93 LIVE — HARD STOPPED after %u guest frames.\nClose to inspect the preserved return-provenance log.",
+                                                @"PvZ2 v94 LIVE — HARD STOPPED after %u guest frames.\nClose to inspect the caller-LR provenance log.",
                                                 result.draw_frames_completed]];
                             } else {
                                 [selfRef.liveController
                                     finishRunWithMessage:
                                         [NSString
                                             stringWithFormat:
-                                                @"PvZ2 v93 LIVE — run finished after %u guest frames.\nClose to inspect the return-provenance/allocator/RELRO log.",
+                                                @"PvZ2 v94 LIVE — run finished after %u guest frames.\nClose to inspect the caller-LR/allocator/RELRO log.",
                                                 result.draw_frames_completed]];
                             }
 
@@ -2962,11 +2962,11 @@ void PvZ2HostNotifyDirectFrame(
 
                             if (result.hard_stop_requested) {
                                 [selfRef.liveController finishRunWithMessage:
-                                    @"PvZ2 v93 LIVE — HARD STOPPED.\nGuest execution was interrupted at the next Dynarmic checkpoint. Close to inspect the preserved return-provenance log."];
+                                    @"PvZ2 v94 LIVE — HARD STOPPED.\nGuest execution was interrupted at the next Dynarmic checkpoint. Close to inspect the caller-LR provenance log."];
                             } else {
                                 [selfRef.liveController finishRunWithMessage:
                                     [NSString stringWithFormat:
-                                        @"PvZ2 v93 LIVE — guest stopped/crashed.\n%@\nClose to inspect the return-provenance/allocator/RELRO log.", message]];
+                                        @"PvZ2 v94 LIVE — guest stopped/crashed.\n%@\nClose to inspect the caller-LR/allocator/RELRO log.", message]];
                             }
 
                         } else {
