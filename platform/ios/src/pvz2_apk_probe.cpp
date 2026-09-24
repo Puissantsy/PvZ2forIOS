@@ -961,6 +961,8 @@ constexpr std::uint64_t kCapLongRun =
     ProbeCap(PvZ2ProbeCapability::LongRunInteractive);
 constexpr std::uint64_t kCapReturnProvenance =
     ProbeCap(PvZ2ProbeCapability::ReturnProvenance);
+constexpr std::uint64_t kCapCallerReturnWatch =
+    ProbeCap(PvZ2ProbeCapability::CallerReturnWatch);
 
 constexpr std::uint64_t kCapsTransformBase =
     kCapLive | kCapCpuFrame | kCapTransform |
@@ -983,6 +985,8 @@ constexpr std::uint64_t kCapsV92 =
     kCapsV91 | kCapLongRun;
 constexpr std::uint64_t kCapsV93 =
     kCapsV92 | kCapReturnProvenance;
+constexpr std::uint64_t kCapsV94 =
+    kCapsV93 | kCapCallerReturnWatch;
 
 constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::PassiveRegistry, "PASSIVE_REGISTRY", nullptr, 0u, false},
@@ -1023,6 +1027,7 @@ constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::V91IndexedAllocatorRelro, "V91_INDEXED_ALLOCATOR_RELRO", "V91 Alloc+RELRO", kCapsV91, true},
     {PvZ2DiagnosticMode::V92LongRunInteractive, "V92_LONG_RUN_INTERACTIVE", "V92 Long Run", kCapsV92, true},
     {PvZ2DiagnosticMode::V93ReturnProvenance, "V93_RETURN_PROVENANCE", "V93 Return", kCapsV93, true},
+    {PvZ2DiagnosticMode::V94CallerReturnWatch, "V94_CALLER_RETURN_WATCH", "V94 LR Watch", kCapsV94, true},
 };
 
 constexpr PvZ2DiagnosticMode kSelectableDiagnosticModes[] = {
@@ -1047,6 +1052,7 @@ constexpr PvZ2DiagnosticMode kSelectableDiagnosticModes[] = {
     PvZ2DiagnosticMode::V91IndexedAllocatorRelro,
     PvZ2DiagnosticMode::V92LongRunInteractive,
     PvZ2DiagnosticMode::V93ReturnProvenance,
+    PvZ2DiagnosticMode::V94CallerReturnWatch,
     PvZ2DiagnosticMode::V66BlockingWaitScheduler,
     PvZ2DiagnosticMode::V65ConditionVariableScheduler,
     PvZ2DiagnosticMode::CtypeCompatDeepScout,
@@ -3127,6 +3133,27 @@ public:
     std::uint32_t v93_last_exception_sp = 0u;
     std::uint32_t v93_last_exception_cpsr = 0u;
     std::uint32_t v93_last_exception_sp_minus_4 = 0u;
+
+    // v94: provenance for the caller frame above v93's clean inner frame.
+    std::uint64_t v94_wrapper_entries = 0u;
+    std::uint64_t v94_watched_guest_writes = 0u;
+    bool v94_watch_armed = false;
+    std::uint32_t v94_watch_slot = 0u;
+    std::uint32_t v94_entry_lr = 0u;
+    std::uint32_t v94_last_outer_at_free = 0u;
+    bool v94_first_change_seen = false;
+    std::uint32_t v94_first_change_frame = 0u;
+    std::uint32_t v94_first_change_slot = 0u;
+    std::uint32_t v94_first_change_address = 0u;
+    std::uint32_t v94_first_change_width = 0u;
+    std::uint32_t v94_first_change_old = 0u;
+    std::uint32_t v94_first_change_new = 0u;
+    std::uint32_t v94_first_change_pc = 0u;
+    std::uint32_t v94_first_change_lr = 0u;
+    std::uint32_t v94_first_change_sp = 0u;
+    std::uint32_t v94_first_change_cpsr = 0u;
+    std::uint32_t v94_first_change_tid = 0u;
+    std::string v94_first_change_phase;
 
     enum class ReturnMode {
         JniOnLoad,
@@ -8205,6 +8232,11 @@ public:
         return out.str();
     }
 
+    bool V94Enabled() const {
+        return HasCapability(
+            PvZ2ProbeCapability::CallerReturnWatch);
+    }
+
     bool V93Enabled() const {
         return HasCapability(
             PvZ2ProbeCapability::ReturnProvenance);
@@ -9283,6 +9315,68 @@ public:
         return out.str();
     }
 
+    std::string V94CallerReturnSummary() const {
+        std::ostringstream out;
+        out
+            << "V94 CALLER-LR SUMMARY wrapperEntries="
+            << v94_wrapper_entries
+            << " watchedGuestWrites="
+            << v94_watched_guest_writes
+            << " armed="
+            << (v94_watch_armed
+                    ? "YES"
+                    : "NO")
+            << " slot=0x"
+            << JniProbeHex(v94_watch_slot)
+            << " entryLR=0x"
+            << JniProbeHex(v94_entry_lr)
+            << " outerAtFree=0x"
+            << JniProbeHex(
+                v94_last_outer_at_free)
+            << " firstChange=";
+
+        if (!v94_first_change_seen) {
+            out << "NONE";
+            return out.str();
+        }
+
+        out
+            << "{frame="
+            << v94_first_change_frame
+            << ",slot=0x"
+            << JniProbeHex(
+                v94_first_change_slot)
+            << ",write=0x"
+            << JniProbeHex(
+                v94_first_change_address)
+            << ",width="
+            << v94_first_change_width
+            << ",old=0x"
+            << JniProbeHex(
+                v94_first_change_old)
+            << ",new=0x"
+            << JniProbeHex(
+                v94_first_change_new)
+            << ",PC=0x"
+            << JniProbeHex(
+                v94_first_change_pc)
+            << ",LR=0x"
+            << JniProbeHex(
+                v94_first_change_lr)
+            << ",SP=0x"
+            << JniProbeHex(
+                v94_first_change_sp)
+            << ",CPSR=0x"
+            << JniProbeHex(
+                v94_first_change_cpsr)
+            << ",tid="
+            << v94_first_change_tid
+            << ",phase="
+            << v94_first_change_phase
+            << "}";
+        return out.str();
+    }
+
     void V91EmitTerminalSummary(
         const char* reason) {
 
@@ -9299,11 +9393,13 @@ public:
 
         AppendDiagnostic(
             std::string{
-                V93Enabled()
-                    ? "V93 TERMINAL reason="
-                    : (V92Enabled()
-                           ? "V92 TERMINAL reason="
-                           : "V91 TERMINAL reason=")} +
+                V94Enabled()
+                    ? "V94 TERMINAL reason="
+                    : (V93Enabled()
+                           ? "V93 TERMINAL reason="
+                           : (V92Enabled()
+                                  ? "V92 TERMINAL reason="
+                                  : "V91 TERMINAL reason="))} +
             (reason != nullptr
                 ? reason
                 : "unknown"));
@@ -9316,6 +9412,10 @@ public:
                 V93ReturnSummary());
             AppendDiagnostic(
                 V93DiagnosticCheck());
+        }
+        if (V94Enabled()) {
+            AppendDiagnostic(
+                V94CallerReturnSummary());
         }
     }
 
@@ -11315,6 +11415,194 @@ public:
         return true;
     }
 
+    bool V94WriteOverlapsWatch(
+        std::uint32_t address,
+        std::uint32_t width) const {
+
+        if (!V94Enabled() ||
+            !v94_watch_armed ||
+            width == 0u) {
+            return false;
+        }
+
+        const std::uint64_t begin = address;
+        const std::uint64_t end =
+            begin + width;
+        const std::uint64_t slot_begin =
+            v94_watch_slot;
+        const std::uint64_t slot_end =
+            slot_begin + 4u;
+
+        return begin < slot_end &&
+               end > slot_begin;
+    }
+
+    void V94ObserveGuestWrite(
+        const char* kind,
+        std::uint32_t address,
+        std::uint32_t width,
+        std::uint64_t raw_value,
+        std::uint32_t watched_before,
+        bool overlapped_before) {
+
+        if (!V94Enabled()) {
+            return;
+        }
+
+        constexpr std::uint32_t
+            kV94WrapperGuest =
+                kGuestBase + 0x00868978u;
+        constexpr std::uint32_t
+            kV94ExpectedReturnGuest =
+                kGuestBase + 0x0086f1fcu;
+
+        const std::uint32_t pc =
+            jit ? jit->Regs()[15] : 0u;
+        const std::uint32_t lr =
+            jit ? jit->Regs()[14] : 0u;
+        const std::uint32_t sp =
+            jit ? jit->Regs()[13] : 0u;
+        const std::uint32_t cpsr =
+            jit ? jit->Cpsr() : 0u;
+        const std::uint32_t plain_pc =
+            pc & ~1u;
+
+        const bool in_stack =
+            address >= kJniProbeStackBase &&
+            static_cast<std::uint64_t>(address) + width <=
+                static_cast<std::uint64_t>(
+                    kJniProbeStackBase) +
+                kJniProbeStackSize;
+
+        const bool wrapper_push_pc =
+            plain_pc >= kV94WrapperGuest &&
+            plain_pc <=
+                kV94WrapperGuest + 4u;
+
+        const bool plausible_lr_slot =
+            width == 4u &&
+            in_stack &&
+            static_cast<std::uint32_t>(
+                raw_value) == lr &&
+            ((address + 4u == sp) ||
+             (address == sp + 12u));
+
+        if (wrapper_push_pc &&
+            plausible_lr_slot) {
+            ++v94_wrapper_entries;
+            v94_watch_armed = true;
+            v94_watch_slot = address;
+            v94_entry_lr =
+                static_cast<std::uint32_t>(
+                    raw_value);
+
+            AppendDiagnostic(
+                "V94 LR-SLOT ARM #" +
+                std::to_string(
+                    v94_wrapper_entries) +
+                " frame=" +
+                std::to_string(
+                    current_frame_number) +
+                " slot=0x" +
+                JniProbeHex(
+                    v94_watch_slot) +
+                " PC=0x" +
+                JniProbeHex(pc) +
+                " LR=0x" +
+                JniProbeHex(lr) +
+                " expected=0x" +
+                JniProbeHex(
+                    kV94ExpectedReturnGuest) +
+                " bit0=" +
+                std::to_string(
+                    v94_entry_lr & 1u) +
+                " SP=0x" +
+                JniProbeHex(sp));
+            return;
+        }
+
+        if (!overlapped_before ||
+            !v94_watch_armed) {
+            return;
+        }
+
+        const std::uint32_t watched_after =
+            mem.Read32Guest(
+                v94_watch_slot);
+
+        if (watched_after ==
+            watched_before) {
+            return;
+        }
+
+        ++v94_watched_guest_writes;
+
+        if (v94_first_change_seen) {
+            return;
+        }
+
+        v94_first_change_seen = true;
+        v94_first_change_frame =
+            current_frame_number;
+        v94_first_change_slot =
+            v94_watch_slot;
+        v94_first_change_address =
+            address;
+        v94_first_change_width =
+            width;
+        v94_first_change_old =
+            watched_before;
+        v94_first_change_new =
+            watched_after;
+        v94_first_change_pc = pc;
+        v94_first_change_lr = lr;
+        v94_first_change_sp = sp;
+        v94_first_change_cpsr = cpsr;
+        v94_first_change_tid =
+            current_probe_thread_id;
+        v94_first_change_phase =
+            V91PhaseName();
+
+        AppendDiagnostic(
+            "V94 FIRST LR-SLOT CHANGE frame=" +
+            std::to_string(
+                current_frame_number) +
+            " slot=0x" +
+            JniProbeHex(
+                v94_watch_slot) +
+            " write=" +
+            (kind != nullptr
+                 ? std::string{kind}
+                 : std::string{"?"}) +
+            "@0x" +
+            JniProbeHex(address) +
+            " width=" +
+            std::to_string(width) +
+            " raw=0x" +
+            JniProbeHex(
+                static_cast<std::uint32_t>(
+                    raw_value)) +
+            " old=0x" +
+            JniProbeHex(
+                watched_before) +
+            " new=0x" +
+            JniProbeHex(
+                watched_after) +
+            " PC=0x" +
+            JniProbeHex(pc) +
+            " LR=0x" +
+            JniProbeHex(lr) +
+            " SP=0x" +
+            JniProbeHex(sp) +
+            " CPSR=0x" +
+            JniProbeHex(cpsr) +
+            " tid=" +
+            std::to_string(
+                current_probe_thread_id) +
+            " phase=" +
+            V91PhaseName());
+    }
+
     std::optional<std::uint32_t>
     MemoryReadCode(std::uint32_t address) override {
         const auto* p = mem.Ptr(address, 4);
@@ -11400,9 +11688,25 @@ public:
             return;
         }
 
+        const bool v94_overlap =
+            V94WriteOverlapsWatch(
+                address,
+                1u);
+        const std::uint32_t v94_before =
+            v94_overlap
+                ? mem.Read32Guest(
+                      v94_watch_slot)
+                : 0u;
         const std::uint8_t old =
             mem.Read8(address);
         mem.Write8Guest(address, value);
+        V94ObserveGuestWrite(
+            "STR8",
+            address,
+            1u,
+            value,
+            v94_before,
+            v94_overlap);
         V56ObserveRegistryWrite(
             address,
             1u,
@@ -11427,9 +11731,25 @@ public:
             return;
         }
 
+        const bool v94_overlap =
+            V94WriteOverlapsWatch(
+                address,
+                2u);
+        const std::uint32_t v94_before =
+            v94_overlap
+                ? mem.Read32Guest(
+                      v94_watch_slot)
+                : 0u;
         const std::uint16_t old =
             mem.Read16Guest(address);
         mem.Write16Guest(address, value);
+        V94ObserveGuestWrite(
+            "STR16",
+            address,
+            2u,
+            value,
+            v94_before,
+            v94_overlap);
         V56ObserveRegistryWrite(
             address,
             2u,
@@ -11454,9 +11774,25 @@ public:
             return;
         }
 
+        const bool v94_overlap =
+            V94WriteOverlapsWatch(
+                address,
+                4u);
+        const std::uint32_t v94_before =
+            v94_overlap
+                ? mem.Read32Guest(
+                      v94_watch_slot)
+                : 0u;
         const std::uint32_t old =
             mem.Read32Guest(address);
         mem.Write32Guest(address, value);
+        V94ObserveGuestWrite(
+            "STR32",
+            address,
+            4u,
+            value,
+            v94_before,
+            v94_overlap);
         V56ObserveRegistryWrite(
             address,
             4u,
@@ -11481,9 +11817,25 @@ public:
             return;
         }
 
+        const bool v94_overlap =
+            V94WriteOverlapsWatch(
+                address,
+                8u);
+        const std::uint32_t v94_before =
+            v94_overlap
+                ? mem.Read32Guest(
+                      v94_watch_slot)
+                : 0u;
         const std::uint64_t old =
             mem.Read64Guest(address);
         mem.Write64Guest(address, value);
+        V94ObserveGuestWrite(
+            "STR64",
+            address,
+            8u,
+            value,
+            v94_before,
+            v94_overlap);
         V56ObserveRegistryWrite(
             address,
             8u,
@@ -11515,9 +11867,25 @@ public:
             return true;
         }
 
+        const bool v94_overlap =
+            V94WriteOverlapsWatch(
+                address,
+                1u);
+        const std::uint32_t v94_before =
+            v94_overlap
+                ? mem.Read32Guest(
+                      v94_watch_slot)
+                : 0u;
         const std::uint8_t old =
             mem.Read8(address);
         mem.Write8Guest(address, value);
+        V94ObserveGuestWrite(
+            "STREX8",
+            address,
+            1u,
+            value,
+            v94_before,
+            v94_overlap);
         V56ObserveRegistryWrite(
             address,
             1u,
@@ -11544,9 +11912,25 @@ public:
             return true;
         }
 
+        const bool v94_overlap =
+            V94WriteOverlapsWatch(
+                address,
+                2u);
+        const std::uint32_t v94_before =
+            v94_overlap
+                ? mem.Read32Guest(
+                      v94_watch_slot)
+                : 0u;
         const std::uint16_t old =
             mem.Read16Guest(address);
         mem.Write16Guest(address, value);
+        V94ObserveGuestWrite(
+            "STREX16",
+            address,
+            2u,
+            value,
+            v94_before,
+            v94_overlap);
         V56ObserveRegistryWrite(
             address,
             2u,
@@ -11573,9 +11957,25 @@ public:
             return true;
         }
 
+        const bool v94_overlap =
+            V94WriteOverlapsWatch(
+                address,
+                4u);
+        const std::uint32_t v94_before =
+            v94_overlap
+                ? mem.Read32Guest(
+                      v94_watch_slot)
+                : 0u;
         const std::uint32_t old =
             mem.Read32Guest(address);
         mem.Write32Guest(address, value);
+        V94ObserveGuestWrite(
+            "STREX32",
+            address,
+            4u,
+            value,
+            v94_before,
+            v94_overlap);
         V56ObserveRegistryWrite(
             address,
             4u,
@@ -11602,9 +12002,25 @@ public:
             return true;
         }
 
+        const bool v94_overlap =
+            V94WriteOverlapsWatch(
+                address,
+                8u);
+        const std::uint32_t v94_before =
+            v94_overlap
+                ? mem.Read32Guest(
+                      v94_watch_slot)
+                : 0u;
         const std::uint64_t old =
             mem.Read64Guest(address);
         mem.Write64Guest(address, value);
+        V94ObserveGuestWrite(
+            "STREX64",
+            address,
+            8u,
+            value,
+            v94_before,
+            v94_overlap);
         V56ObserveRegistryWrite(
             address,
             8u,
@@ -20271,6 +20687,34 @@ public:
                         regs[13] + 36u);
                 v93_last_saved_pc_before =
                     v93_saved_pc_before;
+
+                if (V94Enabled()) {
+                    v94_last_outer_at_free =
+                        mem.Read32Guest(
+                            regs[13] + 52u);
+
+                    if (v94_last_outer_at_free !=
+                        kGuestBase + 0x0086f1fcu) {
+                        AppendDiagnostic(
+                            "V94 OUTER-LR AT FREE frame=" +
+                            std::to_string(
+                                current_frame_number) +
+                            " slot=0x" +
+                            JniProbeHex(
+                                regs[13] + 52u) +
+                            " value=0x" +
+                            JniProbeHex(
+                                v94_last_outer_at_free) +
+                            " expected=0x" +
+                            JniProbeHex(
+                                kGuestBase +
+                                0x0086f1fcu) +
+                            " bit0=" +
+                            std::to_string(
+                                v94_last_outer_at_free &
+                                1u));
+                    }
+                }
 
                 if ((v93_saved_pc_before &
                      1u) != 0u) {
