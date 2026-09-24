@@ -282,6 +282,10 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // to be 0x1086f1fc but is observed as 0x1086f203 at the fatal POP.
     // Observation only: no stack repair or guest-code patch is applied.
     V94CallerReturnWatch = 38u,
+
+    // v95: restore capability-driven runtime inheritance and replace v94's
+    // inferred memory-callback watch with exact PUSH/POP provenance traps.
+    V95PreciseCallerReturnWatch = 39u,
 };
 
 enum class PvZ2ProbeCapability : std::uint64_t {
@@ -303,6 +307,8 @@ enum class PvZ2ProbeCapability : std::uint64_t {
     LongRunInteractive = 1ull << 14,
     ReturnProvenance = 1ull << 15,
     CallerReturnWatch = 1ull << 16,
+    AllocatorProfiling = 1ull << 17,
+    PreciseCallerReturnWatch = 1ull << 18,
 };
 
 struct PvZ2DiagnosticModeDescriptor {

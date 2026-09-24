@@ -963,6 +963,10 @@ constexpr std::uint64_t kCapReturnProvenance =
     ProbeCap(PvZ2ProbeCapability::ReturnProvenance);
 constexpr std::uint64_t kCapCallerReturnWatch =
     ProbeCap(PvZ2ProbeCapability::CallerReturnWatch);
+constexpr std::uint64_t kCapAllocatorProfiling =
+    ProbeCap(PvZ2ProbeCapability::AllocatorProfiling);
+constexpr std::uint64_t kCapPreciseCallerReturnWatch =
+    ProbeCap(PvZ2ProbeCapability::PreciseCallerReturnWatch);
 
 constexpr std::uint64_t kCapsTransformBase =
     kCapLive | kCapCpuFrame | kCapTransform |
@@ -978,7 +982,8 @@ constexpr std::uint64_t kCapsV88 =
 constexpr std::uint64_t kCapsV89 =
     kCapsV88 | kCapHeavyProfiler | kCapHostCost;
 constexpr std::uint64_t kCapsV90 =
-    (kCapsV88 & ~kCapCpuFrame) | kCapHostCost | kCapDirect;
+    (kCapsV88 & ~kCapCpuFrame) | kCapHostCost | kCapDirect |
+    kCapAllocatorProfiling;
 constexpr std::uint64_t kCapsV91 =
     kCapsV90 | kCapIndexedRelro;
 constexpr std::uint64_t kCapsV92 =
@@ -987,6 +992,8 @@ constexpr std::uint64_t kCapsV93 =
     kCapsV92 | kCapReturnProvenance;
 constexpr std::uint64_t kCapsV94 =
     kCapsV93 | kCapCallerReturnWatch;
+constexpr std::uint64_t kCapsV95 =
+    kCapsV94 | kCapPreciseCallerReturnWatch;
 
 constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::PassiveRegistry, "PASSIVE_REGISTRY", nullptr, 0u, false},
@@ -1028,6 +1035,7 @@ constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::V92LongRunInteractive, "V92_LONG_RUN_INTERACTIVE", "V92 Long Run", kCapsV92, true},
     {PvZ2DiagnosticMode::V93ReturnProvenance, "V93_RETURN_PROVENANCE", "V93 Return", kCapsV93, true},
     {PvZ2DiagnosticMode::V94CallerReturnWatch, "V94_CALLER_RETURN_WATCH", "V94 LR Watch", kCapsV94, true},
+    {PvZ2DiagnosticMode::V95PreciseCallerReturnWatch, "V95_PRECISE_CALLER_RETURN_WATCH", "V95 Precise LR", kCapsV95, true},
 };
 
 constexpr PvZ2DiagnosticMode kSelectableDiagnosticModes[] = {
@@ -1053,6 +1061,7 @@ constexpr PvZ2DiagnosticMode kSelectableDiagnosticModes[] = {
     PvZ2DiagnosticMode::V92LongRunInteractive,
     PvZ2DiagnosticMode::V93ReturnProvenance,
     PvZ2DiagnosticMode::V94CallerReturnWatch,
+    PvZ2DiagnosticMode::V95PreciseCallerReturnWatch,
     PvZ2DiagnosticMode::V66BlockingWaitScheduler,
     PvZ2DiagnosticMode::V65ConditionVariableScheduler,
     PvZ2DiagnosticMode::CtypeCompatDeepScout,
@@ -1070,20 +1079,26 @@ PvZ2DescribeDiagnosticMode(PvZ2DiagnosticMode mode) {
     return nullptr;
 }
 
+std::uint64_t PvZ2DiagnosticModeCapabilityMask(
+    PvZ2DiagnosticMode mode) {
+
+    const auto* descriptor =
+        PvZ2DescribeDiagnosticMode(mode);
+    return descriptor != nullptr
+        ? descriptor->capabilities
+        : 0u;
+}
+
 bool PvZ2DiagnosticModeHasCapability(
     PvZ2DiagnosticMode mode,
     PvZ2ProbeCapability capability) {
 
-    const auto* descriptor =
-        PvZ2DescribeDiagnosticMode(mode);
-    if (descriptor == nullptr) {
-        return false;
-    }
-
+    const std::uint64_t capabilities =
+        PvZ2DiagnosticModeCapabilityMask(mode);
     const std::uint64_t mask =
         static_cast<std::uint64_t>(capability);
     return mask == 0u ||
-        (descriptor->capabilities & mask) == mask;
+        (capabilities & mask) == mask;
 }
 
 std::size_t PvZ2SelectableDiagnosticModeCount() {
@@ -1420,6 +1435,8 @@ constexpr std::uint32_t kJniProbeSvcV89BlxTarget0 = 0x00f0c0u;
 constexpr std::uint32_t kJniProbeSvcV89BlxTarget1 = 0x00f0c1u;
 constexpr std::uint32_t kJniProbeSvcV90FontScanBegin = 0x00f0c2u;
 constexpr std::uint32_t kJniProbeSvcV90FontScanEnd = 0x00f0c3u;
+constexpr std::uint32_t kJniProbeSvcV95WrapperPush = 0x00f0c4u;
+constexpr std::uint32_t kJniProbeSvcV95WrapperPop = 0x00f0c5u;
 
 constexpr std::uint32_t kJniProbeSvcUnsupportedJniBase = 0x00e000u;
 constexpr std::uint32_t kJniProbeJniSlotCount = 256u;
@@ -3076,7 +3093,9 @@ public:
           progress_callback(std::move(progress)),
           obb_data(expansion_data),
           obb_size(expansion_size),
-          diagnostic_mode(mode) {}
+          diagnostic_mode(mode),
+          diagnostic_capabilities(
+              PvZ2DiagnosticModeCapabilityMask(mode)) {}
 
     Dynarmic::A32::Jit* jit = nullptr;
     const JniProbeLoadedElf* loaded_elf = nullptr;
@@ -4616,6 +4635,7 @@ public:
     // v56 Diagnostic Matrix state.
     PvZ2DiagnosticMode diagnostic_mode =
         PvZ2DiagnosticMode::PassiveRegistry;
+    std::uint64_t diagnostic_capabilities = 0u;
 
     // v76 iOS GL-view-scale contract. The historical iOS driver stores the
     // scale on EAGLView.contentScaleFactor. Start at Android's old synthetic
@@ -8160,16 +8180,16 @@ public:
     }
 
     bool V79ProfileProbeEnabled() const {
-        return PvZ2DiagnosticModeHasCapability(
-            diagnostic_mode,
+        return HasCapability(
             PvZ2ProbeCapability::ProfileProbe);
     }
 
     bool HasCapability(
         PvZ2ProbeCapability capability) const {
-        return PvZ2DiagnosticModeHasCapability(
-            diagnostic_mode,
-            capability);
+        const std::uint64_t mask =
+            static_cast<std::uint64_t>(capability);
+        return mask == 0u ||
+            (diagnostic_capabilities & mask) == mask;
     }
 
     const char* V79ProfileSiteName(
@@ -8232,9 +8252,24 @@ public:
         return out.str();
     }
 
+    bool V95Enabled() const {
+        return HasCapability(
+            PvZ2ProbeCapability::PreciseCallerReturnWatch);
+    }
+
     bool V94Enabled() const {
         return HasCapability(
             PvZ2ProbeCapability::CallerReturnWatch);
+    }
+
+    const char* RuntimeModeTag() const {
+        if (V95Enabled()) return "V95";
+        if (V94Enabled()) return "V94";
+        if (V93Enabled()) return "V93";
+        if (V92Enabled()) return "V92";
+        if (V91Enabled()) return "V91";
+        if (V90Enabled()) return "V90";
+        return "V89";
     }
 
     bool V93Enabled() const {
@@ -8317,7 +8352,8 @@ public:
                 line.rfind("V91 ", 0u) == 0u ||
                 line.rfind("V92 ", 0u) == 0u ||
                 line.rfind("V93 ", 0u) == 0u ||
-                line.rfind("V94 ", 0u) == 0u) {
+                line.rfind("V94 ", 0u) == 0u ||
+                line.rfind("V95 ", 0u) == 0u) {
                 return true;
             }
 
@@ -9319,7 +9355,8 @@ public:
     std::string V94CallerReturnSummary() const {
         std::ostringstream out;
         out
-            << "V94 CALLER-LR SUMMARY wrapperEntries="
+            << RuntimeModeTag()
+            << " CALLER-LR SUMMARY wrapperEntries="
             << v94_wrapper_entries
             << " watchedGuestWrites="
             << v94_watched_guest_writes
@@ -9393,14 +9430,8 @@ public:
             reason);
 
         AppendDiagnostic(
-            std::string{
-                V94Enabled()
-                    ? "V94 TERMINAL reason="
-                    : (V93Enabled()
-                           ? "V93 TERMINAL reason="
-                           : (V92Enabled()
-                                  ? "V92 TERMINAL reason="
-                                  : "V91 TERMINAL reason="))} +
+            std::string{RuntimeModeTag()} +
+            " TERMINAL reason=" +
             (reason != nullptr
                 ? reason
                 : "unknown"));
@@ -11420,8 +11451,7 @@ public:
         std::uint32_t address,
         std::uint32_t width) const {
 
-        if (!V94Enabled() ||
-            !v94_watch_armed ||
+        if (!v94_watch_armed ||
             width == 0u) {
             return false;
         }
@@ -11446,101 +11476,6 @@ public:
         std::uint32_t watched_before,
         bool overlapped_before) {
 
-        if (!V94Enabled()) {
-            return;
-        }
-
-        constexpr std::uint32_t
-            kV94WrapperGuest =
-                kGuestBase + 0x00868978u;
-        constexpr std::uint32_t
-            kV94ExpectedReturnGuest =
-                kGuestBase + 0x0086f1fcu;
-
-        const std::uint32_t pc =
-            jit ? jit->Regs()[15] : 0u;
-        const std::uint32_t lr =
-            jit ? jit->Regs()[14] : 0u;
-        const std::uint32_t sp =
-            jit ? jit->Regs()[13] : 0u;
-        const std::uint32_t cpsr =
-            jit ? jit->Cpsr() : 0u;
-        const std::uint32_t plain_pc =
-            pc & ~1u;
-
-        const bool in_stack =
-            address >= kJniProbeStackBase &&
-            static_cast<std::uint64_t>(address) + width <=
-                static_cast<std::uint64_t>(
-                    kJniProbeStackBase) +
-                kJniProbeStackSize;
-
-        const bool wrapper_push_pc =
-            plain_pc >= kV94WrapperGuest &&
-            plain_pc <=
-                kV94WrapperGuest + 4u;
-
-        // Dynarmic may expose r15 at the current or immediately following
-        // instruction during a memory callback. The direct BL caller is
-        // unique in this binary, so the expected LR is also a strong entry
-        // discriminator.
-        const bool wrapper_entry_context =
-            wrapper_push_pc ||
-            lr == kV94ExpectedReturnGuest;
-
-        std::uint32_t entry_slot = 0u;
-        if (wrapper_entry_context &&
-            in_stack) {
-            const std::uint32_t before_sp =
-                sp >= 4u ? sp - 4u : 0u;
-            const std::uint32_t after_sp =
-                sp + 12u;
-
-            if (before_sp != 0u &&
-                mem.Ptr(before_sp, 4u) != nullptr &&
-                mem.Read32Guest(before_sp) == lr) {
-                entry_slot = before_sp;
-            } else if (
-                mem.Ptr(after_sp, 4u) != nullptr &&
-                mem.Read32Guest(after_sp) == lr) {
-                entry_slot = after_sp;
-            }
-        }
-
-        if (entry_slot != 0u) {
-            if (!v94_watch_armed ||
-                v94_watch_slot != entry_slot) {
-                ++v94_wrapper_entries;
-                v94_watch_armed = true;
-                v94_watch_slot = entry_slot;
-                v94_entry_lr = lr;
-
-                AppendDiagnostic(
-                    "V94 LR-SLOT ARM #" +
-                    std::to_string(
-                        v94_wrapper_entries) +
-                    " frame=" +
-                    std::to_string(
-                        current_frame_number) +
-                    " slot=0x" +
-                    JniProbeHex(
-                        v94_watch_slot) +
-                    " PC=0x" +
-                    JniProbeHex(pc) +
-                    " LR=0x" +
-                    JniProbeHex(lr) +
-                    " expected=0x" +
-                    JniProbeHex(
-                        kV94ExpectedReturnGuest) +
-                    " bit0=" +
-                    std::to_string(
-                        v94_entry_lr & 1u) +
-                    " SP=0x" +
-                    JniProbeHex(sp));
-            }
-            return;
-        }
-
         if (!overlapped_before ||
             !v94_watch_armed) {
             return;
@@ -11560,6 +11495,15 @@ public:
         if (v94_first_change_seen) {
             return;
         }
+
+        const std::uint32_t pc =
+            jit ? jit->Regs()[15] : 0u;
+        const std::uint32_t lr =
+            jit ? jit->Regs()[14] : 0u;
+        const std::uint32_t sp =
+            jit ? jit->Regs()[13] : 0u;
+        const std::uint32_t cpsr =
+            jit ? jit->Cpsr() : 0u;
 
         v94_first_change_seen = true;
         v94_first_change_frame =
@@ -11584,7 +11528,8 @@ public:
             V91PhaseName();
 
         AppendDiagnostic(
-            "V94 FIRST LR-SLOT CHANGE frame=" +
+            std::string{RuntimeModeTag()} +
+            " FIRST LR-SLOT CHANGE frame=" +
             std::to_string(
                 current_frame_number) +
             " slot=0x" +
@@ -11623,46 +11568,31 @@ public:
             V91PhaseName());
     }
 
-    void V94ObserveRead(
-        std::uint32_t address,
-        std::uint32_t value) {
+    void V94FinalizeSvcWatch(
+        std::uint32_t swi,
+        std::uint32_t slot,
+        std::uint32_t watched_before) {
 
-        if (!V94Enabled() ||
-            !v94_watch_armed ||
-            address != v94_watch_slot) {
+        if (!v94_watch_armed ||
+            v94_watch_slot != slot) {
             return;
         }
 
-        constexpr std::uint32_t kV94WrapperPopGuest =
-            kGuestBase + 0x008689c4u;
-        constexpr std::uint32_t kV94ExpectedReturnGuest =
-            kGuestBase + 0x0086f1fcu;
-
-        const std::uint32_t pc =
-            jit ? jit->Regs()[15] : 0u;
-        const std::uint32_t plain_pc =
-            pc & ~1u;
-
-        if (plain_pc + 4u < kV94WrapperPopGuest ||
-            plain_pc > kV94WrapperPopGuest + 4u) {
+        const std::uint32_t after =
+            mem.Read32Guest(slot);
+        if (after == watched_before) {
             return;
         }
 
-        AppendDiagnostic(
-            "V94 LR-SLOT POP frame=" +
-            std::to_string(current_frame_number) +
-            " slot=0x" +
-            JniProbeHex(v94_watch_slot) +
-            " value=0x" +
-            JniProbeHex(value) +
-            " expected=0x" +
-            JniProbeHex(kV94ExpectedReturnGuest) +
-            " bit0=" +
-            std::to_string(value & 1u) +
-            " PC=0x" +
-            JniProbeHex(pc));
-
-        v94_watch_armed = false;
+        const std::string kind =
+            "SVC-0x" + JniProbeHex(swi);
+        V94ObserveGuestWrite(
+            kind.c_str(),
+            slot,
+            4u,
+            after,
+            watched_before,
+            true);
     }
 
     std::optional<std::uint32_t>
@@ -11685,8 +11615,6 @@ public:
     std::uint32_t MemoryRead32(std::uint32_t address) override {
         const std::uint32_t value =
             mem.Read32Guest(address);
-
-        V94ObserveRead(address, value);
 
         // v91: final safety net for the recurrent crash. The PLT loads free
         // directly from this GOT word. Guest stores and host bridges are
@@ -14330,13 +14258,12 @@ public:
 
         auto& regs = jit->Regs();
 
-        // v94: any host-side SVC/import can write guest memory directly
-        // (memcpy/memmove/memset/string/file bridges, etc.) without passing
-        // through Dynarmic's scalar MemoryWrite callbacks. Snapshot the active
-        // caller-LR slot across every SVC boundary so the entire host-write
-        // class is covered in one place.
+        // v95: host bridges can bypass Dynarmic scalar MemoryWrite
+        // callbacks. Snapshot only while the exact external saved-LR slot is
+        // armed. The local guard is allocation-free because every import uses
+        // CallSVC and this path must remain cheap.
         const bool v94_svc_watch_active =
-            V94Enabled() && v94_watch_armed;
+            v94_watch_armed;
         const std::uint32_t v94_svc_watch_slot =
             v94_svc_watch_active
                 ? v94_watch_slot
@@ -14347,41 +14274,154 @@ public:
                 : 0u;
 
         struct V94SvcExitGuard {
-            std::function<void()> fn;
+            PvZ2JniCallbacks* self = nullptr;
+            std::uint32_t swi = 0u;
+            bool active = false;
+            std::uint32_t slot = 0u;
+            std::uint32_t before = 0u;
+
             ~V94SvcExitGuard() {
-                if (fn) fn();
+                if (self != nullptr && active) {
+                    self->V94FinalizeSvcWatch(
+                        swi,
+                        slot,
+                        before);
+                }
             }
         };
 
         V94SvcExitGuard v94_svc_guard{
-            [this,
-             swi,
-             v94_svc_watch_active,
-             v94_svc_watch_slot,
-             v94_svc_before]() {
-                if (!v94_svc_watch_active ||
-                    !V94Enabled() ||
-                    !v94_watch_armed ||
-                    v94_watch_slot != v94_svc_watch_slot) {
-                    return;
-                }
+            this,
+            swi,
+            v94_svc_watch_active,
+            v94_svc_watch_slot,
+            v94_svc_before};
 
-                const std::uint32_t after =
-                    mem.Read32Guest(v94_svc_watch_slot);
-                if (after == v94_svc_before) {
-                    return;
-                }
+        if (V94Enabled() &&
+            swi == kJniProbeSvcV95WrapperPush) {
 
-                const std::string kind =
-                    "SVC-0x" + JniProbeHex(swi);
-                V94ObserveGuestWrite(
-                    kind.c_str(),
-                    v94_svc_watch_slot,
-                    4u,
-                    after,
-                    v94_svc_before,
-                    true);
-            }};
+            // Original @0x10868978: PUSH {r4,r5,r11,lr}.
+            const std::uint32_t old_sp =
+                regs[13];
+            const std::uint32_t new_sp =
+                old_sp - 16u;
+            const std::uint32_t entry_lr =
+                regs[14];
+
+            mem.Write32Guest(new_sp + 0u, regs[4]);
+            mem.Write32Guest(new_sp + 4u, regs[5]);
+            mem.Write32Guest(new_sp + 8u, regs[11]);
+            mem.Write32Guest(new_sp + 12u, entry_lr);
+            regs[13] = new_sp;
+
+            constexpr std::uint32_t
+                kExpectedOuterReturn =
+                    kGuestBase + 0x0086f1fcu;
+
+            if (entry_lr == kExpectedOuterReturn &&
+                !v94_watch_armed) {
+                ++v94_wrapper_entries;
+                v94_watch_armed = true;
+                v94_watch_slot =
+                    new_sp + 12u;
+                v94_entry_lr =
+                    entry_lr;
+
+                AppendDiagnostic(
+                    std::string{RuntimeModeTag()} +
+                    " LR-SLOT ARM #" +
+                    std::to_string(
+                        v94_wrapper_entries) +
+                    " frame=" +
+                    std::to_string(
+                        current_frame_number) +
+                    " slot=0x" +
+                    JniProbeHex(
+                        v94_watch_slot) +
+                    " PC=0x" +
+                    JniProbeHex(
+                        kGuestBase +
+                        0x00868978u) +
+                    " LR=0x" +
+                    JniProbeHex(entry_lr) +
+                    " expected=0x" +
+                    JniProbeHex(
+                        kExpectedOuterReturn) +
+                    " bit0=" +
+                    std::to_string(
+                        entry_lr & 1u) +
+                    " SP=0x" +
+                    JniProbeHex(new_sp));
+            }
+
+            return;
+        }
+
+        if (V94Enabled() &&
+            swi == kJniProbeSvcV95WrapperPop) {
+
+            // Original @0x108689c4: POP {r4,r5,r11,pc}.
+            const std::uint32_t sp =
+                regs[13];
+            const std::uint32_t out_r4 =
+                mem.Read32Guest(sp + 0u);
+            const std::uint32_t out_r5 =
+                mem.Read32Guest(sp + 4u);
+            const std::uint32_t out_r11 =
+                mem.Read32Guest(sp + 8u);
+            const std::uint32_t raw_pc =
+                mem.Read32Guest(sp + 12u);
+            const std::uint32_t pop_slot =
+                sp + 12u;
+
+            const bool watched_pop =
+                v94_watch_armed &&
+                v94_watch_slot == pop_slot;
+
+            if (watched_pop) {
+                constexpr std::uint32_t
+                    kExpectedOuterReturn =
+                        kGuestBase + 0x0086f1fcu;
+
+                AppendDiagnostic(
+                    std::string{RuntimeModeTag()} +
+                    " LR-SLOT POP frame=" +
+                    std::to_string(
+                        current_frame_number) +
+                    " slot=0x" +
+                    JniProbeHex(pop_slot) +
+                    " value=0x" +
+                    JniProbeHex(raw_pc) +
+                    " expected=0x" +
+                    JniProbeHex(
+                        kExpectedOuterReturn) +
+                    " bit0=" +
+                    std::to_string(
+                        raw_pc & 1u) +
+                    " PC=0x" +
+                    JniProbeHex(
+                        kGuestBase +
+                        0x008689c4u));
+
+                v94_watch_armed = false;
+            }
+
+            regs[4] = out_r4;
+            regs[5] = out_r5;
+            regs[11] = out_r11;
+            regs[13] = sp + 16u;
+            regs[15] = raw_pc & ~1u;
+
+            std::uint32_t cpsr =
+                jit->Cpsr();
+            if ((raw_pc & 1u) != 0u) {
+                cpsr |= 0x20u;
+            } else {
+                cpsr &= ~0x20u;
+            }
+            jit->SetCpsr(cpsr);
+            return;
+        }
 
         // v79: exact first-run Profile provenance. Traps are installed only
         // for V75/V77, and each case below first reproduces the original ARM
@@ -20813,7 +20853,8 @@ public:
                     if (v94_last_outer_at_free !=
                         kGuestBase + 0x0086f1fcu) {
                         AppendDiagnostic(
-                            "V94 OUTER-LR AT FREE frame=" +
+                            std::string{RuntimeModeTag()} +
+                            " OUTER-LR AT FREE frame=" +
                             std::to_string(
                                 current_frame_number) +
                             " slot=0x" +
@@ -29723,15 +29764,7 @@ public:
                 result.hard_stop_requested=true;
                 const auto pc=jit?jit->Regs()[15]:0u,lr=jit?jit->Regs()[14]:0u,cpsr=jit?jit->Cpsr():0u;
                 const std::string tag=
-                    V93Enabled()
-                        ? "V93"
-                        : (V92Enabled()
-                               ? "V92"
-                               : (V91Enabled()
-                               ? "V91"
-                                      : (V90Enabled()
-                                             ? "V90"
-                                             : "V89")));
+                    RuntimeModeTag();
                 result.message=tag+" Hard Stop requested by user.";
                 AppendCritical(tag+" HARD STOP frame="+std::to_string(current_frame_number)+" tid="+std::to_string(current_probe_thread_id)+" PC="+V46DescribeGuestAddress(pc)+" LR="+V46DescribeGuestAddress(lr)+" CPSR=0x"+JniProbeHex(cpsr));
                 if(V89Enabled())V89EmitTerminalSummaries("user-hard-stop");
@@ -30922,6 +30955,20 @@ bool JniProbePrepareRuntime(
         return false;
     }
 
+    if (callbacks.V94Enabled() &&
+        (!patch_resource_native_miss(
+             0x00868978u,
+             0xe92d4830u,
+             kJniProbeSvcV95WrapperPush) ||
+         !patch_resource_native_miss(
+             0x008689c4u,
+             0xe8bd8830u,
+             kJniProbeSvcV95WrapperPop))) {
+        error =
+            "caller-LR PUSH/POP signature mismatch at 0x10868978/0x108689c4.";
+        return false;
+    }
+
     if(callbacks.V89Enabled()&&(!patch_resource_native_miss(0x00894b28u,0xe5911000u,kJniProbeSvcV89BlxTarget0)||!patch_resource_native_miss(0x00894b34u,0xe591201cu,kJniProbeSvcV89BlxTarget1))){
         error="v89 BLX provenance signature mismatch at 0x10894b28/0x10894b34.";return false;
     }
@@ -31055,8 +31102,10 @@ bool JniProbePrepareRuntime(
         callbacks.Append(
             "V83 PROFILE BUTTON DISPATCH: v83 restored the V80 2048x1536 pixel touch control and proved buttonId=5 can dispatch even when the raw +0x28/+0x2c/+0x30/+0x34 radar rectangle does not contain the screen-space tap. Those raw fields are therefore local/transformed, not absolute hitboxes. The passive dispatcher trap remains enabled and does not alter rendering, widget geometry or GameState.");
     }
-    if(callbacks.V94Enabled()){
-        callbacks.AppendDiagnostic("V94 CALLER LR WATCH: v93 proved FreeHeap and the inner 0x108689c8 frame are clean. Track the outer 0x10868978 saved-LR slot from PUSH to POP, including scalar/exclusive guest stores and all host SVC boundaries. Expected direct-call LR is 0x1086f1fc. Observation only: no stack repair, return rewrite or guest-code patch.");
+    if(callbacks.V95Enabled()){
+        callbacks.AppendDiagnostic("V95 PRECISE CALLER LR WATCH: v94 performance regression removed. Exact traps emulate PUSH@0x10868978 and POP@0x108689c4; only incoming LR=0x1086f1fc arms the saved-LR slot. STR/STREX and host SVC writes are observed only against that exact slot. Observation only: no stack repair, return rewrite or guest-code recovery.");
+    } else if(callbacks.V94Enabled()){
+        callbacks.AppendDiagnostic("V94 CALLER LR WATCH: exact PUSH/POP trap implementation active; legacy v94 mode retained only as a selectable control.");
     } else if(callbacks.V93Enabled()){
         callbacks.Append("V93 RETURN PROVENANCE: complete v92 long-run runtime preserved. The exact delete->free path returning through 0x10868b30 is observed non-invasively inside the host free callback: saved PC at guest SP+36 is captured before and after FreeHeap. No guest instruction, return address, allocator result, scheduler state or recovery behavior is changed.");
     } else if(callbacks.V92Enabled()){
@@ -31610,44 +31659,30 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
             return result;
         }
 
+        const bool use_heap_128 =
+            PvZ2DiagnosticModeHasCapability(
+                diagnostic_mode,
+                PvZ2ProbeCapability::Heap128);
+        const bool use_allocator_profile =
+            PvZ2DiagnosticModeHasCapability(
+                diagnostic_mode,
+                PvZ2ProbeCapability::AllocatorProfiling);
+        const bool use_allocator_index =
+            PvZ2DiagnosticModeHasCapability(
+                diagnostic_mode,
+                PvZ2ProbeCapability::IndexedAllocatorRelro);
+
         const std::uint32_t guest_heap_size =
-            (diagnostic_mode ==
-                    PvZ2DiagnosticMode::V86HeapPerformanceFix ||
-             diagnostic_mode ==
-                    PvZ2DiagnosticMode::V87PreemptiveMutexScheduler ||
-             diagnostic_mode ==
-                    PvZ2DiagnosticMode::V88AdaptiveMutexStartup ||
-             diagnostic_mode ==
-                    PvZ2DiagnosticMode::V89PerformanceProfiler ||
-             diagnostic_mode ==
-                    PvZ2DiagnosticMode::V90DirectPresentationProfiler ||
-             diagnostic_mode ==
-                    PvZ2DiagnosticMode::V91IndexedAllocatorRelro ||
-             diagnostic_mode ==
-                    PvZ2DiagnosticMode::V92LongRunInteractive ||
-             diagnostic_mode ==
-                    PvZ2DiagnosticMode::V93ReturnProvenance)
+            use_heap_128
                 ? kJniProbeHeapSizeV86
                 : kJniProbeHeapSize;
 
         JniProbeGuestMemory memory(
             guest_heap_size);
         memory.EnableV90AllocatorProfiling(
-            diagnostic_mode ==
-                PvZ2DiagnosticMode::V90DirectPresentationProfiler ||
-            diagnostic_mode ==
-                PvZ2DiagnosticMode::V91IndexedAllocatorRelro ||
-            diagnostic_mode ==
-                PvZ2DiagnosticMode::V92LongRunInteractive ||
-            diagnostic_mode ==
-                PvZ2DiagnosticMode::V93ReturnProvenance);
+            use_allocator_profile);
         memory.EnableV91AllocatorIndex(
-            diagnostic_mode ==
-                PvZ2DiagnosticMode::V91IndexedAllocatorRelro ||
-            diagnostic_mode ==
-                PvZ2DiagnosticMode::V92LongRunInteractive ||
-            diagnostic_mode ==
-                PvZ2DiagnosticMode::V93ReturnProvenance);
+            use_allocator_index);
 
         PvZ2JniCallbacks callbacks(
             memory,
@@ -31656,6 +31691,35 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
             obb_data,
             obb_size,
             diagnostic_mode);
+
+        if (callbacks.V95Enabled()) {
+            const bool config_ok =
+                memory.heap.size() ==
+                    kJniProbeHeapSizeV86 &&
+                memory.v90_allocator_profile &&
+                memory.v91_allocator_index_enabled;
+
+            callbacks.AppendDiagnostic(
+                std::string{"V95 RUNTIME CONFIG heapBytes="} +
+                std::to_string(
+                    memory.heap.size()) +
+                " allocatorProfile=" +
+                (memory.v90_allocator_profile
+                     ? "YES"
+                     : "NO") +
+                " allocatorIndex=" +
+                (memory.v91_allocator_index_enabled
+                     ? "YES"
+                     : "NO"));
+
+            if (!config_ok) {
+                result.message =
+                    "V95 runtime capability self-check failed before guest execution.";
+                result.trace =
+                    callbacks.Trace();
+                return result;
+            }
+        }
 
         std::uint32_t return_trampoline = 0;
 
@@ -35021,9 +35085,9 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                         if (v92_long_run) {
                             result.hard_stop_requested = true;
                             result.message =
-                                callbacks.V93Enabled()
-                                    ? "V93 Hard Stop requested by user."
-                                    : "V92 Hard Stop requested by user.";
+                                std::string{
+                                    callbacks.RuntimeModeTag()} +
+                                " Hard Stop requested by user.";
                         }
 
                         callbacks.Append(
@@ -35560,9 +35624,9 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                         if (v92_long_run) {
                             result.hard_stop_requested = true;
                             result.message =
-                                callbacks.V93Enabled()
-                                    ? "V93 Hard Stop requested by user."
-                                    : "V92 Hard Stop requested by user.";
+                                std::string{
+                                    callbacks.RuntimeModeTag()} +
+                                " Hard Stop requested by user.";
                         }
 
                         callbacks.Append(
