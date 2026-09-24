@@ -24,4 +24,15 @@ std::uint32_t PvZ2HostAudioRequestedSampleRate();
 std::uint32_t PvZ2HostAudioSessionSampleRate();
 std::uint32_t PvZ2HostAudioSourceSampleRate();
 std::uint32_t PvZ2HostAudioMixerSampleRate();
+
+// v102 real-time clock telemetry. These counters are produced only by the
+// AVAudioSourceNode render thread and are safe to sample from the guest
+// scheduler. They let us distinguish a host clock problem from guest/Wwise
+// starvation without ever entering Dynarmic from CoreAudio.
+std::uint64_t PvZ2HostAudioRenderCallbackCount();
+std::uint64_t PvZ2HostAudioRenderRequestedFrames();
+std::uint64_t PvZ2HostAudioRenderedPCMFrames();
+std::uint64_t PvZ2HostAudioUnderrunFrames();
+std::uint64_t PvZ2HostAudioUnderrunEvents();
+
 const char* PvZ2HostAudioLastError();

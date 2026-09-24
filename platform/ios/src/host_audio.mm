@@ -37,6 +37,15 @@ std::atomic<std::uint32_t> gSessionSampleRate{0u};
 std::atomic<std::uint32_t> gSourceSampleRate{0u};
 std::atomic<std::uint32_t> gMixerSampleRate{0u};
 
+// v102: measure the real AVAudioSourceNode consumption clock. The render
+// callback only touches atomics here; no logging, allocation, mutex or guest
+// execution is allowed on the CoreAudio real-time thread.
+std::atomic<std::uint64_t> gRenderCallbackCount{0u};
+std::atomic<std::uint64_t> gRenderRequestedFrames{0u};
+std::atomic<std::uint64_t> gRenderedPCMFrames{0u};
+std::atomic<std::uint64_t> gUnderrunFrames{0u};
+std::atomic<std::uint64_t> gUnderrunEvents{0u};
+
 std::mutex gControlMutex;
 std::string gLastError;
 AVAudioEngine* gEngine = nil;
@@ -87,6 +96,21 @@ void ResetQueueState() {
         0u,
         std::memory_order_release);
     gConsumedTotal.store(
+        0u,
+        std::memory_order_release);
+    gRenderCallbackCount.store(
+        0u,
+        std::memory_order_release);
+    gRenderRequestedFrames.store(
+        0u,
+        std::memory_order_release);
+    gRenderedPCMFrames.store(
+        0u,
+        std::memory_order_release);
+    gUnderrunFrames.store(
+        0u,
+        std::memory_order_release);
+    gUnderrunEvents.store(
         0u,
         std::memory_order_release);
 }
@@ -175,6 +199,13 @@ OSStatus RenderAudio(
         return noErr;
     }
 
+    gRenderCallbackCount.fetch_add(
+        1u,
+        std::memory_order_relaxed);
+    gRenderRequestedFrames.fetch_add(
+        static_cast<std::uint64_t>(frameCount),
+        std::memory_order_relaxed);
+
     const std::uint64_t read =
         gReadFrame.load(
             std::memory_order_relaxed);
@@ -190,6 +221,20 @@ OSStatus RenderAudio(
             std::min<std::uint64_t>(
                 available,
                 frameCount));
+
+    gRenderedPCMFrames.fetch_add(
+        static_cast<std::uint64_t>(to_read),
+        std::memory_order_relaxed);
+
+    if (to_read < frameCount) {
+        gUnderrunFrames.fetch_add(
+            static_cast<std::uint64_t>(
+                frameCount - to_read),
+            std::memory_order_relaxed);
+        gUnderrunEvents.fetch_add(
+            1u,
+            std::memory_order_relaxed);
+    }
 
     if (to_read == 0u) {
         if (isSilence != nullptr) {
@@ -736,6 +781,36 @@ PvZ2HostAudioSourceSampleRate() {
 std::uint32_t
 PvZ2HostAudioMixerSampleRate() {
     return gMixerSampleRate.load(
+        std::memory_order_acquire);
+}
+
+std::uint64_t
+PvZ2HostAudioRenderCallbackCount() {
+    return gRenderCallbackCount.load(
+        std::memory_order_acquire);
+}
+
+std::uint64_t
+PvZ2HostAudioRenderRequestedFrames() {
+    return gRenderRequestedFrames.load(
+        std::memory_order_acquire);
+}
+
+std::uint64_t
+PvZ2HostAudioRenderedPCMFrames() {
+    return gRenderedPCMFrames.load(
+        std::memory_order_acquire);
+}
+
+std::uint64_t
+PvZ2HostAudioUnderrunFrames() {
+    return gUnderrunFrames.load(
+        std::memory_order_acquire);
+}
+
+std::uint64_t
+PvZ2HostAudioUnderrunEvents() {
+    return gUnderrunEvents.load(
         std::memory_order_acquire);
 }
 

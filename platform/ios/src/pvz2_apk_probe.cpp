@@ -980,6 +980,8 @@ constexpr std::uint64_t kCapRawGuestCallbackABI =
     ProbeCap(PvZ2ProbeCapability::RawGuestCallbackABI);
 constexpr std::uint64_t kCapAudioClockContract =
     ProbeCap(PvZ2ProbeCapability::AudioClockContract);
+constexpr std::uint64_t kCapAudioRealtimePump =
+    ProbeCap(PvZ2ProbeCapability::AudioRealtimePump);
 
 constexpr std::uint64_t kCapsTransformBase =
     kCapLive | kCapCpuFrame | kCapTransform |
@@ -1019,6 +1021,8 @@ constexpr std::uint64_t kCapsV100 =
     kCapsV99 | kCapRawGuestCallbackABI;
 constexpr std::uint64_t kCapsV101 =
     kCapsV100 | kCapAudioClockContract;
+constexpr std::uint64_t kCapsV102 =
+    kCapsV101 | kCapAudioRealtimePump;
 
 constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::PassiveRegistry, "PASSIVE_REGISTRY", nullptr, 0u, false},
@@ -1067,12 +1071,13 @@ constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::V99AudioOpenSLBridge, "V99_AUDIO_OPENSL_BRIDGE", "V99 Audio", kCapsV99, true},
     {PvZ2DiagnosticMode::V100OpenSLCallbackABI, "V100_OPENSL_CALLBACK_ABI", "V100 Audio ABI", kCapsV100, true},
     {PvZ2DiagnosticMode::V101AudioClockContract, "V101_AUDIO_CLOCK_CONTRACT", "V101 Audio Clock", kCapsV101, true},
+    {PvZ2DiagnosticMode::V102AudioRealtimePump, "V102_AUDIO_REALTIME_PUMP", "V102 Audio Pump", kCapsV102, true},
 };
 
 constexpr PvZ2DiagnosticMode kSelectableDiagnosticModes[] = {
     // App-facing selection remains intentionally single-mode.
     // Historical descriptors stay registered for internal diagnostics.
-    PvZ2DiagnosticMode::V101AudioClockContract,
+    PvZ2DiagnosticMode::V102AudioRealtimePump,
 };
 
 } // namespace
@@ -3187,6 +3192,7 @@ public:
         Constructor,
         GameAppInitialize,
         Lifecycle,
+        AudioCallback,
     };
 
     std::uint32_t vm_object = 0;
@@ -3249,6 +3255,21 @@ public:
     std::uint64_t v99_audio_pending_callbacks = 0u;
     std::uint64_t v99_audio_callback_deliveries = 0u;
     std::uint64_t v99_audio_interface_misses = 0u;
+
+    // v102: CoreAudio is the clock source, but guest execution remains confined
+    // to the Dynarmic scheduler thread. AddTicks polls the atomic host completion
+    // total at a bounded cadence and requests a soft scheduler checkpoint. The
+    // actual OpenSL callback runs there on a private stack with a distinct guest
+    // thread id; it is never entered from the CoreAudio render callback.
+    bool v102_audio_service_requested = false;
+    bool v102_audio_inline_active = false;
+    std::uint32_t v102_audio_callback_stack_top = 0u;
+    std::uint64_t v102_audio_poll_ticks = 0u;
+    std::uint64_t v102_audio_forced_slices = 0u;
+    std::uint64_t v102_audio_inline_services = 0u;
+    std::uint64_t v102_audio_inline_callbacks = 0u;
+    std::uint64_t v102_audio_sink_busy_deferrals = 0u;
+    std::uint64_t v102_audio_play_begin_ns = 0u;
 
     // v61 safe cooperative boundary. Set only by the main Native_onDrawFrame
     // thread when the verified resource-stream pump has completed its
@@ -8516,6 +8537,119 @@ public:
     }
 
 
+    bool V102Enabled() const {
+        return HasCapability(
+            PvZ2ProbeCapability::AudioRealtimePump);
+    }
+
+    bool V102AudioSinkMutexAvailable(
+        bool count_deferral = false) {
+        if (!V63Enabled() ||
+            v99_queue_context == 0u) {
+            return true;
+        }
+
+        const std::uint32_t sink_mutex =
+            v99_queue_context + 0x20u;
+        const auto found =
+            v63_mutexes.find(sink_mutex);
+
+        const bool available =
+            found == v63_mutexes.end() ||
+            found->second.depth == 0u;
+
+        if (!available && count_deferral) {
+            ++v102_audio_sink_busy_deferrals;
+        }
+        return available;
+    }
+
+    bool V102RefreshAudioServiceRequest(
+        bool count_deferral = false) {
+        if (!V102Enabled() ||
+            v102_audio_inline_active ||
+            !v99_audio_configured ||
+            v99_play_state != 3u ||
+            v99_queue_callback == 0u ||
+            v99_queue_itf == 0u) {
+            return false;
+        }
+
+        const bool completion_waiting =
+            v99_audio_pending_callbacks != 0u ||
+            PvZ2HostAudioConsumedBufferTotal() >
+                v99_audio_host_consumed;
+
+        if (!completion_waiting) {
+            return false;
+        }
+
+        if (!V102AudioSinkMutexAvailable(
+                count_deferral)) {
+            return false;
+        }
+
+        v102_audio_service_requested = true;
+        return true;
+    }
+
+    void V102LogAudioPacer(
+        const char* phase) {
+        if (!V102Enabled()) {
+            return;
+        }
+
+        const std::uint64_t now =
+            V85SteadyNowNs();
+        const std::uint64_t elapsed_ns =
+            v102_audio_play_begin_ns != 0u &&
+                    now >= v102_audio_play_begin_ns
+                ? now - v102_audio_play_begin_ns
+                : 0u;
+
+        const std::uint64_t requested =
+            PvZ2HostAudioRenderRequestedFrames();
+        const std::uint64_t rendered =
+            PvZ2HostAudioRenderedPCMFrames();
+        const std::uint64_t underrun =
+            PvZ2HostAudioUnderrunFrames();
+        const std::uint64_t effective_hz =
+            elapsed_ns != 0u
+                ? (requested * 1000000000ull) /
+                      elapsed_ns
+                : 0u;
+
+        AppendDiagnostic(
+            "V102 AUDIO PACER phase=" +
+            std::string{
+                phase != nullptr
+                    ? phase
+                    : "n/a"} +
+            " elapsedMs=" +
+            std::to_string(
+                elapsed_ns / 1000000ull) +
+            " renderCallbacks=" +
+            std::to_string(
+                PvZ2HostAudioRenderCallbackCount()) +
+            " requestedFrames=" +
+            std::to_string(requested) +
+            " pcmFrames=" +
+            std::to_string(rendered) +
+            " underrunFrames=" +
+            std::to_string(underrun) +
+            " underrunEvents=" +
+            std::to_string(
+                PvZ2HostAudioUnderrunEvents()) +
+            " effectiveRequestedHz=" +
+            std::to_string(effective_hz) +
+            " queued=" +
+            std::to_string(
+                PvZ2HostAudioQueuedBufferCount()) +
+            " pendingGuestCallbacks=" +
+            std::to_string(
+                v99_audio_pending_callbacks));
+    }
+
     bool V101Enabled() const {
         return HasCapability(
             PvZ2ProbeCapability::AudioClockContract);
@@ -9120,6 +9254,17 @@ public:
             PvZ2HostAudioSetPlaying(
                 state == 3u);
 
+            if (V102Enabled() &&
+                changed &&
+                state == 3u) {
+                v102_audio_play_begin_ns =
+                    V85SteadyNowNs();
+                v102_audio_poll_ticks = 0u;
+                v102_audio_service_requested = false;
+                AppendDiagnostic(
+                    "V102 AUDIO REALTIME CLOCK armed at PLAYING; CoreAudio completions will preempt long guest lifecycles at scheduler checkpoints.");
+            }
+
             if (changed) {
                 AppendDiagnostic(
                     "V99 AUDIO PLAY STATE " +
@@ -9366,6 +9511,7 @@ public:
     }
 
     const char* RuntimeModeTag() const {
+        if (V102Enabled()) return "V102";
         if (V101Enabled()) return "V101";
         if (V100Enabled()) return "V100";
         if (V99Enabled()) return "V99";
@@ -9468,7 +9614,8 @@ public:
                 line.rfind("V98 ", 0u) == 0u ||
                 line.rfind("V99 ", 0u) == 0u ||
                 line.rfind("V100 ", 0u) == 0u ||
-                line.rfind("V101 ", 0u) == 0u) {
+                line.rfind("V101 ", 0u) == 0u ||
+                line.rfind("V102 ", 0u) == 0u) {
                 return true;
             }
 
@@ -18851,6 +18998,10 @@ public:
                 Append(
                     current_lifecycle_name +
                     " returned.");
+            } else if (return_mode == ReturnMode::AudioCallback) {
+                // v102 inline OpenSL completion: deliberately quiet. The
+                // bounded V102 AUDIO PACER/INLINE markers carry the useful
+                // telemetry without one log line per 1024 audio frames.
             } else {
                 result.returned_from_jni_onload = true;
                 result.return_value = regs[0];
@@ -30893,6 +31044,35 @@ public:
 
     void AddTicks(std::uint64_t ticks) override {
         ticks_consumed += ticks;
+
+        if (V102Enabled() &&
+            !v102_audio_inline_active &&
+            return_mode == ReturnMode::Lifecycle &&
+            current_probe_thread_id == 0u &&
+            soft_slice_timeout &&
+            current_lifecycle_name !=
+                "V100_OpenSL_BufferQueueCallback") {
+
+            v102_audio_poll_ticks += ticks;
+            constexpr std::uint64_t
+                kV102AudioPollGuestTicks = 32768ull;
+
+            if (v102_audio_poll_ticks >=
+                kV102AudioPollGuestTicks) {
+                v102_audio_poll_ticks = 0u;
+
+                if (V102RefreshAudioServiceRequest(
+                        true)) {
+                    ++v102_audio_forced_slices;
+                    if (jit) {
+                        jit->HaltExecution(
+                            Dynarmic::HaltReason::UserDefined4);
+                    }
+                    return;
+                }
+            }
+        }
+
         if((V89Enabled()||V90Enabled())&&gV72StopRequested.load(std::memory_order_acquire)){
             if(!result.hard_stop_requested){
                 result.hard_stop_requested=true;
@@ -30923,6 +31103,8 @@ public:
                         current_lifecycle_name.empty()
                             ? "lifecycle"
                             : current_lifecycle_name;
+                case ReturnMode::AudioCallback:
+                    return "V102_OpenSL_AsyncCallback";
                 case ReturnMode::JniOnLoad:
                 default:
                     return "JNI_OnLoad";
@@ -32347,6 +32529,10 @@ bool JniProbePrepareRuntime(
     if (callbacks.V83Enabled()) {
         callbacks.Append(
             "V83 PROFILE BUTTON DISPATCH: v83 restored the V80 2048x1536 pixel touch control and proved buttonId=5 can dispatch even when the raw +0x28/+0x2c/+0x30/+0x34 radar rectangle does not contain the screen-space tap. Those raw fields are therefore local/transformed, not absolute hitboxes. The passive dispatcher trap remains enabled and does not alter rendering, widget geometry or GameState.");
+    }
+    if (callbacks.V102Enabled()) {
+        callbacks.AppendDiagnostic(
+            "V102 AUDIO REALTIME PUMP: CoreAudio completion counters are polled during long guest lifecycles and can request a soft Dynarmic checkpoint. OpenSL completion callbacks run only on the guest scheduler thread, with a private guest stack/thread id; frame boundaries remain fallback drains, never the audio clock.");
     }
     if (callbacks.V101Enabled()) {
         callbacks.AppendDiagnostic(
@@ -33984,6 +34170,282 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             2000000000ull;
                         constexpr std::uint32_t kWorkerStackSize =
                             64u * 1024u;
+                        constexpr std::uint32_t
+                            kV102AudioCallbackStackSize =
+                                64u * 1024u;
+                        constexpr std::uint32_t
+                            kV102AudioCallbackTid =
+                                0x7fff0102u;
+                        constexpr std::uint64_t
+                            kV102AudioCallbackBudget =
+                                250000ull;
+
+                        auto service_v102_audio =
+                            [&](const char* phase) -> bool {
+                                if (!callbacks.V102Enabled() ||
+                                    raw_arm_abi ||
+                                    callbacks.v102_audio_inline_active) {
+                                    return true;
+                                }
+
+                                const std::uint32_t newly_consumed =
+                                    PvZ2HostAudioTakeConsumedBufferCount();
+                                callbacks.v99_audio_host_consumed +=
+                                    newly_consumed;
+                                callbacks.v99_audio_pending_callbacks +=
+                                    newly_consumed;
+
+                                if (callbacks.v99_audio_pending_callbacks ==
+                                        0u ||
+                                    callbacks.v99_queue_callback == 0u ||
+                                    callbacks.v99_queue_itf == 0u) {
+                                    callbacks.v102_audio_service_requested =
+                                        false;
+                                    return true;
+                                }
+
+                                if (!callbacks.V102AudioSinkMutexAvailable(
+                                        true)) {
+                                    callbacks.v102_audio_service_requested =
+                                        false;
+                                    return true;
+                                }
+
+                                if (callbacks.v102_audio_callback_stack_top ==
+                                    0u) {
+                                    const std::uint32_t stack_base =
+                                        memory.AllocateHeap(
+                                            kV102AudioCallbackStackSize,
+                                            16u);
+                                    if (stack_base == 0u) {
+                                        result.message =
+                                            "v102 unable to allocate dedicated OpenSL callback guest stack.";
+                                        callbacks.AppendCritical(
+                                            "V102 AUDIO INLINE ERROR " +
+                                            result.message);
+                                        return false;
+                                    }
+                                    callbacks.v102_audio_callback_stack_top =
+                                        stack_base +
+                                        kV102AudioCallbackStackSize -
+                                        0x100u;
+                                    callbacks.AppendDiagnostic(
+                                        "V102 AUDIO CALLBACK STACK top=" +
+                                        callbacks.V46DescribeGuestAddress(
+                                            callbacks
+                                                .v102_audio_callback_stack_top));
+                                }
+
+                                const auto saved_regs =
+                                    jit.Regs();
+                                const auto saved_ext_regs =
+                                    jit.ExtRegs();
+                                const std::uint32_t saved_cpsr =
+                                    jit.Cpsr();
+                                const std::uint32_t saved_fpscr =
+                                    jit.Fpscr();
+                                const auto saved_return_mode =
+                                    callbacks.return_mode;
+                                const std::string saved_lifecycle_name =
+                                    callbacks.current_lifecycle_name;
+                                const std::uint32_t saved_thread_id =
+                                    callbacks.current_probe_thread_id;
+                                const bool saved_control_returned =
+                                    callbacks.control_returned;
+                                const bool saved_soft_slice =
+                                    callbacks.soft_slice_timeout;
+                                const std::uint64_t saved_ticks_left =
+                                    callbacks.ticks_left;
+                                const std::uint64_t saved_ticks_consumed =
+                                    callbacks.ticks_consumed;
+                                const std::uint64_t saved_next_tick_report =
+                                    callbacks.next_tick_report;
+                                const std::string saved_message =
+                                    result.message;
+
+                                callbacks.v102_audio_inline_active = true;
+                                callbacks.v102_audio_service_requested = false;
+                                ++callbacks.v102_audio_inline_services;
+
+                                constexpr std::uint32_t
+                                    kMaxInlineCallbacks = 8u;
+                                std::uint32_t delivered = 0u;
+                                bool success = true;
+
+                                while (
+                                    callbacks
+                                        .v99_audio_pending_callbacks != 0u &&
+                                    delivered <
+                                        kMaxInlineCallbacks) {
+
+                                    if (!callbacks
+                                             .V102AudioSinkMutexAvailable(
+                                                 true)) {
+                                        break;
+                                    }
+
+                                    const std::uint64_t callback_number =
+                                        callbacks
+                                            .v99_audio_callback_deliveries +
+                                        1u;
+
+                                    clear_probe_halts();
+                                    jit.Regs().fill(0u);
+                                    jit.ExtRegs().fill(0u);
+                                    jit.Regs()[0] =
+                                        callbacks.v99_queue_itf;
+                                    jit.Regs()[1] =
+                                        callbacks.v99_queue_context;
+                                    jit.Regs()[13] =
+                                        callbacks
+                                            .v102_audio_callback_stack_top;
+                                    jit.Regs()[14] =
+                                        return_trampoline;
+                                    jit.Regs()[15] =
+                                        callbacks.v99_queue_callback &
+                                        ~1u;
+                                    jit.SetCpsr(
+                                        (callbacks.v99_queue_callback &
+                                         1u)
+                                            ? 0x30u
+                                            : 0x10u);
+                                    jit.SetFpscr(0u);
+                                    jit.ClearExclusiveState();
+
+                                    callbacks.return_mode =
+                                        PvZ2JniCallbacks::ReturnMode::
+                                            AudioCallback;
+                                    callbacks.current_lifecycle_name =
+                                        "V102_OpenSL_AsyncCallback";
+                                    callbacks.current_probe_thread_id =
+                                        kV102AudioCallbackTid;
+                                    callbacks.control_returned = false;
+                                    callbacks.soft_slice_timeout = true;
+                                    callbacks.ticks_left =
+                                        kV102AudioCallbackBudget;
+                                    callbacks.ticks_consumed = 0u;
+                                    callbacks.next_tick_report =
+                                        std::numeric_limits<
+                                            std::uint64_t>::max();
+                                    result.message.clear();
+
+                                    const Dynarmic::HaltReason audio_halt =
+                                        jit.Run();
+
+                                    const bool returned =
+                                        callbacks.control_returned &&
+                                        Dynarmic::Has(
+                                            audio_halt,
+                                            Dynarmic::HaltReason::
+                                                UserDefined1);
+                                    const bool fatal =
+                                        Dynarmic::Has(
+                                            audio_halt,
+                                            Dynarmic::HaltReason::
+                                                UserDefined2) ||
+                                        Dynarmic::Has(
+                                            audio_halt,
+                                            Dynarmic::HaltReason::
+                                                UserDefined3);
+
+                                    if (!returned ||
+                                        fatal ||
+                                        callbacks.V63HeldMutexCount(
+                                            kV102AudioCallbackTid) !=
+                                            0u) {
+                                        if (result.message.empty()) {
+                                            result.message =
+                                                "v102 OpenSL async callback did not return cleanly; PC=" +
+                                                callbacks
+                                                    .V46DescribeGuestAddress(
+                                                        jit.Regs()[15]) +
+                                                " heldMutexes={" +
+                                                callbacks
+                                                    .V63HeldMutexSummary(
+                                                        kV102AudioCallbackTid) +
+                                                "}.";
+                                        }
+                                        callbacks.AppendCritical(
+                                            "V102 AUDIO INLINE ERROR " +
+                                            result.message);
+                                        success = false;
+                                        break;
+                                    }
+
+                                    --callbacks
+                                         .v99_audio_pending_callbacks;
+                                    ++callbacks
+                                          .v99_audio_callback_deliveries;
+                                    ++callbacks
+                                          .v102_audio_inline_callbacks;
+                                    ++delivered;
+
+                                    if (callbacks.V99ShouldLogCounter(
+                                            callbacks
+                                                .v102_audio_inline_callbacks)) {
+                                        callbacks.AppendDiagnostic(
+                                            "V102 AUDIO INLINE #" +
+                                            std::to_string(
+                                                callbacks
+                                                    .v102_audio_inline_callbacks) +
+                                            " phase=" +
+                                            std::string{
+                                                phase != nullptr
+                                                    ? phase
+                                                    : "n/a"} +
+                                            " callback=" +
+                                            std::to_string(
+                                                callback_number) +
+                                            " queued=" +
+                                            std::to_string(
+                                                PvZ2HostAudioQueuedBufferCount()) +
+                                            " pending=" +
+                                            std::to_string(
+                                                callbacks
+                                                    .v99_audio_pending_callbacks));
+                                    }
+                                }
+
+                                callbacks.v102_audio_inline_active = false;
+
+                                clear_probe_halts();
+                                jit.Regs() = saved_regs;
+                                jit.ExtRegs() = saved_ext_regs;
+                                jit.SetCpsr(saved_cpsr);
+                                jit.SetFpscr(saved_fpscr);
+                                jit.ClearExclusiveState();
+                                callbacks.return_mode =
+                                    saved_return_mode;
+                                callbacks.current_lifecycle_name =
+                                    saved_lifecycle_name;
+                                callbacks.current_probe_thread_id =
+                                    saved_thread_id;
+                                callbacks.control_returned =
+                                    saved_control_returned;
+                                callbacks.soft_slice_timeout =
+                                    saved_soft_slice;
+                                callbacks.ticks_left =
+                                    saved_ticks_left;
+                                callbacks.ticks_consumed =
+                                    saved_ticks_consumed;
+                                callbacks.next_tick_report =
+                                    saved_next_tick_report;
+
+                                if (success) {
+                                    result.message = saved_message;
+                                }
+
+                                if (callbacks.V99ShouldLogCounter(
+                                        callbacks
+                                            .v102_audio_inline_services)) {
+                                    callbacks.V102LogAudioPacer(
+                                        phase);
+                                }
+
+                                callbacks.V102RefreshAudioServiceRequest(
+                                    false);
+                                return success;
+                            };
 
                         std::uint64_t lifecycle_ticks = 0;
                         std::uint32_t async_round = 0;
@@ -34136,6 +34598,33 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                     ".";
 
                                 return false;
+                            }
+
+                            // v102: a real CoreAudio buffer completion may have
+                            // requested this soft halt. Service it before the
+                            // older wait/worker classifier so a long
+                            // Native_onDrawFrame cannot starve Wwise until the
+                            // visual frame returns. If this halt was caused by a
+                            // different scheduler boundary, refresh the atomic
+                            // host completion total here as well.
+                            if (callbacks.V102Enabled() &&
+                                !raw_arm_abi) {
+                                callbacks.V102RefreshAudioServiceRequest(
+                                    true);
+                                if (callbacks
+                                        .v102_audio_service_requested) {
+                                    if (!service_v102_audio(
+                                            "main-checkpoint")) {
+                                        callbacks.soft_slice_timeout =
+                                            false;
+                                        result.lifecycle_failure_name =
+                                            name;
+                                        result.trace =
+                                            callbacks.Trace();
+                                        return false;
+                                    }
+                                    continue;
+                                }
                             }
 
                             // v29 exposed a scheduler correctness issue. Guest
@@ -36274,6 +36763,15 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             --callbacks.v99_audio_pending_callbacks;
                             ++callbacks.v99_audio_callback_deliveries;
                             ++delivered;
+                        }
+
+                        if (callbacks.V102Enabled() &&
+                            newly_consumed != 0u &&
+                            callbacks.V99ShouldLogCounter(
+                                callbacks
+                                    .v99_audio_host_consumed)) {
+                            callbacks.V102LogAudioPacer(
+                                phase);
                         }
 
                         if (callbacks.v99_audio_pending_callbacks != 0u &&

@@ -315,6 +315,12 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // relying on graph negotiation, and expose requested/session/source/mixer
     // rates so any remaining pitch/time mismatch is directly observable.
     V101AudioClockContract = 45u,
+
+    // v102: decouple OpenSL buffer-complete delivery from rendered-frame
+    // boundaries. CoreAudio remains the real-time clock and only publishes
+    // atomic completion counters; the guest callback is injected from safe
+    // Dynarmic scheduler checkpoints using a dedicated guest stack/thread id.
+    V102AudioRealtimePump = 46u,
 };
 
 enum class PvZ2ProbeCapability : std::uint64_t {
@@ -344,6 +350,7 @@ enum class PvZ2ProbeCapability : std::uint64_t {
     AudioOpenSLBridge = 1ull << 22,
     RawGuestCallbackABI = 1ull << 23,
     AudioClockContract = 1ull << 24,
+    AudioRealtimePump = 1ull << 25,
 };
 
 struct PvZ2DiagnosticModeDescriptor {
