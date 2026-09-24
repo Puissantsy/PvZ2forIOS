@@ -530,7 +530,7 @@ void PvZ2HostNotifyDirectFrame(
     self.captionLabel.clipsToBounds =
         YES;
     self.captionLabel.text =
-        @"PvZ2 v106 — starting…\n32 kHz OpenSL contract + BankMgr wait diagnostics";
+        @"PvZ2 v107 — starting…\nBankMgr semaphore wake repair + 32 kHz audio";
 
     self.stopButton =
         [UIButton
@@ -719,7 +719,7 @@ void PvZ2HostNotifyDirectFrame(
 
     self.inputEnabled = NO;
     self.captionLabel.text =
-        @"PvZ2 v106 LIVE — HARD STOP requested; interrupting guest at the next Dynarmic checkpoint…";
+        @"PvZ2 v107 LIVE — HARD STOP requested; interrupting guest at the next Dynarmic checkpoint…";
     self.stopButton.enabled = NO;
     PvZ2RequestInteractiveStop();
 }
@@ -1297,7 +1297,7 @@ void PvZ2HostNotifyDirectFrame(
         self.captionLabel.text =
             [NSString
                 stringWithFormat:
-                    @"PvZ2 v106 LIVE • frame %lu • %@\n%lu×%lu guest • direct GPU 1:1 + audio",
+                    @"PvZ2 v107 LIVE • frame %lu • %@\n%lu×%lu guest • direct GPU 1:1 + audio",
                     (unsigned long)frame,
                     touchState,
                     (unsigned long)width,
@@ -1524,7 +1524,7 @@ void PvZ2HostNotifyDirectFrame(
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — v106 Audio Rate + Bank Wait";
+        @"PvZ2forIOS — v107 Semaphore Wake Repair";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -1533,7 +1533,7 @@ void PvZ2HostNotifyDirectFrame(
         NO;
 
     title.text =
-        @"PvZ2forIOS — v106 Audio Rate + Bank Wait";
+        @"PvZ2forIOS — v107 Semaphore Wake Repair";
 
     title.font =
         [UIFont
@@ -1549,7 +1549,7 @@ void PvZ2HostNotifyDirectFrame(
         NO;
 
     explanation.text =
-        @"v106 fixes the confirmed 32→48 kHz contract mismatch by advertising 24/32/48 kHz through the synthetic OpenSL device, so Wwise can keep its intentional 32 kHz pipeline and AVAudioEngine converts downstream. It also identifies/prioritizes CAkBankMgr during synchronous UnloadBank waits and keeps the v105 resampler probes for verification.";
+        @"v107 preserves the confirmed 32 kHz audio fix and repairs cooperative semaphore wake bookkeeping: real sem_post tokens reconcile any stale FIFO waiter index, impossible stale waits are removed only when that worker actually reaches a new sem_wait, and the exact QueueBankCommand ↔ BankThreadFunc wake pair is traced without faking UnloadBank completion.";
 
     explanation.numberOfLines = 0;
 
@@ -2221,14 +2221,14 @@ void PvZ2HostNotifyDirectFrame(
 
     const auto* selectedDescriptor =
         PvZ2DescribeDiagnosticMode(
-            PvZ2DiagnosticMode::V106AudioRateBankWait);
+            PvZ2DiagnosticMode::V107SemaphoreWakeRepair);
 
     NSString *selectedModeName =
         selectedDescriptor != nullptr
             ? [NSString
                   stringWithUTF8String:
                       selectedDescriptor->internal_name]
-            : @"V106_AUDIO_RATE_BANK_WAIT";
+            : @"V107_SEMAPHORE_WAKE_REPAIR";
 
     [self
         appendUI:
@@ -2291,10 +2291,10 @@ void PvZ2HostNotifyDirectFrame(
 
     const auto* diagnosticDescriptor =
         PvZ2DescribeDiagnosticMode(
-            PvZ2DiagnosticMode::V106AudioRateBankWait);
+            PvZ2DiagnosticMode::V107SemaphoreWakeRepair);
 
     const PvZ2DiagnosticMode diagnosticMode =
-        PvZ2DiagnosticMode::V106AudioRateBankWait;
+        PvZ2DiagnosticMode::V107SemaphoreWakeRepair;
 
     NSString *diagnosticModeName =
         diagnosticDescriptor != nullptr
@@ -2310,7 +2310,7 @@ void PvZ2HostNotifyDirectFrame(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v106 Audio Rate + Bank Wait started mode=%@; PID=%d ===",
+                    @"=== PvZ2 v107 Semaphore Wake Repair started mode=%@; PID=%d ===",
                     diagnosticModeName,
                     getpid()]];
 
@@ -2824,14 +2824,14 @@ void PvZ2HostNotifyDirectFrame(
                                     finishRunWithMessage:
                                         [NSString
                                             stringWithFormat:
-                                                @"PvZ2 v106 LIVE — HARD STOPPED after %u guest frames.\nClose to inspect the v106 runtime log.",
+                                                @"PvZ2 v107 LIVE — HARD STOPPED after %u guest frames.\nClose to inspect the v107 runtime log.",
                                                 result.draw_frames_completed]];
                             } else {
                                 [selfRef.liveController
                                     finishRunWithMessage:
                                         [NSString
                                             stringWithFormat:
-                                                @"PvZ2 v106 LIVE — run finished after %u guest frames.\nClose to inspect the v106 runtime log.",
+                                                @"PvZ2 v107 LIVE — run finished after %u guest frames.\nClose to inspect the v107 runtime log.",
                                                 result.draw_frames_completed]];
                             }
 
@@ -2888,11 +2888,11 @@ void PvZ2HostNotifyDirectFrame(
 
                             if (result.hard_stop_requested) {
                                 [selfRef.liveController finishRunWithMessage:
-                                    @"PvZ2 v106 LIVE — HARD STOPPED.\nGuest execution was interrupted at the next Dynarmic checkpoint. Close to inspect the v106 runtime log."];
+                                    @"PvZ2 v107 LIVE — HARD STOPPED.\nGuest execution was interrupted at the next Dynarmic checkpoint. Close to inspect the v107 runtime log."];
                             } else {
                                 [selfRef.liveController finishRunWithMessage:
                                     [NSString stringWithFormat:
-                                        @"PvZ2 v106 LIVE — guest stopped/crashed.\n%@\nClose to inspect the v106 runtime log.", message]];
+                                        @"PvZ2 v107 LIVE — guest stopped/crashed.\n%@\nClose to inspect the v107 runtime log.", message]];
                             }
 
                         } else {

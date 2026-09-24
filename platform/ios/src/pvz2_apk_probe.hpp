@@ -342,6 +342,11 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // instead of falsely advertising only 48 kHz, and prioritize/trace the
     // real CAkBankMgr worker during synchronous UnloadBank semaphore waits.
     V106AudioRateBankWait = 50u,
+
+    // v107: repair lost cooperative semaphore wakeups by reconciling the
+    // authoritative wait map with its FIFO index, enforce one live blocking
+    // primitive per executing worker, and trace the exact BankMgr wake pair.
+    V107SemaphoreWakeRepair = 51u,
 };
 
 enum class PvZ2ProbeCapability : std::uint64_t {
@@ -376,6 +381,7 @@ enum class PvZ2ProbeCapability : std::uint64_t {
     AudioWorkerHandshake = 1ull << 27,
     WwiseResamplerProbe = 1ull << 28,
     AudioRateBankWait = 1ull << 29,
+    SemaphoreWakeRepair = 1ull << 30,
 };
 
 struct PvZ2DiagnosticModeDescriptor {

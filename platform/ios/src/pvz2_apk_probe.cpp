@@ -990,6 +990,8 @@ constexpr std::uint64_t kCapWwiseResamplerProbe =
     ProbeCap(PvZ2ProbeCapability::WwiseResamplerProbe);
 constexpr std::uint64_t kCapAudioRateBankWait =
     ProbeCap(PvZ2ProbeCapability::AudioRateBankWait);
+constexpr std::uint64_t kCapSemaphoreWakeRepair =
+    ProbeCap(PvZ2ProbeCapability::SemaphoreWakeRepair);
 
 constexpr std::uint64_t kCapsTransformBase =
     kCapLive | kCapCpuFrame | kCapTransform |
@@ -1039,6 +1041,8 @@ constexpr std::uint64_t kCapsV105 =
     kCapsV104 | kCapWwiseResamplerProbe;
 constexpr std::uint64_t kCapsV106 =
     kCapsV105 | kCapAudioRateBankWait;
+constexpr std::uint64_t kCapsV107 =
+    kCapsV106 | kCapSemaphoreWakeRepair;
 
 constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::PassiveRegistry, "PASSIVE_REGISTRY", nullptr, 0u, false},
@@ -1092,12 +1096,13 @@ constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::V104AudioWorkerHandshake, "V104_AUDIO_WORKER_HANDSHAKE", "V104 Audio Worker", kCapsV104, true},
     {PvZ2DiagnosticMode::V105WwiseResamplerProbe, "V105_WWISE_RESAMPLER_PROBE", "V105 Wwise Resampler", kCapsV105, true},
     {PvZ2DiagnosticMode::V106AudioRateBankWait, "V106_AUDIO_RATE_BANK_WAIT", "V106 Audio+Bank", kCapsV106, true},
+    {PvZ2DiagnosticMode::V107SemaphoreWakeRepair, "V107_SEMAPHORE_WAKE_REPAIR", "V107 Semaphore Wake", kCapsV107, true},
 };
 
 constexpr PvZ2DiagnosticMode kSelectableDiagnosticModes[] = {
     // App-facing selection remains intentionally single-mode.
     // Historical descriptors stay registered for internal diagnostics.
-    PvZ2DiagnosticMode::V106AudioRateBankWait,
+    PvZ2DiagnosticMode::V107SemaphoreWakeRepair,
 };
 
 } // namespace
@@ -3322,7 +3327,18 @@ public:
     // v106: identify the real CAkBankMgr worker and prefer it when the main
     // thread is synchronously waiting inside AK::SoundEngine::UnloadBank.
     std::uint32_t v106_bank_worker_tid = 0u;
+    std::uint32_t v106_bank_worker_object = 0u;
     std::uint64_t v106_bank_wait_priorities = 0u;
+
+    // v107: semaphore bookkeeping is represented by an authoritative wait map
+    // plus a FIFO index. The iPad v106 run proved BankMgr stayed asleep despite
+    // QueueBankCommand having an explicit sem_post path, so count repairs and
+    // exact BankMgr wake diagnostics live here.
+    std::uint64_t v107_sem_index_repairs = 0u;
+    std::uint64_t v107_stale_sem_wait_repairs = 0u;
+    std::uint64_t v107_stale_mutex_wait_repairs = 0u;
+    std::uint64_t v107_bank_wake_posts = 0u;
+    std::uint64_t v107_bank_wake_waits = 0u;
 
     // v61 safe cooperative boundary. Set only by the main Native_onDrawFrame
     // thread when the verified resource-stream pump has completed its
@@ -6621,6 +6637,76 @@ public:
             return false;
         }
 
+        if (V107Enabled()) {
+            // Reaching a fresh sem_wait means this executing thread cannot
+            // still legitimately be sleeping on an earlier semaphore.
+            const auto stale_sem =
+                v66_sem_waits.find(
+                    current_probe_thread_id);
+            if (stale_sem !=
+                v66_sem_waits.end()) {
+                const std::uint32_t old_sem =
+                    stale_sem->second.sem;
+                V66EraseSemaphoreWait(
+                    current_probe_thread_id,
+                    old_sem);
+                ++v107_stale_sem_wait_repairs;
+                AppendDiagnostic(
+                    "V107 STALE SEM WAIT REPAIR #" +
+                    std::to_string(
+                        v107_stale_sem_wait_repairs) +
+                    " tid=" +
+                    std::to_string(
+                        current_probe_thread_id) +
+                    " oldSem=" +
+                    V46DescribeGuestAddress(
+                        old_sem) +
+                    " newSem=" +
+                    V46DescribeGuestAddress(
+                        sem));
+            }
+
+            // Likewise, a worker that has actually executed up to sem_wait
+            // cannot still be an unconsumed pthread_mutex_lock waiter. A stale
+            // mutex record would otherwise be checked before semaphore resume
+            // and can permanently mask a legitimate sem_post.
+            if (V87MutexWaitPending(
+                    current_probe_thread_id)) {
+                const auto stale_mutex =
+                    v87_mutex_waits.find(
+                        current_probe_thread_id);
+                const std::uint32_t mutex =
+                    stale_mutex !=
+                            v87_mutex_waits.end()
+                        ? stale_mutex->second.mutex
+                        : 0u;
+                const bool cond_reacquire =
+                    stale_mutex !=
+                            v87_mutex_waits.end() &&
+                        stale_mutex->second
+                            .cond_reacquire;
+
+                if (!cond_reacquire) {
+                    V87EraseMutexWait(
+                        current_probe_thread_id);
+                    ++v107_stale_mutex_wait_repairs;
+                    AppendDiagnostic(
+                        "V107 STALE MUTEX WAIT REPAIR #" +
+                        std::to_string(
+                            v107_stale_mutex_wait_repairs) +
+                        " tid=" +
+                        std::to_string(
+                            current_probe_thread_id) +
+                        " mutex=" +
+                        V46DescribeGuestAddress(
+                            mutex) +
+                        " enteringSem=" +
+                        V46DescribeGuestAddress(
+                            sem));
+                }
+            }
+        }
+
         V66SemaphoreWaitState wait;
         wait.sem = sem;
         wait.timed = timed;
@@ -6682,24 +6768,71 @@ public:
         auto found =
             v66_sem_waiters.find(sem);
 
-        if (found == v66_sem_waiters.end()) {
+        if (found !=
+            v66_sem_waiters.end()) {
+            for (const std::uint32_t tid :
+                 found->second) {
+                auto wait =
+                    v66_sem_waits.find(tid);
+
+                if (wait ==
+                        v66_sem_waits.end() ||
+                    wait->second.sem != sem ||
+                    wait->second.notified) {
+                    continue;
+                }
+
+                wait->second.notified = true;
+                return 1u;
+            }
+        }
+
+        if (!V107Enabled()) {
             return 0u;
         }
 
-        for (const std::uint32_t tid :
-             found->second) {
-            auto wait =
-                v66_sem_waits.find(tid);
+        // v107: v66_sem_waits is authoritative. v66_sem_waiters is only a
+        // FIFO acceleration index; if that secondary index diverged, a real
+        // sem_post token must not be lost. Wake exactly one matching waiter
+        // and repair its FIFO membership for subsequent posts.
+        for (auto& entry :
+             v66_sem_waits) {
+            const std::uint32_t tid =
+                entry.first;
+            V66SemaphoreWaitState& wait =
+                entry.second;
 
-            if (wait ==
-                    v66_sem_waits.end() ||
-                wait->second.sem != sem ||
-                wait->second.notified) {
+            if (wait.sem != sem ||
+                wait.notified) {
                 continue;
             }
 
-            wait->second.notified = true;
-            return 1u;
+            wait.notified = true;
+
+            auto& waiters =
+                v66_sem_waiters[sem];
+            if (std::find(
+                    waiters.begin(),
+                    waiters.end(),
+                    tid) ==
+                waiters.end()) {
+                waiters.push_back(tid);
+            }
+
+            ++v107_sem_index_repairs;
+            AppendDiagnostic(
+                "V107 SEM INDEX REPAIR #" +
+                std::to_string(
+                    v107_sem_index_repairs) +
+                " sem=" +
+                V46DescribeGuestAddress(sem) +
+                " tid=" +
+                std::to_string(tid) +
+                " count=" +
+                std::to_string(
+                    mem.Read32Guest(sem)));
+
+            return 2u;
         }
 
         return 0u;
@@ -8590,9 +8723,92 @@ public:
     }
 
 
+    bool V107Enabled() const {
+        return HasCapability(
+            PvZ2ProbeCapability::SemaphoreWakeRepair);
+    }
+
     bool V106Enabled() const {
         return HasCapability(
             PvZ2ProbeCapability::AudioRateBankWait);
+    }
+
+    std::uint32_t V106BankWakeSemaphoreAddress() const {
+        return
+            v106_bank_worker_object != 0u
+                ? v106_bank_worker_object + 0x28u
+                : 0u;
+    }
+
+    std::string V107BankWorkerWaitSummary() {
+        std::ostringstream out;
+
+        const std::uint32_t wake_sem =
+            V106BankWakeSemaphoreAddress();
+
+        out
+            << "bankTid="
+            << v106_bank_worker_tid
+            << " bankObject="
+            << V46DescribeGuestAddress(
+                   v106_bank_worker_object)
+            << " wakeSem="
+            << V46DescribeGuestAddress(
+                   wake_sem)
+            << " wakeCount="
+            << (wake_sem != 0u
+                    ? mem.Read32Guest(wake_sem)
+                    : 0u)
+            << " queueDepth="
+            << (v106_bank_worker_object != 0u
+                    ? mem.Read32Guest(
+                          v106_bank_worker_object +
+                          0x4cu)
+                    : 0u);
+
+        const auto sem_wait =
+            v66_sem_waits.find(
+                v106_bank_worker_tid);
+
+        if (sem_wait !=
+            v66_sem_waits.end()) {
+            out
+                << " bankSemWait="
+                << V46DescribeGuestAddress(
+                       sem_wait->second.sem)
+                << " bankNotified="
+                << (sem_wait->second.notified
+                        ? "YES"
+                        : "NO")
+                << " bankTimed="
+                << (sem_wait->second.timed
+                        ? "YES"
+                        : "NO");
+        } else {
+            out
+                << " bankSemWait=NONE"
+                << " bankNotified=NO"
+                << " bankTimed=NO";
+        }
+
+        out
+            << " bankMutexPending="
+            << (V87MutexWaitPending(
+                    v106_bank_worker_tid)
+                    ? "YES"
+                    : "NO")
+            << " bankMutexGranted="
+            << (V87MutexWaitGranted(
+                    v106_bank_worker_tid)
+                    ? "YES"
+                    : "NO")
+            << " bankCondPending="
+            << (V65ThreadBlocked(
+                    v106_bank_worker_tid)
+                    ? "YES"
+                    : "NO");
+
+        return out.str();
     }
 
     std::uint32_t V106MainSemaphoreWaitAddress() const {
@@ -9868,6 +10084,7 @@ public:
     }
 
     const char* RuntimeModeTag() const {
+        if (V107Enabled()) return "V107";
         if (V106Enabled()) return "V106";
         if (V105Enabled()) return "V105";
         if (V104Enabled()) return "V104";
@@ -9980,7 +10197,8 @@ public:
                 line.rfind("V103 ", 0u) == 0u ||
                 line.rfind("V104 ", 0u) == 0u ||
                 line.rfind("V105 ", 0u) == 0u ||
-                line.rfind("V106 ", 0u) == 0u) {
+                line.rfind("V106 ", 0u) == 0u ||
+                line.rfind("V107 ", 0u) == 0u) {
                 return true;
             }
 
@@ -25172,6 +25390,8 @@ public:
                     kV106AkBankThreadEntryGuest) {
                     v106_bank_worker_tid =
                         thread_id;
+                    v106_bank_worker_object =
+                        argument;
                     AppendDiagnostic(
                         "V106 BANK WORKER FOUND tid=" +
                         std::to_string(thread_id) +
@@ -25231,6 +25451,8 @@ public:
                         (kGuestBase + 0x00bc7b8cu)) {
                         v106_bank_worker_tid =
                             thread_id;
+                        v106_bank_worker_object =
+                            worker_object;
                         AppendDiagnostic(
                             "V106 BANK WORKER FOUND tid=" +
                             std::to_string(thread_id) +
@@ -25880,13 +26102,16 @@ public:
 
         if (name == "sem_post") {
             const std::uint32_t sem = regs[0];
+            const std::uint32_t before =
+                mem.Read32Guest(sem);
 
             mem.Write32Guest(
                 sem,
-                mem.Read32Guest(sem) + 1u);
+                before + 1u);
 
+            std::uint32_t woke = 0u;
             if (V66Enabled()) {
-                const std::uint32_t woke =
+                woke =
                     V66NotifySemaphore(sem);
                 ++v66_sem_posts;
 
@@ -25906,6 +26131,35 @@ public:
                 }
             }
 
+            if (V107Enabled() &&
+                (regs[14] & ~1u) ==
+                    kGuestBase +
+                    0x00bc1554u) {
+                ++v107_bank_wake_posts;
+                AppendDiagnostic(
+                    "V107 BANK WAKE POST #" +
+                    std::to_string(
+                        v107_bank_wake_posts) +
+                    " caller=" +
+                    V46DescribeGuestAddress(
+                        regs[14]) +
+                    " sem=" +
+                    V46DescribeGuestAddress(
+                        sem) +
+                    " expectedSem=" +
+                    V46DescribeGuestAddress(
+                        V106BankWakeSemaphoreAddress()) +
+                    " count=" +
+                    std::to_string(before) +
+                    "->" +
+                    std::to_string(
+                        mem.Read32Guest(sem)) +
+                    " notifyResult=" +
+                    std::to_string(woke) +
+                    " " +
+                    V107BankWorkerWaitSummary());
+            }
+
             regs[0] = 0;
             ++supported_calls;
             return;
@@ -25918,6 +26172,36 @@ public:
             const std::uint32_t sem = regs[0];
             const std::uint32_t count =
                 mem.Read32Guest(sem);
+
+            const bool v107_bank_wake_wait =
+                V107Enabled() &&
+                name == "sem_wait" &&
+                current_probe_thread_id ==
+                    v106_bank_worker_tid &&
+                (regs[14] & ~1u) ==
+                    kGuestBase +
+                    0x00bc7bb8u;
+
+            if (v107_bank_wake_wait) {
+                ++v107_bank_wake_waits;
+                AppendDiagnostic(
+                    "V107 BANK WAKE WAIT #" +
+                    std::to_string(
+                        v107_bank_wake_waits) +
+                    " caller=" +
+                    V46DescribeGuestAddress(
+                        regs[14]) +
+                    " sem=" +
+                    V46DescribeGuestAddress(
+                        sem) +
+                    " expectedSem=" +
+                    V46DescribeGuestAddress(
+                        V106BankWakeSemaphoreAddress()) +
+                    " count=" +
+                    std::to_string(count) +
+                    " " +
+                    V107BankWorkerWaitSummary());
+            }
 
             if (count > 0u) {
                 mem.Write32Guest(
@@ -33089,9 +33373,13 @@ bool JniProbePrepareRuntime(
         callbacks.Append(
             "V83 PROFILE BUTTON DISPATCH: v83 restored the V80 2048x1536 pixel touch control and proved buttonId=5 can dispatch even when the raw +0x28/+0x2c/+0x30/+0x34 radar rectangle does not contain the screen-space tap. Those raw fields are therefore local/transformed, not absolute hitboxes. The passive dispatcher trap remains enabled and does not alter rendering, widget geometry or GameState.");
     }
+    if (callbacks.V107Enabled()) {
+        callbacks.AppendDiagnostic(
+            "V107 SEMAPHORE WAKE REPAIR: v106 audio-rate correction remains unchanged. Cooperative sem_post keeps real token accounting but reconciles a divergent FIFO waiter index from the authoritative semaphore-wait map, and a thread that actually reaches a new sem_wait discards impossible stale semaphore/mutex wait records. Exact QueueBankCommand sem_post and BankThreadFunc sem_wait calls log BankMgr object, wake semaphore, queue depth and notified state; no UnloadBank completion is fabricated.");
+    }
     if (callbacks.V106Enabled()) {
         callbacks.AppendDiagnostic(
-            "V106 AUDIO RATE + BANK WAIT: OpenSL output capabilities now expose discrete 24/32/48 kHz rates instead of forcing 48 kHz, preserving PvZ2's intentional 32 kHz Wwise pipeline while AVAudioEngine performs downstream hardware conversion. The real CAkBankMgr::BankThreadFunc worker is identified and preferred during synchronous UnloadBank sem_wait; power-of-two worker-state snapshots diagnose any remaining bank-completion stall.");
+            "V106 AUDIO RATE + BANK WAIT: OpenSL output capabilities expose discrete 24/32/48 kHz rates, preserving PvZ2's intentional 32 kHz Wwise pipeline while AVAudioEngine performs downstream hardware conversion. The real CAkBankMgr::BankThreadFunc worker remains prioritized during synchronous UnloadBank sem_wait.");
     }
     if (callbacks.V105Enabled()) {
         callbacks.AppendDiagnostic(
@@ -35506,6 +35794,9 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                             << callbacks.v106_bank_worker_tid
                                             << " cursor="
                                             << scheduler_worker_cursor
+                                            << " "
+                                            << callbacks
+                                                   .V107BankWorkerWaitSummary()
                                             << " workers={";
 
                                         const std::size_t summary_limit =
