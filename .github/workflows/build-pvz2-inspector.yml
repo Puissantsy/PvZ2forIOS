@@ -56,15 +56,15 @@ jobs:
           cp -R "$APP" inspector-package/Payload/PvZ2Inspector.app
           (
             cd inspector-package
-            zip -qry ../PvZ2Inspector-Lab-v2.3-alpha-unsigned.ipa Payload
+            zip -qry ../PvZ2Inspector-Lab-v2.4-alpha-unsigned.ipa Payload
           )
-          shasum -a 256 PvZ2Inspector-Lab-v2.3-alpha-unsigned.ipa | tee PvZ2Inspector-Lab-v2.3-alpha-unsigned.ipa.sha256
+          shasum -a 256 PvZ2Inspector-Lab-v2.4-alpha-unsigned.ipa | tee PvZ2Inspector-Lab-v2.4-alpha-unsigned.ipa.sha256
 
       - name: Upload unsigned IPA
         uses: actions/upload-artifact@v4
         with:
-          name: PvZ2Inspector-Lab-v2.3-alpha-unsigned
+          name: PvZ2Inspector-Lab-v2.4-alpha-unsigned
           path: |
-            PvZ2Inspector-Lab-v2.3-alpha-unsigned.ipa
-            PvZ2Inspector-Lab-v2.3-alpha-unsigned.ipa.sha256
+            PvZ2Inspector-Lab-v2.4-alpha-unsigned.ipa
+            PvZ2Inspector-Lab-v2.4-alpha-unsigned.ipa.sha256
           if-no-files-found: error

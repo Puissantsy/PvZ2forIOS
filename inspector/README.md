@@ -1,5 +1,42 @@
 # PvZ2 Inspector Lab
 
+## Lab v2.4-alpha — v109 audio / scheduler + multi-touch reference forensics
+
+v2.4 keeps every v2.3 HotUI/iPad report and adds one offline pass for the
+current playable v109 runtime.
+
+With the exact Android APK and a v109 runtime log it now exports:
+
+- `v109-audio-performance-diagnosis.txt`
+  - parses the terminal V90 worker/frame summaries;
+  - attributes worker time to tid5 / CAkAudioThread;
+  - groups logged slow frames into stall clusters;
+  - correlates seed-packet input bursts with waitWorker-heavy frames;
+  - checks V102 pacer/underrun stability and V104 sampling quality.
+- `v109-audio-stalls.csv`
+  - one row per logged slow frame with guest/main/waitWorker/present timing,
+    allocator counts, input count and a coarse cause classification.
+- `wwise-audio-static-callgraph.txt`
+  - resolves the exact ARM32 Wwise/AkVorbis symbols and direct BL edges around
+    CAkAudioThread, CAkAudioMgr, CAkLEngine, VPL, CAkResampler,
+    CAkSrcBank/FileVorbis, DecodeVorbis and MDCT.
+- `next-audio-probe-plan.txt`
+  - specifies a future summary-only host scheduler histogram for tid5 PCs and
+    wall time. It deliberately avoids reinstalling hot DSP SVC probes.
+- `v109-audio-critical-excerpt.txt`
+  - terminal frame summary, slowest frames and the sparse V104 handshake samples.
+
+When the historical decrypted iOS 1.5 IPA is also supplied, v2.4 writes
+`ios-audio-input-reference.txt`, collecting AudioToolbox/AVFoundation,
+pthread/audio import-call evidence and the historical pinch/multi-touch markers
+(`drivers.ios.use_multitouch`, `handlePinchGesture:`, touch selectors and
+Sexy::Touch/vector strings). This is reference evidence only; it does not
+pretend the Android and iOS implementations are identical.
+
+The purpose is to decide what a future game probe must measure before changing
+the v104+ audio scheduler, and to prepare the separate World Map pinch audit.
+Inspector itself remains offline/static and requires neither JIT nor StikDebug.
+
 ## Lab v2.3-alpha — HotUI virtual scale / content-resolution forensics
 
 v2.3 targets the remaining oversized/cropped UI after the real-iPad v78 run
@@ -8,35 +45,35 @@ proved that the legacy geometry experiment is genuinely applied and stable.
 The new analyzer correlates four evidence classes instead of trying another
 screen size blindly:
 
-- the three native \`LawnApp::SetWidthHeight\` diagnostics
-  (\`mOrigScreenWidth/Height\`, \`mWidth/mHeight\`,
-  \`m_contentResolutionWidth/Height\`);
+- the three native `LawnApp::SetWidthHeight` diagnostics
+  (`mOrigScreenWidth/Height`, `mWidth/mHeight`,
+  `m_contentResolutionWidth/Height`);
 - the active host/FBO/UI package evidence already present in the runtime log;
-- Android \`libPVZ2.so\` HotUI anchors such as \`VirtualWidth\`,
-  \`VirtualHeight\`, \`BoardScaledVirtualWidth\`, \`SizeFromScreen\`,
-  \`ScalePositionOffset\` and \`ImmuneToDeviceScaling\`;
+- Android `libPVZ2.so` HotUI anchors such as `VirtualWidth`,
+  `VirtualHeight`, `BoardScaledVirtualWidth`, `SizeFromScreen`,
+  `ScalePositionOffset` and `ImmuneToDeviceScaling`;
 - the same HotUI vocabulary in the historical decrypted iOS 1.5 ARMv7 Mach-O.
 
 With the v78 log it emits:
 
-\`\`\`
+```
 v78-ui-scale-diagnosis.txt
 ui-scale-static-markers.txt
 v79-ui-scale-plan.txt
 v78-ui-scale-critical-excerpt.txt
-\`\`\`
+```
 
 With the historical iOS IPA selected it also emits:
 
-\`\`\`
+```
 ios-ui-scale-reference.txt
-\`\`\`
+```
 
 The v79 plan is observational: one future runtime build compares the v75 and
 v77 controls while tracing the consumers of LawnApp's content-resolution
 fields and one concrete first-run widget's virtual-rect -> scalar ->
 final-pixel transform. It does **not** recommend changing
-\`m_contentResolutionWidth/Height\` until that provenance is known.
+`m_contentResolutionWidth/Height` until that provenance is known.
 
 # PvZ2 Inspector Lab
 

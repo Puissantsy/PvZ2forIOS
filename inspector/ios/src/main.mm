@@ -55,7 +55,13 @@ NSArray<NSURL *> *ExistingReportURLs() {
         @"ui-scale-static-markers.txt",
         @"v79-ui-scale-plan.txt",
         @"v78-ui-scale-critical-excerpt.txt",
+        @"v109-audio-performance-diagnosis.txt",
+        @"v109-audio-stalls.csv",
+        @"wwise-audio-static-callgraph.txt",
+        @"next-audio-probe-plan.txt",
+        @"v109-audio-critical-excerpt.txt",
         @"ios-reference-report.txt",
+        @"ios-audio-input-reference.txt",
         @"ios-ui-scale-reference.txt",
         @"android-ios-shared-strings.csv",
         @"objc-classes.csv",
@@ -118,11 +124,11 @@ NSArray<NSURL *> *ExistingReportURLs() {
     [super viewDidLoad];
 
     self.view.backgroundColor = UIColor.systemBackgroundColor;
-    self.title = @"PvZ2 Inspector Lab v2.3-alpha";
+    self.title = @"PvZ2 Inspector Lab v2.4-alpha";
 
     UILabel *title = [[UILabel alloc] init];
     title.translatesAutoresizingMaskIntoConstraints = NO;
-    title.text = @"PvZ2 Inspector Lab v2.3-alpha";
+    title.text = @"PvZ2 Inspector Lab v2.4-alpha";
     title.font = [UIFont boldSystemFontOfSize:27.0];
     title.numberOfLines = 0;
 
@@ -131,14 +137,12 @@ NSArray<NSURL *> *ExistingReportURLs() {
     explanation.numberOfLines = 0;
     explanation.font = [UIFont systemFontOfSize:14.5];
     explanation.text =
-        @"Inspector v2.3 targets the remaining oversized UI after v78 proved "
-         "that host FBO, 2048×1536 legacy geometry and UI_IPAD are applied. "
-         "It extracts LawnApp::SetWidthHeight content-resolution evidence, "
-         "audits HotUI virtual-layout anchors (VirtualWidth/Height, "
-         "SizeFromScreen, ScalePositionOffset, ImmuneToDeviceScaling), and "
-         "compares those anchors with the historical decrypted iOS 1.5 IPA. "
-         "Use the v78 log for the highest-value report. No JIT or StikDebug "
-         "is required by Inspector itself.";
+        @"Inspector v2.4 keeps the v2.3 HotUI/iPad geometry analysis and adds "
+         "v109 audio-performance forensics: V90 stall clusters, tid5/CAkAudioThread "
+         "worker attribution, Wwise/AkVorbis static call graph, sparse-sampling "
+         "diagnosis and the next low-overhead audio-probe plan. With the historical "
+         "iOS 1.5 IPA it also exports pinch/multi-touch and native audio/thread "
+         "reference evidence. No JIT or StikDebug is required by Inspector itself.";
 
     UIButton *apkButton =
         [self makeButton:@"1. Select PvZ2 APK"
@@ -561,6 +565,32 @@ didPickDocumentsAtURLs:
                         result.v78_ui_scale_critical_excerpt);
                 }
 
+                if (!result.v109_audio_performance_diagnosis.empty()) {
+                    WriteUtf8(
+                        [root stringByAppendingPathComponent:@"v109-audio-performance-diagnosis.txt"],
+                        result.v109_audio_performance_diagnosis);
+                }
+                if (!result.v109_audio_stalls_csv.empty()) {
+                    WriteUtf8(
+                        [root stringByAppendingPathComponent:@"v109-audio-stalls.csv"],
+                        result.v109_audio_stalls_csv);
+                }
+                if (!result.wwise_audio_static_callgraph.empty()) {
+                    WriteUtf8(
+                        [root stringByAppendingPathComponent:@"wwise-audio-static-callgraph.txt"],
+                        result.wwise_audio_static_callgraph);
+                }
+                if (!result.next_audio_probe_plan.empty()) {
+                    WriteUtf8(
+                        [root stringByAppendingPathComponent:@"next-audio-probe-plan.txt"],
+                        result.next_audio_probe_plan);
+                }
+                if (!result.v109_audio_critical_excerpt.empty()) {
+                    WriteUtf8(
+                        [root stringByAppendingPathComponent:@"v109-audio-critical-excerpt.txt"],
+                        result.v109_audio_critical_excerpt);
+                }
+
                 if (ipa.length > 0 && ipaResult.ok) {
                     WriteUtf8(
                         [root stringByAppendingPathComponent:@"ios-reference-report.txt"],
@@ -570,6 +600,11 @@ didPickDocumentsAtURLs:
                         WriteUtf8(
                             [root stringByAppendingPathComponent:@"ios-ui-scale-reference.txt"],
                             ipaResult.ui_scale_reference);
+                    }
+                    if (!ipaResult.audio_input_reference.empty()) {
+                        WriteUtf8(
+                            [root stringByAppendingPathComponent:@"ios-audio-input-reference.txt"],
+                            ipaResult.audio_input_reference);
                     }
 
                     if (!ipaResult.shared_strings_csv.empty()) {

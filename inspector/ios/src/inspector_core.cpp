@@ -1882,6 +1882,575 @@ std::optional<std::uint64_t> ParseUnsignedAfter(
 }
 
 
+struct V109FramePerf {
+    std::uint64_t frame = 0u;
+    double guest_ms = 0.0;
+    double main_ms = 0.0;
+    double wait_ms = 0.0;
+    double boundary_ms = 0.0;
+    double font_ms = 0.0;
+    double present_ms = 0.0;
+    double active_ms = 0.0;
+    std::uint64_t alloc_calls = 0u;
+    std::uint64_t alloc_scan_steps = 0u;
+    std::uint64_t input_events = 0u;
+    std::string source_line;
+};
+
+struct V109AudioPerformanceAnalysis {
+    bool present = false;
+    std::string summary_line;
+    std::string diagnosis;
+    std::string stalls_csv;
+    std::string next_probe_plan;
+    std::string critical_excerpt;
+};
+
+std::optional<double> ParseWorkerMs(
+    const std::string& line,
+    std::uint32_t tid) {
+
+    const std::size_t workers = line.find("workers={");
+    if (workers == std::string::npos) return std::nullopt;
+
+    const std::string marker = std::to_string(tid) + ":";
+    const std::size_t pos = line.find(marker, workers);
+    if (pos == std::string::npos) return std::nullopt;
+
+    const std::size_t begin = pos + marker.size();
+    std::size_t end = begin;
+    while (end < line.size()) {
+        const char ch = line[end];
+        if (!(std::isdigit(static_cast<unsigned char>(ch)) != 0 ||
+              ch == '.' || ch == '-' || ch == '+' ||
+              ch == 'e' || ch == 'E')) {
+            break;
+        }
+        ++end;
+    }
+    if (end == begin) return std::nullopt;
+
+    try {
+        return std::stod(line.substr(begin, end - begin));
+    } catch (...) {
+        return std::nullopt;
+    }
+}
+
+const Symbol* FindExactSymbol(
+    const Elf32Arm& elf,
+    const std::string& name) {
+
+    for (const auto& symbol : elf.symbols()) {
+        if (symbol.name == name &&
+            symbol.shndx != 0u &&
+            symbol.size != 0u) {
+            return &symbol;
+        }
+    }
+    return nullptr;
+}
+
+std::string AudioBucketForSymbol(
+    const std::string& name) {
+
+    if (name.find("Vorbis") != std::string::npos ||
+        name.find("vorbis_") != std::string::npos ||
+        name.find("mdct_") != std::string::npos ||
+        name.find("floor1_") != std::string::npos ||
+        name.find("res_inverse") != std::string::npos ||
+        name.find("book_decode") != std::string::npos ||
+        name.find("DecodeVorbis") != std::string::npos) {
+        return "vorbis_decode";
+    }
+    if (name.find("Resampler") != std::string::npos ||
+        name.find("VPLPitchNode") != std::string::npos) {
+        return "resampler_pitch";
+    }
+    if (name.find("VPL") != std::string::npos ||
+        name.find("LEngine") != std::string::npos) {
+        return "mixer_vpl";
+    }
+    if (name.find("AudioMgr") != std::string::npos ||
+        name.find("AudioThread") != std::string::npos) {
+        return "audio_mgr_scheduler";
+    }
+    return "other";
+}
+
+std::vector<std::uint32_t> DirectArmBlTargets(
+    const Elf32Arm& elf,
+    const Symbol& symbol) {
+
+    std::vector<std::uint32_t> out;
+    const std::uint32_t start = symbol.value & ~1u;
+
+    if ((symbol.value & 1u) != 0u || symbol.size < 4u) {
+        return out;
+    }
+
+    const auto bytes = elf.Read(start, symbol.size);
+    for (std::size_t i = 0u; i + 4u <= bytes.size(); i += 4u) {
+        const std::uint32_t word = U32(bytes.data() + i);
+        if ((word & 0x0f000000u) != 0x0b000000u) {
+            continue;
+        }
+
+        const std::int32_t delta =
+            SignExtend(word & 0x00ffffffu, 24) << 2;
+        const std::uint32_t pc =
+            start + static_cast<std::uint32_t>(i);
+        const std::uint32_t target =
+            static_cast<std::uint32_t>(
+                static_cast<std::int64_t>(pc) +
+                8ll +
+                static_cast<std::int64_t>(delta)) &
+            ~1u;
+
+        if (target < elf.image_end() && elf.IsExecutable(target)) {
+            out.push_back(target);
+        }
+    }
+
+    std::sort(out.begin(), out.end());
+    out.erase(std::unique(out.begin(), out.end()), out.end());
+    return out;
+}
+
+std::string BuildWwiseAudioStaticCallGraph(
+    const Elf32Arm& elf) {
+
+    const std::vector<std::pair<const char*, const char*>> focus = {
+        {"CAkAudioThread::EventMgrThreadFunc", "_ZN14CAkAudioThread18EventMgrThreadFuncEPv"},
+        {"CAkAudioMgr::Perform", "_ZN11CAkAudioMgr7PerformEv"},
+        {"CAkLEngine::Perform", "_ZN10CAkLEngine7PerformEv"},
+        {"CAkLEngine::SequencerVoiceFilling", "_ZN10CAkLEngine21SequencerVoiceFillingEv"},
+        {"CAkLEngine::GetBuffer", "_ZN10CAkLEngine9GetBufferEv"},
+        {"CAkLEngine::RunVPL", "_ZN10CAkLEngine6RunVPLER12AkRunningVPL"},
+        {"CAkVPLSrcCbxNode::StartRun", "_ZN16CAkVPLSrcCbxNode8StartRunER10AkVPLState"},
+        {"CAkVPLSrcCbxNode::ConsumeBuffer", "_ZN16CAkVPLSrcCbxNode13ConsumeBufferER10AkVPLState"},
+        {"CAkVPLPitchNode::ConsumeBuffer", "_ZN15CAkVPLPitchNode13ConsumeBufferER10AkVPLState"},
+        {"CAkVPLMixBusNode::ConsumeBuffer", "_ZN16CAkVPLMixBusNode13ConsumeBufferER10AkVPLStateP10AkAudioMix"},
+        {"CAkResampler::Execute", "_ZN12CAkResampler7ExecuteEP13AkAudioBufferS1_"},
+        {"CAkSrcBankVorbis::GetBuffer", "_ZN16CAkSrcBankVorbis9GetBufferER10AkVPLState"},
+        {"CAkSrcFileVorbis::GetBuffer", "_ZN16CAkSrcFileVorbis9GetBufferER10AkVPLState"},
+        {"DecodeVorbis", "_Z12DecodeVorbisP12AkTremorInfotPhPs"},
+        {"vorbis_dsp_pcmout", "_Z17vorbis_dsp_pcmoutP16vorbis_dsp_statePsi"},
+        {"vorbis_dsp_synthesis", "_Z20vorbis_dsp_synthesisP16vorbis_dsp_stateP10ogg_packet"},
+        {"mapping_inverse", "_Z15mapping_inverseP16vorbis_dsp_stateP19vorbis_info_mapping"},
+        {"res_inverse", "_Z11res_inverseP16vorbis_dsp_stateP19vorbis_info_residuePPiS3_i"},
+        {"floor1_inverse1", "_Z15floor1_inverse1P16vorbis_dsp_stateP18vorbis_info_floor1Pi"},
+        {"floor1_inverse2", "_Z15floor1_inverse2P16vorbis_dsp_stateP18vorbis_info_floor1PiS3_"},
+        {"mdct_backward", "_Z13mdct_backwardiPf"},
+        {"ak_vorbis_book_decode", "_Z21ak_vorbis_book_decodeP8codebookP14oggpack_buffer"}
+    };
+
+    std::map<std::uint32_t, std::string> names;
+    std::map<std::string, const Symbol*> symbols;
+
+    std::ostringstream out;
+    out
+        << "PvZ2 Inspector Lab v2.4-alpha - Wwise audio static call graph\n"
+        << "================================================================\n"
+        << "Source: exact APK lib/armeabi-v7a/libPVZ2.so.\n"
+        << "Direct ARM BL edges are static evidence; they do not measure runtime time.\n\n"
+        << "FOCUS SYMBOLS\n"
+        << "-------------\n";
+
+    for (const auto& item : focus) {
+        const Symbol* sym = FindExactSymbol(elf, item.second);
+        if (sym == nullptr) {
+            out << "[MISSING] " << item.first
+                << " / " << item.second << "\n";
+            continue;
+        }
+
+        const std::uint32_t off = sym->value & ~1u;
+        names[off] = item.first;
+        symbols[item.first] = sym;
+
+        out
+            << "[" << AudioBucketForSymbol(sym->name) << "] "
+            << item.first
+            << " ELF=" << Hex(off)
+            << " runtime=" << Hex(kGuestBase + off)
+            << " size=" << sym->size
+            << " mangled=" << sym->name
+            << "\n";
+    }
+
+    out
+        << "\nDIRECT BL EDGES AMONG FOCUS FUNCTIONS\n"
+        << "------------------------------------\n";
+
+    std::size_t edge_count = 0u;
+    for (const auto& item : focus) {
+        const auto it = symbols.find(item.first);
+        if (it == symbols.end()) continue;
+
+        const auto targets = DirectArmBlTargets(elf, *it->second);
+        for (const auto target : targets) {
+            auto named = names.find(target);
+            if (named == names.end()) continue;
+            out << item.first << " -> " << named->second << "\n";
+            ++edge_count;
+        }
+    }
+
+    if (edge_count == 0u) {
+        out << "(no direct focus-to-focus BL edges resolved)\n";
+    }
+
+    out
+        << "\nKNOWN PIPELINE TO CORRELATE WITH RUNTIME tid5 PCs\n"
+        << "-------------------------------------------------\n"
+        << "EventMgrThreadFunc -> CAkAudioMgr::Perform -> CAkLEngine::Perform\n"
+        << "  -> SequencerVoiceFilling/GetBuffer -> RunVPL\n"
+        << "  -> VPL source/pitch/mix nodes\n"
+        << "  -> CAkResampler::Execute (pitch/resample path)\n"
+        << "  -> CAkSrcBank/FileVorbis::GetBuffer -> DecodeVorbis\n"
+        << "  -> vorbis_dsp_synthesis -> mapping_inverse\n"
+        << "  -> floor/residue -> mdct_backward (decode path)\n\n"
+        << "v109 runtime already sampled tid5 inside mdct_backward during a severe stall.\n"
+        << "The next runtime probe should TIME/BUCKET tid5 PCs rather than trap every DSP call.\n";
+
+    return out.str();
+}
+
+V109AudioPerformanceAnalysis AnalyzeV109AudioRuntime(
+    const std::string& log,
+    const Elf32Arm& elf) {
+
+    V109AudioPerformanceAnalysis a;
+    a.present =
+        log.find("V109_LEAN_AUDIO_PERFORMANCE") != std::string::npos ||
+        log.find("PvZ2 v109 Lean Audio Performance") != std::string::npos;
+    if (!a.present) return a;
+
+    std::map<std::uint64_t, std::uint64_t> inputs_by_frame;
+    std::vector<V109FramePerf> frames;
+    std::vector<std::string> handshake_lines;
+    std::map<std::string, std::uint64_t> handshake_pc_buckets;
+    std::uint64_t handshake_total = 0u;
+    std::uint64_t handshake_code = 0u;
+    std::uint64_t handshake_blocked = 0u;
+
+    std::string first_pacer;
+    std::string last_pacer;
+    std::string frame_summary;
+    std::string mutex_summary;
+    std::string input_summary;
+
+    std::istringstream stream(log);
+    std::string line;
+    while (std::getline(stream, line)) {
+        if (line.find("V85 PERF input stage=UI_ProcessEvents frame=") != std::string::npos) {
+            if (const auto frame = ParseUnsignedAfter(line, "frame=")) {
+                ++inputs_by_frame[*frame];
+            }
+        }
+
+        if (line.find("V90 FRAME frame=") != std::string::npos) {
+            V109FramePerf f;
+            const auto frame = ParseUnsignedAfter(line, "frame=");
+            if (!frame) continue;
+            f.frame = *frame;
+            f.guest_ms = ParseDoubleAfter(line, "guestMs=").value_or(0.0);
+            f.main_ms = ParseDoubleAfter(line, "mainApproxMs=").value_or(0.0);
+            f.wait_ms = ParseDoubleAfter(line, "waitWorkerMs=").value_or(0.0);
+            f.boundary_ms = ParseDoubleAfter(line, "boundaryWorkerMs=").value_or(0.0);
+            f.font_ms = ParseDoubleAfter(line, "fontMs=").value_or(0.0);
+            f.present_ms = ParseDoubleAfter(line, "presentMs=").value_or(0.0);
+            f.active_ms = ParseDoubleAfter(line, "activeFrameMs=").value_or(0.0);
+            f.alloc_calls = ParseUnsignedAfter(line, "allocCalls=").value_or(0u);
+            f.alloc_scan_steps = ParseUnsignedAfter(line, "allocScanSteps=").value_or(0u);
+            f.source_line = line;
+            frames.push_back(std::move(f));
+        }
+
+        if (line.find("V102 AUDIO PACER") != std::string::npos) {
+            if (first_pacer.empty()) first_pacer = line;
+            last_pacer = line;
+        }
+
+        if (line.find("V104 AUDIO HANDSHAKE") != std::string::npos) {
+            ++handshake_total;
+            if (line.find("blocked=YES") != std::string::npos) {
+                ++handshake_blocked;
+            }
+            if (handshake_lines.size() < 64u) {
+                handshake_lines.push_back(line);
+            }
+
+            if (const auto pc = ParseUnsignedAfter(line, "PC=0x", 16)) {
+                const auto classified =
+                    Classify(static_cast<std::uint32_t>(*pc), elf);
+                if (classified.region == "libPVZ2.so" &&
+                    classified.offset && classified.executable) {
+                    ++handshake_code;
+                    const auto nearest = elf.NearestSymbol(*classified.offset);
+                    const std::string key =
+                        nearest
+                            ? nearest->first.name
+                            : ("ELF+" + Hex(*classified.offset));
+                    ++handshake_pc_buckets[key];
+                } else {
+                    ++handshake_pc_buckets[classified.region];
+                }
+            }
+        }
+
+        if (line.find("V90 FRAME SUMMARY") != std::string::npos) {
+            frame_summary = line;
+        }
+        if (line.find("V87 MUTEX SUMMARY") != std::string::npos) {
+            mutex_summary = line;
+        }
+        if (line.find("V72 INTERACTIVE SUMMARY") != std::string::npos) {
+            input_summary = line;
+        }
+    }
+
+    for (auto& frame : frames) {
+        frame.input_events = inputs_by_frame[frame.frame];
+    }
+
+    std::sort(frames.begin(), frames.end(),
+        [](const V109FramePerf& lhs, const V109FramePerf& rhs) {
+            return lhs.frame < rhs.frame;
+        });
+
+    const auto classify_frame = [](const V109FramePerf& f) {
+        if (f.guest_ms <= 0.0) return std::string{"unknown"};
+        const double wait_pct = 100.0 * f.wait_ms / f.guest_ms;
+        const double main_pct = 100.0 * f.main_ms / f.guest_ms;
+        const double font_pct = 100.0 * f.font_ms / f.guest_ms;
+        if (f.font_ms >= 100.0 && font_pct >= 50.0) {
+            return std::string{"font_main_load"};
+        }
+        if (wait_pct >= 60.0) {
+            return std::string{"audio_worker_dominant"};
+        }
+        if (main_pct >= 70.0) {
+            return std::string{"main_dominant"};
+        }
+        return std::string{"mixed"};
+    };
+
+    std::vector<V109FramePerf> stalls;
+    for (const auto& f : frames) {
+        if (f.guest_ms >= 150.0 || f.wait_ms >= 100.0) {
+            stalls.push_back(f);
+        }
+    }
+
+    std::ostringstream csv;
+    csv << "frame,guestMs,mainApproxMs,waitWorkerMs,boundaryWorkerMs,"
+        << "fontMs,presentMs,activeFrameMs,waitPct,mainPct,"
+        << "allocCalls,allocScanSteps,inputEvents,classification\n";
+
+    for (const auto& f : stalls) {
+        const double wait_pct =
+            f.guest_ms > 0.0 ? 100.0 * f.wait_ms / f.guest_ms : 0.0;
+        const double main_pct =
+            f.guest_ms > 0.0 ? 100.0 * f.main_ms / f.guest_ms : 0.0;
+
+        csv << f.frame << ","
+            << std::fixed << std::setprecision(3)
+            << f.guest_ms << ","
+            << f.main_ms << ","
+            << f.wait_ms << ","
+            << f.boundary_ms << ","
+            << f.font_ms << ","
+            << f.present_ms << ","
+            << f.active_ms << ","
+            << wait_pct << ","
+            << main_pct << ","
+            << f.alloc_calls << ","
+            << f.alloc_scan_steps << ","
+            << f.input_events << ","
+            << classify_frame(f) << "\n";
+    }
+    a.stalls_csv = csv.str();
+
+    struct Cluster {
+        std::uint64_t first = 0u;
+        std::uint64_t last = 0u;
+        std::size_t count = 0u;
+        double guest = 0.0;
+        double main = 0.0;
+        double wait = 0.0;
+        double present = 0.0;
+        std::uint64_t inputs = 0u;
+    };
+
+    std::vector<Cluster> clusters;
+    for (const auto& f : stalls) {
+        if (clusters.empty() || f.frame > clusters.back().last + 3u) {
+            clusters.push_back(
+                Cluster{f.frame, f.frame, 0u, 0.0, 0.0, 0.0, 0.0, 0u});
+        }
+        auto& c = clusters.back();
+        c.last = f.frame;
+        ++c.count;
+        c.guest += f.guest_ms;
+        c.main += f.main_ms;
+        c.wait += f.wait_ms;
+        c.present += f.present_ms;
+        c.inputs += f.input_events;
+    }
+
+    auto slowest = stalls;
+    std::sort(slowest.begin(), slowest.end(),
+        [](const V109FramePerf& lhs, const V109FramePerf& rhs) {
+            if (lhs.guest_ms != rhs.guest_ms) return lhs.guest_ms > rhs.guest_ms;
+            return lhs.frame < rhs.frame;
+        });
+
+    const std::uint64_t total_frames =
+        ParseUnsignedAfter(frame_summary, "frames=").value_or(0u);
+    const double guest_total =
+        ParseDoubleAfter(frame_summary, "guestTotalMs=").value_or(0.0);
+    const double wait_total =
+        ParseDoubleAfter(frame_summary, "waitWorkerTotalMs=").value_or(0.0);
+
+    double present_total = 0.0;
+    const std::size_t present_pos = frame_summary.find("present{");
+    if (present_pos != std::string::npos) {
+        present_total =
+            ParseDoubleAfter(frame_summary.substr(present_pos), "totalMs=").value_or(0.0);
+    }
+
+    double worker_total = 0.0;
+    for (std::uint32_t tid = 1u; tid <= 6u; ++tid) {
+        worker_total += ParseWorkerMs(frame_summary, tid).value_or(0.0);
+    }
+    const double tid5 = ParseWorkerMs(frame_summary, 5u).value_or(0.0);
+    const double tid5_share =
+        worker_total > 0.0 ? 100.0 * tid5 / worker_total : 0.0;
+
+    std::ostringstream diagnosis;
+    diagnosis
+        << "PvZ2 Inspector Lab v2.4-alpha - v109 audio performance diagnosis\n"
+        << "==================================================================\n"
+        << "Source: v109 V90/V102/V104/V85 runtime telemetry + exact Android ELF.\n\n"
+        << "GLOBAL\n"
+        << "------\n"
+        << "frames: " << total_frames << "\n"
+        << "guestTotalMs: " << std::fixed << std::setprecision(3) << guest_total << "\n"
+        << "waitWorkerTotalMs: " << wait_total << "\n"
+        << "waitWorker / guest total: "
+        << (guest_total > 0.0 ? 100.0 * wait_total / guest_total : 0.0) << "%\n"
+        << "tid5 / CAkAudioThread worker ms: " << tid5 << "\n"
+        << "tid5 share of recorded worker ms: " << tid5_share << "%\n"
+        << "present total ms: " << present_total << "\n"
+        << "logged V90 frame samples: " << frames.size() << "\n"
+        << "slow/stall samples exported: " << stalls.size() << "\n\n"
+        << "STALL CLUSTERS (logged slow frames, gap <= 3)\n"
+        << "--------------------------------------------\n";
+
+    for (const auto& c : clusters) {
+        if (c.count == 0u) continue;
+        diagnosis << "frames " << c.first;
+        if (c.last != c.first) diagnosis << "-" << c.last;
+        diagnosis
+            << " count=" << c.count
+            << " avgGuestMs=" << (c.guest / c.count)
+            << " waitPct=" << (c.guest > 0.0 ? 100.0 * c.wait / c.guest : 0.0)
+            << " mainPct=" << (c.guest > 0.0 ? 100.0 * c.main / c.guest : 0.0)
+            << " presentPct=" << (c.guest > 0.0 ? 100.0 * c.present / c.guest : 0.0)
+            << " inputEvents=" << c.inputs << "\n";
+    }
+
+    diagnosis
+        << "\nV104 HANDSHAKE SAMPLING QUALITY\n"
+        << "-------------------------------\n"
+        << "samples: " << handshake_total << "\n"
+        << "blocked samples: " << handshake_blocked << "\n"
+        << "samples whose PC resolves to libPVZ2 code: " << handshake_code << "\n";
+    for (const auto& item : handshake_pc_buckets) {
+        diagnosis << "  " << item.second << "x " << item.first << "\n";
+    }
+
+    diagnosis << "\nAUDIO PACER\n-----------\n";
+    if (!first_pacer.empty()) diagnosis << "first: " << first_pacer << "\n";
+    if (!last_pacer.empty()) diagnosis << "last:  " << last_pacer << "\n";
+
+    diagnosis
+        << "\nSCHEDULER / INPUT TERMINAL EVIDENCE\n"
+        << "----------------------------------\n";
+    if (!mutex_summary.empty()) diagnosis << mutex_summary << "\n";
+    if (!input_summary.empty()) diagnosis << input_summary << "\n";
+
+    diagnosis
+        << "\nINTERPRETATION\n"
+        << "--------------\n"
+        << "1. If tid5 remains near all recorded worker time while GPU present is small, "
+           "the recurring gameplay stalls are not a presentation bottleneck.\n"
+        << "2. Stable 32 kHz pacer + stable underrun count during low-load periods "
+           "separates callback cadence from expensive Wwise work.\n"
+        << "3. A libPVZ2 code sample inside mdct_backward during a waitWorker-heavy "
+           "frame proves real AkVorbis/MDCT work can sit on the frame's critical path.\n"
+        << "4. The sparse V104 power-of-two handshake samples are enough for proof-of-presence, "
+           "not enough to estimate where tid5 spends its time.\n";
+    a.diagnosis = diagnosis.str();
+
+    std::ostringstream excerpt;
+    excerpt
+        << "PvZ2 Inspector v2.4-alpha - v109 critical audio/stall excerpt\n"
+        << "================================================================\n\n"
+        << "FINAL FRAME SUMMARY\n"
+        << frame_summary << "\n\n"
+        << "TOP SLOW FRAMES\n";
+    const std::size_t slow_cap = std::min<std::size_t>(slowest.size(), 30u);
+    for (std::size_t i = 0u; i < slow_cap; ++i) {
+        excerpt << slowest[i].source_line << "\n";
+    }
+    excerpt << "\nV104 HANDSHAKE SAMPLES\n";
+    for (const auto& item : handshake_lines) excerpt << item << "\n";
+    a.critical_excerpt = excerpt.str();
+
+    std::ostringstream plan;
+    plan
+        << "PvZ2 Inspector Lab v2.4-alpha - next audio probe plan\n"
+        << "=====================================================\n\n"
+        << "DO NOT retune the scheduler yet. The missing datum is the time distribution "
+           "inside tid5 / CAkAudioThread.\n\n"
+        << "LOW-OVERHEAD RUNTIME PROBE\n"
+        << "--------------------------\n"
+        << "1. Instrument the host scheduler, not Wwise functions: whenever tid5 receives "
+           "a cooperative execution quantum, accumulate host wall time plus start/end guest PC/LR.\n"
+        << "2. Bucket PCs by the exact ELF function ranges exported in "
+           "wwise-audio-static-callgraph.txt: audio manager, VPL/mixer, resampler/pitch, "
+           "Vorbis/MDCT, other.\n"
+        << "3. Maintain per-frame audioWorkerMs and audioQuanta counters. Emit a line only "
+           "for slow frames (for example guest>=100 ms or audioWorker>=50 ms) plus one terminal histogram.\n"
+        << "4. Do not reinstall v105 SVC traps and do not log every DecodeVorbis/MDCT call. "
+           "The probe must be cheaper than the work being measured.\n"
+        << "5. Preserve v106 32 kHz, v107 semaphore repair, v108 bank liveness and all v109 stability behavior.\n\n"
+        << "DECISION RULE\n"
+        << "-------------\n"
+        << "- Vorbis/MDCT dominates: investigate native/offloaded decode or larger-grain audio scheduling.\n"
+        << "- VPL/mixer/resampler dominates: optimize/parallelize that worker path first.\n"
+        << "- large host time but PCs stay near scheduler/wait glue: fix cooperative scheduling overhead.\n"
+        << "- mixed: use the per-frame histogram to target the seed-packet and animation bursts separately.\n";
+    a.next_probe_plan = plan.str();
+
+    std::ostringstream summary;
+    summary
+        << "v109 audio: frames=" << total_frames
+        << " tid5Share=" << std::fixed << std::setprecision(1)
+        << tid5_share << "%"
+        << " stalls=" << stalls.size()
+        << " V104CodeSamples=" << handshake_code
+        << "/" << handshake_total;
+    a.summary_line = summary.str();
+
+    return a;
+}
+
+
+
 std::vector<std::uint32_t> FindExactAsciiVaddrs(
     const Elf32Arm& elf,
     const std::string& text) {
@@ -2016,7 +2585,7 @@ UiScaleRuntimeAnalysis AnalyzeUiScaleRuntime(
 
     std::ostringstream diagnosis;
     diagnosis
-        << "PvZ2 Inspector Lab v2.3-alpha - UI scale / content-resolution diagnosis\n"
+        << "PvZ2 Inspector Lab v2.4-alpha - UI scale / content-resolution diagnosis\n"
         << "=======================================================================\n\n"
         << "RUNTIME GEOMETRY INSIDE LawnApp\n"
         << "-------------------------------\n"
@@ -2094,7 +2663,7 @@ UiScaleRuntimeAnalysis AnalyzeUiScaleRuntime(
 
     std::ostringstream static_report;
     static_report
-        << "PvZ2 Inspector Lab v2.3-alpha - Android UI-scale static anchors\n"
+        << "PvZ2 Inspector Lab v2.4-alpha - Android UI-scale static anchors\n"
         << "================================================================\n"
         << "Source: original APK lib/armeabi-v7a/libPVZ2.so.\n"
         << "These are reproducible string anchors; presence does not prove execution.\n\n";
@@ -2144,7 +2713,7 @@ UiScaleRuntimeAnalysis AnalyzeUiScaleRuntime(
 
     std::ostringstream plan;
     plan
-        << "PvZ2 Inspector Lab v2.3-alpha - proposed v79 UI-scale provenance probe\n"
+        << "PvZ2 Inspector Lab v2.4-alpha - proposed v79 UI-scale provenance probe\n"
         << "======================================================================\n\n"
         << "GOAL\n"
         << "----\n"
@@ -4149,10 +4718,16 @@ PvZ2InspectorResult InspectPvZ2ApkAndLog(
             AnalyzeUiScaleRuntime(
                 log_text,
                 elf);
+        const V109AudioPerformanceAnalysis v109_audio =
+            AnalyzeV109AudioRuntime(
+                log_text,
+                elf);
+        const std::string wwise_audio_static_callgraph =
+            BuildWwiseAudioStaticCallGraph(elf);
 
         std::ostringstream summary;
         summary
-            << "PvZ2 Inspector Lab v2.3-alpha\n"
+            << "PvZ2 Inspector Lab v2.4-alpha\n"
             << "APK bytes: " << apk_size << "\n"
             << "libPVZ2.so bytes: " << result.elf_size << "\n"
             << "mapped image span: " << Hex(result.image_size) << "\n"
@@ -4238,6 +4813,10 @@ PvZ2InspectorResult InspectPvZ2ApkAndLog(
                     ? "MATCH"
                     : "PARTIAL/MISMATCH")
             << "\n";
+
+        if (v109_audio.present) {
+            summary << v109_audio.summary_line << "\n";
+        }
 
         if (startup_runtime.present) {
             summary
@@ -4660,6 +5239,13 @@ PvZ2InspectorResult InspectPvZ2ApkAndLog(
             }
         }
 
+        if (!wwise_audio_static_callgraph.empty()) {
+            report << "\n" << wwise_audio_static_callgraph << "\n";
+        }
+        if (v109_audio.present) {
+            report << "\n" << v109_audio.diagnosis << "\n";
+        }
+
         result.report = report.str();
 
         std::ostringstream csv;
@@ -4773,10 +5359,21 @@ PvZ2InspectorResult InspectPvZ2ApkAndLog(
         result.v78_ui_scale_critical_excerpt =
             ui_scale.present ? ui_scale.critical_excerpt : std::string{};
 
+        result.v109_audio_performance_diagnosis =
+            v109_audio.present ? v109_audio.diagnosis : std::string{};
+        result.v109_audio_stalls_csv =
+            v109_audio.present ? v109_audio.stalls_csv : std::string{};
+        result.wwise_audio_static_callgraph =
+            wwise_audio_static_callgraph;
+        result.next_audio_probe_plan =
+            v109_audio.present ? v109_audio.next_probe_plan : std::string{};
+        result.v109_audio_critical_excerpt =
+            v109_audio.present ? v109_audio.critical_excerpt : std::string{};
+
         std::ostringstream json;
         json
             << "{\n"
-            << "  \"tool\": \"PvZ2 Inspector Lab v2.3-alpha\",\n"
+            << "  \"tool\": \"PvZ2 Inspector Lab v2.4-alpha\",\n"
             << "  \"apkSize\": " << result.apk_size << ",\n"
             << "  \"elfSize\": " << result.elf_size << ",\n"
             << "  \"guestBase\": \"" << Hex(kGuestBase) << "\",\n"
@@ -4796,6 +5393,9 @@ PvZ2InspectorResult InspectPvZ2ApkAndLog(
             << ",\n"
             << "  \"v78UiScaleAnalysisPresent\": "
             << (ui_scale.present ? "true" : "false")
+            << ",\n"
+            << "  \"v109AudioAnalysisPresent\": "
+            << (v109_audio.present ? "true" : "false")
             << ",\n"
             << "  \"genericAddressAnalysisBytes\": "
             << result.generic_log_bytes

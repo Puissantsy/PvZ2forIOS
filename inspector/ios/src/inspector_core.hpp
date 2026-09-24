@@ -45,6 +45,13 @@ struct PvZ2InspectorResult {
     std::string v79_ui_scale_plan;
     std::string v78_ui_scale_critical_excerpt;
 
+    // v2.4: v109 audio-performance / Wwise scheduling forensics.
+    std::string v109_audio_performance_diagnosis;
+    std::string v109_audio_stalls_csv;
+    std::string wwise_audio_static_callgraph;
+    std::string next_audio_probe_plan;
+    std::string v109_audio_critical_excerpt;
+
     std::string message;
 };
 

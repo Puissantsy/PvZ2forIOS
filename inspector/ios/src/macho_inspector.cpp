@@ -1245,6 +1245,7 @@ PvZ2IpaInspectorResult InspectPvZ2IpaReference(
         const auto strings = ExtractAsciiStrings(macho);
 
         std::vector<std::string> shared_strings;
+        bool android_multitouch_marker = false;
         if (apk_data != nullptr && apk_size > 0u) {
             const auto apk_entries = ListZip(apk_data, apk_size);
             auto it = std::find_if(
@@ -1258,6 +1259,15 @@ PvZ2IpaInspectorResult InspectPvZ2IpaReference(
                     Extract(apk_data, apk_size, *it);
                 const auto android_strings =
                     ExtractAsciiStrings(android_elf);
+
+                android_multitouch_marker =
+                    std::any_of(
+                        android_strings.begin(),
+                        android_strings.end(),
+                        [](const std::string& value) {
+                            return value.find("drivers.android.use_multitouch") !=
+                                std::string::npos;
+                        });
 
                 std::set_intersection(
                     strings.begin(),
@@ -1378,7 +1388,7 @@ PvZ2IpaInspectorResult InspectPvZ2IpaReference(
 
         std::ostringstream ui_scale_reference;
         ui_scale_reference
-            << "PvZ2 Inspector Lab v2.3-alpha - historical iOS HotUI scale reference\n"
+            << "PvZ2 Inspector Lab v2.4-alpha - historical iOS HotUI scale reference\n"
             << "=====================================================================\n"
             << "Source: decrypted historical PvZ2 iOS 1.5 ARMv7 Mach-O.\n"
             << "Static string anchors do not prove that a runtime branch executes.\n\n";
@@ -1436,6 +1446,110 @@ PvZ2IpaInspectorResult InspectPvZ2IpaReference(
 
         result.ui_scale_reference =
             ui_scale_reference.str();
+
+
+        std::ostringstream audio_input_reference;
+        audio_input_reference
+            << "PvZ2 Inspector Lab v2.4-alpha - historical iOS audio/input reference\n"
+            << "====================================================================\n"
+            << "Source: decrypted historical PvZ2 iOS 1.5 ARMv7 Mach-O + exact Android APK.\n"
+            << "This report is static/reference evidence; it does not prove runtime scheduling.\n\n"
+            << "MULTI-TOUCH MARKERS\n"
+            << "-------------------\n"
+            << "Android drivers.android.use_multitouch: "
+            << (android_multitouch_marker ? "YES" : "NO")
+            << "\n";
+
+        const std::array<const char*, 8> input_markers = {{
+            "drivers.ios.use_multitouch",
+            "handlePinchGesture:",
+            "touchesBegan:withEvent:",
+            "touchesMoved:withEvent:",
+            "touchesEnded:withEvent:",
+            "touchesCancelled:withEvent:",
+            "Sexy::Touch",
+            "vector<Sexy::Touch>"
+        }};
+
+        for (const char* marker : input_markers) {
+            bool found = false;
+            for (const auto& value : strings) {
+                if (value.find(marker) != std::string::npos) {
+                    found = true;
+                    break;
+                }
+            }
+            audio_input_reference
+                << marker << ": "
+                << (found ? "YES" : "NO")
+                << "\n";
+        }
+
+        audio_input_reference
+            << "\nAUDIO FRAMEWORKS\n"
+            << "----------------\n";
+        for (const auto& dylib : dylibs) {
+            if (dylib.find("AudioToolbox") != std::string::npos ||
+                dylib.find("AVFoundation") != std::string::npos ||
+                dylib.find("CoreAudio") != std::string::npos) {
+                audio_input_reference << dylib << "\n";
+            }
+        }
+
+        audio_input_reference
+            << "\nRELEVANT OBJECTIVE-C METHODS\n"
+            << "----------------------------\n";
+        {
+            std::istringstream methods_stream(objc.methods_csv);
+            std::string method_line;
+            std::size_t emitted = 0u;
+            while (std::getline(methods_stream, method_line) &&
+                   emitted < 120u) {
+                if (method_line.find("Pinch") != std::string::npos ||
+                    method_line.find("pinch") != std::string::npos ||
+                    method_line.find("touchesBegan") != std::string::npos ||
+                    method_line.find("touchesMoved") != std::string::npos ||
+                    method_line.find("touchesEnded") != std::string::npos ||
+                    method_line.find("touchesCancelled") != std::string::npos) {
+                    audio_input_reference << method_line << "\n";
+                    ++emitted;
+                }
+            }
+        }
+
+        audio_input_reference
+            << "\nTHREAD/AUDIO IMPORT-CALL REFERENCE (sampled rows)\n"
+            << "------------------------------------------------\n";
+        {
+            std::istringstream imports_stream(import_calls.csv);
+            std::string import_line;
+            std::size_t emitted = 0u;
+            while (std::getline(imports_stream, import_line) &&
+                   emitted < 180u) {
+                if (import_line.find("pthread_create") != std::string::npos ||
+                    import_line.find("pthread_join") != std::string::npos ||
+                    import_line.find("pthread_mutex") != std::string::npos ||
+                    import_line.find("pthread_cond") != std::string::npos ||
+                    import_line.find("sem_wait") != std::string::npos ||
+                    import_line.find("sem_post") != std::string::npos ||
+                    import_line.find("Audio") != std::string::npos) {
+                    audio_input_reference << import_line << "\n";
+                    ++emitted;
+                }
+            }
+        }
+
+        audio_input_reference
+            << "\nINTERPRETATION\n"
+            << "--------------\n"
+            << "The historical iOS build provides an oracle for two independent port gaps:\n"
+            << "1. pinch/multi-touch: compare its handlePinchGesture/touch vector path with the "
+               "Android guest MotionEvent-style bridge rather than changing UIKit collection;\n"
+            << "2. audio concurrency: compare pthread/audio framework usage with the current "
+               "cooperative Dynarmic CAkAudioThread model before changing Wwise semantics.\n";
+
+        result.audio_input_reference =
+            audio_input_reference.str();
 
         std::ostringstream report;
         report
