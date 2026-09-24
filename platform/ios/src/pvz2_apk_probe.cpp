@@ -11488,45 +11488,56 @@ public:
             wrapper_push_pc ||
             lr == kV94ExpectedReturnGuest;
 
-        const bool plausible_lr_slot =
-            width == 4u &&
-            in_stack &&
-            static_cast<std::uint32_t>(
-                raw_value) == lr &&
-            ((address + 4u == sp) ||
-             (address == sp + 12u));
-
+        std::uint32_t entry_slot = 0u;
         if (wrapper_entry_context &&
-            plausible_lr_slot) {
-            ++v94_wrapper_entries;
-            v94_watch_armed = true;
-            v94_watch_slot = address;
-            v94_entry_lr =
-                static_cast<std::uint32_t>(
-                    raw_value);
+            in_stack) {
+            const std::uint32_t before_sp =
+                sp >= 4u ? sp - 4u : 0u;
+            const std::uint32_t after_sp =
+                sp + 12u;
 
-            AppendDiagnostic(
-                "V94 LR-SLOT ARM #" +
-                std::to_string(
-                    v94_wrapper_entries) +
-                " frame=" +
-                std::to_string(
-                    current_frame_number) +
-                " slot=0x" +
-                JniProbeHex(
-                    v94_watch_slot) +
-                " PC=0x" +
-                JniProbeHex(pc) +
-                " LR=0x" +
-                JniProbeHex(lr) +
-                " expected=0x" +
-                JniProbeHex(
-                    kV94ExpectedReturnGuest) +
-                " bit0=" +
-                std::to_string(
-                    v94_entry_lr & 1u) +
-                " SP=0x" +
-                JniProbeHex(sp));
+            if (before_sp != 0u &&
+                mem.Ptr(before_sp, 4u) != nullptr &&
+                mem.Read32Guest(before_sp) == lr) {
+                entry_slot = before_sp;
+            } else if (
+                mem.Ptr(after_sp, 4u) != nullptr &&
+                mem.Read32Guest(after_sp) == lr) {
+                entry_slot = after_sp;
+            }
+        }
+
+        if (entry_slot != 0u) {
+            if (!v94_watch_armed ||
+                v94_watch_slot != entry_slot) {
+                ++v94_wrapper_entries;
+                v94_watch_armed = true;
+                v94_watch_slot = entry_slot;
+                v94_entry_lr = lr;
+
+                AppendDiagnostic(
+                    "V94 LR-SLOT ARM #" +
+                    std::to_string(
+                        v94_wrapper_entries) +
+                    " frame=" +
+                    std::to_string(
+                        current_frame_number) +
+                    " slot=0x" +
+                    JniProbeHex(
+                        v94_watch_slot) +
+                    " PC=0x" +
+                    JniProbeHex(pc) +
+                    " LR=0x" +
+                    JniProbeHex(lr) +
+                    " expected=0x" +
+                    JniProbeHex(
+                        kV94ExpectedReturnGuest) +
+                    " bit0=" +
+                    std::to_string(
+                        v94_entry_lr & 1u) +
+                    " SP=0x" +
+                    JniProbeHex(sp));
+            }
             return;
         }
 
