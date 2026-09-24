@@ -978,6 +978,8 @@ constexpr std::uint64_t kCapAudioOpenSLBridge =
     ProbeCap(PvZ2ProbeCapability::AudioOpenSLBridge);
 constexpr std::uint64_t kCapRawGuestCallbackABI =
     ProbeCap(PvZ2ProbeCapability::RawGuestCallbackABI);
+constexpr std::uint64_t kCapAudioClockContract =
+    ProbeCap(PvZ2ProbeCapability::AudioClockContract);
 
 constexpr std::uint64_t kCapsTransformBase =
     kCapLive | kCapCpuFrame | kCapTransform |
@@ -1015,6 +1017,8 @@ constexpr std::uint64_t kCapsV99 =
     kCapsV98 | kCapAudioOpenSLBridge;
 constexpr std::uint64_t kCapsV100 =
     kCapsV99 | kCapRawGuestCallbackABI;
+constexpr std::uint64_t kCapsV101 =
+    kCapsV100 | kCapAudioClockContract;
 
 constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::PassiveRegistry, "PASSIVE_REGISTRY", nullptr, 0u, false},
@@ -1062,12 +1066,13 @@ constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::V98PresentationRgbFidelity, "V98_PRESENTATION_RGB_FIDELITY", "V98 RGB", kCapsV98, true},
     {PvZ2DiagnosticMode::V99AudioOpenSLBridge, "V99_AUDIO_OPENSL_BRIDGE", "V99 Audio", kCapsV99, true},
     {PvZ2DiagnosticMode::V100OpenSLCallbackABI, "V100_OPENSL_CALLBACK_ABI", "V100 Audio ABI", kCapsV100, true},
+    {PvZ2DiagnosticMode::V101AudioClockContract, "V101_AUDIO_CLOCK_CONTRACT", "V101 Audio Clock", kCapsV101, true},
 };
 
 constexpr PvZ2DiagnosticMode kSelectableDiagnosticModes[] = {
     // App-facing selection remains intentionally single-mode.
     // Historical descriptors stay registered for internal diagnostics.
-    PvZ2DiagnosticMode::V100OpenSLCallbackABI,
+    PvZ2DiagnosticMode::V101AudioClockContract,
 };
 
 } // namespace
@@ -8511,6 +8516,11 @@ public:
     }
 
 
+    bool V101Enabled() const {
+        return HasCapability(
+            PvZ2ProbeCapability::AudioClockContract);
+    }
+
     bool V100Enabled() const {
         return HasCapability(
             PvZ2ProbeCapability::RawGuestCallbackABI);
@@ -9082,6 +9092,21 @@ public:
                 "V99 AUDIO HOST START backend=AVAudioEngine ringFrames=" +
                 std::to_string(
                     PvZ2HostAudioRingCapacityFrames()));
+            if (V101Enabled()) {
+                AppendDiagnostic(
+                    "V101 AUDIO CLOCK requested=" +
+                    std::to_string(
+                        PvZ2HostAudioRequestedSampleRate()) +
+                    " session=" +
+                    std::to_string(
+                        PvZ2HostAudioSessionSampleRate()) +
+                    " source=" +
+                    std::to_string(
+                        PvZ2HostAudioSourceSampleRate()) +
+                    " mixer=" +
+                    std::to_string(
+                        PvZ2HostAudioMixerSampleRate()));
+            }
             return true;
         }
 
@@ -9341,6 +9366,7 @@ public:
     }
 
     const char* RuntimeModeTag() const {
+        if (V101Enabled()) return "V101";
         if (V100Enabled()) return "V100";
         if (V99Enabled()) return "V99";
         if (V98Enabled()) return "V98";
@@ -9441,7 +9467,8 @@ public:
                 line.rfind("V97 ", 0u) == 0u ||
                 line.rfind("V98 ", 0u) == 0u ||
                 line.rfind("V99 ", 0u) == 0u ||
-                line.rfind("V100 ", 0u) == 0u) {
+                line.rfind("V100 ", 0u) == 0u ||
+                line.rfind("V101 ", 0u) == 0u) {
                 return true;
             }
 
@@ -32320,6 +32347,10 @@ bool JniProbePrepareRuntime(
     if (callbacks.V83Enabled()) {
         callbacks.Append(
             "V83 PROFILE BUTTON DISPATCH: v83 restored the V80 2048x1536 pixel touch control and proved buttonId=5 can dispatch even when the raw +0x28/+0x2c/+0x30/+0x34 radar rectangle does not contain the screen-space tap. Those raw fields are therefore local/transformed, not absolute hitboxes. The passive dispatcher trap remains enabled and does not alter rendering, widget geometry or GameState.");
+    }
+    if (callbacks.V101Enabled()) {
+        callbacks.AppendDiagnostic(
+            "V101 AUDIO CLOCK CONTRACT: AVAudioSourceNode is explicitly format-pinned to Wwise PCM rate; AVAudioEngine may convert only downstream toward the session/mixer rate. Requested/session/source/mixer clocks are logged after engine start.");
     }
     if (callbacks.V100Enabled()) {
         callbacks.AppendDiagnostic(

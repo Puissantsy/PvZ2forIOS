@@ -530,7 +530,7 @@ void PvZ2HostNotifyDirectFrame(
     self.captionLabel.clipsToBounds =
         YES;
     self.captionLabel.text =
-        @"PvZ2 v100 — starting…\nOpenSL callback ABI fix + v99 audio";
+        @"PvZ2 v101 — starting…\n48 kHz source clock pin + v100 audio";
 
     self.stopButton =
         [UIButton
@@ -719,7 +719,7 @@ void PvZ2HostNotifyDirectFrame(
 
     self.inputEnabled = NO;
     self.captionLabel.text =
-        @"PvZ2 v100 LIVE — HARD STOP requested; interrupting guest at the next Dynarmic checkpoint…";
+        @"PvZ2 v101 LIVE — HARD STOP requested; interrupting guest at the next Dynarmic checkpoint…";
     self.stopButton.enabled = NO;
     PvZ2RequestInteractiveStop();
 }
@@ -1297,7 +1297,7 @@ void PvZ2HostNotifyDirectFrame(
         self.captionLabel.text =
             [NSString
                 stringWithFormat:
-                    @"PvZ2 v100 LIVE • frame %lu • %@\n%lu×%lu guest • direct GPU 1:1 + audio",
+                    @"PvZ2 v101 LIVE • frame %lu • %@\n%lu×%lu guest • direct GPU 1:1 + audio",
                     (unsigned long)frame,
                     touchState,
                     (unsigned long)width,
@@ -1524,7 +1524,7 @@ void PvZ2HostNotifyDirectFrame(
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — v100 OpenSL Callback ABI";
+        @"PvZ2forIOS — v101 Audio Clock Contract";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -1533,7 +1533,7 @@ void PvZ2HostNotifyDirectFrame(
         NO;
 
     title.text =
-        @"PvZ2forIOS — v100 OpenSL Callback ABI";
+        @"PvZ2forIOS — v101 Audio Clock Contract";
 
     title.font =
         [UIFont
@@ -1549,7 +1549,7 @@ void PvZ2HostNotifyDirectFrame(
         NO;
 
     explanation.text =
-        @"v100 keeps the complete v99 audio bridge but fixes the first real BufferQueue completion callback: it is a native OpenSL C callback, not a JNI method. The guest now receives r0=BufferQueue and r1=CAkSinkOpenSL context while retaining the same scheduler-safe delivery boundary and AVAudioEngine PCM path.";
+        @"v101 keeps the complete v100 audio bridge and pins AVAudioSourceNode itself to the exact Wwise PCM clock (48 kHz in this build). Hardware/session conversion is left downstream to AVAudioEngine, and the requested/session/source/mixer rates are logged so pitch or speed mismatches are directly diagnosable.";
 
     explanation.numberOfLines = 0;
 
@@ -2221,14 +2221,14 @@ void PvZ2HostNotifyDirectFrame(
 
     const auto* selectedDescriptor =
         PvZ2DescribeDiagnosticMode(
-            PvZ2DiagnosticMode::V100OpenSLCallbackABI);
+            PvZ2DiagnosticMode::V101AudioClockContract);
 
     NSString *selectedModeName =
         selectedDescriptor != nullptr
             ? [NSString
                   stringWithUTF8String:
                       selectedDescriptor->internal_name]
-            : @"V100_OPENSL_CALLBACK_ABI";
+            : @"V101_AUDIO_CLOCK_CONTRACT";
 
     [self
         appendUI:
@@ -2291,10 +2291,10 @@ void PvZ2HostNotifyDirectFrame(
 
     const auto* diagnosticDescriptor =
         PvZ2DescribeDiagnosticMode(
-            PvZ2DiagnosticMode::V100OpenSLCallbackABI);
+            PvZ2DiagnosticMode::V101AudioClockContract);
 
     const PvZ2DiagnosticMode diagnosticMode =
-        PvZ2DiagnosticMode::V100OpenSLCallbackABI;
+        PvZ2DiagnosticMode::V101AudioClockContract;
 
     NSString *diagnosticModeName =
         diagnosticDescriptor != nullptr
@@ -2310,7 +2310,7 @@ void PvZ2HostNotifyDirectFrame(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v100 OpenSL Callback ABI started mode=%@; PID=%d ===",
+                    @"=== PvZ2 v101 Audio Clock Contract started mode=%@; PID=%d ===",
                     diagnosticModeName,
                     getpid()]];
 
@@ -2824,14 +2824,14 @@ void PvZ2HostNotifyDirectFrame(
                                     finishRunWithMessage:
                                         [NSString
                                             stringWithFormat:
-                                                @"PvZ2 v100 LIVE — HARD STOPPED after %u guest frames.\nClose to inspect the v100 runtime log.",
+                                                @"PvZ2 v101 LIVE — HARD STOPPED after %u guest frames.\nClose to inspect the v101 runtime log.",
                                                 result.draw_frames_completed]];
                             } else {
                                 [selfRef.liveController
                                     finishRunWithMessage:
                                         [NSString
                                             stringWithFormat:
-                                                @"PvZ2 v100 LIVE — run finished after %u guest frames.\nClose to inspect the v100 runtime log.",
+                                                @"PvZ2 v101 LIVE — run finished after %u guest frames.\nClose to inspect the v101 runtime log.",
                                                 result.draw_frames_completed]];
                             }
 
@@ -2888,11 +2888,11 @@ void PvZ2HostNotifyDirectFrame(
 
                             if (result.hard_stop_requested) {
                                 [selfRef.liveController finishRunWithMessage:
-                                    @"PvZ2 v100 LIVE — HARD STOPPED.\nGuest execution was interrupted at the next Dynarmic checkpoint. Close to inspect the v100 runtime log."];
+                                    @"PvZ2 v101 LIVE — HARD STOPPED.\nGuest execution was interrupted at the next Dynarmic checkpoint. Close to inspect the v101 runtime log."];
                             } else {
                                 [selfRef.liveController finishRunWithMessage:
                                     [NSString stringWithFormat:
-                                        @"PvZ2 v100 LIVE — guest stopped/crashed.\n%@\nClose to inspect the v100 runtime log.", message]];
+                                        @"PvZ2 v101 LIVE — guest stopped/crashed.\n%@\nClose to inspect the v101 runtime log.", message]];
                             }
 
                         } else {

@@ -33,6 +33,9 @@ std::atomic<bool> gPlaying{false};
 std::atomic<bool> gConfigured{false};
 std::atomic<std::uint32_t> gChannels{0u};
 std::atomic<std::uint32_t> gSampleRate{0u};
+std::atomic<std::uint32_t> gSessionSampleRate{0u};
+std::atomic<std::uint32_t> gSourceSampleRate{0u};
+std::atomic<std::uint32_t> gMixerSampleRate{0u};
 
 std::mutex gControlMutex;
 std::string gLastError;
@@ -122,6 +125,15 @@ void StopLocked() {
         0u,
         std::memory_order_release);
     gSampleRate.store(
+        0u,
+        std::memory_order_release);
+    gSessionSampleRate.store(
+        0u,
+        std::memory_order_release);
+    gSourceSampleRate.store(
+        0u,
+        std::memory_order_release);
+    gMixerSampleRate.store(
         0u,
         std::memory_order_release);
     ResetQueueState();
@@ -389,6 +401,25 @@ bool PvZ2HostAudioConfigure(
     const std::uint32_t render_channels =
         channels;
 
+    AVAudioFormat* format =
+        [[AVAudioFormat alloc]
+            initWithCommonFormat:
+                AVAudioPCMFormatFloat32
+            sampleRate:
+                static_cast<double>(
+                    sample_rate)
+            channels:
+                static_cast<AVAudioChannelCount>(
+                    channels)
+            interleaved:NO];
+
+    if (format == nil) {
+        SetErrorLocked(
+            "unable to create AVAudioFormat");
+        StopLocked();
+        return false;
+    }
+
     AVAudioSourceNodeRenderBlock render_block =
         ^OSStatus(
             BOOL* isSilence,
@@ -406,32 +437,15 @@ bool PvZ2HostAudioConfigure(
         [[AVAudioEngine alloc] init];
     gSource =
         [[AVAudioSourceNode alloc]
-            initWithRenderBlock:
+            initWithFormat:
+                format
+            renderBlock:
                 render_block];
 
     if (gEngine == nil ||
         gSource == nil) {
         SetErrorLocked(
             "unable to create AVAudioEngine/AVAudioSourceNode");
-        StopLocked();
-        return false;
-    }
-
-    AVAudioFormat* format =
-        [[AVAudioFormat alloc]
-            initWithCommonFormat:
-                AVAudioPCMFormatFloat32
-            sampleRate:
-                static_cast<double>(
-                    sample_rate)
-            channels:
-                static_cast<AVAudioChannelCount>(
-                    channels)
-            interleaved:NO];
-
-    if (format == nil) {
-        SetErrorLocked(
-            "unable to create AVAudioFormat");
         StopLocked();
         return false;
     }
@@ -460,12 +474,40 @@ bool PvZ2HostAudioConfigure(
         return false;
     }
 
+    const double session_rate =
+        session.sampleRate;
+    const double source_rate =
+        [gSource
+            outputFormatForBus:0]
+            .sampleRate;
+    const double mixer_rate =
+        [gEngine.mainMixerNode
+            outputFormatForBus:0]
+            .sampleRate;
+
+    auto rounded_rate =
+        [](double value) -> std::uint32_t {
+            return value > 0.0
+                ? static_cast<std::uint32_t>(
+                      value + 0.5)
+                : 0u;
+        };
+
     ResetQueueState();
     gChannels.store(
         channels,
         std::memory_order_release);
     gSampleRate.store(
         sample_rate,
+        std::memory_order_release);
+    gSessionSampleRate.store(
+        rounded_rate(session_rate),
+        std::memory_order_release);
+    gSourceSampleRate.store(
+        rounded_rate(source_rate),
+        std::memory_order_release);
+    gMixerSampleRate.store(
+        rounded_rate(mixer_rate),
         std::memory_order_release);
     gConfigured.store(
         true,
@@ -671,6 +713,30 @@ PvZ2HostAudioConsumedBufferTotal() {
 std::uint32_t
 PvZ2HostAudioRingCapacityFrames() {
     return kRingFrames;
+}
+
+std::uint32_t
+PvZ2HostAudioRequestedSampleRate() {
+    return gSampleRate.load(
+        std::memory_order_acquire);
+}
+
+std::uint32_t
+PvZ2HostAudioSessionSampleRate() {
+    return gSessionSampleRate.load(
+        std::memory_order_acquire);
+}
+
+std::uint32_t
+PvZ2HostAudioSourceSampleRate() {
+    return gSourceSampleRate.load(
+        std::memory_order_acquire);
+}
+
+std::uint32_t
+PvZ2HostAudioMixerSampleRate() {
+    return gMixerSampleRate.load(
+        std::memory_order_acquire);
 }
 
 const char* PvZ2HostAudioLastError() {

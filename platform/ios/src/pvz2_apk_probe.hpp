@@ -310,6 +310,11 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // helper (r0=JNIEnv*, shifting BufferQueue/context by one register). Keep
     // the same scheduler-safe delivery point and use the raw ARM C callback ABI.
     V100OpenSLCallbackABI = 44u,
+
+    // v101: pin AVAudioSourceNode itself to Wwise's PCM sample clock instead of
+    // relying on graph negotiation, and expose requested/session/source/mixer
+    // rates so any remaining pitch/time mismatch is directly observable.
+    V101AudioClockContract = 45u,
 };
 
 enum class PvZ2ProbeCapability : std::uint64_t {
@@ -338,6 +343,7 @@ enum class PvZ2ProbeCapability : std::uint64_t {
     PresentationRgbFidelity = 1ull << 21,
     AudioOpenSLBridge = 1ull << 22,
     RawGuestCallbackABI = 1ull << 23,
+    AudioClockContract = 1ull << 24,
 };
 
 struct PvZ2DiagnosticModeDescriptor {

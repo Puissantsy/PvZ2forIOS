@@ -20,4 +20,8 @@ std::uint32_t PvZ2HostAudioQueuedBufferCount();
 std::uint32_t PvZ2HostAudioTakeConsumedBufferCount();
 std::uint64_t PvZ2HostAudioConsumedBufferTotal();
 std::uint32_t PvZ2HostAudioRingCapacityFrames();
+std::uint32_t PvZ2HostAudioRequestedSampleRate();
+std::uint32_t PvZ2HostAudioSessionSampleRate();
+std::uint32_t PvZ2HostAudioSourceSampleRate();
+std::uint32_t PvZ2HostAudioMixerSampleRate();
 const char* PvZ2HostAudioLastError();
