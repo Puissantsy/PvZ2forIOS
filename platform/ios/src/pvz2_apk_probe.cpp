@@ -8316,7 +8316,8 @@ public:
                 line.rfind("V90 ", 0u) == 0u ||
                 line.rfind("V91 ", 0u) == 0u ||
                 line.rfind("V92 ", 0u) == 0u ||
-                line.rfind("V93 ", 0u) == 0u) {
+                line.rfind("V93 ", 0u) == 0u ||
+                line.rfind("V94 ", 0u) == 0u) {
                 return true;
             }
 
@@ -14317,6 +14318,59 @@ public:
         }
 
         auto& regs = jit->Regs();
+
+        // v94: any host-side SVC/import can write guest memory directly
+        // (memcpy/memmove/memset/string/file bridges, etc.) without passing
+        // through Dynarmic's scalar MemoryWrite callbacks. Snapshot the active
+        // caller-LR slot across every SVC boundary so the entire host-write
+        // class is covered in one place.
+        const bool v94_svc_watch_active =
+            V94Enabled() && v94_watch_armed;
+        const std::uint32_t v94_svc_watch_slot =
+            v94_svc_watch_active
+                ? v94_watch_slot
+                : 0u;
+        const std::uint32_t v94_svc_before =
+            v94_svc_watch_active
+                ? mem.Read32Guest(v94_svc_watch_slot)
+                : 0u;
+
+        struct V94SvcExitGuard {
+            std::function<void()> fn;
+            ~V94SvcExitGuard() {
+                if (fn) fn();
+            }
+        };
+
+        V94SvcExitGuard v94_svc_guard{
+            [this,
+             swi,
+             v94_svc_watch_active,
+             v94_svc_watch_slot,
+             v94_svc_before]() {
+                if (!v94_svc_watch_active ||
+                    !V94Enabled() ||
+                    !v94_watch_armed ||
+                    v94_watch_slot != v94_svc_watch_slot) {
+                    return;
+                }
+
+                const std::uint32_t after =
+                    mem.Read32Guest(v94_svc_watch_slot);
+                if (after == v94_svc_before) {
+                    return;
+                }
+
+                const std::string kind =
+                    "SVC-0x" + JniProbeHex(swi);
+                V94ObserveGuestWrite(
+                    kind.c_str(),
+                    v94_svc_watch_slot,
+                    4u,
+                    after,
+                    v94_svc_before,
+                    true);
+            }};
 
         // v79: exact first-run Profile provenance. Traps are installed only
         // for V75/V77, and each case below first reproduces the original ARM
@@ -30990,7 +31044,9 @@ bool JniProbePrepareRuntime(
         callbacks.Append(
             "V83 PROFILE BUTTON DISPATCH: v83 restored the V80 2048x1536 pixel touch control and proved buttonId=5 can dispatch even when the raw +0x28/+0x2c/+0x30/+0x34 radar rectangle does not contain the screen-space tap. Those raw fields are therefore local/transformed, not absolute hitboxes. The passive dispatcher trap remains enabled and does not alter rendering, widget geometry or GameState.");
     }
-    if(callbacks.V93Enabled()){
+    if(callbacks.V94Enabled()){
+        callbacks.AppendDiagnostic("V94 CALLER LR WATCH: v93 proved FreeHeap and the inner 0x108689c8 frame are clean. Track the outer 0x10868978 saved-LR slot from PUSH to POP, including scalar/exclusive guest stores and all host SVC boundaries. Expected direct-call LR is 0x1086f1fc. Observation only: no stack repair, return rewrite or guest-code patch.");
+    } else if(callbacks.V93Enabled()){
         callbacks.Append("V93 RETURN PROVENANCE: complete v92 long-run runtime preserved. The exact delete->free path returning through 0x10868b30 is observed non-invasively inside the host free callback: saved PC at guest SP+36 is captured before and after FreeHeap. No guest instruction, return address, allocator result, scheduler state or recovery behavior is changed.");
     } else if(callbacks.V92Enabled()){
         callbacks.Append("V92 LONG-RUN: complete v91 allocator/RELRO/direct-GPU/input runtime preserved; the legacy 600-frame probe ceiling is disabled and execution continues until Hard Stop or a real failure. Periodic performance logging is throttled for sustained play.");
