@@ -992,6 +992,8 @@ constexpr std::uint64_t kCapAudioRateBankWait =
     ProbeCap(PvZ2ProbeCapability::AudioRateBankWait);
 constexpr std::uint64_t kCapSemaphoreWakeRepair =
     ProbeCap(PvZ2ProbeCapability::SemaphoreWakeRepair);
+constexpr std::uint64_t kCapBankCompletionLiveness =
+    ProbeCap(PvZ2ProbeCapability::BankCompletionLiveness);
 
 constexpr std::uint64_t kCapsTransformBase =
     kCapLive | kCapCpuFrame | kCapTransform |
@@ -1043,6 +1045,8 @@ constexpr std::uint64_t kCapsV106 =
     kCapsV105 | kCapAudioRateBankWait;
 constexpr std::uint64_t kCapsV107 =
     kCapsV106 | kCapSemaphoreWakeRepair;
+constexpr std::uint64_t kCapsV108 =
+    kCapsV107 | kCapBankCompletionLiveness;
 
 constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::PassiveRegistry, "PASSIVE_REGISTRY", nullptr, 0u, false},
@@ -1097,12 +1101,13 @@ constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::V105WwiseResamplerProbe, "V105_WWISE_RESAMPLER_PROBE", "V105 Wwise Resampler", kCapsV105, true},
     {PvZ2DiagnosticMode::V106AudioRateBankWait, "V106_AUDIO_RATE_BANK_WAIT", "V106 Audio+Bank", kCapsV106, true},
     {PvZ2DiagnosticMode::V107SemaphoreWakeRepair, "V107_SEMAPHORE_WAKE_REPAIR", "V107 Semaphore Wake", kCapsV107, true},
+    {PvZ2DiagnosticMode::V108BankCompletionLiveness, "V108_BANK_COMPLETION_LIVENESS", "V108 Bank Completion", kCapsV108, true},
 };
 
 constexpr PvZ2DiagnosticMode kSelectableDiagnosticModes[] = {
     // App-facing selection remains intentionally single-mode.
     // Historical descriptors stay registered for internal diagnostics.
-    PvZ2DiagnosticMode::V107SemaphoreWakeRepair,
+    PvZ2DiagnosticMode::V108BankCompletionLiveness,
 };
 
 } // namespace
@@ -1482,6 +1487,14 @@ constexpr std::uint32_t kJniProbeSvcV95WrapperPop = 0x00f0c5u;
 constexpr std::uint32_t kJniProbeSvcV105ResamplerInitState = 0x00f0c6u;
 constexpr std::uint32_t kJniProbeSvcV105SetPitchState = 0x00f0c7u;
 constexpr std::uint32_t kJniProbeSvcV105SwitchToState = 0x00f0c8u;
+
+// v108: exact low-frequency probes for the asynchronous SoundBank teardown
+// path. Each replaces one verified ARM instruction and emulates it exactly.
+constexpr std::uint32_t kJniProbeSvcV108KillSlotEntry = 0x00f0c9u;
+constexpr std::uint32_t kJniProbeSvcV108KillBankMsg = 0x00f0cau;
+constexpr std::uint32_t kJniProbeSvcV108UsageSlotRelease = 0x00f0cbu;
+constexpr std::uint32_t kJniProbeSvcV108UnloadCompletion = 0x00f0ccu;
+constexpr std::uint32_t kJniProbeSvcV108DefaultBankCallback = 0x00f0cdu;
 
 constexpr std::uint32_t kJniProbeSvcUnsupportedJniBase = 0x00e000u;
 constexpr std::uint32_t kJniProbeJniSlotCount = 256u;
@@ -3339,6 +3352,22 @@ public:
     std::uint64_t v107_stale_mutex_wait_repairs = 0u;
     std::uint64_t v107_bank_wake_posts = 0u;
     std::uint64_t v107_bank_wake_waits = 0u;
+
+    // v108: the final v107 transition stall proved that BankMgr dequeues the
+    // command but synchronous UnloadBank never receives DefaultBankCallbackFunc.
+    // Track the real CAkUsageSlot teardown and CAkAudioThread event semaphore.
+    std::uint32_t v108_audio_event_sem = 0u;
+    std::uint32_t v108_active_kill_slot = 0u;
+    bool v108_active_kill_msg_seen = false;
+    std::uint64_t v108_kill_slot_calls = 0u;
+    std::uint64_t v108_kill_msg_calls = 0u;
+    std::uint64_t v108_slot_release_calls = 0u;
+    std::uint64_t v108_completion_notifications = 0u;
+    std::uint64_t v108_default_bank_callbacks = 0u;
+    std::uint64_t v108_audio_event_posts = 0u;
+    std::uint64_t v108_audio_event_waits = 0u;
+    std::uint64_t v108_audio_liveness_pulses = 0u;
+    std::uint64_t v108_last_audio_liveness_pulse_ns = 0u;
 
     // v61 safe cooperative boundary. Set only by the main Native_onDrawFrame
     // thread when the verified resource-stream pump has completed its
@@ -8723,6 +8752,92 @@ public:
     }
 
 
+    bool V108Enabled() const {
+        return HasCapability(
+            PvZ2ProbeCapability::BankCompletionLiveness);
+    }
+
+    std::string V108BankCompletionSummary() {
+        std::ostringstream out;
+        const std::uint32_t slot = v108_active_kill_slot;
+        const std::uint32_t callback = slot != 0u ? mem.Read32Guest(slot + 0x2cu) : 0u;
+        const std::uint32_t cookie = slot != 0u ? mem.Read32Guest(slot + 0x30u) : 0u;
+        const std::int32_t refs = slot != 0u ? static_cast<std::int32_t>(mem.Read32Guest(slot + 0x40u)) : 0;
+        const std::int32_t prepare_refs = slot != 0u ? static_cast<std::int32_t>(mem.Read32Guest(slot + 0x44u)) : 0;
+        const std::uint32_t flags = slot != 0u ? mem.Read8(slot + 0x48u) : 0u;
+        const std::uint32_t audio_count = v108_audio_event_sem != 0u ? mem.Read32Guest(v108_audio_event_sem) : 0u;
+        const auto audio_wait = v66_sem_waits.find(v104_audio_worker_tid);
+
+        out << "killSlot=" << V46DescribeGuestAddress(slot)
+            << " killMsgSeen=" << (v108_active_kill_msg_seen ? "YES" : "NO")
+            << " refs=" << refs << " prepareRefs=" << prepare_refs
+            << " flags=0x" << JniProbeHex(flags)
+            << " callback=" << V46DescribeGuestAddress(callback)
+            << " cookie=" << V46DescribeGuestAddress(cookie)
+            << " audioTid=" << v104_audio_worker_tid
+            << " audioSem=" << V46DescribeGuestAddress(v108_audio_event_sem)
+            << " audioSemCount=" << audio_count;
+
+        if (audio_wait != v66_sem_waits.end()) {
+            out << " audioWaitSem=" << V46DescribeGuestAddress(audio_wait->second.sem)
+                << " audioNotified=" << (audio_wait->second.notified ? "YES" : "NO");
+        } else {
+            out << " audioWaitSem=NONE audioNotified=NO";
+        }
+
+        out << " hostQueued=" << PvZ2HostAudioQueuedBufferCount()
+            << " pendingGuestCallbacks=" << v99_audio_pending_callbacks
+            << " consumedTotal=" << PvZ2HostAudioConsumedBufferTotal()
+            << " renderCallbacks=" << PvZ2HostAudioRenderCallbackCount()
+            << " renderedPCM=" << PvZ2HostAudioRenderedPCMFrames()
+            << " underrunEvents=" << PvZ2HostAudioUnderrunEvents();
+        return out.str();
+    }
+
+    bool V108MaybePulseAudioLiveness() {
+        if (!V108Enabled() || v108_active_kill_slot == 0u ||
+            !v108_active_kill_msg_seen || v104_audio_worker_tid == 0u ||
+            v108_audio_event_sem == 0u) {
+            return false;
+        }
+
+        const std::uint32_t callback = mem.Read32Guest(v108_active_kill_slot + 0x2cu);
+        if (callback == 0u) {
+            v108_active_kill_slot = 0u;
+            v108_active_kill_msg_seen = false;
+            return false;
+        }
+
+        // Preserve natural CoreAudio/OpenSL completions. Synthesize only the
+        // Wwise event-thread wake when teardown is pending and PCM has drained.
+        if (PvZ2HostAudioQueuedBufferCount() != 0u || v99_audio_pending_callbacks != 0u) {
+            return false;
+        }
+
+        auto wait = v66_sem_waits.find(v104_audio_worker_tid);
+        if (wait == v66_sem_waits.end() || wait->second.sem != v108_audio_event_sem ||
+            wait->second.notified || mem.Read32Guest(v108_audio_event_sem) != 0u) {
+            return false;
+        }
+
+        const std::uint64_t now = V66SteadyNowNs();
+        constexpr std::uint64_t kPulsePeriodNs = 32000000ull; // 1024 / 32 kHz
+        if (v108_last_audio_liveness_pulse_ns != 0u &&
+            now - v108_last_audio_liveness_pulse_ns < kPulsePeriodNs) {
+            return false;
+        }
+
+        mem.Write32Guest(v108_audio_event_sem, 1u);
+        const std::uint32_t woke = V66NotifySemaphore(v108_audio_event_sem);
+        v108_last_audio_liveness_pulse_ns = now;
+        ++v108_audio_liveness_pulses;
+        AppendDiagnostic("V108 AUDIO LIVENESS PULSE #" +
+                         std::to_string(v108_audio_liveness_pulses) +
+                         " woke=" + std::to_string(woke) + " " +
+                         V108BankCompletionSummary());
+        return woke != 0u;
+    }
+
     bool V107Enabled() const {
         return HasCapability(
             PvZ2ProbeCapability::SemaphoreWakeRepair);
@@ -10084,6 +10199,7 @@ public:
     }
 
     const char* RuntimeModeTag() const {
+        if (V108Enabled()) return "V108";
         if (V107Enabled()) return "V107";
         if (V106Enabled()) return "V106";
         if (V105Enabled()) return "V105";
@@ -10198,7 +10314,8 @@ public:
                 line.rfind("V104 ", 0u) == 0u ||
                 line.rfind("V105 ", 0u) == 0u ||
                 line.rfind("V106 ", 0u) == 0u ||
-                line.rfind("V107 ", 0u) == 0u) {
+                line.rfind("V107 ", 0u) == 0u ||
+                line.rfind("V108 ", 0u) == 0u) {
                 return true;
             }
 
@@ -16742,6 +16859,76 @@ public:
             default:
                 break;
             }
+        }
+
+        if (V108Enabled() &&
+            (swi == kJniProbeSvcV108KillSlotEntry ||
+             swi == kJniProbeSvcV108KillBankMsg ||
+             swi == kJniProbeSvcV108UsageSlotRelease ||
+             swi == kJniProbeSvcV108UnloadCompletion ||
+             swi == kJniProbeSvcV108DefaultBankCallback)) {
+            if (swi == kJniProbeSvcV108KillSlotEntry) {
+                // lib+0x00bc3fd0 MOV r0,r1.
+                regs[0] = regs[1];
+                v108_active_kill_slot = regs[1];
+                v108_active_kill_msg_seen = false;
+                v108_last_audio_liveness_pulse_ns = 0u;
+                ++v108_kill_slot_calls;
+                AppendDiagnostic("V108 BANK KILLSLOT #" + std::to_string(v108_kill_slot_calls) +
+                                 " slot=" + V46DescribeGuestAddress(regs[1]) +
+                                 " callback=" + V46DescribeGuestAddress(regs[2]) +
+                                 " cookie=" + V46DescribeGuestAddress(regs[3]) + " " +
+                                 V108BankCompletionSummary());
+                return;
+            }
+            if (swi == kJniProbeSvcV108KillBankMsg) {
+                // lib+0x00bbf254 LDR r10,[r4,#8].
+                regs[10] = mem.Read32Guest(regs[4] + 0x8u);
+                ++v108_kill_msg_calls;
+                if (regs[10] == v108_active_kill_slot) v108_active_kill_msg_seen = true;
+                AppendDiagnostic("V108 BANK KILLMSG #" + std::to_string(v108_kill_msg_calls) +
+                                 " slot=" + V46DescribeGuestAddress(regs[10]) +
+                                 " active=" + (regs[10] == v108_active_kill_slot ? "YES" : "NO") + " " +
+                                 V108BankCompletionSummary());
+                return;
+            }
+            if (swi == kJniProbeSvcV108UsageSlotRelease) {
+                // lib+0x00bc5478 MOV r5,r0.
+                regs[5] = regs[0];
+                ++v108_slot_release_calls;
+                if (regs[0] == v108_active_kill_slot || v108_slot_release_calls <= 16u ||
+                    (v108_slot_release_calls & (v108_slot_release_calls - 1u)) == 0u) {
+                    AppendDiagnostic("V108 BANK SLOT RELEASE #" + std::to_string(v108_slot_release_calls) +
+                                     " slot=" + V46DescribeGuestAddress(regs[0]) +
+                                     " destroy=" + std::to_string(regs[1]) +
+                                     " caller=" + V46DescribeGuestAddress(regs[14]) + " " +
+                                     V108BankCompletionSummary());
+                }
+                return;
+            }
+            if (swi == kJniProbeSvcV108UnloadCompletion) {
+                // lib+0x00bc0e80 LDR r1,[r0,#0x2c].
+                regs[1] = mem.Read32Guest(regs[0] + 0x2cu);
+                ++v108_completion_notifications;
+                AppendDiagnostic("V108 BANK COMPLETION NOTIFY #" + std::to_string(v108_completion_notifications) +
+                                 " slot=" + V46DescribeGuestAddress(regs[0]) +
+                                 " callback=" + V46DescribeGuestAddress(regs[1]) + " " +
+                                 V108BankCompletionSummary());
+                return;
+            }
+            // lib+0x00bb6a50 LDR r1,[sp]. DefaultBankCallbackFunc will
+            // sem_post(cookie+4) immediately after the emulated load.
+            regs[1] = mem.Read32Guest(regs[13]);
+            ++v108_default_bank_callbacks;
+            AppendDiagnostic("V108 BANK DEFAULT CALLBACK #" + std::to_string(v108_default_bank_callbacks) +
+                             " cookie=" + V46DescribeGuestAddress(regs[1]) +
+                             " completionSem=" + V46DescribeGuestAddress(regs[1] != 0u ? regs[1] + 4u : 0u) +
+                             " result=" + std::to_string(regs[2]) + " " + V108BankCompletionSummary());
+            if (v108_active_kill_slot != 0u && mem.Read32Guest(v108_active_kill_slot + 0x30u) == regs[1]) {
+                v108_active_kill_slot = 0u;
+                v108_active_kill_msg_seen = false;
+            }
+            return;
         }
 
         if (V105Enabled() &&
@@ -25406,6 +25593,11 @@ public:
                 (start_routine & ~1u) ==
                     kV104AkAudioThreadEntryGuest) {
                 v104_audio_worker_tid = thread_id;
+                if (V108Enabled()) {
+                    v108_audio_event_sem = argument;
+                    AppendDiagnostic("V108 AUDIO EVENT SEM FOUND tid=" + std::to_string(thread_id) +
+                                     " sem=" + V46DescribeGuestAddress(v108_audio_event_sem));
+                }
                 AppendDiagnostic(
                     "V104 AUDIO WORKER FOUND tid=" +
                     std::to_string(thread_id) +
@@ -25469,6 +25661,11 @@ public:
                     (worker_entry & ~1u) ==
                         (kGuestBase + 0x00bfdb70u)) {
                     v104_audio_worker_tid = thread_id;
+                    if (V108Enabled()) {
+                        v108_audio_event_sem = worker_object;
+                        AppendDiagnostic("V108 AUDIO EVENT SEM FOUND tid=" + std::to_string(thread_id) +
+                                         " sem=" + V46DescribeGuestAddress(v108_audio_event_sem));
+                    }
                     AppendDiagnostic(
                         "V104 AUDIO WORKER FOUND tid=" +
                         std::to_string(thread_id) +
@@ -26160,6 +26357,18 @@ public:
                     V107BankWorkerWaitSummary());
             }
 
+            if (V108Enabled() && sem == v108_audio_event_sem) {
+                ++v108_audio_event_posts;
+                if (v108_active_kill_slot != 0u || v108_audio_event_posts <= 16u ||
+                    (v108_audio_event_posts & (v108_audio_event_posts - 1u)) == 0u) {
+                    AppendDiagnostic("V108 AUDIO EVENT POST #" + std::to_string(v108_audio_event_posts) +
+                                     " caller=" + V46DescribeGuestAddress(regs[14]) +
+                                     " count=" + std::to_string(before) + "->" +
+                                     std::to_string(mem.Read32Guest(sem)) +
+                                     " woke=" + std::to_string(woke) + " " + V108BankCompletionSummary());
+                }
+            }
+
             regs[0] = 0;
             ++supported_calls;
             return;
@@ -26201,6 +26410,17 @@ public:
                     std::to_string(count) +
                     " " +
                     V107BankWorkerWaitSummary());
+            }
+
+            if (V108Enabled() && name == "sem_wait" &&
+                current_probe_thread_id == v104_audio_worker_tid && sem == v108_audio_event_sem) {
+                ++v108_audio_event_waits;
+                if (v108_active_kill_slot != 0u &&
+                    (v108_audio_event_waits <= 32u ||
+                     (v108_audio_event_waits & (v108_audio_event_waits - 1u)) == 0u)) {
+                    AppendDiagnostic("V108 AUDIO EVENT WAIT #" + std::to_string(v108_audio_event_waits) +
+                                     " count=" + std::to_string(count) + " " + V108BankCompletionSummary());
+                }
             }
 
             if (count > 0u) {
@@ -33239,6 +33459,16 @@ bool JniProbePrepareRuntime(
         return false;
     }
 
+    if (callbacks.V108Enabled() &&
+        (!patch_resource_native_miss(0x00bc3fd0u, 0xe1a00001u, kJniProbeSvcV108KillSlotEntry) ||
+         !patch_resource_native_miss(0x00bbf254u, 0xe594a008u, kJniProbeSvcV108KillBankMsg) ||
+         !patch_resource_native_miss(0x00bc5478u, 0xe1a05000u, kJniProbeSvcV108UsageSlotRelease) ||
+         !patch_resource_native_miss(0x00bc0e80u, 0xe590102cu, kJniProbeSvcV108UnloadCompletion) ||
+         !patch_resource_native_miss(0x00bb6a50u, 0xe59d1000u, kJniProbeSvcV108DefaultBankCallback))) {
+        error = "v108 Wwise bank-completion signature mismatch at KillSlot/KillBank/Release/Completion/DefaultCallback; refusing to patch an unverified PvZ2 1.5.252752 instruction.";
+        return false;
+    }
+
     if (callbacks.V105Enabled() &&
         (!patch_resource_native_miss(
              0x00c141f8u,
@@ -33372,6 +33602,10 @@ bool JniProbePrepareRuntime(
     if (callbacks.V83Enabled()) {
         callbacks.Append(
             "V83 PROFILE BUTTON DISPATCH: v83 restored the V80 2048x1536 pixel touch control and proved buttonId=5 can dispatch even when the raw +0x28/+0x2c/+0x30/+0x34 radar rectangle does not contain the screen-space tap. Those raw fields are therefore local/transformed, not absolute hitboxes. The passive dispatcher trap remains enabled and does not alter rendering, widget geometry or GameState.");
+    }
+    if (callbacks.V108Enabled()) {
+        callbacks.AppendDiagnostic(
+            "V108 BANK COMPLETION LIVENESS: v107 proved BankMgr wakes and dequeues the final UnloadBank command, but the synchronous completion callback can remain pending after KillBank while CAkUsageSlot still owns live references. Exact traps trace KillSlot -> ProcessMsgQueue(KillBank) -> CAkUsageSlot::Release -> UnloadCompletionNotification -> DefaultBankCallbackFunc. If and only if that real teardown is pending, the OpenSL ring is empty, no guest buffer callback is pending, and CAkAudioThread is asleep on its own event semaphore, a 32 ms liveness pulse wakes only CAkAudioThread so Wwise itself can finish releasing voices; the main UnloadBank completion semaphore is never fabricated.");
     }
     if (callbacks.V107Enabled()) {
         callbacks.AppendDiagnostic(
@@ -35762,6 +35996,10 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                     }
                                 }
 
+                                if (v106_bank_unload_wait && callbacks.V108Enabled()) {
+                                    callbacks.V108MaybePulseAudioLiveness();
+                                }
+
                                 if (v96_main_blocking_wait) {
                                     ++v96_workers_only_rounds;
                                 }
@@ -35797,6 +36035,10 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                             << " "
                                             << callbacks
                                                    .V107BankWorkerWaitSummary()
+                                            << " "
+                                            << (callbacks.V108Enabled()
+                                                    ? callbacks.V108BankCompletionSummary()
+                                                    : std::string{"v108=OFF"})
                                             << " workers={";
 
                                         const std::size_t summary_limit =
