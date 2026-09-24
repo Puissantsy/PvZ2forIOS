@@ -976,6 +976,8 @@ constexpr std::uint64_t kCapPresentationRgbFidelity =
     ProbeCap(PvZ2ProbeCapability::PresentationRgbFidelity);
 constexpr std::uint64_t kCapAudioOpenSLBridge =
     ProbeCap(PvZ2ProbeCapability::AudioOpenSLBridge);
+constexpr std::uint64_t kCapRawGuestCallbackABI =
+    ProbeCap(PvZ2ProbeCapability::RawGuestCallbackABI);
 
 constexpr std::uint64_t kCapsTransformBase =
     kCapLive | kCapCpuFrame | kCapTransform |
@@ -1011,6 +1013,8 @@ constexpr std::uint64_t kCapsV98 =
     kCapsV97 | kCapPresentationRgbFidelity;
 constexpr std::uint64_t kCapsV99 =
     kCapsV98 | kCapAudioOpenSLBridge;
+constexpr std::uint64_t kCapsV100 =
+    kCapsV99 | kCapRawGuestCallbackABI;
 
 constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::PassiveRegistry, "PASSIVE_REGISTRY", nullptr, 0u, false},
@@ -1057,12 +1061,13 @@ constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::V97GrantedMutexWaitGraph, "V97_GRANTED_MUTEX_WAIT_GRAPH", "V97 Mutex", kCapsV97, true},
     {PvZ2DiagnosticMode::V98PresentationRgbFidelity, "V98_PRESENTATION_RGB_FIDELITY", "V98 RGB", kCapsV98, true},
     {PvZ2DiagnosticMode::V99AudioOpenSLBridge, "V99_AUDIO_OPENSL_BRIDGE", "V99 Audio", kCapsV99, true},
+    {PvZ2DiagnosticMode::V100OpenSLCallbackABI, "V100_OPENSL_CALLBACK_ABI", "V100 Audio ABI", kCapsV100, true},
 };
 
 constexpr PvZ2DiagnosticMode kSelectableDiagnosticModes[] = {
     // App-facing selection remains intentionally single-mode.
     // Historical descriptors stay registered for internal diagnostics.
-    PvZ2DiagnosticMode::V99AudioOpenSLBridge,
+    PvZ2DiagnosticMode::V100OpenSLCallbackABI,
 };
 
 } // namespace
@@ -8506,6 +8511,11 @@ public:
     }
 
 
+    bool V100Enabled() const {
+        return HasCapability(
+            PvZ2ProbeCapability::RawGuestCallbackABI);
+    }
+
     bool V99Enabled() const {
         return HasCapability(
             PvZ2ProbeCapability::AudioOpenSLBridge);
@@ -9331,6 +9341,7 @@ public:
     }
 
     const char* RuntimeModeTag() const {
+        if (V100Enabled()) return "V100";
         if (V99Enabled()) return "V99";
         if (V98Enabled()) return "V98";
         if (V97Enabled()) return "V97";
@@ -9429,7 +9440,8 @@ public:
                 line.rfind("V96 ", 0u) == 0u ||
                 line.rfind("V97 ", 0u) == 0u ||
                 line.rfind("V98 ", 0u) == 0u ||
-                line.rfind("V99 ", 0u) == 0u) {
+                line.rfind("V99 ", 0u) == 0u ||
+                line.rfind("V100 ", 0u) == 0u) {
                 return true;
             }
 
@@ -32309,6 +32321,10 @@ bool JniProbePrepareRuntime(
         callbacks.Append(
             "V83 PROFILE BUTTON DISPATCH: v83 restored the V80 2048x1536 pixel touch control and proved buttonId=5 can dispatch even when the raw +0x28/+0x2c/+0x30/+0x34 radar rectangle does not contain the screen-space tap. Those raw fields are therefore local/transformed, not absolute hitboxes. The passive dispatcher trap remains enabled and does not alter rendering, widget geometry or GameState.");
     }
+    if (callbacks.V100Enabled()) {
+        callbacks.AppendDiagnostic(
+            "V100 OPENSL CALLBACK ABI: v99 proved Engine/Player/AVAudioEngine/PCM enqueue. BufferQueue completion now enters CAkSinkOpenSL::EnqueueBufferCallback with raw ARM C ABI r0=SLAndroidSimpleBufferQueueItf, r1=CAkSinkOpenSL context; JNI env injection is disabled only for this callback class.");
+    }
     if (callbacks.V99Enabled()) {
         callbacks.AppendDiagnostic(
             "V99 AUDIO OPENSL BRIDGE: v98 playable runtime preserved. Wwise CAkSinkOpenSL receives functional Engine/Object/Play/BufferQueue/AndroidConfiguration/AudioIODeviceCapabilities interfaces; mixed PCM16 is copied to a bounded AVAudioEngine ring and buffer-complete callbacks return to Dynarmic only at scheduler-safe lifecycle/frame boundaries.");
@@ -33435,7 +33451,8 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                         std::uint32_t thiz,
                         std::uint32_t arg2,
                         std::uint32_t arg3,
-                        bool first_draw) -> bool {
+                        bool first_draw,
+                        bool raw_arm_abi = false) -> bool {
 
                         auto clear_probe_halts =
                             [&]() {
@@ -33873,14 +33890,27 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
 
                         jit.Regs().fill(0);
                         jit.ExtRegs().fill(0);
-                        jit.Regs()[0] =
-                            callbacks.env_object;
-                        jit.Regs()[1] =
-                            thiz;
-                        jit.Regs()[2] =
-                            arg2;
-                        jit.Regs()[3] =
-                            arg3;
+
+                        if (raw_arm_abi) {
+                            // Native C callback ABI: do not insert JNIEnv*.
+                            // v99 entered OpenSL callbacks through the JNI
+                            // lifecycle convention and shifted every argument:
+                            // r0=env, r1=BufferQueue, r2=context. Wwise expects
+                            // r0=BufferQueue and r1=context.
+                            jit.Regs()[0] = thiz;
+                            jit.Regs()[1] = arg2;
+                            jit.Regs()[2] = arg3;
+                            jit.Regs()[3] = 0u;
+                        } else {
+                            jit.Regs()[0] =
+                                callbacks.env_object;
+                            jit.Regs()[1] =
+                                thiz;
+                            jit.Regs()[2] =
+                                arg2;
+                            jit.Regs()[3] =
+                                arg3;
+                        }
                         jit.Regs()[13] =
                             kJniProbeStackBase +
                             kJniProbeStackSize -
@@ -36181,13 +36211,30 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                         PvZ2HostAudioQueuedBufferCount()));
                             }
 
+                            if (callbacks.V100Enabled() &&
+                                callbacks.V99ShouldLogCounter(
+                                    callback_number)) {
+                                callbacks.AppendDiagnostic(
+                                    "V100 AUDIO CALLBACK ABI #" +
+                                    std::to_string(callback_number) +
+                                    " r0(queue)=" +
+                                    callbacks.V46DescribeGuestAddress(
+                                        callbacks.v99_queue_itf) +
+                                    " r1(context)=" +
+                                    callbacks.V46DescribeGuestAddress(
+                                        callbacks.v99_queue_context));
+                            }
+
                             if (!run_lifecycle(
-                                    "V99_OpenSL_BufferQueueCallback",
+                                    callbacks.V100Enabled()
+                                        ? "V100_OpenSL_BufferQueueCallback"
+                                        : "V99_OpenSL_BufferQueueCallback",
                                     callbacks.v99_queue_callback,
                                     callbacks.v99_queue_itf,
                                     callbacks.v99_queue_context,
                                     0u,
-                                    false)) {
+                                    false,
+                                    callbacks.V100Enabled())) {
                                 callbacks.AppendCritical(
                                     "V99 AUDIO CALLBACK guest delivery failed.");
                                 return false;

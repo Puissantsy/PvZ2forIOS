@@ -304,6 +304,12 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // Wwise CAkSinkOpenSL. Mixed PCM is bridged to AVAudioEngine and completed
     // buffer callbacks are delivered only at scheduler-safe guest boundaries.
     V99AudioOpenSLBridge = 43u,
+
+    // v100: v99 proved the complete host audio path through PCM enqueue, but
+    // the first OpenSL callback was accidentally entered through the JNI ABI
+    // helper (r0=JNIEnv*, shifting BufferQueue/context by one register). Keep
+    // the same scheduler-safe delivery point and use the raw ARM C callback ABI.
+    V100OpenSLCallbackABI = 44u,
 };
 
 enum class PvZ2ProbeCapability : std::uint64_t {
@@ -331,6 +337,7 @@ enum class PvZ2ProbeCapability : std::uint64_t {
     GrantedMutexWaitGraph = 1ull << 20,
     PresentationRgbFidelity = 1ull << 21,
     AudioOpenSLBridge = 1ull << 22,
+    RawGuestCallbackABI = 1ull << 23,
 };
 
 struct PvZ2DiagnosticModeDescriptor {
