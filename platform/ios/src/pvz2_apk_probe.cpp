@@ -969,6 +969,8 @@ constexpr std::uint64_t kCapPreciseCallerReturnWatch =
     ProbeCap(PvZ2ProbeCapability::PreciseCallerReturnWatch);
 constexpr std::uint64_t kCapMainThreadBlocking =
     ProbeCap(PvZ2ProbeCapability::MainThreadBlocking);
+constexpr std::uint64_t kCapGrantedMutexWaitGraph =
+    ProbeCap(PvZ2ProbeCapability::GrantedMutexWaitGraph);
 
 constexpr std::uint64_t kCapsTransformBase =
     kCapLive | kCapCpuFrame | kCapTransform |
@@ -998,6 +1000,8 @@ constexpr std::uint64_t kCapsV95 =
     kCapsV94 | kCapPreciseCallerReturnWatch;
 constexpr std::uint64_t kCapsV96 =
     kCapsV95 | kCapMainThreadBlocking;
+constexpr std::uint64_t kCapsV97 =
+    kCapsV96 | kCapGrantedMutexWaitGraph;
 
 constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::PassiveRegistry, "PASSIVE_REGISTRY", nullptr, 0u, false},
@@ -1041,36 +1045,13 @@ constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::V94CallerReturnWatch, "V94_CALLER_RETURN_WATCH", "V94 LR Watch", kCapsV94, true},
     {PvZ2DiagnosticMode::V95PreciseCallerReturnWatch, "V95_PRECISE_CALLER_RETURN_WATCH", "V95 Precise LR", kCapsV95, true},
     {PvZ2DiagnosticMode::V96MainThreadBlocking, "V96_MAIN_THREAD_BLOCKING", "V96 Main Waits", kCapsV96, true},
+    {PvZ2DiagnosticMode::V97GrantedMutexWaitGraph, "V97_GRANTED_MUTEX_WAIT_GRAPH", "V97 Current", kCapsV97, true},
 };
 
 constexpr PvZ2DiagnosticMode kSelectableDiagnosticModes[] = {
-    PvZ2DiagnosticMode::FullMatrix,
-    PvZ2DiagnosticMode::V74RetinaInputPolish,
-    PvZ2DiagnosticMode::V75IpadUiPackage,
-    PvZ2DiagnosticMode::V76IosScaleContract,
-    PvZ2DiagnosticMode::V77LegacyIpadGeometry,
-    PvZ2DiagnosticMode::V80GlobalTransformProbe,
-    PvZ2DiagnosticMode::V81HitTestLogicalPoints,
-    PvZ2DiagnosticMode::V82ProfileLayoutRadar,
-    PvZ2DiagnosticMode::V83ProfileButtonDispatch,
-    PvZ2DiagnosticMode::V84FinalBlitTrace,
-    PvZ2DiagnosticMode::V84PointsEqualPixels,
-    PvZ2DiagnosticMode::V84AndroidGraphicsContract,
-    PvZ2DiagnosticMode::V85PerformanceBaseline,
-    PvZ2DiagnosticMode::V86HeapPerformanceFix,
-    PvZ2DiagnosticMode::V87PreemptiveMutexScheduler,
-    PvZ2DiagnosticMode::V88AdaptiveMutexStartup,
-    PvZ2DiagnosticMode::V89PerformanceProfiler,
-    PvZ2DiagnosticMode::V90DirectPresentationProfiler,
-    PvZ2DiagnosticMode::V91IndexedAllocatorRelro,
-    PvZ2DiagnosticMode::V92LongRunInteractive,
-    PvZ2DiagnosticMode::V93ReturnProvenance,
-    PvZ2DiagnosticMode::V94CallerReturnWatch,
-    PvZ2DiagnosticMode::V95PreciseCallerReturnWatch,
-    PvZ2DiagnosticMode::V96MainThreadBlocking,
-    PvZ2DiagnosticMode::V66BlockingWaitScheduler,
-    PvZ2DiagnosticMode::V65ConditionVariableScheduler,
-    PvZ2DiagnosticMode::CtypeCompatDeepScout,
+    // App-facing selection is intentionally single-mode from v97 onward.
+    // Historical descriptors remain registered for internal diagnostics.
+    PvZ2DiagnosticMode::V97GrantedMutexWaitGraph,
 };
 
 } // namespace
@@ -3285,6 +3266,7 @@ public:
     std::uint64_t v87_priority_continuations = 0u;
     std::uint64_t v88_burst_continuations = 0u;
     std::uint64_t v87_deadlock_cycles = 0u;
+    std::uint64_t v97_granted_graph_terminals = 0u;
     std::uint32_t v87_last_mutex_error = 0u;
     std::string v87_failure_message;
 
@@ -6848,6 +6830,14 @@ public:
                 return 0xffffffffu;
             }
 
+            // v97: handoff sets owner/depth and leaves the wait record alive
+            // only until V87PrepareMutexResume consumes it. Once granted, that
+            // record is not an edge in the wait-for graph.
+            if (V97Enabled() &&
+                wait->second.granted) {
+                return 0xffffffffu;
+            }
+
             const auto mutex =
                 v63_mutexes.find(
                     wait->second.mutex);
@@ -6861,13 +6851,24 @@ public:
             const std::uint32_t owner =
                 mutex->second.owner;
 
-            if (owner == waiter_tid ||
-                !seen.insert(owner).second) {
+            if (owner == waiter_tid) {
                 return owner;
             }
 
-            if (v87_mutex_waits.find(owner) ==
-                v87_mutex_waits.end()) {
+            const auto owner_wait =
+                v87_mutex_waits.find(owner);
+
+            if (owner_wait ==
+                    v87_mutex_waits.end() ||
+                (V97Enabled() &&
+                 owner_wait->second.granted)) {
+                // No live dependency beyond this owner. A granted record
+                // means the owner must be scheduled to finish its lock call,
+                // not followed as though it were still waiting.
+                return owner;
+            }
+
+            if (!seen.insert(owner).second) {
                 return owner;
             }
 
@@ -6947,7 +6948,9 @@ public:
         std::uint32_t cursor = owner;
 
         while (cursor != 0xffffffffu) {
-            if (!seen.insert(cursor).second) {
+            // The requester is not inserted in v87_mutex_waits until this
+            // validation succeeds, so preserve direct self-deadlock detection.
+            if (cursor == thread_id) {
                 ++v87_deadlock_cycles;
 
                 v87_failure_message =
@@ -6974,9 +6977,64 @@ public:
             const auto owner_wait =
                 v87_mutex_waits.find(cursor);
 
+            // A thread without a wait record owns/runs normally. In v97 a
+            // granted record is equivalent for graph purposes: handoff has
+            // already assigned ownership, and the record survives only until
+            // the thread consumes the pthread_mutex_lock return.
             if (owner_wait ==
-                v87_mutex_waits.end()) {
+                    v87_mutex_waits.end() ||
+                (V97Enabled() &&
+                 owner_wait->second.granted)) {
+
+                if (owner_wait != v87_mutex_waits.end() &&
+                    owner_wait->second.granted) {
+                    ++v97_granted_graph_terminals;
+
+                    if (v97_granted_graph_terminals <= 16u ||
+                        (v97_granted_graph_terminals &
+                         (v97_granted_graph_terminals - 1u)) == 0u) {
+                        AppendDiagnostic(
+                            "V97 MUTEX GRAPH GRANTED TERMINAL #" +
+                            std::to_string(
+                                v97_granted_graph_terminals) +
+                            " requesterTid=" +
+                            std::to_string(thread_id) +
+                            " ownerTid=" +
+                            std::to_string(cursor) +
+                            " mutex=" +
+                            V46DescribeGuestAddress(mutex) +
+                            " ownerWaitMutex=" +
+                            V46DescribeGuestAddress(
+                                owner_wait->second.mutex));
+                    }
+                }
+
                 break;
+            }
+
+            // Only an ungranted waiter contributes a live dependency edge.
+            if (!seen.insert(cursor).second) {
+                ++v87_deadlock_cycles;
+
+                v87_failure_message =
+                    "v87 detected a mutex wait-for cycle: waiterTid=" +
+                    std::to_string(thread_id) +
+                    " mutex=" +
+                    V46DescribeGuestAddress(mutex) +
+                    " ownerTid=" +
+                    std::to_string(owner) +
+                    ".";
+
+                result.message =
+                    v87_failure_message;
+
+                Append(
+                    "V87 MUTEX DEADLOCK #" +
+                    std::to_string(v87_deadlock_cycles) +
+                    " " +
+                    v87_failure_message);
+
+                return false;
             }
 
             const auto owner_mutex =
@@ -7365,6 +7423,8 @@ public:
             << v88_burst_continuations
             << " deadlockCycles="
             << v87_deadlock_cycles
+            << " v97GrantedGraphTerminals="
+            << v97_granted_graph_terminals
             << " pendingWaiters="
             << v87_mutex_waits.size();
 
@@ -8404,6 +8464,11 @@ public:
         return out.str();
     }
 
+    bool V97Enabled() const {
+        return HasCapability(
+            PvZ2ProbeCapability::GrantedMutexWaitGraph);
+    }
+
     bool V96Enabled() const {
         return HasCapability(
             PvZ2ProbeCapability::MainThreadBlocking);
@@ -8420,6 +8485,7 @@ public:
     }
 
     const char* RuntimeModeTag() const {
+        if (V97Enabled()) return "V97";
         if (V96Enabled()) return "V96";
         if (V95Enabled()) return "V95";
         if (V94Enabled()) return "V94";
@@ -8512,7 +8578,8 @@ public:
                 line.rfind("V93 ", 0u) == 0u ||
                 line.rfind("V94 ", 0u) == 0u ||
                 line.rfind("V95 ", 0u) == 0u ||
-                line.rfind("V96 ", 0u) == 0u) {
+                line.rfind("V96 ", 0u) == 0u ||
+                line.rfind("V97 ", 0u) == 0u) {
                 return true;
             }
 
@@ -31264,6 +31331,10 @@ bool JniProbePrepareRuntime(
         callbacks.Append(
             "V83 PROFILE BUTTON DISPATCH: v83 restored the V80 2048x1536 pixel touch control and proved buttonId=5 can dispatch even when the raw +0x28/+0x2c/+0x30/+0x34 radar rectangle does not contain the screen-space tap. Those raw fields are therefore local/transformed, not absolute hitboxes. The passive dispatcher trap remains enabled and does not alter rendering, widget geometry or GameState.");
     }
+    if (callbacks.V97Enabled()) {
+        callbacks.AppendDiagnostic(
+            "V97 MUTEX WAIT GRAPH: a V87 wait record with granted=true is a handoff/resume token, not a live wait-for dependency. Deadlock traversal stops at granted owners and preferred-owner traversal schedules them instead of following their stale bookkeeping edge.");
+    }
     if (callbacks.V96Enabled()) {
         callbacks.AppendDiagnostic(
             "V96 MAIN BLOCKING: lifecycle tid=0 now uses real cooperative sem_wait/sem_timedwait, pthread_cond_wait/pthread_cond_timedwait and nanosleep/usleep blocking. While main is blocked only deferred workers run; condition resume is prepared before sem/sleep and generic mutex resume. v95 precise LR provenance remains active.");
@@ -31271,7 +31342,7 @@ bool JniProbePrepareRuntime(
     if(callbacks.V95Enabled()){
         callbacks.AppendDiagnostic("V95 PRECISE CALLER LR WATCH: v94 performance regression removed. Exact traps emulate PUSH@0x10868978 and POP@0x108689c4; only incoming LR=0x1086f1fc arms the saved-LR slot. STR/STREX and host SVC writes are observed only against that exact slot. Observation only: no stack repair, return rewrite or guest-code recovery.");
     } else if(callbacks.V94Enabled()){
-        callbacks.AppendDiagnostic("V94 CALLER LR WATCH: exact PUSH/POP trap implementation active; legacy v94 mode retained only as a selectable control.");
+        callbacks.AppendDiagnostic("V94 CALLER LR WATCH: exact PUSH/POP trap implementation active; legacy v94 mode retained internally for diagnostic control.");
     } else if(callbacks.V93Enabled()){
         callbacks.Append("V93 RETURN PROVENANCE: complete v92 long-run runtime preserved. The exact delete->free path returning through 0x10868b30 is observed non-invasively inside the host free callback: saved PC at guest SP+36 is captured before and after FreeHeap. No guest instruction, return address, allocator result, scheduler state or recovery behavior is changed.");
     } else if(callbacks.V92Enabled()){

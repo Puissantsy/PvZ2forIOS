@@ -290,6 +290,10 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // v96: preserve the v95 provenance watcher and give lifecycle tid=0
     // real cooperative sem/cond/sleep blocking semantics.
     V96MainThreadBlocking = 40u,
+
+    // v97: treat a handed-off/granted V87 mutex wait as runnable ownership,
+    // not as a live edge in the wait-for graph.
+    V97GrantedMutexWaitGraph = 41u,
 };
 
 enum class PvZ2ProbeCapability : std::uint64_t {
@@ -314,6 +318,7 @@ enum class PvZ2ProbeCapability : std::uint64_t {
     AllocatorProfiling = 1ull << 17,
     PreciseCallerReturnWatch = 1ull << 18,
     MainThreadBlocking = 1ull << 19,
+    GrantedMutexWaitGraph = 1ull << 20,
 };
 
 struct PvZ2DiagnosticModeDescriptor {

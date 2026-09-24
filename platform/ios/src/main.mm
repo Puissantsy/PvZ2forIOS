@@ -530,7 +530,7 @@ void PvZ2HostNotifyDirectFrame(
     self.captionLabel.clipsToBounds =
         YES;
     self.captionLabel.text =
-        @"PvZ2 v96 — starting…\nmain-thread blocking + LR watch";
+        @"PvZ2 v97 — starting…\ngranted-mutex graph + main waits";
 
     self.stopButton =
         [UIButton
@@ -719,7 +719,7 @@ void PvZ2HostNotifyDirectFrame(
 
     self.inputEnabled = NO;
     self.captionLabel.text =
-        @"PvZ2 v96 LIVE — HARD STOP requested; interrupting guest at the next Dynarmic checkpoint…";
+        @"PvZ2 v97 LIVE — HARD STOP requested; interrupting guest at the next Dynarmic checkpoint…";
     self.stopButton.enabled = NO;
     PvZ2RequestInteractiveStop();
 }
@@ -1297,7 +1297,7 @@ void PvZ2HostNotifyDirectFrame(
         self.captionLabel.text =
             [NSString
                 stringWithFormat:
-                    @"PvZ2 v96 LIVE • frame %lu • %@\n%lu×%lu guest • direct GPU 1:1",
+                    @"PvZ2 v97 LIVE • frame %lu • %@\n%lu×%lu guest • direct GPU 1:1",
                     (unsigned long)frame,
                     touchState,
                     (unsigned long)width,
@@ -1465,9 +1465,6 @@ void PvZ2HostNotifyDirectFrame(
     UIButton *jniButton;
 
 @property(nonatomic, strong)
-    UISegmentedControl *diagnosticModeControl;
-
-@property(nonatomic, strong)
     PvZ2LiveViewController *liveController;
 
 @property(nonatomic, assign)
@@ -1527,7 +1524,7 @@ void PvZ2HostNotifyDirectFrame(
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — v96 Main Thread Blocking";
+        @"PvZ2forIOS — v97 Granted Mutex Wait Graph";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -1536,7 +1533,7 @@ void PvZ2HostNotifyDirectFrame(
         NO;
 
     title.text =
-        @"PvZ2forIOS — v96 Main Thread Blocking";
+        @"PvZ2forIOS — v97 Granted Mutex Wait Graph";
 
     title.font =
         [UIFont
@@ -1552,7 +1549,7 @@ void PvZ2HostNotifyDirectFrame(
         NO;
 
     explanation.text =
-        @"v96 keeps the validated v95 runtime and precise LR watcher, then fixes lifecycle main-thread blocking for semaphores, condition variables and sleeps. A blocked tid=0 now stays frozen while deferred workers run until the real post/signal/timeout and required mutex reacquire complete.";
+        @"v97 keeps the validated v96 main-thread blocking and v95 LR watcher, then fixes V87 mutex deadlock traversal: a granted handoff is runnable ownership, not a live wait-for dependency. Historical run modes are hidden; the app always runs the current v97 runtime.";
 
     explanation.numberOfLines = 0;
 
@@ -1597,46 +1594,6 @@ void PvZ2HostNotifyDirectFrame(
                 @"3. Run PvZ2\nAPK + OBB"
             selector:
                 @selector(selectApkForJni)];
-
-    NSMutableArray<NSString *> *diagnosticModeItems =
-        [NSMutableArray array];
-    NSInteger defaultDiagnosticModeIndex = 0;
-
-    const std::size_t diagnosticModeCount =
-        PvZ2SelectableDiagnosticModeCount();
-
-    for (std::size_t i = 0u;
-         i < diagnosticModeCount;
-         ++i) {
-        const auto* descriptor =
-            PvZ2SelectableDiagnosticModeAt(i);
-        if (descriptor == nullptr ||
-            descriptor->ui_name == nullptr) {
-            continue;
-        }
-
-        [diagnosticModeItems
-            addObject:
-                [NSString
-                    stringWithUTF8String:
-                        descriptor->ui_name]];
-
-        if (descriptor->mode ==
-            PvZ2DiagnosticMode::V96MainThreadBlocking) {
-            defaultDiagnosticModeIndex =
-                static_cast<NSInteger>(i);
-        }
-    }
-
-    self.diagnosticModeControl =
-        [[UISegmentedControl alloc]
-            initWithItems:
-                diagnosticModeItems];
-
-    self.diagnosticModeControl.translatesAutoresizingMaskIntoConstraints =
-        NO;
-    self.diagnosticModeControl.selectedSegmentIndex =
-        defaultDiagnosticModeIndex;
 
     UIStackView *mainButtons =
         [[UIStackView alloc]
@@ -1726,7 +1683,6 @@ void PvZ2HostNotifyDirectFrame(
                     title,
                     explanation,
                     self.statusLabel,
-                    self.diagnosticModeControl,
                     mainButtons,
                     utilityButtons,
                     self.logView
@@ -1772,10 +1728,6 @@ void PvZ2HostNotifyDirectFrame(
                         guide.bottomAnchor
                     constant:
                         -16.0],
-
-                [self.diagnosticModeControl.heightAnchor
-                    constraintEqualToConstant:
-                        34.0],
 
                 [mainButtons.heightAnchor
                     constraintEqualToConstant:
@@ -2267,34 +2219,22 @@ void PvZ2HostNotifyDirectFrame(
     picker.modalPresentationStyle =
         UIModalPresentationFormSheet;
 
-    NSInteger modeIndex =
-        self.diagnosticModeControl.selectedSegmentIndex;
-
     const auto* selectedDescriptor =
-        modeIndex >= 0
-            ? PvZ2SelectableDiagnosticModeAt(
-                  static_cast<std::size_t>(
-                      modeIndex))
-            : nullptr;
-
-    if (selectedDescriptor == nullptr) {
-        selectedDescriptor =
-            PvZ2SelectableDiagnosticModeAt(0u);
-        modeIndex = 0;
-    }
+        PvZ2DescribeDiagnosticMode(
+            PvZ2DiagnosticMode::V97GrantedMutexWaitGraph);
 
     NSString *selectedModeName =
         selectedDescriptor != nullptr
             ? [NSString
                   stringWithUTF8String:
                       selectedDescriptor->internal_name]
-            : @"UNKNOWN";
+            : @"V97_GRANTED_MUTEX_WAIT_GRAPH";
 
     [self
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. mode=%@. Start with V95 Precise LR. It restores the inherited v91 allocator/128 MiB runtime and uses exact PUSH/POP traps to watch only the outer saved LR whose expected value is 0x1086f1fc. No recovery or stack patch is applied.",
+                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. Runtime is fixed to %@; historical run modes are no longer exposed in the app.",
                     selectedModeName]];
 
     [self
@@ -2349,26 +2289,12 @@ void PvZ2HostNotifyDirectFrame(
         return;
     }
 
-    NSInteger selectedMode =
-        self.diagnosticModeControl.selectedSegmentIndex;
-
     const auto* diagnosticDescriptor =
-        selectedMode >= 0
-            ? PvZ2SelectableDiagnosticModeAt(
-                  static_cast<std::size_t>(
-                      selectedMode))
-            : nullptr;
-
-    if (diagnosticDescriptor == nullptr) {
-        diagnosticDescriptor =
-            PvZ2DescribeDiagnosticMode(
-                PvZ2DiagnosticMode::FullMatrix);
-    }
+        PvZ2DescribeDiagnosticMode(
+            PvZ2DiagnosticMode::V97GrantedMutexWaitGraph);
 
     const PvZ2DiagnosticMode diagnosticMode =
-        diagnosticDescriptor != nullptr
-            ? diagnosticDescriptor->mode
-            : PvZ2DiagnosticMode::FullMatrix;
+        PvZ2DiagnosticMode::V97GrantedMutexWaitGraph;
 
     NSString *diagnosticModeName =
         diagnosticDescriptor != nullptr
@@ -2384,7 +2310,7 @@ void PvZ2HostNotifyDirectFrame(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v96 Main Thread Blocking started mode=%@; PID=%d ===",
+                    @"=== PvZ2 v97 Granted Mutex Wait Graph started mode=%@; PID=%d ===",
                     diagnosticModeName,
                     getpid()]];
 
@@ -2898,14 +2824,14 @@ void PvZ2HostNotifyDirectFrame(
                                     finishRunWithMessage:
                                         [NSString
                                             stringWithFormat:
-                                                @"PvZ2 v96 LIVE — HARD STOPPED after %u guest frames.\nClose to inspect the caller-LR provenance log.",
+                                                @"PvZ2 v97 LIVE — HARD STOPPED after %u guest frames.\nClose to inspect the v97 runtime log.",
                                                 result.draw_frames_completed]];
                             } else {
                                 [selfRef.liveController
                                     finishRunWithMessage:
                                         [NSString
                                             stringWithFormat:
-                                                @"PvZ2 v96 LIVE — run finished after %u guest frames.\nClose to inspect the caller-LR/allocator/RELRO log.",
+                                                @"PvZ2 v97 LIVE — run finished after %u guest frames.\nClose to inspect the v97 runtime log.",
                                                 result.draw_frames_completed]];
                             }
 
@@ -2962,11 +2888,11 @@ void PvZ2HostNotifyDirectFrame(
 
                             if (result.hard_stop_requested) {
                                 [selfRef.liveController finishRunWithMessage:
-                                    @"PvZ2 v96 LIVE — HARD STOPPED.\nGuest execution was interrupted at the next Dynarmic checkpoint. Close to inspect the caller-LR provenance log."];
+                                    @"PvZ2 v97 LIVE — HARD STOPPED.\nGuest execution was interrupted at the next Dynarmic checkpoint. Close to inspect the v97 runtime log."];
                             } else {
                                 [selfRef.liveController finishRunWithMessage:
                                     [NSString stringWithFormat:
-                                        @"PvZ2 v96 LIVE — guest stopped/crashed.\n%@\nClose to inspect the caller-LR/allocator/RELRO log.", message]];
+                                        @"PvZ2 v97 LIVE — guest stopped/crashed.\n%@\nClose to inspect the v97 runtime log.", message]];
                             }
 
                         } else {
