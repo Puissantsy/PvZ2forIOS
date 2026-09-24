@@ -3262,6 +3262,7 @@ public:
     // actual OpenSL callback runs there on a private stack with a distinct guest
     // thread id; it is never entered from the CoreAudio render callback.
     bool v102_audio_service_requested = false;
+    bool v102_audio_forced_halt_pending = false;
     bool v102_audio_inline_active = false;
     std::uint32_t v102_audio_callback_stack_top = 0u;
     std::uint64_t v102_audio_poll_ticks = 0u;
@@ -31064,6 +31065,7 @@ public:
                 if (V102RefreshAudioServiceRequest(
                         true)) {
                     ++v102_audio_forced_slices;
+                    v102_audio_forced_halt_pending = true;
                     if (jit) {
                         jit->HaltExecution(
                             Dynarmic::HaltReason::UserDefined4);
@@ -34265,6 +34267,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
 
                                 callbacks.v102_audio_inline_active = true;
                                 callbacks.v102_audio_service_requested = false;
+                                callbacks.v102_audio_forced_halt_pending = false;
                                 ++callbacks.v102_audio_inline_services;
 
                                 constexpr std::uint32_t
@@ -34609,12 +34612,21 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             // host completion total here as well.
                             if (callbacks.V102Enabled() &&
                                 !raw_arm_abi) {
+                                const bool audio_only_halt =
+                                    callbacks
+                                        .v102_audio_forced_halt_pending;
+                                callbacks
+                                    .v102_audio_forced_halt_pending =
+                                    false;
+
                                 callbacks.V102RefreshAudioServiceRequest(
                                     true);
                                 if (callbacks
                                         .v102_audio_service_requested) {
                                     if (!service_v102_audio(
-                                            "main-checkpoint")) {
+                                            audio_only_halt
+                                                ? "audio-preempt"
+                                                : "scheduler-checkpoint")) {
                                         callbacks.soft_slice_timeout =
                                             false;
                                         result.lifecycle_failure_name =
@@ -34623,7 +34635,15 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                             callbacks.Trace();
                                         return false;
                                     }
-                                    continue;
+
+                                    // Only an AddTicks/CoreAudio preemption is
+                                    // consumed by the audio service itself. If
+                                    // the halt came from mutex/cond/sem/resource
+                                    // scheduling, continue below and preserve
+                                    // that wait's normal v96/v97 handling.
+                                    if (audio_only_halt) {
+                                        continue;
+                                    }
                                 }
                             }
 
@@ -34831,6 +34851,26 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                 future_changed = false;
                                 any_worker_ran = false;
                                 worker_slices_this_round = 0u;
+
+                                if (callbacks.V102Enabled() &&
+                                    !raw_arm_abi) {
+                                    callbacks.V102RefreshAudioServiceRequest(
+                                        true);
+                                    if (callbacks
+                                            .v102_audio_service_requested &&
+                                        !service_v102_audio(
+                                            "blocked-wait")) {
+                                        callbacks.soft_slice_timeout =
+                                            false;
+                                        callbacks.current_probe_thread_id =
+                                            0u;
+                                        result.lifecycle_failure_name =
+                                            name;
+                                        result.trace =
+                                            callbacks.Trace();
+                                        return false;
+                                    }
+                                }
 
                                 if (v96_main_blocking_wait) {
                                     ++v96_workers_only_rounds;
