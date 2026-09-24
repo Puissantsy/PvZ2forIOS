@@ -982,6 +982,8 @@ constexpr std::uint64_t kCapAudioClockContract =
     ProbeCap(PvZ2ProbeCapability::AudioClockContract);
 constexpr std::uint64_t kCapAudioRealtimePump =
     ProbeCap(PvZ2ProbeCapability::AudioRealtimePump);
+constexpr std::uint64_t kCapAudioDrawFramePump =
+    ProbeCap(PvZ2ProbeCapability::AudioDrawFramePump);
 
 constexpr std::uint64_t kCapsTransformBase =
     kCapLive | kCapCpuFrame | kCapTransform |
@@ -1023,6 +1025,8 @@ constexpr std::uint64_t kCapsV101 =
     kCapsV100 | kCapAudioClockContract;
 constexpr std::uint64_t kCapsV102 =
     kCapsV101 | kCapAudioRealtimePump;
+constexpr std::uint64_t kCapsV103 =
+    kCapsV102 | kCapAudioDrawFramePump;
 
 constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::PassiveRegistry, "PASSIVE_REGISTRY", nullptr, 0u, false},
@@ -1072,12 +1076,13 @@ constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::V100OpenSLCallbackABI, "V100_OPENSL_CALLBACK_ABI", "V100 Audio ABI", kCapsV100, true},
     {PvZ2DiagnosticMode::V101AudioClockContract, "V101_AUDIO_CLOCK_CONTRACT", "V101 Audio Clock", kCapsV101, true},
     {PvZ2DiagnosticMode::V102AudioRealtimePump, "V102_AUDIO_REALTIME_PUMP", "V102 Audio Pump", kCapsV102, true},
+    {PvZ2DiagnosticMode::V103AudioDrawFramePump, "V103_AUDIO_DRAWFRAME_PUMP", "V103 Audio Draw Pump", kCapsV103, true},
 };
 
 constexpr PvZ2DiagnosticMode kSelectableDiagnosticModes[] = {
     // App-facing selection remains intentionally single-mode.
     // Historical descriptors stay registered for internal diagnostics.
-    PvZ2DiagnosticMode::V102AudioRealtimePump,
+    PvZ2DiagnosticMode::V103AudioDrawFramePump,
 };
 
 } // namespace
@@ -8538,6 +8543,21 @@ public:
     }
 
 
+    bool V103Enabled() const {
+        return HasCapability(
+            PvZ2ProbeCapability::AudioDrawFramePump);
+    }
+
+    bool V103AudioRealtimeWindow() const {
+        if (!V103Enabled()) {
+            return true;
+        }
+
+        return
+            return_mode == ReturnMode::Lifecycle &&
+            current_lifecycle_name == "Native_onDrawFrame";
+    }
+
     bool V102Enabled() const {
         return HasCapability(
             PvZ2ProbeCapability::AudioRealtimePump);
@@ -8568,6 +8588,7 @@ public:
     bool V102RefreshAudioServiceRequest(
         bool count_deferral = false) {
         if (!V102Enabled() ||
+            !V103AudioRealtimeWindow() ||
             v102_audio_inline_active ||
             !v99_audio_configured ||
             v99_play_state != 3u ||
@@ -9263,7 +9284,9 @@ public:
                 v102_audio_poll_ticks = 0u;
                 v102_audio_service_requested = false;
                 AppendDiagnostic(
-                    "V102 AUDIO REALTIME CLOCK armed at PLAYING; CoreAudio completions will preempt long guest lifecycles at scheduler checkpoints.");
+                    V103Enabled()
+                        ? "V103 AUDIO REALTIME CLOCK armed at PLAYING; preemption is gated until Native_onDrawFrame, with startup using fallback drains."
+                        : "V102 AUDIO REALTIME CLOCK armed at PLAYING; CoreAudio completions will preempt long guest lifecycles at scheduler checkpoints.");
             }
 
             if (changed) {
@@ -9512,6 +9535,7 @@ public:
     }
 
     const char* RuntimeModeTag() const {
+        if (V103Enabled()) return "V103";
         if (V102Enabled()) return "V102";
         if (V101Enabled()) return "V101";
         if (V100Enabled()) return "V100";
@@ -9616,7 +9640,8 @@ public:
                 line.rfind("V99 ", 0u) == 0u ||
                 line.rfind("V100 ", 0u) == 0u ||
                 line.rfind("V101 ", 0u) == 0u ||
-                line.rfind("V102 ", 0u) == 0u) {
+                line.rfind("V102 ", 0u) == 0u ||
+                line.rfind("V103 ", 0u) == 0u) {
                 return true;
             }
 
@@ -31047,6 +31072,7 @@ public:
         ticks_consumed += ticks;
 
         if (V102Enabled() &&
+            V103AudioRealtimeWindow() &&
             !v102_audio_inline_active &&
             return_mode == ReturnMode::Lifecycle &&
             current_probe_thread_id == 0u &&
@@ -32532,9 +32558,13 @@ bool JniProbePrepareRuntime(
         callbacks.Append(
             "V83 PROFILE BUTTON DISPATCH: v83 restored the V80 2048x1536 pixel touch control and proved buttonId=5 can dispatch even when the raw +0x28/+0x2c/+0x30/+0x34 radar rectangle does not contain the screen-space tap. Those raw fields are therefore local/transformed, not absolute hitboxes. The passive dispatcher trap remains enabled and does not alter rendering, widget geometry or GameState.");
     }
+    if (callbacks.V103Enabled()) {
+        callbacks.AppendDiagnostic(
+            "V103 AUDIO DRAW-FRAME GATE: v102 real-time CoreAudio completion telemetry is preserved, but asynchronous OpenSL guest callback injection is allowed only inside Native_onDrawFrame. Native_onSurfaceCreated and all other startup lifecycles retain the validated v101 scheduler/interleaving behavior; pre-frame/frame-boundary drains remain fallback.");
+    }
     if (callbacks.V102Enabled()) {
         callbacks.AppendDiagnostic(
-            "V102 AUDIO REALTIME PUMP: CoreAudio completion counters are polled during long guest lifecycles and can request a soft Dynarmic checkpoint. OpenSL completion callbacks run only on the guest scheduler thread, with a private guest stack/thread id; frame boundaries remain fallback drains, never the audio clock.");
+            "V102 AUDIO REALTIME PUMP: CoreAudio completion counters are polled during eligible guest lifecycles and can request a soft Dynarmic checkpoint. OpenSL completion callbacks run only on the guest scheduler thread, with a private guest stack/thread id; frame boundaries remain fallback drains.");
     }
     if (callbacks.V101Enabled()) {
         callbacks.AppendDiagnostic(

@@ -321,6 +321,11 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // atomic completion counters; the guest callback is injected from safe
     // Dynarmic scheduler checkpoints using a dedicated guest stack/thread id.
     V102AudioRealtimePump = 46u,
+
+    // v103: preserve v102's CoreAudio-driven completion pump, but permit
+    // asynchronous guest callback injection only while Native_onDrawFrame is
+    // active. Startup/surface lifecycles retain the validated v101 scheduling.
+    V103AudioDrawFramePump = 47u,
 };
 
 enum class PvZ2ProbeCapability : std::uint64_t {
@@ -351,6 +356,7 @@ enum class PvZ2ProbeCapability : std::uint64_t {
     RawGuestCallbackABI = 1ull << 23,
     AudioClockContract = 1ull << 24,
     AudioRealtimePump = 1ull << 25,
+    AudioDrawFramePump = 1ull << 26,
 };
 
 struct PvZ2DiagnosticModeDescriptor {
