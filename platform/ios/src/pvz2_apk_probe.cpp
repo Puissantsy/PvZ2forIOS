@@ -11479,6 +11479,14 @@ public:
             plain_pc <=
                 kV94WrapperGuest + 4u;
 
+        // Dynarmic may expose r15 at the current or immediately following
+        // instruction during a memory callback. The direct BL caller is
+        // unique in this binary, so the expected LR is also a strong entry
+        // discriminator.
+        const bool wrapper_entry_context =
+            wrapper_push_pc ||
+            lr == kV94ExpectedReturnGuest;
+
         const bool plausible_lr_slot =
             width == 4u &&
             in_stack &&
@@ -11487,7 +11495,7 @@ public:
             ((address + 4u == sp) ||
              (address == sp + 12u));
 
-        if (wrapper_push_pc &&
+        if (wrapper_entry_context &&
             plausible_lr_slot) {
             ++v94_wrapper_entries;
             v94_watch_armed = true;
@@ -11603,6 +11611,48 @@ public:
             V91PhaseName());
     }
 
+    void V94ObserveRead(
+        std::uint32_t address,
+        std::uint32_t value) {
+
+        if (!V94Enabled() ||
+            !v94_watch_armed ||
+            address != v94_watch_slot) {
+            return;
+        }
+
+        constexpr std::uint32_t kV94WrapperPopGuest =
+            kGuestBase + 0x008689c4u;
+        constexpr std::uint32_t kV94ExpectedReturnGuest =
+            kGuestBase + 0x0086f1fcu;
+
+        const std::uint32_t pc =
+            jit ? jit->Regs()[15] : 0u;
+        const std::uint32_t plain_pc =
+            pc & ~1u;
+
+        if (plain_pc + 4u < kV94WrapperPopGuest ||
+            plain_pc > kV94WrapperPopGuest + 4u) {
+            return;
+        }
+
+        AppendDiagnostic(
+            "V94 LR-SLOT POP frame=" +
+            std::to_string(current_frame_number) +
+            " slot=0x" +
+            JniProbeHex(v94_watch_slot) +
+            " value=0x" +
+            JniProbeHex(value) +
+            " expected=0x" +
+            JniProbeHex(kV94ExpectedReturnGuest) +
+            " bit0=" +
+            std::to_string(value & 1u) +
+            " PC=0x" +
+            JniProbeHex(pc));
+
+        v94_watch_armed = false;
+    }
+
     std::optional<std::uint32_t>
     MemoryReadCode(std::uint32_t address) override {
         const auto* p = mem.Ptr(address, 4);
@@ -11623,6 +11673,8 @@ public:
     std::uint32_t MemoryRead32(std::uint32_t address) override {
         const std::uint32_t value =
             mem.Read32Guest(address);
+
+        V94ObserveRead(address, value);
 
         // v91: final safety net for the recurrent crash. The PLT loads free
         // directly from this GOT word. Guest stores and host bridges are
