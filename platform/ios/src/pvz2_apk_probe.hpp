@@ -276,6 +276,12 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // provenance around the exact free/delete return path implicated by the
     // recurrent 0x1086fcea Thumb-state crash. No guest recovery is applied.
     V93ReturnProvenance = 37u,
+
+    // v94: v93 proved FreeHeap and the inner delete frame are clean. Track
+    // the immediately outer frame (0x10868978), whose saved LR is expected
+    // to be 0x1086f1fc but is observed as 0x1086f203 at the fatal POP.
+    // Observation only: no stack repair or guest-code patch is applied.
+    V94CallerReturnWatch = 38u,
 };
 
 enum class PvZ2ProbeCapability : std::uint64_t {
@@ -296,6 +302,7 @@ enum class PvZ2ProbeCapability : std::uint64_t {
     IndexedAllocatorRelro = 1ull << 13,
     LongRunInteractive = 1ull << 14,
     ReturnProvenance = 1ull << 15,
+    CallerReturnWatch = 1ull << 16,
 };
 
 struct PvZ2DiagnosticModeDescriptor {
