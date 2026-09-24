@@ -294,6 +294,10 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // v97: treat a handed-off/granted V87 mutex wait as runnable ownership,
     // not as a live edge in the wait-for graph.
     V97GrantedMutexWaitGraph = 41u,
+
+    // v98: preserve the final composited framebuffer RGB verbatim during
+    // host presentation instead of unpremultiplying it by framebuffer alpha.
+    V98PresentationRgbFidelity = 42u,
 };
 
 enum class PvZ2ProbeCapability : std::uint64_t {
@@ -319,6 +323,7 @@ enum class PvZ2ProbeCapability : std::uint64_t {
     PreciseCallerReturnWatch = 1ull << 18,
     MainThreadBlocking = 1ull << 19,
     GrantedMutexWaitGraph = 1ull << 20,
+    PresentationRgbFidelity = 1ull << 21,
 };
 
 struct PvZ2DiagnosticModeDescriptor {

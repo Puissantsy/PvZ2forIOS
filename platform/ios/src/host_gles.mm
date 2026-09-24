@@ -209,15 +209,19 @@ bool EnsurePresentationResources() {
             "  vTexCoord=aTexCoord;\n"
             "}\n";
 
+        // v98: gColorTexture already contains PvZ2's final composited RGB.
+        // v90 copied the old v40 UIImage diagnostic workaround here and
+        // divided RGB by framebuffer alpha. That brightened low-alpha halos
+        // and antialiased edges (sun/zombie artifacts) and weakened shadows.
+        // Direct presentation must preserve RGB exactly; only the host
+        // drawable is forced opaque.
         static const char* fragment_source =
             "precision mediump float;\n"
             "uniform sampler2D uTexture;\n"
             "varying vec2 vTexCoord;\n"
             "void main(){\n"
             "  vec4 c=texture2D(uTexture,vTexCoord);\n"
-            "  float a=c.a;\n"
-            "  vec3 rgb=(a<=0.0)?vec3(0.0):clamp(c.rgb/max(a,0.0039215686),0.0,1.0);\n"
-            "  gl_FragColor=vec4(rgb,1.0);\n"
+            "  gl_FragColor=vec4(c.rgb,1.0);\n"
             "}\n";
 
         const GLuint vertex =
@@ -1123,10 +1127,10 @@ PvZ2HostGLESCopyDisplayRGBA(
         return nullptr;
     }
 
-    // Match the diagnostic PNG exactly: UIKit coordinates are top-left, while
-    // glReadPixels is bottom-left. PvZ2's default target can also contain
-    // premultiplied alpha during fades; undo it and expose an opaque display
-    // copy without mutating any guest-visible framebuffer bytes.
+    // v98: UIKit coordinates are top-left while glReadPixels is bottom-left.
+    // Preserve the final framebuffer RGB byte-for-byte and make only the host
+    // copy opaque. The old rgb/alpha normalization altered low-alpha visual
+    // content even though RGB was already the final composited result.
     for (std::uint32_t y = 0u;
          y < gHeight;
          ++y) {
@@ -1145,36 +1149,6 @@ PvZ2HostGLESCopyDisplayRGBA(
     for (std::size_t i = 0u;
          i < total_bytes;
          i += 4u) {
-
-        const std::uint32_t alpha =
-            gLiveDisplayPixels[i + 3u];
-
-        if (alpha == 0u) {
-            gLiveDisplayPixels[i + 0u] = 0u;
-            gLiveDisplayPixels[i + 1u] = 0u;
-            gLiveDisplayPixels[i + 2u] = 0u;
-        } else if (alpha < 255u) {
-            for (std::size_t channel = 0u;
-                 channel < 3u;
-                 ++channel) {
-
-                const std::uint32_t straight =
-                    (static_cast<std::uint32_t>(
-                         gLiveDisplayPixels[
-                             i + channel]) *
-                         255u +
-                     alpha / 2u) /
-                    alpha;
-
-                gLiveDisplayPixels[
-                    i + channel] =
-                    static_cast<std::uint8_t>(
-                        std::min<std::uint32_t>(
-                            255u,
-                            straight));
-            }
-        }
-
         gLiveDisplayPixels[i + 3u] = 255u;
     }
 
@@ -1266,50 +1240,13 @@ PvZ2HostGLESCapturePNGNamed(
             row_bytes);
     }
 
-    // v40: the offscreen framebuffer is already the final composited RGB
-    // result we want to inspect. Its alpha channel is still meaningful to
-    // PvZ2 during its splash/fade path, but feeding those bytes to UIKit as
-    // premultiplied alpha makes the diagnostic image get darkened again
-    // against the black UIImageView background.
-    //
-    // Normalize the diagnostic capture only:
-    //   1. undo premultiplication for partially transparent pixels;
-    //   2. force the exported image opaque so UIKit cannot composite it a
-    //      second time.
-    //
-    // This does NOT modify the GLES framebuffer or any pixels seen by PvZ2.
+    // v98: the offscreen framebuffer RGB is already the final composited
+    // image. Preserve those RGB bytes and force only the exported host image
+    // alpha opaque. This keeps diagnostic captures faithful to direct GPU
+    // presentation and avoids resurrecting the old v40 unpremultiply artifact.
     for (std::size_t i = 0u;
          i < total_bytes;
          i += 4u) {
-
-        const std::uint32_t alpha =
-            flipped[i + 3u];
-
-        if (alpha == 0u) {
-            flipped[i + 0u] = 0u;
-            flipped[i + 1u] = 0u;
-            flipped[i + 2u] = 0u;
-        } else if (alpha < 255u) {
-            for (std::size_t channel = 0u;
-                 channel < 3u;
-                 ++channel) {
-
-                const std::uint32_t value =
-                    flipped[i + channel];
-
-                const std::uint32_t straight =
-                    (value * 255u +
-                     alpha / 2u) /
-                    alpha;
-
-                flipped[i + channel] =
-                    static_cast<std::uint8_t>(
-                        std::min<std::uint32_t>(
-                            255u,
-                            straight));
-            }
-        }
-
         flipped[i + 3u] = 255u;
     }
 

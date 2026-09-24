@@ -971,6 +971,8 @@ constexpr std::uint64_t kCapMainThreadBlocking =
     ProbeCap(PvZ2ProbeCapability::MainThreadBlocking);
 constexpr std::uint64_t kCapGrantedMutexWaitGraph =
     ProbeCap(PvZ2ProbeCapability::GrantedMutexWaitGraph);
+constexpr std::uint64_t kCapPresentationRgbFidelity =
+    ProbeCap(PvZ2ProbeCapability::PresentationRgbFidelity);
 
 constexpr std::uint64_t kCapsTransformBase =
     kCapLive | kCapCpuFrame | kCapTransform |
@@ -1002,6 +1004,8 @@ constexpr std::uint64_t kCapsV96 =
     kCapsV95 | kCapMainThreadBlocking;
 constexpr std::uint64_t kCapsV97 =
     kCapsV96 | kCapGrantedMutexWaitGraph;
+constexpr std::uint64_t kCapsV98 =
+    kCapsV97 | kCapPresentationRgbFidelity;
 
 constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::PassiveRegistry, "PASSIVE_REGISTRY", nullptr, 0u, false},
@@ -1046,12 +1050,13 @@ constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::V95PreciseCallerReturnWatch, "V95_PRECISE_CALLER_RETURN_WATCH", "V95 Precise LR", kCapsV95, true},
     {PvZ2DiagnosticMode::V96MainThreadBlocking, "V96_MAIN_THREAD_BLOCKING", "V96 Main Waits", kCapsV96, true},
     {PvZ2DiagnosticMode::V97GrantedMutexWaitGraph, "V97_GRANTED_MUTEX_WAIT_GRAPH", "V97 Current", kCapsV97, true},
+    {PvZ2DiagnosticMode::V98PresentationRgbFidelity, "V98_PRESENTATION_RGB_FIDELITY", "V98 Current", kCapsV98, true},
 };
 
 constexpr PvZ2DiagnosticMode kSelectableDiagnosticModes[] = {
-    // App-facing selection is intentionally single-mode from v97 onward.
-    // Historical descriptors remain registered for internal diagnostics.
-    PvZ2DiagnosticMode::V97GrantedMutexWaitGraph,
+    // App-facing selection remains intentionally single-mode.
+    // Historical descriptors stay registered for internal diagnostics.
+    PvZ2DiagnosticMode::V98PresentationRgbFidelity,
 };
 
 } // namespace
@@ -8464,6 +8469,11 @@ public:
         return out.str();
     }
 
+    bool V98Enabled() const {
+        return HasCapability(
+            PvZ2ProbeCapability::PresentationRgbFidelity);
+    }
+
     bool V97Enabled() const {
         return HasCapability(
             PvZ2ProbeCapability::GrantedMutexWaitGraph);
@@ -8485,6 +8495,7 @@ public:
     }
 
     const char* RuntimeModeTag() const {
+        if (V98Enabled()) return "V98";
         if (V97Enabled()) return "V97";
         if (V96Enabled()) return "V96";
         if (V95Enabled()) return "V95";
@@ -8579,7 +8590,8 @@ public:
                 line.rfind("V94 ", 0u) == 0u ||
                 line.rfind("V95 ", 0u) == 0u ||
                 line.rfind("V96 ", 0u) == 0u ||
-                line.rfind("V97 ", 0u) == 0u) {
+                line.rfind("V97 ", 0u) == 0u ||
+                line.rfind("V98 ", 0u) == 0u) {
                 return true;
             }
 
@@ -31330,6 +31342,10 @@ bool JniProbePrepareRuntime(
     if (callbacks.V83Enabled()) {
         callbacks.Append(
             "V83 PROFILE BUTTON DISPATCH: v83 restored the V80 2048x1536 pixel touch control and proved buttonId=5 can dispatch even when the raw +0x28/+0x2c/+0x30/+0x34 radar rectangle does not contain the screen-space tap. Those raw fields are therefore local/transformed, not absolute hitboxes. The passive dispatcher trap remains enabled and does not alter rendering, widget geometry or GameState.");
+    }
+    if (callbacks.V98Enabled()) {
+        callbacks.AppendDiagnostic(
+            "V98 PRESENTATION RGB FIDELITY: host display and diagnostic copies preserve the guest framebuffer's already-composited RGB verbatim and force only output alpha opaque; the v40/v90 rgb/alpha unpremultiply workaround is disabled.");
     }
     if (callbacks.V97Enabled()) {
         callbacks.AppendDiagnostic(

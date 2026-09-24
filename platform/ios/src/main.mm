@@ -530,7 +530,7 @@ void PvZ2HostNotifyDirectFrame(
     self.captionLabel.clipsToBounds =
         YES;
     self.captionLabel.text =
-        @"PvZ2 v97 — starting…\ngranted-mutex graph + main waits";
+        @"PvZ2 v98 — starting…\nRGB fidelity + v97 runtime";
 
     self.stopButton =
         [UIButton
@@ -719,7 +719,7 @@ void PvZ2HostNotifyDirectFrame(
 
     self.inputEnabled = NO;
     self.captionLabel.text =
-        @"PvZ2 v97 LIVE — HARD STOP requested; interrupting guest at the next Dynarmic checkpoint…";
+        @"PvZ2 v98 LIVE — HARD STOP requested; interrupting guest at the next Dynarmic checkpoint…";
     self.stopButton.enabled = NO;
     PvZ2RequestInteractiveStop();
 }
@@ -1297,7 +1297,7 @@ void PvZ2HostNotifyDirectFrame(
         self.captionLabel.text =
             [NSString
                 stringWithFormat:
-                    @"PvZ2 v97 LIVE • frame %lu • %@\n%lu×%lu guest • direct GPU 1:1",
+                    @"PvZ2 v98 LIVE • frame %lu • %@\n%lu×%lu guest • direct GPU 1:1",
                     (unsigned long)frame,
                     touchState,
                     (unsigned long)width,
@@ -1524,7 +1524,7 @@ void PvZ2HostNotifyDirectFrame(
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — v97 Granted Mutex Wait Graph";
+        @"PvZ2forIOS — v98 Presentation RGB Fidelity";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -1533,7 +1533,7 @@ void PvZ2HostNotifyDirectFrame(
         NO;
 
     title.text =
-        @"PvZ2forIOS — v97 Granted Mutex Wait Graph";
+        @"PvZ2forIOS — v98 Presentation RGB Fidelity";
 
     title.font =
         [UIFont
@@ -1549,7 +1549,7 @@ void PvZ2HostNotifyDirectFrame(
         NO;
 
     explanation.text =
-        @"v97 keeps the validated v96 main-thread blocking and v95 LR watcher, then fixes V87 mutex deadlock traversal: a granted handoff is runnable ownership, not a live wait-for dependency. Historical run modes are hidden; the app always runs the current v97 runtime.";
+        @"v98 keeps the validated v97 playable runtime and fixes host presentation fidelity: the final guest framebuffer RGB is now displayed verbatim instead of being divided by framebuffer alpha. This targets bright low-alpha halos/edges and missing translucent shadows without changing PTX assets or ETC1 decoding.";
 
     explanation.numberOfLines = 0;
 
@@ -2221,14 +2221,14 @@ void PvZ2HostNotifyDirectFrame(
 
     const auto* selectedDescriptor =
         PvZ2DescribeDiagnosticMode(
-            PvZ2DiagnosticMode::V97GrantedMutexWaitGraph);
+            PvZ2DiagnosticMode::V98PresentationRgbFidelity);
 
     NSString *selectedModeName =
         selectedDescriptor != nullptr
             ? [NSString
                   stringWithUTF8String:
                       selectedDescriptor->internal_name]
-            : @"V97_GRANTED_MUTEX_WAIT_GRAPH";
+            : @"V98_PRESENTATION_RGB_FIDELITY";
 
     [self
         appendUI:
@@ -2291,10 +2291,10 @@ void PvZ2HostNotifyDirectFrame(
 
     const auto* diagnosticDescriptor =
         PvZ2DescribeDiagnosticMode(
-            PvZ2DiagnosticMode::V97GrantedMutexWaitGraph);
+            PvZ2DiagnosticMode::V98PresentationRgbFidelity);
 
     const PvZ2DiagnosticMode diagnosticMode =
-        PvZ2DiagnosticMode::V97GrantedMutexWaitGraph;
+        PvZ2DiagnosticMode::V98PresentationRgbFidelity;
 
     NSString *diagnosticModeName =
         diagnosticDescriptor != nullptr
@@ -2310,7 +2310,7 @@ void PvZ2HostNotifyDirectFrame(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v97 Granted Mutex Wait Graph started mode=%@; PID=%d ===",
+                    @"=== PvZ2 v98 Presentation RGB Fidelity started mode=%@; PID=%d ===",
                     diagnosticModeName,
                     getpid()]];
 
@@ -2824,14 +2824,14 @@ void PvZ2HostNotifyDirectFrame(
                                     finishRunWithMessage:
                                         [NSString
                                             stringWithFormat:
-                                                @"PvZ2 v97 LIVE — HARD STOPPED after %u guest frames.\nClose to inspect the v97 runtime log.",
+                                                @"PvZ2 v98 LIVE — HARD STOPPED after %u guest frames.\nClose to inspect the v98 runtime log.",
                                                 result.draw_frames_completed]];
                             } else {
                                 [selfRef.liveController
                                     finishRunWithMessage:
                                         [NSString
                                             stringWithFormat:
-                                                @"PvZ2 v97 LIVE — run finished after %u guest frames.\nClose to inspect the v97 runtime log.",
+                                                @"PvZ2 v98 LIVE — run finished after %u guest frames.\nClose to inspect the v98 runtime log.",
                                                 result.draw_frames_completed]];
                             }
 
@@ -2888,11 +2888,11 @@ void PvZ2HostNotifyDirectFrame(
 
                             if (result.hard_stop_requested) {
                                 [selfRef.liveController finishRunWithMessage:
-                                    @"PvZ2 v97 LIVE — HARD STOPPED.\nGuest execution was interrupted at the next Dynarmic checkpoint. Close to inspect the v97 runtime log."];
+                                    @"PvZ2 v98 LIVE — HARD STOPPED.\nGuest execution was interrupted at the next Dynarmic checkpoint. Close to inspect the v98 runtime log."];
                             } else {
                                 [selfRef.liveController finishRunWithMessage:
                                     [NSString stringWithFormat:
-                                        @"PvZ2 v97 LIVE — guest stopped/crashed.\n%@\nClose to inspect the v97 runtime log.", message]];
+                                        @"PvZ2 v98 LIVE — guest stopped/crashed.\n%@\nClose to inspect the v98 runtime log.", message]];
                             }
 
                         } else {
