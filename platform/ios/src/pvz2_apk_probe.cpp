@@ -988,6 +988,8 @@ constexpr std::uint64_t kCapAudioWorkerHandshake =
     ProbeCap(PvZ2ProbeCapability::AudioWorkerHandshake);
 constexpr std::uint64_t kCapWwiseResamplerProbe =
     ProbeCap(PvZ2ProbeCapability::WwiseResamplerProbe);
+constexpr std::uint64_t kCapAudioRateBankWait =
+    ProbeCap(PvZ2ProbeCapability::AudioRateBankWait);
 
 constexpr std::uint64_t kCapsTransformBase =
     kCapLive | kCapCpuFrame | kCapTransform |
@@ -1035,6 +1037,8 @@ constexpr std::uint64_t kCapsV104 =
     kCapsV103 | kCapAudioWorkerHandshake;
 constexpr std::uint64_t kCapsV105 =
     kCapsV104 | kCapWwiseResamplerProbe;
+constexpr std::uint64_t kCapsV106 =
+    kCapsV105 | kCapAudioRateBankWait;
 
 constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::PassiveRegistry, "PASSIVE_REGISTRY", nullptr, 0u, false},
@@ -1087,12 +1091,13 @@ constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::V103AudioDrawFramePump, "V103_AUDIO_DRAWFRAME_PUMP", "V103 Audio Draw Pump", kCapsV103, true},
     {PvZ2DiagnosticMode::V104AudioWorkerHandshake, "V104_AUDIO_WORKER_HANDSHAKE", "V104 Audio Worker", kCapsV104, true},
     {PvZ2DiagnosticMode::V105WwiseResamplerProbe, "V105_WWISE_RESAMPLER_PROBE", "V105 Wwise Resampler", kCapsV105, true},
+    {PvZ2DiagnosticMode::V106AudioRateBankWait, "V106_AUDIO_RATE_BANK_WAIT", "V106 Audio+Bank", kCapsV106, true},
 };
 
 constexpr PvZ2DiagnosticMode kSelectableDiagnosticModes[] = {
     // App-facing selection remains intentionally single-mode.
     // Historical descriptors stay registered for internal diagnostics.
-    PvZ2DiagnosticMode::V105WwiseResamplerProbe,
+    PvZ2DiagnosticMode::V106AudioRateBankWait,
 };
 
 } // namespace
@@ -3313,6 +3318,11 @@ public:
     std::uint64_t v105_resampler_init_calls = 0u;
     std::uint64_t v105_set_pitch_calls = 0u;
     std::uint64_t v105_switch_to_calls = 0u;
+
+    // v106: identify the real CAkBankMgr worker and prefer it when the main
+    // thread is synchronously waiting inside AK::SoundEngine::UnloadBank.
+    std::uint32_t v106_bank_worker_tid = 0u;
+    std::uint64_t v106_bank_wait_priorities = 0u;
 
     // v61 safe cooperative boundary. Set only by the main Native_onDrawFrame
     // thread when the verified resource-stream pump has completed its
@@ -8580,6 +8590,24 @@ public:
     }
 
 
+    bool V106Enabled() const {
+        return HasCapability(
+            PvZ2ProbeCapability::AudioRateBankWait);
+    }
+
+    std::uint32_t V106MainSemaphoreWaitAddress() const {
+        if (!V106Enabled()) {
+            return 0u;
+        }
+
+        const auto found =
+            v66_sem_waits.find(0u);
+        return
+            found != v66_sem_waits.end()
+                ? found->second.sem
+                : 0u;
+    }
+
     bool V105Enabled() const {
         return HasCapability(
             PvZ2ProbeCapability::WwiseResamplerProbe);
@@ -9129,7 +9157,9 @@ public:
         v99_config_itf = make_handle(config_vtable);
         v99_caps_itf = make_handle(caps_vtable);
         v99_audio_rate_array =
-            mem.AllocateObject(4u, 4u);
+            mem.AllocateObject(
+                V106Enabled() ? 12u : 4u,
+                4u);
 
         if (v99_engine_object == 0u ||
             v99_output_mix_object == 0u ||
@@ -9146,9 +9176,27 @@ public:
         }
 
         // OpenSL sampling-rate constants are expressed in milliHertz.
-        mem.Write32Guest(
-            v99_audio_rate_array,
-            48000000u);
+        // v99-v105 incorrectly advertised only 48 kHz. PvZ2 1.5 explicitly
+        // selects a 32 kHz Wwise platform rate (24 kHz on its alternate path)
+        // before CAkLEngine::Init; forcing the OpenSL sink to 48 kHz therefore
+        // left g_pipelineCoreFrequency at 32 kHz while the host consumed PCM at
+        // 48 kHz. v106 advertises the discrete rates the game can request and
+        // lets AVAudioEngine convert the selected source rate downstream.
+        if (V106Enabled()) {
+            mem.Write32Guest(
+                v99_audio_rate_array + 0u,
+                24000000u);
+            mem.Write32Guest(
+                v99_audio_rate_array + 4u,
+                32000000u);
+            mem.Write32Guest(
+                v99_audio_rate_array + 8u,
+                48000000u);
+        } else {
+            mem.Write32Guest(
+                v99_audio_rate_array,
+                48000000u);
+        }
 
         AppendDiagnostic(
             "V99 AUDIO OPENSL OBJECTS READY engineObject=" +
@@ -9751,8 +9799,9 @@ public:
                     0u);
             }
 
-            // SLAudioOutputDescriptor, ARM32 ABI. Advertise one integrated
-            // stereo output with the exact 48 kHz rate used by this sink.
+            // SLAudioOutputDescriptor, ARM32 ABI. v106 exposes a discrete
+            // 24/32/48 kHz device contract. The game's normal 32 kHz request
+            // now matches instead of falling back to our old 48 kHz-only sink.
             mem.Write16Guest(
                 descriptor + 4u,
                 1u);
@@ -9764,7 +9813,9 @@ public:
                 1u);
             mem.Write32Guest(
                 descriptor + 16u,
-                48000000u);
+                V106Enabled()
+                    ? 24000000u
+                    : 48000000u);
             mem.Write32Guest(
                 descriptor + 20u,
                 48000000u);
@@ -9776,7 +9827,9 @@ public:
                 v99_audio_rate_array);
             mem.Write16Guest(
                 descriptor + 32u,
-                1u);
+                V106Enabled()
+                    ? 3u
+                    : 1u);
             mem.Write16Guest(
                 descriptor + 34u,
                 2u);
@@ -9815,6 +9868,7 @@ public:
     }
 
     const char* RuntimeModeTag() const {
+        if (V106Enabled()) return "V106";
         if (V105Enabled()) return "V105";
         if (V104Enabled()) return "V104";
         if (V103Enabled()) return "V103";
@@ -9925,7 +9979,8 @@ public:
                 line.rfind("V102 ", 0u) == 0u ||
                 line.rfind("V103 ", 0u) == 0u ||
                 line.rfind("V104 ", 0u) == 0u ||
-                line.rfind("V105 ", 0u) == 0u) {
+                line.rfind("V105 ", 0u) == 0u ||
+                line.rfind("V106 ", 0u) == 0u) {
                 return true;
             }
 
@@ -25099,6 +25154,34 @@ public:
 
             constexpr std::uint32_t kV104AkAudioThreadEntryGuest =
                 kGuestBase + 0x00bfdb70u;
+            constexpr std::uint32_t kV106AkBankThreadEntryGuest =
+                kGuestBase + 0x00bc7b8cu;
+
+            if (V106Enabled()) {
+                AppendDiagnostic(
+                    "V106 WORKER CREATED tid=" +
+                    std::to_string(thread_id) +
+                    " start=" +
+                    V46DescribeGuestAddress(start_routine) +
+                    " arg=" +
+                    V46DescribeGuestAddress(argument) +
+                    " phase=" +
+                    phase);
+
+                if ((start_routine & ~1u) ==
+                    kV106AkBankThreadEntryGuest) {
+                    v106_bank_worker_tid =
+                        thread_id;
+                    AppendDiagnostic(
+                        "V106 BANK WORKER FOUND tid=" +
+                        std::to_string(thread_id) +
+                        " start=" +
+                        V46DescribeGuestAddress(start_routine) +
+                        " arg=" +
+                        V46DescribeGuestAddress(argument));
+                }
+            }
+
             if (V104Enabled() &&
                 (start_routine & ~1u) ==
                     kV104AkAudioThreadEntryGuest) {
@@ -25134,6 +25217,31 @@ public:
                 const std::uint32_t worker_entry = mem.Read32Guest(argument);
                 const std::uint32_t worker_object =
                     mem.Read32Guest(argument + 4u);
+
+                if (V106Enabled()) {
+                    AppendDiagnostic(
+                        "V106 WORKER WRAPPER tid=" +
+                        std::to_string(thread_id) +
+                        " entry=" +
+                        V46DescribeGuestAddress(worker_entry) +
+                        " this=" +
+                        V46DescribeGuestAddress(worker_object));
+
+                    if ((worker_entry & ~1u) ==
+                        (kGuestBase + 0x00bc7b8cu)) {
+                        v106_bank_worker_tid =
+                            thread_id;
+                        AppendDiagnostic(
+                            "V106 BANK WORKER FOUND tid=" +
+                            std::to_string(thread_id) +
+                            " wrapperStart=" +
+                            V46DescribeGuestAddress(start_routine) +
+                            " entry=" +
+                            V46DescribeGuestAddress(worker_entry) +
+                            " this=" +
+                            V46DescribeGuestAddress(worker_object));
+                    }
+                }
 
                 if (V104Enabled() &&
                     (worker_entry & ~1u) ==
@@ -32981,9 +33089,13 @@ bool JniProbePrepareRuntime(
         callbacks.Append(
             "V83 PROFILE BUTTON DISPATCH: v83 restored the V80 2048x1536 pixel touch control and proved buttonId=5 can dispatch even when the raw +0x28/+0x2c/+0x30/+0x34 radar rectangle does not contain the screen-space tap. Those raw fields are therefore local/transformed, not absolute hitboxes. The passive dispatcher trap remains enabled and does not alter rendering, widget geometry or GameState.");
     }
+    if (callbacks.V106Enabled()) {
+        callbacks.AppendDiagnostic(
+            "V106 AUDIO RATE + BANK WAIT: OpenSL output capabilities now expose discrete 24/32/48 kHz rates instead of forcing 48 kHz, preserving PvZ2's intentional 32 kHz Wwise pipeline while AVAudioEngine performs downstream hardware conversion. The real CAkBankMgr::BankThreadFunc worker is identified and preferred during synchronous UnloadBank sem_wait; power-of-two worker-state snapshots diagnose any remaining bank-completion stall.");
+    }
     if (callbacks.V105Enabled()) {
         callbacks.AppendDiagnostic(
-            "V105 WWISE RESAMPLER PROBE: v104 audio scheduling and 48 kHz host sink are unchanged. Verified observational traps log CAkResampler::Init after sourceHz/targetHz ratio plus DSP selection, CAkResampler::SetPitch after fixed-point step calculation, and CAkResampler::SwitchTo after source-format transition plus DSP reselection. No rate, pitch, PCM, scheduler, renderer or VFS value is modified.");
+            "V105 WWISE RESAMPLER PROBE: v104 audio scheduling remains active. Verified observational traps log CAkResampler::Init after sourceHz/targetHz ratio plus DSP selection, CAkResampler::SetPitch after fixed-point step calculation, and CAkResampler::SwitchTo after source-format transition plus DSP reselection.");
     }
     if (callbacks.V104Enabled()) {
         callbacks.AppendDiagnostic(
@@ -35154,6 +35266,15 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             const std::uint32_t wait_lr =
                                 jit.Regs()[14];
 
+                            constexpr std::uint32_t
+                                kV106UnloadBankSemWaitReturn =
+                                    kGuestBase + 0x00bb9afcu;
+                            const bool v106_bank_unload_wait =
+                                callbacks.V106Enabled() &&
+                                v96_main_blocking_wait &&
+                                wait_lr ==
+                                    kV106UnloadBankSemWaitReturn;
+
                             const bool v87_main_mutex_wait =
                                 callbacks.V87Enabled() &&
                                 callbacks.V87MutexWaitPending(0u);
@@ -35326,6 +35447,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             bool any_worker_ran = false;
                             std::size_t worker_slices_this_round = 0u;
                             std::uint64_t v96_workers_only_rounds = 0u;
+                            std::uint64_t v106_bank_wait_rounds = 0u;
 
                             for (;;) {
                                 future_changed = false;
@@ -35356,6 +35478,89 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                     ++v96_workers_only_rounds;
                                 }
 
+                                if (v106_bank_unload_wait) {
+                                    ++v106_bank_wait_rounds;
+                                    const bool log_bank_wait =
+                                        v106_bank_wait_rounds <= 8u ||
+                                        (v106_bank_wait_rounds != 0u &&
+                                         (v106_bank_wait_rounds &
+                                          (v106_bank_wait_rounds - 1u)) == 0u);
+
+                                    if (log_bank_wait) {
+                                        const std::uint32_t wait_sem =
+                                            callbacks
+                                                .V106MainSemaphoreWaitAddress();
+                                        std::ostringstream state;
+                                        state
+                                            << "V106 BANK WAIT ROUND #"
+                                            << v106_bank_wait_rounds
+                                            << " sem="
+                                            << callbacks.V46DescribeGuestAddress(
+                                                   wait_sem)
+                                            << " semCount="
+                                            << (wait_sem != 0u
+                                                    ? memory.Read32Guest(
+                                                          wait_sem)
+                                                    : 0u)
+                                            << " bankTid="
+                                            << callbacks.v106_bank_worker_tid
+                                            << " cursor="
+                                            << scheduler_worker_cursor
+                                            << " workers={";
+
+                                        const std::size_t summary_limit =
+                                            std::min<std::size_t>(
+                                                callbacks
+                                                    .deferred_threads.size(),
+                                                64u);
+
+                                        for (std::size_t si = 0u;
+                                             si < summary_limit;
+                                             ++si) {
+                                            const auto& ws =
+                                                callbacks
+                                                    .deferred_threads[si];
+                                            if (si != 0u) {
+                                                state << ",";
+                                            }
+                                            state
+                                                << "tid="
+                                                << ws.id
+                                                << ":pc="
+                                                << callbacks
+                                                       .V46DescribeGuestAddress(
+                                                           ws.regs[15])
+                                                << ":started="
+                                                << (ws.runtime_started
+                                                        ? "Y"
+                                                        : "N")
+                                                << ":done="
+                                                << (ws.runtime_completed
+                                                        ? "Y"
+                                                        : "N")
+                                                << ":blocked="
+                                                << ((callbacks
+                                                         .V66ThreadBlocked(
+                                                             ws.id) ||
+                                                     callbacks
+                                                         .V65ThreadBlocked(
+                                                             ws.id) ||
+                                                     callbacks
+                                                         .V87MutexWaitPending(
+                                                             ws.id))
+                                                        ? "Y"
+                                                        : "N")
+                                                << ":held="
+                                                << callbacks
+                                                       .V63HeldMutexCount(
+                                                           ws.id);
+                                        }
+                                        state << "}";
+                                        callbacks.AppendDiagnostic(
+                                            state.str());
+                                    }
+                                }
+
                             const std::size_t worker_limit =
                                 std::min<std::size_t>(
                                     callbacks.deferred_threads.size(),
@@ -35379,6 +35584,48 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                             callbacks.v104_audio_worker_tid) {
                                         worker_start = candidate;
                                         v104_audio_worker_selected = true;
+                                        break;
+                                    }
+                                }
+                            }
+
+                            if (!v104_audio_wakeup_round &&
+                                v106_bank_unload_wait &&
+                                callbacks.v106_bank_worker_tid != 0u &&
+                                worker_limit != 0u) {
+
+                                for (std::size_t candidate = 0u;
+                                     candidate < worker_limit;
+                                     ++candidate) {
+                                    if (candidate <
+                                            callbacks.deferred_threads.size() &&
+                                        callbacks.deferred_threads[candidate].id ==
+                                            callbacks.v106_bank_worker_tid) {
+                                        worker_start = candidate;
+                                        ++callbacks
+                                             .v106_bank_wait_priorities;
+                                        if (callbacks
+                                                .v106_bank_wait_priorities <=
+                                                16u ||
+                                            (callbacks
+                                                 .v106_bank_wait_priorities &
+                                             (callbacks
+                                                  .v106_bank_wait_priorities -
+                                              1u)) == 0u) {
+                                            callbacks.AppendDiagnostic(
+                                                "V106 BANK WORKER PRIORITY #" +
+                                                std::to_string(
+                                                    callbacks
+                                                        .v106_bank_wait_priorities) +
+                                                " tid=" +
+                                                std::to_string(
+                                                    callbacks
+                                                        .v106_bank_worker_tid) +
+                                                " waitLR=" +
+                                                callbacks
+                                                    .V46DescribeGuestAddress(
+                                                        wait_lr));
+                                        }
                                         break;
                                     }
                                 }

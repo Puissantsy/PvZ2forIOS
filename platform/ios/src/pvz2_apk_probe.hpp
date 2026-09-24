@@ -337,6 +337,11 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // ratio, pitch fixed-point steps and source/sound IDs at low-frequency
     // CAkResampler lifecycle points (Init, SetPitch and SwitchTo).
     V105WwiseResamplerProbe = 49u,
+
+    // v106: restore the Android OpenSL output-rate contract (24/32/48 kHz)
+    // instead of falsely advertising only 48 kHz, and prioritize/trace the
+    // real CAkBankMgr worker during synchronous UnloadBank semaphore waits.
+    V106AudioRateBankWait = 50u,
 };
 
 enum class PvZ2ProbeCapability : std::uint64_t {
@@ -370,6 +375,7 @@ enum class PvZ2ProbeCapability : std::uint64_t {
     AudioDrawFramePump = 1ull << 26,
     AudioWorkerHandshake = 1ull << 27,
     WwiseResamplerProbe = 1ull << 28,
+    AudioRateBankWait = 1ull << 29,
 };
 
 struct PvZ2DiagnosticModeDescriptor {
