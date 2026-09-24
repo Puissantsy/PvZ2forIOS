@@ -66,6 +66,13 @@ void PvZ2QueueTouchEvent(
 // v73: exact Android UITextInputEvent path. action=0 mirrors commitText,
 // action=3 mirrors deleteSurroundingText. The bytes are UTF-8 and copied
 // synchronously into the host event queue.
+// v110: exact Android UIPinchEvent type=3 bridge.
+void PvZ2QueuePinchEvent(
+    std::int32_t x,
+    std::int32_t y,
+    float scale_dist_sq,
+    float scale_delta);
+
 void PvZ2QueueTextInputEvent(
     std::uint32_t action,
     const std::uint8_t* utf8,
@@ -357,6 +364,11 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // audio/bank fix, but remove the now-proven v105 resampler SVC observer
     // from the hot Wwise path and suppress per-frame lifecycle trace spam.
     V109LeanAudioPerformance = 53u,
+
+    // v110 preserves v109 runtime; only input/profiling/UI package selection
+    // change between the two A/B arms.
+    V110AudioPinchUiAndroid = 54u,
+    V110AudioPinchUiIpad = 55u,
 };
 
 enum class PvZ2ProbeCapability : std::uint64_t {

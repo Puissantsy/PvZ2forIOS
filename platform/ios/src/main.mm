@@ -530,7 +530,7 @@ void PvZ2HostNotifyDirectFrame(
     self.captionLabel.clipsToBounds =
         YES;
     self.captionLabel.text =
-        @"PvZ2 v109 — starting…\nLean Wwise hot path + v108 bank liveness";
+        @"PvZ2 v110 — starting…\ntid5 profiler + pinch type 3 + UI package A/B";
 
     self.stopButton =
         [UIButton
@@ -719,7 +719,7 @@ void PvZ2HostNotifyDirectFrame(
 
     self.inputEnabled = NO;
     self.captionLabel.text =
-        @"PvZ2 v109 LIVE — HARD STOP requested; interrupting guest at the next Dynarmic checkpoint…";
+        @"PvZ2 v110 LIVE — HARD STOP requested; interrupting guest at the next Dynarmic checkpoint…";
     self.stopButton.enabled = NO;
     PvZ2RequestInteractiveStop();
 }
@@ -1189,6 +1189,48 @@ void PvZ2HostNotifyDirectFrame(
     }
 }
 
+- (void)queuePinchFromActiveTouches {
+    if (!self.inputEnabled || self.touchIds.count != 2u) {
+        return;
+    }
+
+    NSArray<NSValue *> *keys = self.touchIds.allKeys;
+    UITouch *first = [keys[0] nonretainedObjectValue];
+    UITouch *second = [keys[1] nonretainedObjectValue];
+
+    if (first == nil || second == nil) {
+        return;
+    }
+
+    std::int32_t x0 = 0, y0 = 0, px0 = 0, py0 = 0;
+    std::int32_t x1 = 0, y1 = 0, px1 = 0, py1 = 0;
+
+    if (![self mapTouch:first x:&x0 y:&y0 previousX:&px0 previousY:&py0] ||
+        ![self mapTouch:second x:&x1 y:&y1 previousX:&px1 previousY:&py1]) {
+        return;
+    }
+
+    const double dx = static_cast<double>(x0) - x1;
+    const double dy = static_cast<double>(y0) - y1;
+    const double previousDx = static_cast<double>(px0) - px1;
+    const double previousDy = static_cast<double>(py0) - py1;
+    const double distanceSq = dx * dx + dy * dy;
+    const double previousDistanceSq =
+        previousDx * previousDx + previousDy * previousDy;
+
+    const float scaleDelta =
+        previousDistanceSq > 0.0
+            ? static_cast<float>(
+                  std::sqrt(distanceSq / previousDistanceSq) - 1.0)
+            : 0.0f;
+
+    PvZ2QueuePinchEvent(
+        (x0 + x1) / 2,
+        (y0 + y1) / 2,
+        static_cast<float>(distanceSq),
+        scaleDelta);
+}
+
 - (void)touchesBegan:
         (NSSet<UITouch *> *)touches
     withEvent:
@@ -1217,6 +1259,8 @@ void PvZ2HostNotifyDirectFrame(
             touches
         phase:1u
         release:NO];
+
+    [self queuePinchFromActiveTouches];
 
     [super
         touchesMoved:
@@ -1297,7 +1341,7 @@ void PvZ2HostNotifyDirectFrame(
         self.captionLabel.text =
             [NSString
                 stringWithFormat:
-                    @"PvZ2 v109 LIVE • frame %lu • %@\n%lu×%lu guest • direct GPU 1:1 + audio",
+                    @"PvZ2 v110 LIVE • frame %lu • %@\n%lu×%lu guest • direct GPU 1:1 + audio",
                     (unsigned long)frame,
                     touchState,
                     (unsigned long)width,
@@ -1476,6 +1520,12 @@ void PvZ2HostNotifyDirectFrame(
 @property(nonatomic, assign)
     BOOL step1ReadyLogged;
 
+@property(nonatomic, strong)
+    UISegmentedControl *v110UiPackageControl;
+
+@property(nonatomic, assign)
+    NSInteger v110SelectedUiModeIndex;
+
 @end
 
 @implementation ProbeViewController
@@ -1524,7 +1574,7 @@ void PvZ2HostNotifyDirectFrame(
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — v109 Lean Audio Performance";
+        @"PvZ2forIOS — v110 Audio + Pinch + UI A/B";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -1533,7 +1583,7 @@ void PvZ2HostNotifyDirectFrame(
         NO;
 
     title.text =
-        @"PvZ2forIOS — v109 Lean Audio Performance";
+        @"PvZ2forIOS — v110 Audio + Pinch + UI A/B";
 
     title.font =
         [UIFont
@@ -1549,7 +1599,7 @@ void PvZ2HostNotifyDirectFrame(
         NO;
 
     explanation.text =
-        @"v109 keeps every functional v108 audio/bank fix, but removes the retired v105 resampler SVC observer from Wwise's hot path and suppresses per-frame V88 lifecycle trace spam. V90 timing remains active so this build directly measures whether diagnostic overhead was amplifying the zombie/plant and PopCap-transition FPS drops.";
+        @"v110 preserves the validated v109 runtime. It adds exact Android UIPinchEvent type=3 delivery, low-overhead CAkAudioThread timing buckets, and a clean UI package A/B. Start with Android UI (control), then rerun the same scene with iPad UI (remap). Persistence remains intentionally out of this build.";
 
     explanation.numberOfLines = 0;
 
@@ -1557,6 +1607,16 @@ void PvZ2HostNotifyDirectFrame(
         [UIFont
             systemFontOfSize:
                 15.0];
+
+    self.v110UiPackageControl =
+        [[UISegmentedControl alloc]
+            initWithItems:@[
+                @"Android UI (control)",
+                @"iPad UI (remap)"
+            ]];
+    self.v110UiPackageControl.translatesAutoresizingMaskIntoConstraints = NO;
+    self.v110UiPackageControl.selectedSegmentIndex = 0;
+    self.v110SelectedUiModeIndex = 0;
 
     self.statusLabel =
         [[UILabel alloc] init];
@@ -1682,6 +1742,7 @@ void PvZ2HostNotifyDirectFrame(
                 @[
                     title,
                     explanation,
+                    self.v110UiPackageControl,
                     self.statusLabel,
                     mainButtons,
                     utilityButtons,
@@ -2219,22 +2280,29 @@ void PvZ2HostNotifyDirectFrame(
     picker.modalPresentationStyle =
         UIModalPresentationFormSheet;
 
+    self.v110SelectedUiModeIndex =
+        self.v110UiPackageControl.selectedSegmentIndex == 1 ? 1 : 0;
+
+    const PvZ2DiagnosticMode selectedMode =
+        self.v110SelectedUiModeIndex == 1
+            ? PvZ2DiagnosticMode::V110AudioPinchUiIpad
+            : PvZ2DiagnosticMode::V110AudioPinchUiAndroid;
+
     const auto* selectedDescriptor =
-        PvZ2DescribeDiagnosticMode(
-            PvZ2DiagnosticMode::V109LeanAudioPerformance);
+        PvZ2DescribeDiagnosticMode(selectedMode);
 
     NSString *selectedModeName =
         selectedDescriptor != nullptr
             ? [NSString
                   stringWithUTF8String:
                       selectedDescriptor->internal_name]
-            : @"V109_LEAN_AUDIO_PERFORMANCE";
+            : @"V110_AUDIO_PINCH_UI_ANDROID";
 
     [self
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. Runtime is fixed to %@; historical run modes are no longer exposed in the app.",
+                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v110 UI arm=%@. Audio profiler and pinch bridge are identical in both arms.",
                     selectedModeName]];
 
     [self
@@ -2289,12 +2357,13 @@ void PvZ2HostNotifyDirectFrame(
         return;
     }
 
-    const auto* diagnosticDescriptor =
-        PvZ2DescribeDiagnosticMode(
-            PvZ2DiagnosticMode::V109LeanAudioPerformance);
-
     const PvZ2DiagnosticMode diagnosticMode =
-        PvZ2DiagnosticMode::V109LeanAudioPerformance;
+        self.v110SelectedUiModeIndex == 1
+            ? PvZ2DiagnosticMode::V110AudioPinchUiIpad
+            : PvZ2DiagnosticMode::V110AudioPinchUiAndroid;
+
+    const auto* diagnosticDescriptor =
+        PvZ2DescribeDiagnosticMode(diagnosticMode);
 
     NSString *diagnosticModeName =
         diagnosticDescriptor != nullptr
@@ -2310,7 +2379,7 @@ void PvZ2HostNotifyDirectFrame(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v109 Lean Audio Performance started mode=%@; PID=%d ===",
+                    @"=== PvZ2 v110 Audio + Pinch + UI A/B started mode=%@; PID=%d ===",
                     diagnosticModeName,
                     getpid()]];
 
@@ -2824,14 +2893,14 @@ void PvZ2HostNotifyDirectFrame(
                                     finishRunWithMessage:
                                         [NSString
                                             stringWithFormat:
-                                                @"PvZ2 v109 LIVE — HARD STOPPED after %u guest frames.\nClose to inspect the v109 runtime log.",
+                                                @"PvZ2 v110 LIVE — HARD STOPPED after %u guest frames.\nClose to inspect the v110 runtime log.",
                                                 result.draw_frames_completed]];
                             } else {
                                 [selfRef.liveController
                                     finishRunWithMessage:
                                         [NSString
                                             stringWithFormat:
-                                                @"PvZ2 v109 LIVE — run finished after %u guest frames.\nClose to inspect the v109 runtime log.",
+                                                @"PvZ2 v110 LIVE — run finished after %u guest frames.\nClose to inspect the v110 runtime log.",
                                                 result.draw_frames_completed]];
                             }
 
@@ -2888,11 +2957,11 @@ void PvZ2HostNotifyDirectFrame(
 
                             if (result.hard_stop_requested) {
                                 [selfRef.liveController finishRunWithMessage:
-                                    @"PvZ2 v109 LIVE — HARD STOPPED.\nGuest execution was interrupted at the next Dynarmic checkpoint. Close to inspect the v109 runtime log."];
+                                    @"PvZ2 v110 LIVE — HARD STOPPED.\nGuest execution was interrupted at the next Dynarmic checkpoint. Close to inspect the v110 runtime log."];
                             } else {
                                 [selfRef.liveController finishRunWithMessage:
                                     [NSString stringWithFormat:
-                                        @"PvZ2 v109 LIVE — guest stopped/crashed.\n%@\nClose to inspect the v109 runtime log.", message]];
+                                        @"PvZ2 v110 LIVE — guest stopped/crashed.\n%@\nClose to inspect the v110 runtime log.", message]];
                             }
 
                         } else {
