@@ -530,7 +530,7 @@ void PvZ2HostNotifyDirectFrame(
     self.captionLabel.clipsToBounds =
         YES;
     self.captionLabel.text =
-        @"PvZ2 v98 — starting…\nRGB fidelity + v97 runtime";
+        @"PvZ2 v99 — starting…\nAudio OpenSL→AVAudioEngine + v98 runtime";
 
     self.stopButton =
         [UIButton
@@ -719,7 +719,7 @@ void PvZ2HostNotifyDirectFrame(
 
     self.inputEnabled = NO;
     self.captionLabel.text =
-        @"PvZ2 v98 LIVE — HARD STOP requested; interrupting guest at the next Dynarmic checkpoint…";
+        @"PvZ2 v99 LIVE — HARD STOP requested; interrupting guest at the next Dynarmic checkpoint…";
     self.stopButton.enabled = NO;
     PvZ2RequestInteractiveStop();
 }
@@ -1297,7 +1297,7 @@ void PvZ2HostNotifyDirectFrame(
         self.captionLabel.text =
             [NSString
                 stringWithFormat:
-                    @"PvZ2 v98 LIVE • frame %lu • %@\n%lu×%lu guest • direct GPU 1:1",
+                    @"PvZ2 v99 LIVE • frame %lu • %@\n%lu×%lu guest • direct GPU 1:1 + audio",
                     (unsigned long)frame,
                     touchState,
                     (unsigned long)width,
@@ -1524,7 +1524,7 @@ void PvZ2HostNotifyDirectFrame(
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — v98 Presentation RGB Fidelity";
+        @"PvZ2forIOS — v99 Audio OpenSL Bridge";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -1533,7 +1533,7 @@ void PvZ2HostNotifyDirectFrame(
         NO;
 
     title.text =
-        @"PvZ2forIOS — v98 Presentation RGB Fidelity";
+        @"PvZ2forIOS — v99 Audio OpenSL Bridge";
 
     title.font =
         [UIFont
@@ -1549,7 +1549,7 @@ void PvZ2HostNotifyDirectFrame(
         NO;
 
     explanation.text =
-        @"v98 keeps the validated v97 playable runtime and fixes host presentation fidelity: the final guest framebuffer RGB is now displayed verbatim instead of being divided by framebuffer alpha. This targets bright low-alpha halos/edges and missing translucent shadows without changing PTX assets or ETC1 decoding.";
+        @"v99 keeps the validated v98 playable/rendering runtime and enables the original Wwise Android sink through a narrow OpenSL ES compatibility layer. Wwise still decodes/mixes the game's BNK/WEM itself; BufferQueue PCM16 is copied into an AVAudioEngine ring and completion callbacks are returned to the guest only at safe scheduler boundaries.";
 
     explanation.numberOfLines = 0;
 
@@ -2221,14 +2221,14 @@ void PvZ2HostNotifyDirectFrame(
 
     const auto* selectedDescriptor =
         PvZ2DescribeDiagnosticMode(
-            PvZ2DiagnosticMode::V98PresentationRgbFidelity);
+            PvZ2DiagnosticMode::V99AudioOpenSLBridge);
 
     NSString *selectedModeName =
         selectedDescriptor != nullptr
             ? [NSString
                   stringWithUTF8String:
                       selectedDescriptor->internal_name]
-            : @"V98_PRESENTATION_RGB_FIDELITY";
+            : @"V99_AUDIO_OPENSL_BRIDGE";
 
     [self
         appendUI:
@@ -2291,10 +2291,10 @@ void PvZ2HostNotifyDirectFrame(
 
     const auto* diagnosticDescriptor =
         PvZ2DescribeDiagnosticMode(
-            PvZ2DiagnosticMode::V98PresentationRgbFidelity);
+            PvZ2DiagnosticMode::V99AudioOpenSLBridge);
 
     const PvZ2DiagnosticMode diagnosticMode =
-        PvZ2DiagnosticMode::V98PresentationRgbFidelity;
+        PvZ2DiagnosticMode::V99AudioOpenSLBridge;
 
     NSString *diagnosticModeName =
         diagnosticDescriptor != nullptr
@@ -2310,7 +2310,7 @@ void PvZ2HostNotifyDirectFrame(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v98 Presentation RGB Fidelity started mode=%@; PID=%d ===",
+                    @"=== PvZ2 v99 Audio OpenSL Bridge started mode=%@; PID=%d ===",
                     diagnosticModeName,
                     getpid()]];
 
@@ -2824,14 +2824,14 @@ void PvZ2HostNotifyDirectFrame(
                                     finishRunWithMessage:
                                         [NSString
                                             stringWithFormat:
-                                                @"PvZ2 v98 LIVE — HARD STOPPED after %u guest frames.\nClose to inspect the v98 runtime log.",
+                                                @"PvZ2 v99 LIVE — HARD STOPPED after %u guest frames.\nClose to inspect the v99 runtime log.",
                                                 result.draw_frames_completed]];
                             } else {
                                 [selfRef.liveController
                                     finishRunWithMessage:
                                         [NSString
                                             stringWithFormat:
-                                                @"PvZ2 v98 LIVE — run finished after %u guest frames.\nClose to inspect the v98 runtime log.",
+                                                @"PvZ2 v99 LIVE — run finished after %u guest frames.\nClose to inspect the v99 runtime log.",
                                                 result.draw_frames_completed]];
                             }
 
@@ -2888,11 +2888,11 @@ void PvZ2HostNotifyDirectFrame(
 
                             if (result.hard_stop_requested) {
                                 [selfRef.liveController finishRunWithMessage:
-                                    @"PvZ2 v98 LIVE — HARD STOPPED.\nGuest execution was interrupted at the next Dynarmic checkpoint. Close to inspect the v98 runtime log."];
+                                    @"PvZ2 v99 LIVE — HARD STOPPED.\nGuest execution was interrupted at the next Dynarmic checkpoint. Close to inspect the v99 runtime log."];
                             } else {
                                 [selfRef.liveController finishRunWithMessage:
                                     [NSString stringWithFormat:
-                                        @"PvZ2 v98 LIVE — guest stopped/crashed.\n%@\nClose to inspect the v98 runtime log.", message]];
+                                        @"PvZ2 v99 LIVE — guest stopped/crashed.\n%@\nClose to inspect the v99 runtime log.", message]];
                             }
 
                         } else {

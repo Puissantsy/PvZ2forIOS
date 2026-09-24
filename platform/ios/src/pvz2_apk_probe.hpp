@@ -298,6 +298,12 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // v98: preserve the final composited framebuffer RGB verbatim during
     // host presentation instead of unpremultiplying it by framebuffer alpha.
     V98PresentationRgbFidelity = 42u,
+
+    // v99: keep the complete playable v98 runtime and replace the deliberate
+    // OpenSL ES failure shim with the narrow object/interface surface used by
+    // Wwise CAkSinkOpenSL. Mixed PCM is bridged to AVAudioEngine and completed
+    // buffer callbacks are delivered only at scheduler-safe guest boundaries.
+    V99AudioOpenSLBridge = 43u,
 };
 
 enum class PvZ2ProbeCapability : std::uint64_t {
@@ -324,6 +330,7 @@ enum class PvZ2ProbeCapability : std::uint64_t {
     MainThreadBlocking = 1ull << 19,
     GrantedMutexWaitGraph = 1ull << 20,
     PresentationRgbFidelity = 1ull << 21,
+    AudioOpenSLBridge = 1ull << 22,
 };
 
 struct PvZ2DiagnosticModeDescriptor {

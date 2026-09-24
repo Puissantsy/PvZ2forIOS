@@ -1,5 +1,6 @@
 #include "pvz2_apk_probe.hpp"
 #include "host_gles.hpp"
+#include "host_audio.hpp"
 
 #include <OpenGLES/ES2/gl.h>
 #include <OpenGLES/ES2/glext.h>
@@ -973,6 +974,8 @@ constexpr std::uint64_t kCapGrantedMutexWaitGraph =
     ProbeCap(PvZ2ProbeCapability::GrantedMutexWaitGraph);
 constexpr std::uint64_t kCapPresentationRgbFidelity =
     ProbeCap(PvZ2ProbeCapability::PresentationRgbFidelity);
+constexpr std::uint64_t kCapAudioOpenSLBridge =
+    ProbeCap(PvZ2ProbeCapability::AudioOpenSLBridge);
 
 constexpr std::uint64_t kCapsTransformBase =
     kCapLive | kCapCpuFrame | kCapTransform |
@@ -1006,6 +1009,8 @@ constexpr std::uint64_t kCapsV97 =
     kCapsV96 | kCapGrantedMutexWaitGraph;
 constexpr std::uint64_t kCapsV98 =
     kCapsV97 | kCapPresentationRgbFidelity;
+constexpr std::uint64_t kCapsV99 =
+    kCapsV98 | kCapAudioOpenSLBridge;
 
 constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::PassiveRegistry, "PASSIVE_REGISTRY", nullptr, 0u, false},
@@ -1049,14 +1054,15 @@ constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::V94CallerReturnWatch, "V94_CALLER_RETURN_WATCH", "V94 LR Watch", kCapsV94, true},
     {PvZ2DiagnosticMode::V95PreciseCallerReturnWatch, "V95_PRECISE_CALLER_RETURN_WATCH", "V95 Precise LR", kCapsV95, true},
     {PvZ2DiagnosticMode::V96MainThreadBlocking, "V96_MAIN_THREAD_BLOCKING", "V96 Main Waits", kCapsV96, true},
-    {PvZ2DiagnosticMode::V97GrantedMutexWaitGraph, "V97_GRANTED_MUTEX_WAIT_GRAPH", "V97 Current", kCapsV97, true},
-    {PvZ2DiagnosticMode::V98PresentationRgbFidelity, "V98_PRESENTATION_RGB_FIDELITY", "V98 Current", kCapsV98, true},
+    {PvZ2DiagnosticMode::V97GrantedMutexWaitGraph, "V97_GRANTED_MUTEX_WAIT_GRAPH", "V97 Mutex", kCapsV97, true},
+    {PvZ2DiagnosticMode::V98PresentationRgbFidelity, "V98_PRESENTATION_RGB_FIDELITY", "V98 RGB", kCapsV98, true},
+    {PvZ2DiagnosticMode::V99AudioOpenSLBridge, "V99_AUDIO_OPENSL_BRIDGE", "V99 Audio", kCapsV99, true},
 };
 
 constexpr PvZ2DiagnosticMode kSelectableDiagnosticModes[] = {
     // App-facing selection remains intentionally single-mode.
     // Historical descriptors stay registered for internal diagnostics.
-    PvZ2DiagnosticMode::V98PresentationRgbFidelity,
+    PvZ2DiagnosticMode::V99AudioOpenSLBridge,
 };
 
 } // namespace
@@ -3203,6 +3209,36 @@ public:
     std::vector<DeferredThread> deferred_threads;
     std::uint32_t current_probe_thread_id = 0;
     bool soft_slice_timeout = false;
+
+    // v99 OpenSL ES / Wwise audio bridge. These are guest addresses: OpenSL
+    // interface handles are one-word cells that point to guest vtables whose
+    // methods enter this callback object through ordinary import SVC trampolines.
+    std::unordered_map<std::string, std::uint32_t> v99_opensl_iids;
+    std::unordered_map<std::string, std::uint32_t> v99_opensl_methods;
+    std::uint32_t v99_engine_object = 0u;
+    std::uint32_t v99_output_mix_object = 0u;
+    std::uint32_t v99_player_object = 0u;
+    std::uint32_t v99_engine_itf = 0u;
+    std::uint32_t v99_play_itf = 0u;
+    std::uint32_t v99_queue_itf = 0u;
+    std::uint32_t v99_config_itf = 0u;
+    std::uint32_t v99_caps_itf = 0u;
+    std::uint32_t v99_audio_rate_array = 0u;
+    std::uint32_t v99_queue_callback = 0u;
+    std::uint32_t v99_queue_context = 0u;
+    std::uint32_t v99_audio_sample_rate = 48000u;
+    std::uint32_t v99_audio_channels = 2u;
+    std::uint32_t v99_audio_queue_capacity = 4u;
+    std::uint32_t v99_play_state = 1u;
+    bool v99_audio_configured = false;
+    std::uint64_t v99_engine_create_calls = 0u;
+    std::uint64_t v99_audio_enqueues = 0u;
+    std::uint64_t v99_audio_getstate_calls = 0u;
+    std::uint64_t v99_audio_clears = 0u;
+    std::uint64_t v99_audio_host_consumed = 0u;
+    std::uint64_t v99_audio_pending_callbacks = 0u;
+    std::uint64_t v99_audio_callback_deliveries = 0u;
+    std::uint64_t v99_audio_interface_misses = 0u;
 
     // v61 safe cooperative boundary. Set only by the main Native_onDrawFrame
     // thread when the verified resource-stream pump has completed its
@@ -8469,6 +8505,806 @@ public:
         return out.str();
     }
 
+
+    bool V99Enabled() const {
+        return HasCapability(
+            PvZ2ProbeCapability::AudioOpenSLBridge);
+    }
+
+    bool V99ShouldLogCounter(
+        std::uint64_t value) const {
+        return
+            value <= 16u ||
+            (value != 0u &&
+             (value & (value - 1u)) == 0u);
+    }
+
+    void V99RegisterOpenSLIID(
+        const std::string& name,
+        std::uint32_t iid) {
+        v99_opensl_iids[name] = iid;
+    }
+
+    void V99RegisterOpenSLMethod(
+        const std::string& name,
+        std::uint32_t trampoline) {
+        v99_opensl_methods[name] = trampoline;
+    }
+
+    std::uint32_t V99OpenSLMethod(
+        const char* name) const {
+        const auto found =
+            v99_opensl_methods.find(
+                name != nullptr
+                    ? std::string{name}
+                    : std::string{});
+        return found == v99_opensl_methods.end()
+            ? 0u
+            : found->second;
+    }
+
+    std::uint32_t V99OpenSLIID(
+        const char* name) const {
+        const auto found =
+            v99_opensl_iids.find(
+                name != nullptr
+                    ? std::string{name}
+                    : std::string{});
+        return found == v99_opensl_iids.end()
+            ? 0u
+            : found->second;
+    }
+
+    bool V99EnsureOpenSLObjects() {
+        if (!V99Enabled()) {
+            return false;
+        }
+
+        if (v99_engine_object != 0u) {
+            return true;
+        }
+
+        const std::uint32_t unsupported =
+            V99OpenSLMethod("__v99_sl_unsupported");
+        const std::uint32_t object_realize =
+            V99OpenSLMethod("__v99_sl_object_realize");
+        const std::uint32_t object_get_state =
+            V99OpenSLMethod("__v99_sl_object_get_state");
+        const std::uint32_t object_get_interface =
+            V99OpenSLMethod("__v99_sl_object_get_interface");
+        const std::uint32_t object_register_callback =
+            V99OpenSLMethod("__v99_sl_object_register_callback");
+        const std::uint32_t object_destroy =
+            V99OpenSLMethod("__v99_sl_object_destroy");
+        const std::uint32_t create_player =
+            V99OpenSLMethod("__v99_sl_engine_create_audio_player");
+        const std::uint32_t create_mix =
+            V99OpenSLMethod("__v99_sl_engine_create_output_mix");
+        const std::uint32_t set_play_state =
+            V99OpenSLMethod("__v99_sl_play_set_state");
+        const std::uint32_t queue_enqueue =
+            V99OpenSLMethod("__v99_sl_queue_enqueue");
+        const std::uint32_t queue_clear =
+            V99OpenSLMethod("__v99_sl_queue_clear");
+        const std::uint32_t queue_get_state =
+            V99OpenSLMethod("__v99_sl_queue_get_state");
+        const std::uint32_t queue_register =
+            V99OpenSLMethod("__v99_sl_queue_register_callback");
+        const std::uint32_t config_set =
+            V99OpenSLMethod("__v99_sl_android_config_set");
+        const std::uint32_t caps_outputs =
+            V99OpenSLMethod("__v99_sl_caps_get_outputs");
+        const std::uint32_t caps_query =
+            V99OpenSLMethod("__v99_sl_caps_query_output");
+
+        if (unsupported == 0u ||
+            object_realize == 0u ||
+            object_get_state == 0u ||
+            object_get_interface == 0u ||
+            object_register_callback == 0u ||
+            object_destroy == 0u ||
+            create_player == 0u ||
+            create_mix == 0u ||
+            set_play_state == 0u ||
+            queue_enqueue == 0u ||
+            queue_clear == 0u ||
+            queue_get_state == 0u ||
+            queue_register == 0u ||
+            config_set == 0u ||
+            caps_outputs == 0u ||
+            caps_query == 0u) {
+            AppendCritical(
+                "V99 AUDIO ERROR synthetic OpenSL method table is incomplete.");
+            return false;
+        }
+
+        const std::array<const char*, 5> required_iids = {{
+            "SL_IID_ENGINE",
+            "SL_IID_PLAY",
+            "SL_IID_BUFFERQUEUE",
+            "SL_IID_ANDROIDCONFIGURATION",
+            "SL_IID_AUDIOIODEVICECAPABILITIES",
+        }};
+
+        for (const char* iid_name : required_iids) {
+            if (V99OpenSLIID(iid_name) == 0u) {
+                AppendCritical(
+                    "V99 AUDIO ERROR missing imported IID " +
+                    std::string{iid_name});
+                return false;
+            }
+        }
+
+        auto make_vtable =
+            [&](std::size_t slots) -> std::uint32_t {
+                const std::uint32_t table =
+                    mem.AllocateObject(
+                        static_cast<std::uint32_t>(
+                            slots * 4u),
+                        4u);
+                if (table == 0u) {
+                    return 0u;
+                }
+                for (std::size_t i = 0u;
+                     i < slots;
+                     ++i) {
+                    mem.Write32Guest(
+                        table +
+                            static_cast<std::uint32_t>(
+                                i * 4u),
+                        unsupported);
+                }
+                return table;
+            };
+
+        auto make_handle =
+            [&](std::uint32_t table) -> std::uint32_t {
+                if (table == 0u) {
+                    return 0u;
+                }
+                const std::uint32_t handle =
+                    mem.AllocateObject(4u, 4u);
+                if (handle != 0u) {
+                    mem.Write32Guest(
+                        handle,
+                        table);
+                }
+                return handle;
+            };
+
+        const std::uint32_t object_vtable =
+            make_vtable(12u);
+        const std::uint32_t engine_vtable =
+            make_vtable(15u);
+        const std::uint32_t play_vtable =
+            make_vtable(16u);
+        const std::uint32_t queue_vtable =
+            make_vtable(4u);
+        const std::uint32_t config_vtable =
+            make_vtable(4u);
+        const std::uint32_t caps_vtable =
+            make_vtable(12u);
+
+        if (object_vtable == 0u ||
+            engine_vtable == 0u ||
+            play_vtable == 0u ||
+            queue_vtable == 0u ||
+            config_vtable == 0u ||
+            caps_vtable == 0u) {
+            AppendCritical(
+                "V99 AUDIO ERROR unable to allocate OpenSL guest vtables.");
+            return false;
+        }
+
+        // SLObjectItf: Realize, GetState, GetInterface,
+        // RegisterCallback, Destroy.
+        mem.Write32Guest(object_vtable + 0u * 4u, object_realize);
+        mem.Write32Guest(object_vtable + 2u * 4u, object_get_state);
+        mem.Write32Guest(object_vtable + 3u * 4u, object_get_interface);
+        mem.Write32Guest(object_vtable + 4u * 4u, object_register_callback);
+        mem.Write32Guest(object_vtable + 6u * 4u, object_destroy);
+
+        // SLEngineItf: CreateAudioPlayer is slot 2,
+        // CreateOutputMix is slot 7.
+        mem.Write32Guest(engine_vtable + 2u * 4u, create_player);
+        mem.Write32Guest(engine_vtable + 7u * 4u, create_mix);
+
+        // SLPlayItf: SetPlayState is slot 0.
+        mem.Write32Guest(play_vtable + 0u * 4u, set_play_state);
+
+        // SL(AndroidSimple)BufferQueueItf.
+        mem.Write32Guest(queue_vtable + 0u * 4u, queue_enqueue);
+        mem.Write32Guest(queue_vtable + 1u * 4u, queue_clear);
+        mem.Write32Guest(queue_vtable + 2u * 4u, queue_get_state);
+        mem.Write32Guest(queue_vtable + 3u * 4u, queue_register);
+
+        // SLAndroidConfigurationItf::SetConfiguration.
+        mem.Write32Guest(config_vtable + 0u * 4u, config_set);
+
+        // SLAudioIODeviceCapabilitiesItf.
+        mem.Write32Guest(caps_vtable + 3u * 4u, caps_outputs);
+        mem.Write32Guest(caps_vtable + 4u * 4u, caps_query);
+
+        v99_engine_object = make_handle(object_vtable);
+        v99_output_mix_object = make_handle(object_vtable);
+        v99_player_object = make_handle(object_vtable);
+        v99_engine_itf = make_handle(engine_vtable);
+        v99_play_itf = make_handle(play_vtable);
+        v99_queue_itf = make_handle(queue_vtable);
+        v99_config_itf = make_handle(config_vtable);
+        v99_caps_itf = make_handle(caps_vtable);
+        v99_audio_rate_array =
+            mem.AllocateObject(4u, 4u);
+
+        if (v99_engine_object == 0u ||
+            v99_output_mix_object == 0u ||
+            v99_player_object == 0u ||
+            v99_engine_itf == 0u ||
+            v99_play_itf == 0u ||
+            v99_queue_itf == 0u ||
+            v99_config_itf == 0u ||
+            v99_caps_itf == 0u ||
+            v99_audio_rate_array == 0u) {
+            AppendCritical(
+                "V99 AUDIO ERROR unable to allocate OpenSL guest handles.");
+            return false;
+        }
+
+        // OpenSL sampling-rate constants are expressed in milliHertz.
+        mem.Write32Guest(
+            v99_audio_rate_array,
+            48000000u);
+
+        AppendDiagnostic(
+            "V99 AUDIO OPENSL OBJECTS READY engineObject=" +
+            V46DescribeGuestAddress(v99_engine_object) +
+            " engineItf=" +
+            V46DescribeGuestAddress(v99_engine_itf) +
+            " queueItf=" +
+            V46DescribeGuestAddress(v99_queue_itf));
+        return true;
+    }
+
+    bool V99HandleSlCreateEngine(
+        std::array<std::uint32_t, 16>& regs) {
+        if (!V99Enabled()) {
+            return false;
+        }
+
+        ++v99_engine_create_calls;
+
+        if (regs[0] == 0u ||
+            !V99EnsureOpenSLObjects()) {
+            regs[0] = 1u;
+            return true;
+        }
+
+        mem.Write32Guest(
+            regs[0],
+            v99_engine_object);
+        regs[0] = 0u;
+
+        if (V99ShouldLogCounter(
+                v99_engine_create_calls)) {
+            AppendDiagnostic(
+                "V99 AUDIO ENGINE CREATE #" +
+                std::to_string(
+                    v99_engine_create_calls) +
+                " object=" +
+                V46DescribeGuestAddress(
+                    v99_engine_object));
+        }
+        return true;
+    }
+
+    bool V99HandleOpenSLSvc(
+        const std::string& name,
+        std::array<std::uint32_t, 16>& regs) {
+        if (!V99Enabled() ||
+            name.rfind("__v99_sl_", 0u) != 0u) {
+            return false;
+        }
+
+        if (name == "__v99_sl_unsupported") {
+            regs[0] = 1u;
+            return true;
+        }
+
+        if (name == "__v99_sl_object_realize") {
+            regs[0] = 0u;
+            return true;
+        }
+
+        if (name == "__v99_sl_object_get_state") {
+            if (regs[1] != 0u) {
+                // SL_OBJECT_STATE_REALIZED
+                mem.Write32Guest(
+                    regs[1],
+                    2u);
+            }
+            regs[0] = 0u;
+            return true;
+        }
+
+        if (name == "__v99_sl_object_get_interface") {
+            const std::uint32_t object = regs[0];
+            const std::uint32_t iid = regs[1];
+            const std::uint32_t out = regs[2];
+            std::uint32_t interface_handle = 0u;
+
+            if (object == v99_engine_object) {
+                if (iid ==
+                    V99OpenSLIID(
+                        "SL_IID_ENGINE")) {
+                    interface_handle =
+                        v99_engine_itf;
+                } else if (
+                    iid ==
+                    V99OpenSLIID(
+                        "SL_IID_AUDIOIODEVICECAPABILITIES")) {
+                    interface_handle =
+                        v99_caps_itf;
+                }
+            } else if (
+                object == v99_player_object) {
+                if (iid ==
+                    V99OpenSLIID(
+                        "SL_IID_PLAY")) {
+                    interface_handle =
+                        v99_play_itf;
+                } else if (
+                    iid ==
+                    V99OpenSLIID(
+                        "SL_IID_BUFFERQUEUE")) {
+                    interface_handle =
+                        v99_queue_itf;
+                } else if (
+                    iid ==
+                    V99OpenSLIID(
+                        "SL_IID_ANDROIDCONFIGURATION")) {
+                    interface_handle =
+                        v99_config_itf;
+                }
+            }
+
+            if (out != 0u) {
+                mem.Write32Guest(
+                    out,
+                    interface_handle);
+            }
+
+            if (interface_handle == 0u) {
+                ++v99_audio_interface_misses;
+                if (V99ShouldLogCounter(
+                        v99_audio_interface_misses)) {
+                    AppendDiagnostic(
+                        "V99 AUDIO GETINTERFACE MISS #" +
+                        std::to_string(
+                            v99_audio_interface_misses) +
+                        " object=" +
+                        V46DescribeGuestAddress(
+                            object) +
+                        " iid=" +
+                        V46DescribeGuestAddress(
+                            iid));
+                }
+                regs[0] = 1u;
+            } else {
+                regs[0] = 0u;
+            }
+            return true;
+        }
+
+        if (name == "__v99_sl_object_register_callback") {
+            // CAkSinkOpenSL registers object callbacks even though all
+            // v99 Realize calls are synchronous. No async object event
+            // needs to be manufactured.
+            regs[0] = 0u;
+            return true;
+        }
+
+        if (name == "__v99_sl_object_destroy") {
+            if (regs[0] == v99_player_object ||
+                regs[0] == v99_engine_object) {
+                PvZ2HostAudioSetPlaying(false);
+                PvZ2HostAudioClear();
+                PvZ2HostAudioShutdown();
+                v99_audio_configured = false;
+            }
+            regs[0] = 0u;
+            return true;
+        }
+
+        if (name == "__v99_sl_engine_create_output_mix") {
+            if (!V99EnsureOpenSLObjects() ||
+                regs[1] == 0u) {
+                regs[0] = 1u;
+                return true;
+            }
+            mem.Write32Guest(
+                regs[1],
+                v99_output_mix_object);
+            regs[0] = 0u;
+            AppendDiagnostic(
+                "V99 AUDIO OUTPUT MIX CREATE object=" +
+                V46DescribeGuestAddress(
+                    v99_output_mix_object));
+            return true;
+        }
+
+        if (name == "__v99_sl_engine_create_audio_player") {
+            const std::uint32_t out_player =
+                regs[1];
+            const std::uint32_t source =
+                regs[2];
+
+            if (out_player == 0u ||
+                source == 0u) {
+                regs[0] = 1u;
+                return true;
+            }
+
+            const std::uint32_t locator =
+                mem.Read32Guest(
+                    source + 0u);
+            const std::uint32_t format =
+                mem.Read32Guest(
+                    source + 4u);
+
+            if (locator == 0u ||
+                format == 0u) {
+                regs[0] = 1u;
+                return true;
+            }
+
+            const std::uint32_t locator_type =
+                mem.Read32Guest(
+                    locator + 0u);
+            const std::uint32_t requested_buffers =
+                mem.Read32Guest(
+                    locator + 4u);
+            const std::uint32_t format_type =
+                mem.Read32Guest(
+                    format + 0u);
+            const std::uint32_t channels =
+                mem.Read32Guest(
+                    format + 4u);
+            const std::uint32_t rate_millihz =
+                mem.Read32Guest(
+                    format + 8u);
+            const std::uint32_t bits =
+                mem.Read32Guest(
+                    format + 12u);
+            const std::uint32_t container_bits =
+                mem.Read32Guest(
+                    format + 16u);
+            const std::uint32_t channel_mask =
+                mem.Read32Guest(
+                    format + 20u);
+            const std::uint32_t endianness =
+                mem.Read32Guest(
+                    format + 24u);
+
+            const std::uint32_t sample_rate =
+                rate_millihz >= 1000u
+                    ? rate_millihz / 1000u
+                    : 0u;
+
+            if (format_type != 2u ||
+                sample_rate == 0u ||
+                (channels != 1u &&
+                 channels != 2u) ||
+                bits != 16u ||
+                container_bits != 16u) {
+                AppendCritical(
+                    "V99 AUDIO PLAYER unsupported PCM contract format=" +
+                    std::to_string(format_type) +
+                    " rateMilliHz=" +
+                    std::to_string(rate_millihz) +
+                    " channels=" +
+                    std::to_string(channels) +
+                    " bits=" +
+                    std::to_string(bits) +
+                    " container=" +
+                    std::to_string(
+                        container_bits));
+                regs[0] = 1u;
+                return true;
+            }
+
+            const std::uint32_t queue_capacity =
+                requested_buffers == 0u
+                    ? 4u
+                    : std::clamp<std::uint32_t>(
+                          requested_buffers,
+                          1u,
+                          64u);
+
+            if (!PvZ2HostAudioConfigure(
+                    sample_rate,
+                    channels)) {
+                const char* host_error =
+                    PvZ2HostAudioLastError();
+                AppendCritical(
+                    "V99 AUDIO HOST START FAILED: " +
+                    std::string{
+                        host_error != nullptr
+                            ? host_error
+                            : "unknown AVAudioEngine error"});
+                regs[0] = 1u;
+                return true;
+            }
+
+            v99_audio_sample_rate =
+                sample_rate;
+            v99_audio_channels =
+                channels;
+            v99_audio_queue_capacity =
+                queue_capacity;
+            v99_audio_configured = true;
+            v99_play_state = 1u;
+            PvZ2HostAudioSetPlaying(false);
+            PvZ2HostAudioClear();
+
+            mem.Write32Guest(
+                out_player,
+                v99_player_object);
+            regs[0] = 0u;
+
+            AppendDiagnostic(
+                "V99 AUDIO PLAYER " +
+                std::to_string(sample_rate) +
+                " Hz channels=" +
+                std::to_string(channels) +
+                " buffers=" +
+                std::to_string(
+                    queue_capacity) +
+                " bits=" +
+                std::to_string(bits) +
+                " locator=0x" +
+                JniProbeHex(locator_type) +
+                " channelMask=0x" +
+                JniProbeHex(channel_mask) +
+                " endian=" +
+                std::to_string(
+                    endianness));
+            AppendDiagnostic(
+                "V99 AUDIO HOST START backend=AVAudioEngine ringFrames=" +
+                std::to_string(
+                    PvZ2HostAudioRingCapacityFrames()));
+            return true;
+        }
+
+        if (name == "__v99_sl_play_set_state") {
+            const std::uint32_t state =
+                regs[1];
+            const bool changed =
+                state != v99_play_state;
+            v99_play_state = state;
+
+            PvZ2HostAudioSetPlaying(
+                state == 3u);
+
+            if (changed) {
+                AppendDiagnostic(
+                    "V99 AUDIO PLAY STATE " +
+                    std::to_string(state) +
+                    (state == 3u
+                        ? " PLAYING"
+                        : (state == 2u
+                               ? " PAUSED"
+                               : " STOPPED")));
+            }
+
+            regs[0] = 0u;
+            return true;
+        }
+
+        if (name == "__v99_sl_queue_enqueue") {
+            const std::uint32_t guest_buffer =
+                regs[1];
+            const std::uint32_t bytes =
+                regs[2];
+
+            if (!v99_audio_configured ||
+                guest_buffer == 0u ||
+                bytes == 0u ||
+                PvZ2HostAudioQueuedBufferCount() >=
+                    v99_audio_queue_capacity) {
+                regs[0] = 1u;
+                return true;
+            }
+
+            const std::uint8_t* pcm =
+                mem.Ptr(
+                    guest_buffer,
+                    bytes);
+            if (pcm == nullptr ||
+                !PvZ2HostAudioEnqueuePCM16(
+                    pcm,
+                    bytes)) {
+                regs[0] = 1u;
+                return true;
+            }
+
+            ++v99_audio_enqueues;
+            if (V99ShouldLogCounter(
+                    v99_audio_enqueues)) {
+                const std::uint32_t frame_bytes =
+                    std::max<std::uint32_t>(
+                        1u,
+                        v99_audio_channels *
+                            2u);
+                AppendDiagnostic(
+                    "V99 AUDIO ENQUEUE #" +
+                    std::to_string(
+                        v99_audio_enqueues) +
+                    " frames=" +
+                    std::to_string(
+                        bytes /
+                        frame_bytes) +
+                    " bytes=" +
+                    std::to_string(bytes) +
+                    " queued=" +
+                    std::to_string(
+                        PvZ2HostAudioQueuedBufferCount()));
+            }
+
+            regs[0] = 0u;
+            return true;
+        }
+
+        if (name == "__v99_sl_queue_clear") {
+            PvZ2HostAudioClear();
+            ++v99_audio_clears;
+            if (V99ShouldLogCounter(
+                    v99_audio_clears)) {
+                AppendDiagnostic(
+                    "V99 AUDIO QUEUE CLEAR #" +
+                    std::to_string(
+                        v99_audio_clears));
+            }
+            regs[0] = 0u;
+            return true;
+        }
+
+        if (name == "__v99_sl_queue_get_state") {
+            ++v99_audio_getstate_calls;
+            if (regs[1] != 0u) {
+                mem.Write32Guest(
+                    regs[1] + 0u,
+                    PvZ2HostAudioQueuedBufferCount());
+                mem.Write32Guest(
+                    regs[1] + 4u,
+                    static_cast<std::uint32_t>(
+                        PvZ2HostAudioConsumedBufferTotal()));
+            }
+            regs[0] = 0u;
+            return true;
+        }
+
+        if (name == "__v99_sl_queue_register_callback") {
+            v99_queue_callback =
+                regs[1];
+            v99_queue_context =
+                regs[2];
+
+            AppendDiagnostic(
+                "V99 AUDIO BUFFERQUEUE CALLBACK registered fn=" +
+                V46DescribeGuestAddress(
+                    v99_queue_callback) +
+                " context=" +
+                V46DescribeGuestAddress(
+                    v99_queue_context));
+            regs[0] = 0u;
+            return true;
+        }
+
+        if (name == "__v99_sl_android_config_set") {
+            const std::string key =
+                regs[1] != 0u
+                    ? mem.ReadCStringGuest(
+                          regs[1],
+                          128u)
+                    : std::string{};
+            const std::uint32_t value =
+                regs[2] != 0u &&
+                        regs[3] >= 4u
+                    ? mem.Read32Guest(
+                          regs[2])
+                    : 0u;
+
+            AppendDiagnostic(
+                "V99 AUDIO ANDROID CONFIG key=\"" +
+                key +
+                "\" value=" +
+                std::to_string(value) +
+                " bytes=" +
+                std::to_string(
+                    regs[3]));
+            regs[0] = 0u;
+            return true;
+        }
+
+        if (name == "__v99_sl_caps_get_outputs") {
+            if (regs[1] == 0u) {
+                regs[0] = 1u;
+                return true;
+            }
+
+            const std::uint32_t requested =
+                mem.Read32Guest(
+                    regs[1]);
+            mem.Write32Guest(
+                regs[1],
+                1u);
+
+            if (regs[2] != 0u &&
+                requested != 0u) {
+                mem.Write32Guest(
+                    regs[2],
+                    1u);
+            }
+
+            regs[0] = 0u;
+            return true;
+        }
+
+        if (name == "__v99_sl_caps_query_output") {
+            if (regs[2] == 0u) {
+                regs[0] = 1u;
+                return true;
+            }
+
+            const std::uint32_t descriptor =
+                regs[2];
+
+            for (std::uint32_t i = 0u;
+                 i < 36u;
+                 ++i) {
+                mem.Write8Guest(
+                    descriptor + i,
+                    0u);
+            }
+
+            // SLAudioOutputDescriptor, ARM32 ABI. Advertise one integrated
+            // stereo output with the exact 48 kHz rate used by this sink.
+            mem.Write16Guest(
+                descriptor + 4u,
+                1u);
+            mem.Write16Guest(
+                descriptor + 6u,
+                2u);
+            mem.Write16Guest(
+                descriptor + 8u,
+                1u);
+            mem.Write32Guest(
+                descriptor + 16u,
+                48000000u);
+            mem.Write32Guest(
+                descriptor + 20u,
+                48000000u);
+            mem.Write32Guest(
+                descriptor + 24u,
+                0u);
+            mem.Write32Guest(
+                descriptor + 28u,
+                v99_audio_rate_array);
+            mem.Write16Guest(
+                descriptor + 32u,
+                1u);
+            mem.Write16Guest(
+                descriptor + 34u,
+                2u);
+
+            regs[0] = 0u;
+            return true;
+        }
+
+        regs[0] = 1u;
+        return true;
+    }
+
     bool V98Enabled() const {
         return HasCapability(
             PvZ2ProbeCapability::PresentationRgbFidelity);
@@ -8495,6 +9331,7 @@ public:
     }
 
     const char* RuntimeModeTag() const {
+        if (V99Enabled()) return "V99";
         if (V98Enabled()) return "V98";
         if (V97Enabled()) return "V97";
         if (V96Enabled()) return "V96";
@@ -8591,7 +9428,8 @@ public:
                 line.rfind("V95 ", 0u) == 0u ||
                 line.rfind("V96 ", 0u) == 0u ||
                 line.rfind("V97 ", 0u) == 0u ||
-                line.rfind("V98 ", 0u) == 0u) {
+                line.rfind("V98 ", 0u) == 0u ||
+                line.rfind("V99 ", 0u) == 0u) {
                 return true;
             }
 
@@ -20868,6 +21706,16 @@ public:
 
         const std::string& name = binding->second.name;
 
+        if (V99Enabled() &&
+            name.rfind("__v99_sl_", 0u) == 0u) {
+            if (V99HandleOpenSLSvc(
+                    name,
+                    regs)) {
+                ++supported_calls;
+                return;
+            }
+        }
+
         if (name == "__errno") {
             if (guest_errno_address == 0) {
                 guest_errno_address =
@@ -29560,9 +30408,15 @@ public:
         }
 
         if (name == "slCreateEngine") {
+            if (V99Enabled() &&
+                V99HandleSlCreateEngine(
+                    regs)) {
+                ++supported_calls;
+                return;
+            }
+
             log_fallback_once("opensl-probe");
-            // Report unavailable audio cleanly. The real backend will map
-            // OpenSL ES to iOS audio instead of constructing fake vtables.
+            // Historical control modes deliberately report audio unavailable.
             regs[0] = 1; // non-success SLresult
             ++supported_calls;
             return;
@@ -30571,6 +31425,64 @@ std::uint32_t JniProbeAllocateImportedObject(
         return variable;
     }
 
+    if (callbacks.V99Enabled() &&
+        (name == "SL_IID_ENGINE" ||
+         name == "SL_IID_PLAY" ||
+         name == "SL_IID_BUFFERQUEUE" ||
+         name == "SL_IID_ANDROIDCONFIGURATION" ||
+         name == "SL_IID_AUDIOIODEVICECAPABILITIES")) {
+
+        // OpenSL exports each IID as a pointer-valued data symbol. The ELF
+        // relocation therefore needs the address of a guest variable whose
+        // value is the stable IID object pointer, not the zero-filled generic
+        // imported-data placeholder used by earlier probes.
+        const std::uint32_t variable =
+            memory.AllocateObject(
+                4u,
+                4u);
+        const std::uint32_t backing =
+            memory.AllocateObject(
+                16u,
+                4u);
+
+        if (variable == 0u ||
+            backing == 0u) {
+            return 0u;
+        }
+
+        std::uint32_t token =
+            0x534c0000u;
+        for (const unsigned char ch :
+             name) {
+            token =
+                (token * 33u) ^
+                static_cast<std::uint32_t>(
+                    ch);
+        }
+
+        memory.Write32Guest(
+            backing + 0u,
+            token);
+        memory.Write32Guest(
+            backing + 4u,
+            token ^ 0x13579bdfu);
+        memory.Write32Guest(
+            backing + 8u,
+            token ^ 0x2468ace0u);
+        memory.Write32Guest(
+            backing + 12u,
+            token ^ 0xa5a5a5a5u);
+        memory.Write32Guest(
+            variable,
+            backing);
+
+        callbacks.V99RegisterOpenSLIID(
+            name,
+            backing);
+
+        return variable;
+    }
+
     // Deliberately preserve the v56 generic placeholder for all other
     // imported objects and for the V56_BASELINE control mode.
     return memory.AllocateObject(64, 8);
@@ -30775,6 +31687,60 @@ bool JniProbePrepareRuntime(
             }
 
             ++result.imports_patched;
+        }
+    }
+
+    if (callbacks.V99Enabled()) {
+        const std::array<const char*, 16> v99_methods = {{
+            "__v99_sl_unsupported",
+            "__v99_sl_object_realize",
+            "__v99_sl_object_get_state",
+            "__v99_sl_object_get_interface",
+            "__v99_sl_object_register_callback",
+            "__v99_sl_object_destroy",
+            "__v99_sl_engine_create_audio_player",
+            "__v99_sl_engine_create_output_mix",
+            "__v99_sl_play_set_state",
+            "__v99_sl_queue_enqueue",
+            "__v99_sl_queue_clear",
+            "__v99_sl_queue_get_state",
+            "__v99_sl_queue_register_callback",
+            "__v99_sl_android_config_set",
+            "__v99_sl_caps_get_outputs",
+            "__v99_sl_caps_query_output",
+        }};
+
+        for (const char* method_name :
+             v99_methods) {
+            const std::uint32_t svc =
+                kJniProbeImportSvcBase +
+                import_svc_index++;
+            const std::uint32_t trampoline =
+                JniProbeMakeTrampoline(
+                    memory,
+                    trampoline_slot++,
+                    svc);
+
+            if (trampoline == 0u) {
+                error =
+                    "v99 OpenSL synthetic trampoline arena exhausted.";
+                return false;
+            }
+
+            callbacks.imports_by_svc.emplace(
+                svc,
+                JniProbeImportBinding{
+                    trampoline,
+                    method_name});
+            callbacks.V99RegisterOpenSLMethod(
+                method_name,
+                trampoline);
+        }
+
+        if (!callbacks.V99EnsureOpenSLObjects()) {
+            error =
+                "v99 OpenSL guest object/interface construction failed.";
+            return false;
         }
     }
 
@@ -31343,6 +32309,10 @@ bool JniProbePrepareRuntime(
         callbacks.Append(
             "V83 PROFILE BUTTON DISPATCH: v83 restored the V80 2048x1536 pixel touch control and proved buttonId=5 can dispatch even when the raw +0x28/+0x2c/+0x30/+0x34 radar rectangle does not contain the screen-space tap. Those raw fields are therefore local/transformed, not absolute hitboxes. The passive dispatcher trap remains enabled and does not alter rendering, widget geometry or GameState.");
     }
+    if (callbacks.V99Enabled()) {
+        callbacks.AppendDiagnostic(
+            "V99 AUDIO OPENSL BRIDGE: v98 playable runtime preserved. Wwise CAkSinkOpenSL receives functional Engine/Object/Play/BufferQueue/AndroidConfiguration/AudioIODeviceCapabilities interfaces; mixed PCM16 is copied to a bounded AVAudioEngine ring and buffer-complete callbacks return to Dynarmic only at scheduler-safe lifecycle/frame boundaries.");
+    }
     if (callbacks.V98Enabled()) {
         callbacks.AppendDiagnostic(
             "V98 PRESENTATION RGB FIDELITY: host display and diagnostic copies preserve the guest framebuffer's already-composited RGB verbatim and force only output alpha opaque; the v40/v90 rgb/alpha unpremultiply workaround is disabled.");
@@ -31871,6 +32841,15 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
     PvZ2JniProbeResult result;
     result.diagnostic_mode =
         diagnostic_mode;
+
+    struct V99HostAudioRunGuard {
+        V99HostAudioRunGuard() {
+            PvZ2HostAudioShutdown();
+        }
+        ~V99HostAudioRunGuard() {
+            PvZ2HostAudioShutdown();
+        }
+    } v99_host_audio_run_guard;
 
     if (!apk_data || apk_size == 0) {
         result.message =
@@ -35133,6 +36112,106 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                         return true;
                     };
 
+
+                auto drain_audio_callbacks =
+                    [&](const char* phase) -> bool {
+                        if (!callbacks.V99Enabled()) {
+                            return true;
+                        }
+
+                        const std::uint32_t newly_consumed =
+                            PvZ2HostAudioTakeConsumedBufferCount();
+
+                        callbacks.v99_audio_host_consumed +=
+                            newly_consumed;
+                        callbacks.v99_audio_pending_callbacks +=
+                            newly_consumed;
+
+                        if (callbacks.v99_audio_pending_callbacks == 0u) {
+                            return true;
+                        }
+
+                        if (callbacks.v99_queue_callback == 0u ||
+                            callbacks.v99_queue_itf == 0u) {
+                            if (newly_consumed != 0u) {
+                                callbacks.AppendDiagnostic(
+                                    "V99 AUDIO CALLBACK DEFERRED phase=" +
+                                    std::string{
+                                        phase != nullptr
+                                            ? phase
+                                            : "n/a"} +
+                                    " pending=" +
+                                    std::to_string(
+                                        callbacks
+                                            .v99_audio_pending_callbacks) +
+                                    " callbackRegistered=NO");
+                            }
+                            return true;
+                        }
+
+                        constexpr std::uint32_t
+                            kMaxAudioCallbacksPerBoundary =
+                                8u;
+                        std::uint32_t delivered = 0u;
+
+                        while (callbacks.v99_audio_pending_callbacks != 0u &&
+                               delivered <
+                                   kMaxAudioCallbacksPerBoundary) {
+                            const std::uint64_t callback_number =
+                                callbacks.v99_audio_callback_deliveries +
+                                1u;
+
+                            if (callbacks.V99ShouldLogCounter(
+                                    callback_number)) {
+                                callbacks.AppendDiagnostic(
+                                    "V99 AUDIO CALLBACK #" +
+                                    std::to_string(
+                                        callback_number) +
+                                    " phase=" +
+                                    std::string{
+                                        phase != nullptr
+                                            ? phase
+                                            : "n/a"} +
+                                    " pendingBefore=" +
+                                    std::to_string(
+                                        callbacks
+                                            .v99_audio_pending_callbacks) +
+                                    " hostQueued=" +
+                                    std::to_string(
+                                        PvZ2HostAudioQueuedBufferCount()));
+                            }
+
+                            if (!run_lifecycle(
+                                    "V99_OpenSL_BufferQueueCallback",
+                                    callbacks.v99_queue_callback,
+                                    callbacks.v99_queue_itf,
+                                    callbacks.v99_queue_context,
+                                    0u,
+                                    false)) {
+                                callbacks.AppendCritical(
+                                    "V99 AUDIO CALLBACK guest delivery failed.");
+                                return false;
+                            }
+
+                            --callbacks.v99_audio_pending_callbacks;
+                            ++callbacks.v99_audio_callback_deliveries;
+                            ++delivered;
+                        }
+
+                        if (callbacks.v99_audio_pending_callbacks != 0u &&
+                            callbacks.V99ShouldLogCounter(
+                                callbacks
+                                    .v99_audio_callback_deliveries)) {
+                            callbacks.AppendDiagnostic(
+                                "V99 AUDIO CALLBACK BACKLOG pending=" +
+                                std::to_string(
+                                    callbacks
+                                        .v99_audio_pending_callbacks));
+                        }
+
+                        return true;
+                    };
+
                 constexpr std::uint32_t kGameAppThis =
                     kAndroidGameApp;
                 constexpr std::uint32_t kSurfaceThis =
@@ -35325,6 +36404,11 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                 if (!run_boundary_workers(
                         "pre-frame",
                         callbacks.deferred_threads.size())) {
+                    return result;
+                }
+
+                if (!drain_audio_callbacks(
+                        "pre-frame")) {
                     return result;
                 }
 
@@ -35567,6 +36651,11 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                     // Native_onDrawFrame has returned, never in the middle of
                     // guest rendering/state mutation.
                     if (!drain_offline_http_callbacks(
+                            "frame-boundary")) {
+                        return result;
+                    }
+
+                    if (!drain_audio_callbacks(
                             "frame-boundary")) {
                         return result;
                     }
