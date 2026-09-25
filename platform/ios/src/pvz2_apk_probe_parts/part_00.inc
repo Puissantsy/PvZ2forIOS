@@ -1027,6 +1027,9 @@ constexpr std::uint64_t kCapsV114 = kCapsV113;
 // v115 changes only Dynarmic memory access for the lower 255/256 main-stack
 // pages; all v114 runtime capabilities and telemetry remain enabled.
 constexpr std::uint64_t kCapsV115 = kCapsV114;
+// v116 additionally changes only Dynarmic memory access for complete pages of
+// the exact non-writable RX PT_LOAD. Runtime capabilities remain unchanged.
+constexpr std::uint64_t kCapsV116 = kCapsV115;
 
 constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::PassiveRegistry, "PASSIVE_REGISTRY", nullptr, 0u, false},
@@ -1089,11 +1092,12 @@ constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::V112AudioBoundaryProfiler, "V112_AUDIO_BOUNDARY_PROFILER", "V112 Audio Boundary", kCapsV112, false},
     {PvZ2DiagnosticMode::V113DynarmicHeapPageTable, "V113_DYNARMIC_HEAP_PAGETABLE", "V113 Heap Page Table", kCapsV113, false},
     {PvZ2DiagnosticMode::V114MainBoundaryProfiler, "V114_MAIN_BOUNDARY_PROFILER", "V114 Main Boundary", kCapsV114, false},
-    {PvZ2DiagnosticMode::V115DynarmicMainStackPageTable, "V115_DYNARMIC_MAIN_STACK_PAGETABLE", "V115 Main Stack", kCapsV115, true},
+    {PvZ2DiagnosticMode::V115DynarmicMainStackPageTable, "V115_DYNARMIC_MAIN_STACK_PAGETABLE", "V115 Main Stack", kCapsV115, false},
+    {PvZ2DiagnosticMode::V116DynarmicReadOnlyImagePageTable, "V116_DYNARMIC_READONLY_IMAGE_PAGETABLE", "V116 RX Image", kCapsV116, true},
 };
 
 constexpr PvZ2DiagnosticMode kSelectableDiagnosticModes[] = {
-    PvZ2DiagnosticMode::V115DynarmicMainStackPageTable,
+    PvZ2DiagnosticMode::V116DynarmicReadOnlyImagePageTable,
 };
 
 } // namespace
@@ -1604,6 +1608,19 @@ bool BuildJniProbeElf(
 
     if (loads.size() != 2 || image_end != 0x00df9700ull) {
         error = "JNI probe ELF load profile does not match PvZ2 1.5.252752.";
+        return false;
+    }
+
+    // v116 relies on the exact Android linker permissions of this build:
+    // PT_LOAD[0] is RX and contains code/rodata, PT_LOAD[1] is RW and contains
+    // mutable data/GOT/RELRO. Refuse the profile if that contract ever differs.
+    if (loads[0].vaddr != 0x00000000u ||
+        loads[0].memsz != 0x00ccaad4u ||
+        loads[0].flags != 5u ||
+        loads[1].vaddr != 0x00ccbf90u ||
+        loads[1].memsz != 0x0012d770u ||
+        loads[1].flags != 6u) {
+        error = "JNI probe ELF PT_LOAD permission profile does not match PvZ2 1.5.252752.";
         return false;
     }
 
@@ -3827,6 +3844,14 @@ public:
     std::uint32_t v115_stack_pages_mapped = 0u;
     std::uint32_t v115_stack_callback_pages = 1u;
     std::uint64_t v115_stack_activation_ns = 0u;
+
+    // v116: direct-map only *complete* 4 KiB pages covered by the exact RX
+    // PT_LOAD (ELF offsets 0x00000000..0x00ccaad3). The mixed/partial page at
+    // 0x00cca000 and the complete RW PT_LOAD remain callback-backed.
+    bool v116_image_page_table_active = false;
+    std::uint32_t v116_image_pages_mapped = 0u;
+    std::uint32_t v116_image_callback_tail_pages = 0u;
+    std::uint64_t v116_image_activation_ns = 0u;
 
     // v114: natural Native_onDrawFrame/main-thread boundary profiler. No
     // periodic halt or guest patch is installed. Each existing main jit.Run
