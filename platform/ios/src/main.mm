@@ -2283,7 +2283,7 @@ void PvZ2HostNotifyDirectFrame(
     self.v110SelectedUiModeIndex = 0;
 
     const PvZ2DiagnosticMode selectedMode =
-        PvZ2DiagnosticMode::V115DynarmicMainStackPageTable;
+        PvZ2DiagnosticMode::V116DynarmicReadOnlyImagePageTable;
 
     const auto* selectedDescriptor =
         PvZ2DescribeDiagnosticMode(selectedMode);
@@ -2293,13 +2293,13 @@ void PvZ2HostNotifyDirectFrame(
             ? [NSString
                   stringWithUTF8String:
                       selectedDescriptor->internal_name]
-            : @"V115_DYNARMIC_MAIN_STACK_PAGETABLE";
+            : @"V116_DYNARMIC_READONLY_IMAGE_PAGETABLE";
 
     [self
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v115 mode=%@. Reproduce the ~700–770 animation first, then Day 4/late wave. Confirm performance gain and intact LR-SLOT telemetry, then Hard Stop.",
+                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v116 mode=%@. Reproduce the laggy animation first, then a heavy Day 4/late-wave seed-spam segment. Confirm RX image mapping, intact LR-SLOT/RELRO telemetry, audio stability and frame-time reduction, then Hard Stop.",
                     selectedModeName]];
 
     [self
@@ -2355,7 +2355,7 @@ void PvZ2HostNotifyDirectFrame(
     }
 
     const PvZ2DiagnosticMode diagnosticMode =
-        PvZ2DiagnosticMode::V115DynarmicMainStackPageTable;
+        PvZ2DiagnosticMode::V116DynarmicReadOnlyImagePageTable;
 
     const auto* diagnosticDescriptor =
         PvZ2DescribeDiagnosticMode(diagnosticMode);
@@ -2374,7 +2374,7 @@ void PvZ2HostNotifyDirectFrame(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v115 Main Stack Page Table started mode=%@; PID=%d ===",
+                    @"=== PvZ2 v116 RX Image Page Table started mode=%@; PID=%d ===",
                     diagnosticModeName,
                     getpid()]];
 
