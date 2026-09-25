@@ -389,6 +389,12 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // v113 heap page-table optimization. It uses only natural import/SVC and
     // existing jit.Run boundaries while Native_onDrawFrame is executing.
     V114MainBoundaryProfiler = 59u,
+
+    // v115: keep v114 telemetry and the v113 heap direct mapping, then map
+    // the first 255/256 pages of the 1 MiB main guest stack directly through
+    // Dynarmic. The final 4 KiB page stays callback-backed so the validated
+    // v94/v95 LR-slot provenance/watch path remains observable.
+    V115DynarmicMainStackPageTable = 60u,
 };
 
 enum class PvZ2ProbeCapability : std::uint64_t {
