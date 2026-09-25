@@ -450,6 +450,10 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // v128: preserve v127 and persist the v51 Android private USERFS in the
     // app's iOS sandbox while keeping guest-visible Android paths unchanged.
     V128PersistentUserFs = 71u,
+
+    // v129: preserve v128, but replace Android's adaptive Board world-scale
+    // stores with the historical iOS contract: scale=1.0, offsets=0/0.
+    V129IosBoardScale = 72u,
 };
 
 enum class PvZ2ProbeCapability : std::uint64_t {

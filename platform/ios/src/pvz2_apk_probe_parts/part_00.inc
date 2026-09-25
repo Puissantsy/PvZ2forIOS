@@ -1054,6 +1054,7 @@ constexpr std::uint64_t kCapsV125 = kCapsV124;
 constexpr std::uint64_t kCapsV126 = kCapsV125;
 constexpr std::uint64_t kCapsV127 = kCapsV126;
 constexpr std::uint64_t kCapsV128 = kCapsV127;
+constexpr std::uint64_t kCapsV129 = kCapsV128;
 
 constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::PassiveRegistry, "PASSIVE_REGISTRY", nullptr, 0u, false},
@@ -1127,11 +1128,12 @@ constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::V125RepeatEnqueueContext, "V125_REPEAT_ENQUEUE_CONTEXT", "V125 Repeat Context", kCapsV125, false},
     {PvZ2DiagnosticMode::V126AudioFlightRecorder, "V126_AUDIO_FLIGHT_RECORDER", "V126 Audio Flight", kCapsV126, false},
     {PvZ2DiagnosticMode::V127AudioWorkerDrain, "V127_AUDIO_WORKER_DRAIN", "V127 Audio Worker Drain", kCapsV127, false},
-    {PvZ2DiagnosticMode::V128PersistentUserFs, "V128_PERSISTENT_USERFS", "V128 Persistent Save", kCapsV128, true},
+    {PvZ2DiagnosticMode::V128PersistentUserFs, "V128_PERSISTENT_USERFS", "V128 Persistent Save", kCapsV128, false},
+    {PvZ2DiagnosticMode::V129IosBoardScale, "V129_IOS_BOARD_SCALE", "V129 iOS Board Scale", kCapsV129, true},
 };
 
 constexpr PvZ2DiagnosticMode kSelectableDiagnosticModes[] = {
-    PvZ2DiagnosticMode::V128PersistentUserFs,
+    PvZ2DiagnosticMode::V129IosBoardScale,
 };
 
 } // namespace
@@ -1556,6 +1558,13 @@ constexpr std::uint32_t kJniProbeSvcV108KillBankMsg = 0x00f0cau;
 constexpr std::uint32_t kJniProbeSvcV108UsageSlotRelease = 0x00f0cbu;
 constexpr std::uint32_t kJniProbeSvcV108UnloadCompletion = 0x00f0ccu;
 constexpr std::uint32_t kJniProbeSvcV108DefaultBankCallback = 0x00f0cdu;
+
+// v129: three exact Android adaptive Board-scale stores. Each SVC replaces
+// only the final VSTR of Board+0x678. The callback derives the Board pointer
+// from that destination and applies the historical iOS triplet 1.0/0/0.
+constexpr std::uint32_t kJniProbeSvcV129BoardScaleState = 0x00f0d0u;
+constexpr std::uint32_t kJniProbeSvcV129BoardScaleInit = 0x00f0d1u;
+constexpr std::uint32_t kJniProbeSvcV129BoardScaleRefresh = 0x00f0d2u;
 
 constexpr std::uint32_t kJniProbeSvcUnsupportedJniBase = 0x00e000u;
 constexpr std::uint32_t kJniProbeJniSlotCount = 256u;

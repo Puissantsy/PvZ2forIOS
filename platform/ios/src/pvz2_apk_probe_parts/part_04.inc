@@ -458,6 +458,64 @@
             v94_svc_watch_slot,
             v94_svc_before};
 
+        if (V129Enabled() &&
+            (swi == kJniProbeSvcV129BoardScaleState ||
+             swi == kJniProbeSvcV129BoardScaleInit ||
+             swi == kJniProbeSvcV129BoardScaleRefresh)) {
+
+            // Exact patched instructions:
+            //  0x10174a50: VSTR s0,[r0]  (r0 = Board+0x678)
+            //  0x10178a58: VSTR s0,[r2]  (r2 = Board+0x678)
+            //  0x101791b8: VSTR s0,[r0]  (r0 = Board+0x678)
+            const std::uint32_t scale_ptr =
+                swi == kJniProbeSvcV129BoardScaleInit
+                    ? regs[2]
+                    : regs[0];
+
+            constexpr std::uint32_t kBoardScaleOffset = 0x678u;
+            constexpr std::uint32_t kFloatOne = 0x3f800000u;
+
+            if (scale_ptr < kBoardScaleOffset) {
+                AppendCritical(
+                    "V129 BOARD SCALE invalid destination ptr=0x" +
+                    JniProbeHex(scale_ptr));
+                control_returned = true;
+                return;
+            }
+
+            const std::uint32_t board =
+                scale_ptr - kBoardScaleOffset;
+
+            mem.Write32Guest(board + 0x678u, kFloatOne);
+            mem.Write32Guest(board + 0x67cu, 0u);
+            mem.Write32Guest(board + 0x680u, 0u);
+
+            ++v129_board_scale_forces;
+            if (swi == kJniProbeSvcV129BoardScaleState) {
+                ++v129_board_scale_state_forces;
+            } else if (swi == kJniProbeSvcV129BoardScaleInit) {
+                ++v129_board_scale_init_forces;
+            } else {
+                ++v129_board_scale_refresh_forces;
+            }
+
+            if (v129_board_scale_forces <= 12u) {
+                AppendDiagnostic(
+                    "V129 BOARD SCALE #" +
+                    std::to_string(v129_board_scale_forces) +
+                    " site=" +
+                    (swi == kJniProbeSvcV129BoardScaleState
+                        ? std::string{"state"}
+                        : swi == kJniProbeSvcV129BoardScaleInit
+                            ? std::string{"init"}
+                            : std::string{"refresh"}) +
+                    " board=0x" + JniProbeHex(board) +
+                    " -> scale=1.0 offsetX=0 offsetY=0");
+            }
+
+            return;
+        }
+
         if (V94Enabled() &&
             swi == kJniProbeSvcV95WrapperPush) {
 

@@ -780,9 +780,15 @@
     }
 
 
+    bool V129Enabled() const {
+        return diagnostic_mode ==
+            PvZ2DiagnosticMode::V129IosBoardScale;
+    }
+
     bool V128Enabled() const {
         return diagnostic_mode ==
-            PvZ2DiagnosticMode::V128PersistentUserFs;
+                   PvZ2DiagnosticMode::V128PersistentUserFs ||
+               V129Enabled();
     }
 
     std::string V128ConfigHostPath() const {
@@ -4309,6 +4315,7 @@
     }
 
     const char* RuntimeModeTag() const {
+        if (V129Enabled()) return "V129";
         if (V128Enabled()) return "V128";
         if (V127Enabled()) return "V127";
         if (V126Enabled()) return "V126";
@@ -5713,6 +5720,14 @@
         }
         if (V127Enabled()) {
             AppendDiagnostic(V127AudioDrainSummary());
+        }
+        if (V129Enabled()) {
+            AppendDiagnostic(
+                "V129 IOS BOARD SCALE SUMMARY forces=" +
+                std::to_string(v129_board_scale_forces) +
+                " state=" + std::to_string(v129_board_scale_state_forces) +
+                " init=" + std::to_string(v129_board_scale_init_forces) +
+                " refresh=" + std::to_string(v129_board_scale_refresh_forces));
         }
         if (V128Enabled()) {
             AppendDiagnostic(

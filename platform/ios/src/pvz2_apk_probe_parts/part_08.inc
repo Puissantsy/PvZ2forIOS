@@ -1735,6 +1735,25 @@ bool JniProbePrepareRuntime(
         return false;
     }
 
+    if (callbacks.V129Enabled() &&
+        (!patch_resource_native_miss(
+             0x00174a50u,
+             0xed800a00u,
+             kJniProbeSvcV129BoardScaleState) ||
+         !patch_resource_native_miss(
+             0x00178a58u,
+             0xed820a00u,
+             kJniProbeSvcV129BoardScaleInit) ||
+         !patch_resource_native_miss(
+             0x001791b8u,
+             0xed800a00u,
+             kJniProbeSvcV129BoardScaleRefresh))) {
+
+        error =
+            "v129 Board iOS-scale signature mismatch at 0x10174a50/0x10178a58/0x101791b8; refusing to patch an unverified PvZ2 1.5.252752 image.";
+        return false;
+    }
+
     if (callbacks.V94Enabled() &&
         (!patch_resource_native_miss(
              0x00868978u,

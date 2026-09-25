@@ -719,7 +719,7 @@ void PvZ2HostNotifyDirectFrame(
 
     self.inputEnabled = NO;
     self.captionLabel.text =
-        @"PvZ2 v128 LIVE — HARD STOP requested; stopping guest at the next checkpoint…";
+        @"PvZ2 v129 LIVE — HARD STOP requested; stopping guest at the next checkpoint…";
     self.stopButton.enabled = NO;
     PvZ2RequestInteractiveStop();
 }
@@ -1341,7 +1341,7 @@ void PvZ2HostNotifyDirectFrame(
         self.captionLabel.text =
             [NSString
                 stringWithFormat:
-                    @"PvZ2 v128 LIVE • frame %lu • %@\n%lu×%lu guest • direct GPU 1:1 + audio",
+                    @"PvZ2 v129 LIVE • frame %lu • %@\n%lu×%lu guest • direct GPU 1:1 + audio",
                     (unsigned long)frame,
                     touchState,
                     (unsigned long)width,
@@ -2283,7 +2283,7 @@ void PvZ2HostNotifyDirectFrame(
     self.v110SelectedUiModeIndex = 0;
 
     const PvZ2DiagnosticMode selectedMode =
-        PvZ2DiagnosticMode::V128PersistentUserFs;
+        PvZ2DiagnosticMode::V129IosBoardScale;
 
     const auto* selectedDescriptor =
         PvZ2DescribeDiagnosticMode(selectedMode);
@@ -2293,13 +2293,13 @@ void PvZ2HostNotifyDirectFrame(
             ? [NSString
                   stringWithUTF8String:
                       selectedDescriptor->internal_name]
-            : @"V128_PERSISTENT_USERFS";
+            : @"V129_IOS_BOARD_SCALE";
 
     [self
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v128 mode=%@. Persistent USERFS keeps the validated v127 runtime/audio behavior and maps Android private files/cache into the iOS app sandbox. Profile/progress files flush atomically on fflush/fsync/close and reload on the next launch. Make visible progress, fully close the app, then relaunch to verify persistence.",
+                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v129 mode=%@. Keeps v128 persistence and v127 audio, but replaces the three verified Android adaptive Board world-scale stores with the historical iOS contract scale=1.0 / offsets=0/0. Reach Ancient Egypt Day 1 and compare lawn size, mower visibility, surrounding margins and SeedBank overlap.",
                     selectedModeName]];
 
     [self
@@ -2355,7 +2355,7 @@ void PvZ2HostNotifyDirectFrame(
     }
 
     const PvZ2DiagnosticMode diagnosticMode =
-        PvZ2DiagnosticMode::V128PersistentUserFs;
+        PvZ2DiagnosticMode::V129IosBoardScale;
 
     const auto* diagnosticDescriptor =
         PvZ2DescribeDiagnosticMode(diagnosticMode);
@@ -2374,7 +2374,7 @@ void PvZ2HostNotifyDirectFrame(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v128 Persistent UserFS started mode=%@; PID=%d ===",
+                    @"=== PvZ2 v129 iOS Board Scale started mode=%@; PID=%d ===",
                     diagnosticModeName,
                     getpid()]];
 
@@ -2888,14 +2888,14 @@ void PvZ2HostNotifyDirectFrame(
                                     finishRunWithMessage:
                                         [NSString
                                             stringWithFormat:
-                                                @"PvZ2 v128 LIVE — HARD STOPPED after %u guest frames.\nClose to inspect the v128 runtime log.",
+                                                @"PvZ2 v129 LIVE — HARD STOPPED after %u guest frames.\nClose to inspect the v129 runtime log.",
                                                 result.draw_frames_completed]];
                             } else {
                                 [selfRef.liveController
                                     finishRunWithMessage:
                                         [NSString
                                             stringWithFormat:
-                                                @"PvZ2 v128 LIVE — run finished after %u guest frames.\nClose to inspect the v128 runtime log.",
+                                                @"PvZ2 v129 LIVE — run finished after %u guest frames.\nClose to inspect the v129 runtime log.",
                                                 result.draw_frames_completed]];
                             }
 
@@ -2952,11 +2952,11 @@ void PvZ2HostNotifyDirectFrame(
 
                             if (result.hard_stop_requested) {
                                 [selfRef.liveController finishRunWithMessage:
-                                    @"PvZ2 v128 LIVE — HARD STOPPED.\nGuest execution was interrupted at the next Dynarmic checkpoint. Close to inspect the v128 runtime log."];
+                                    @"PvZ2 v129 LIVE — HARD STOPPED.\nGuest execution was interrupted at the next Dynarmic checkpoint. Close to inspect the v129 runtime log."];
                             } else {
                                 [selfRef.liveController finishRunWithMessage:
                                     [NSString stringWithFormat:
-                                        @"PvZ2 v128 LIVE — guest stopped/crashed.\n%@\nClose to inspect the v128 runtime log.", message]];
+                                        @"PvZ2 v129 LIVE — guest stopped/crashed.\n%@\nClose to inspect the v129 runtime log.", message]];
                             }
 
                         } else {

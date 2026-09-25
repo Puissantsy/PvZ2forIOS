@@ -729,6 +729,12 @@
     std::uint64_t v128_config_flushes = 0u;
     std::uint64_t v128_config_failures = 0u;
 
+    // v129: count exact replacements of Android's adaptive Board transform.
+    std::uint64_t v129_board_scale_forces = 0u;
+    std::uint64_t v129_board_scale_state_forces = 0u;
+    std::uint64_t v129_board_scale_init_forces = 0u;
+    std::uint64_t v129_board_scale_refresh_forces = 0u;
+
     std::unordered_set<std::string> v51_config_keys;
     std::unordered_map<std::string, std::string>
         v51_config_strings;
