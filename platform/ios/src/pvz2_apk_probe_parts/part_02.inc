@@ -780,9 +780,16 @@
     }
 
 
-    bool V122Enabled() const {
+    bool V123Enabled() const {
         return diagnostic_mode ==
-            PvZ2DiagnosticMode::V122PcmContinuityTelemetry;
+            PvZ2DiagnosticMode::V123NonSilentRepeatTelemetry;
+    }
+
+    bool V122Enabled() const {
+        return
+            diagnostic_mode ==
+                PvZ2DiagnosticMode::V122PcmContinuityTelemetry ||
+            V123Enabled();
     }
 
     bool V121Enabled() const {
@@ -3260,6 +3267,7 @@
     }
 
     const char* RuntimeModeTag() const {
+        if (V123Enabled()) return "V123";
         if (V122Enabled()) return "V122";
         if (V121Enabled()) return "V121";
         if (V118Enabled()) return "V118";
@@ -4595,7 +4603,19 @@
                 << " repeatedSparseBlocks=" << audio.repeated_sparse_blocks
                 << " maxSparseRepeatRun=" << audio.max_sparse_repeat_run
                 << " firstSparseRepeatGuestFrame=" << audio.first_sparse_repeat_guest_frame
-                << " lastSparseRepeatGuestFrame=" << audio.last_sparse_repeat_guest_frame;
+                << " lastSparseRepeatGuestFrame=" << audio.last_sparse_repeat_guest_frame
+                << " nonSilentRepeatedSparseBlocks=" << audio.non_silent_repeated_sparse_blocks
+                << " maxNonSilentRepeatRun=" << audio.max_non_silent_repeat_run
+                << " firstNonSilentRepeatGuestFrame=" << audio.first_non_silent_repeat_guest_frame
+                << " lastNonSilentRepeatGuestFrame=" << audio.last_non_silent_repeat_guest_frame
+                << " animWindowRepeats=" << audio.animation_window_non_silent_repeats
+                << " animWindowFirst=" << audio.animation_window_first_repeat_frame
+                << " animWindowLast=" << audio.animation_window_last_repeat_frame
+                << " lateWindowRepeats=" << audio.late_window_non_silent_repeats
+                << " lateWindowFirst=" << audio.late_window_first_repeat_frame
+                << " lateWindowLast=" << audio.late_window_last_repeat_frame
+                << " animWindowJumpGt8192=" << audio.animation_window_jump_gt_8192
+                << " lateWindowJumpGt8192=" << audio.late_window_jump_gt_8192;
             AppendDiagnostic(out.str());
         }
         if (V110ProfilingEnabled()) AppendDiagnostic(V110AudioSummary());

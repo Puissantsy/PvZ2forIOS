@@ -1938,6 +1938,14 @@ bool JniProbePrepareRuntime(
             "and wall time between imports is measured only inside the same "
             "jit.Run worker span so scheduler sleep is excluded.");
     }
+    if (callbacks.V123Enabled()) {
+        callbacks.AppendDiagnostic(
+            "V123 NON-SILENT REPEAT TELEMETRY: v122/v121/v118 runtime unchanged. "
+            "Sparse-identical consecutive PCM blocks are counted separately only "
+            "when sampled peak amplitude is >=256, with dedicated correlation "
+            "windows 800-2500 and 10000-12500 guest frames. No PCM is modified "
+            "and no per-buffer log is emitted.");
+    }
     if (callbacks.V122Enabled()) {
         callbacks.AppendDiagnostic(
             "V122 PCM CONTINUITY TELEMETRY: v121/v118 runtime unchanged. "

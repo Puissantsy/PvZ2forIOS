@@ -71,6 +71,18 @@ struct PvZ2HostAudioDiagnostics {
     std::uint64_t max_sparse_repeat_run = 0u;
     std::uint64_t first_sparse_repeat_guest_frame = 0u;
     std::uint64_t last_sparse_repeat_guest_frame = 0u;
+    std::uint64_t non_silent_repeated_sparse_blocks = 0u;
+    std::uint64_t max_non_silent_repeat_run = 0u;
+    std::uint64_t first_non_silent_repeat_guest_frame = 0u;
+    std::uint64_t last_non_silent_repeat_guest_frame = 0u;
+    std::uint64_t animation_window_non_silent_repeats = 0u;
+    std::uint64_t animation_window_first_repeat_frame = 0u;
+    std::uint64_t animation_window_last_repeat_frame = 0u;
+    std::uint64_t late_window_non_silent_repeats = 0u;
+    std::uint64_t late_window_first_repeat_frame = 0u;
+    std::uint64_t late_window_last_repeat_frame = 0u;
+    std::uint64_t animation_window_jump_gt_8192 = 0u;
+    std::uint64_t late_window_jump_gt_8192 = 0u;
 };
 
 void PvZ2HostAudioResetDiagnostics();

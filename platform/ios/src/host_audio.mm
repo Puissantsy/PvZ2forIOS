@@ -85,6 +85,18 @@ std::atomic<std::uint64_t> gDiagRepeatedSparseBlocks{0u};
 std::atomic<std::uint64_t> gDiagMaxSparseRepeatRun{0u};
 std::atomic<std::uint64_t> gDiagFirstSparseRepeatGuestFrame{0u};
 std::atomic<std::uint64_t> gDiagLastSparseRepeatGuestFrame{0u};
+std::atomic<std::uint64_t> gDiagNonSilentRepeatedSparseBlocks{0u};
+std::atomic<std::uint64_t> gDiagMaxNonSilentRepeatRun{0u};
+std::atomic<std::uint64_t> gDiagFirstNonSilentRepeatGuestFrame{0u};
+std::atomic<std::uint64_t> gDiagLastNonSilentRepeatGuestFrame{0u};
+std::atomic<std::uint64_t> gDiagAnimationWindowNonSilentRepeats{0u};
+std::atomic<std::uint64_t> gDiagAnimationWindowFirstRepeatFrame{0u};
+std::atomic<std::uint64_t> gDiagAnimationWindowLastRepeatFrame{0u};
+std::atomic<std::uint64_t> gDiagLateWindowNonSilentRepeats{0u};
+std::atomic<std::uint64_t> gDiagLateWindowFirstRepeatFrame{0u};
+std::atomic<std::uint64_t> gDiagLateWindowLastRepeatFrame{0u};
+std::atomic<std::uint64_t> gDiagAnimationWindowJumpGt8192{0u};
+std::atomic<std::uint64_t> gDiagLateWindowJumpGt8192{0u};
 
 // Producer-side continuity state. EnqueuePCM16 is invoked serially by the
 // cooperative guest thread, so these do not participate in the realtime
@@ -93,6 +105,7 @@ bool gDiagHavePreviousBlock = false;
 std::array<std::int16_t, kMaxChannels> gDiagPreviousLastSample{};
 std::uint64_t gDiagPreviousSparseSignature = 0u;
 std::uint64_t gDiagSparseRepeatRun = 0u;
+std::uint64_t gDiagNonSilentSparseRepeatRun = 0u;
 
 void DiagnosticAtomicMin(
     std::atomic<std::uint64_t>& target,
@@ -876,6 +889,18 @@ bool PvZ2HostAudioEnqueuePCM16(
             gDiagBoundaryJumpGt8192.fetch_add(
                 1u,
                 std::memory_order_relaxed);
+            if (guest_frame >= 800u &&
+                guest_frame <= 2500u) {
+                gDiagAnimationWindowJumpGt8192.fetch_add(
+                    1u,
+                    std::memory_order_relaxed);
+            }
+            if (guest_frame >= 10000u &&
+                guest_frame <= 12500u) {
+                gDiagLateWindowJumpGt8192.fetch_add(
+                    1u,
+                    std::memory_order_relaxed);
+            }
         }
         if (jump > 16384u) {
             gDiagBoundaryJumpGt16384.fetch_add(
@@ -904,6 +929,7 @@ bool PvZ2HostAudioEnqueuePCM16(
     // 16-point sparse FNV-1a signature: 16 frames x <=2 channels.
     std::uint64_t sparse_signature =
         1469598103934665603ull;
+    std::uint64_t sparse_peak = 0u;
     constexpr std::uint64_t kSparsePoints = 16u;
     for (std::uint64_t point = 0u;
          point < kSparsePoints;
@@ -926,6 +952,15 @@ bool PvZ2HostAudioEnqueuePCM16(
                 &sample,
                 src + byte_index,
                 sizeof(sample));
+            const std::int64_t signed_sample =
+                static_cast<std::int64_t>(sample);
+            const std::uint64_t abs_sample =
+                static_cast<std::uint64_t>(
+                    signed_sample < 0
+                        ? -signed_sample
+                        : signed_sample);
+            sparse_peak =
+                std::max(sparse_peak, abs_sample);
             const std::uint16_t raw =
                 static_cast<std::uint16_t>(sample);
             sparse_signature ^=
@@ -957,8 +992,65 @@ bool PvZ2HostAudioEnqueuePCM16(
         gDiagLastSparseRepeatGuestFrame.store(
             guest_frame,
             std::memory_order_relaxed);
+
+        if (sparse_peak >= 256u) {
+            ++gDiagNonSilentSparseRepeatRun;
+            gDiagNonSilentRepeatedSparseBlocks.fetch_add(
+                1u,
+                std::memory_order_relaxed);
+            DiagnosticAtomicMax(
+                gDiagMaxNonSilentRepeatRun,
+                gDiagNonSilentSparseRepeatRun);
+            std::uint64_t expected_non_silent_first = 0u;
+            gDiagFirstNonSilentRepeatGuestFrame
+                .compare_exchange_strong(
+                    expected_non_silent_first,
+                    guest_frame,
+                    std::memory_order_relaxed,
+                    std::memory_order_relaxed);
+            gDiagLastNonSilentRepeatGuestFrame.store(
+                guest_frame,
+                std::memory_order_relaxed);
+
+            if (guest_frame >= 800u &&
+                guest_frame <= 2500u) {
+                gDiagAnimationWindowNonSilentRepeats.fetch_add(
+                    1u,
+                    std::memory_order_relaxed);
+                std::uint64_t expected_window_first = 0u;
+                gDiagAnimationWindowFirstRepeatFrame
+                    .compare_exchange_strong(
+                        expected_window_first,
+                        guest_frame,
+                        std::memory_order_relaxed,
+                        std::memory_order_relaxed);
+                gDiagAnimationWindowLastRepeatFrame.store(
+                    guest_frame,
+                    std::memory_order_relaxed);
+            }
+
+            if (guest_frame >= 10000u &&
+                guest_frame <= 12500u) {
+                gDiagLateWindowNonSilentRepeats.fetch_add(
+                    1u,
+                    std::memory_order_relaxed);
+                std::uint64_t expected_window_first = 0u;
+                gDiagLateWindowFirstRepeatFrame
+                    .compare_exchange_strong(
+                        expected_window_first,
+                        guest_frame,
+                        std::memory_order_relaxed,
+                        std::memory_order_relaxed);
+                gDiagLateWindowLastRepeatFrame.store(
+                    guest_frame,
+                    std::memory_order_relaxed);
+            }
+        } else {
+            gDiagNonSilentSparseRepeatRun = 0u;
+        }
     } else {
         gDiagSparseRepeatRun = 1u;
+        gDiagNonSilentSparseRepeatRun = 0u;
     }
 
     gDiagPreviousLastSample = last_sample;
@@ -1172,10 +1264,23 @@ void PvZ2HostAudioResetDiagnostics() {
     gDiagMaxSparseRepeatRun.store(0u, std::memory_order_relaxed);
     gDiagFirstSparseRepeatGuestFrame.store(0u, std::memory_order_relaxed);
     gDiagLastSparseRepeatGuestFrame.store(0u, std::memory_order_relaxed);
+    gDiagNonSilentRepeatedSparseBlocks.store(0u, std::memory_order_relaxed);
+    gDiagMaxNonSilentRepeatRun.store(0u, std::memory_order_relaxed);
+    gDiagFirstNonSilentRepeatGuestFrame.store(0u, std::memory_order_relaxed);
+    gDiagLastNonSilentRepeatGuestFrame.store(0u, std::memory_order_relaxed);
+    gDiagAnimationWindowNonSilentRepeats.store(0u, std::memory_order_relaxed);
+    gDiagAnimationWindowFirstRepeatFrame.store(0u, std::memory_order_relaxed);
+    gDiagAnimationWindowLastRepeatFrame.store(0u, std::memory_order_relaxed);
+    gDiagLateWindowNonSilentRepeats.store(0u, std::memory_order_relaxed);
+    gDiagLateWindowFirstRepeatFrame.store(0u, std::memory_order_relaxed);
+    gDiagLateWindowLastRepeatFrame.store(0u, std::memory_order_relaxed);
+    gDiagAnimationWindowJumpGt8192.store(0u, std::memory_order_relaxed);
+    gDiagLateWindowJumpGt8192.store(0u, std::memory_order_relaxed);
     gDiagHavePreviousBlock = false;
     gDiagPreviousLastSample.fill(0);
     gDiagPreviousSparseSignature = 0u;
     gDiagSparseRepeatRun = 0u;
+    gDiagNonSilentSparseRepeatRun = 0u;
 }
 
 void PvZ2HostAudioSetDiagnosticGuestFrame(
@@ -1248,6 +1353,30 @@ PvZ2HostAudioDiagnosticSnapshot() {
         gDiagFirstSparseRepeatGuestFrame.load(std::memory_order_relaxed);
     out.last_sparse_repeat_guest_frame =
         gDiagLastSparseRepeatGuestFrame.load(std::memory_order_relaxed);
+    out.non_silent_repeated_sparse_blocks =
+        gDiagNonSilentRepeatedSparseBlocks.load(std::memory_order_relaxed);
+    out.max_non_silent_repeat_run =
+        gDiagMaxNonSilentRepeatRun.load(std::memory_order_relaxed);
+    out.first_non_silent_repeat_guest_frame =
+        gDiagFirstNonSilentRepeatGuestFrame.load(std::memory_order_relaxed);
+    out.last_non_silent_repeat_guest_frame =
+        gDiagLastNonSilentRepeatGuestFrame.load(std::memory_order_relaxed);
+    out.animation_window_non_silent_repeats =
+        gDiagAnimationWindowNonSilentRepeats.load(std::memory_order_relaxed);
+    out.animation_window_first_repeat_frame =
+        gDiagAnimationWindowFirstRepeatFrame.load(std::memory_order_relaxed);
+    out.animation_window_last_repeat_frame =
+        gDiagAnimationWindowLastRepeatFrame.load(std::memory_order_relaxed);
+    out.late_window_non_silent_repeats =
+        gDiagLateWindowNonSilentRepeats.load(std::memory_order_relaxed);
+    out.late_window_first_repeat_frame =
+        gDiagLateWindowFirstRepeatFrame.load(std::memory_order_relaxed);
+    out.late_window_last_repeat_frame =
+        gDiagLateWindowLastRepeatFrame.load(std::memory_order_relaxed);
+    out.animation_window_jump_gt_8192 =
+        gDiagAnimationWindowJumpGt8192.load(std::memory_order_relaxed);
+    out.late_window_jump_gt_8192 =
+        gDiagLateWindowJumpGt8192.load(std::memory_order_relaxed);
     return out;
 }
 

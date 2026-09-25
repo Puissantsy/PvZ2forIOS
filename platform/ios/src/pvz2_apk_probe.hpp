@@ -422,6 +422,11 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // of the PCM blocks handed from Wwise to the host: inter-block sample
     // discontinuities plus a sparse consecutive-block signature.
     V122PcmContinuityTelemetry = 65u,
+
+    // v123: refine v122 repeat telemetry so silent/static blocks do not hide
+    // the signal. Count only sparse-identical blocks with audible-level PCM
+    // energy and correlate them with the two user-observed crackle windows.
+    V123NonSilentRepeatTelemetry = 66u,
 };
 
 enum class PvZ2ProbeCapability : std::uint64_t {
