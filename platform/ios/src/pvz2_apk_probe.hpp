@@ -395,6 +395,12 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // Dynarmic. The final 4 KiB page stays callback-backed so the validated
     // v94/v95 LR-slot provenance/watch path remains observable.
     V115DynarmicMainStackPageTable = 60u,
+
+    // v116: keep the validated v115 heap/main-stack mappings and additionally
+    // direct-map only complete pages of libPVZ2.so's non-writable RX PT_LOAD.
+    // The partial tail page plus the complete writable PT_LOAD/GOT/RELRO stay
+    // callback-backed.
+    V116DynarmicReadOnlyImagePageTable = 61u,
 };
 
 enum class PvZ2ProbeCapability : std::uint64_t {
