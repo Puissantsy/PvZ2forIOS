@@ -780,9 +780,16 @@
     }
 
 
-    bool V116Enabled() const {
+    bool V117Enabled() const {
         return diagnostic_mode ==
-            PvZ2DiagnosticMode::V116DynarmicReadOnlyImagePageTable;
+            PvZ2DiagnosticMode::V117LeanPerformance;
+    }
+
+    bool V116Enabled() const {
+        return
+            diagnostic_mode ==
+                PvZ2DiagnosticMode::V116DynarmicReadOnlyImagePageTable ||
+            V117Enabled();
     }
 
     bool V115Enabled() const {
@@ -794,19 +801,20 @@
     bool V114Enabled() const {
         return
             diagnostic_mode == PvZ2DiagnosticMode::V114MainBoundaryProfiler ||
-            V115Enabled();
+            (V115Enabled() && !V117Enabled());
     }
 
     bool V113Enabled() const {
         return
             diagnostic_mode == PvZ2DiagnosticMode::V113DynarmicHeapPageTable ||
-            V114Enabled();
+            V114Enabled() ||
+            V115Enabled();
     }
 
     bool V112Enabled() const {
         return
             diagnostic_mode == PvZ2DiagnosticMode::V112AudioBoundaryProfiler ||
-            V113Enabled();
+            (V113Enabled() && !V117Enabled());
     }
 
     bool V111Enabled() const {
@@ -819,14 +827,20 @@
             diagnostic_mode == PvZ2DiagnosticMode::V110AudioPinchUiAndroid ||
             diagnostic_mode == PvZ2DiagnosticMode::V110AudioPinchUiIpad ||
             V111Enabled() ||
-            V112Enabled();
+            V112Enabled() ||
+            V117Enabled();
+    }
+
+    bool V110ProfilingEnabled() const {
+        return V110Enabled() && !V117Enabled();
     }
 
     bool V110AndroidUiControlEnabled() const {
         return
             diagnostic_mode == PvZ2DiagnosticMode::V110AudioPinchUiAndroid ||
             V111Enabled() ||
-            V112Enabled();
+            V112Enabled() ||
+            V117Enabled();
     }
 
     V110AudioBucket V110AudioBucketForPc(std::uint32_t pc) const {
@@ -870,11 +884,14 @@
     }
 
     void V110BeginAudioQuantum(std::uint32_t tid) {
-        if (V110IsAudioWorker(tid)) v110_quantum_guest_ticks.fill(0u);
+        if (V110ProfilingEnabled() && V110IsAudioWorker(tid))
+            v110_quantum_guest_ticks.fill(0u);
     }
 
     void V110RecordAudioTicks(std::uint64_t ticks) {
-        if (!V110IsAudioWorker(current_probe_thread_id) || jit == nullptr)
+        if (!V110ProfilingEnabled() ||
+            !V110IsAudioWorker(current_probe_thread_id) ||
+            jit == nullptr)
             return;
         const std::size_t bucket = static_cast<std::size_t>(
             V110AudioBucketForPc(jit->Regs()[15]));
@@ -886,7 +903,7 @@
         std::uint32_t start_pc,
         std::uint32_t end_pc,
         std::uint64_t elapsed_ns) {
-        if (!V110IsAudioWorker(tid)) return;
+        if (!V110ProfilingEnabled() || !V110IsAudioWorker(tid)) return;
 
         std::size_t dominant = 4u;
         std::uint64_t dominant_ticks = 0u;
@@ -1323,7 +1340,8 @@
         v113_heap_pages_mapped = pages;
 
         if (V115Enabled()) {
-            const std::size_t callback_tail_bytes = page_size;
+            const std::size_t callback_tail_bytes =
+                V117Enabled() ? 0u : page_size;
             const std::size_t direct_stack_bytes =
                 mem.stack.size() >= callback_tail_bytes
                     ? mem.stack.size() - callback_tail_bytes
@@ -1341,17 +1359,20 @@
                 ++stack_pages;
             }
 
-            // Deliberately keep the final 4 KiB page null in the Dynarmic
-            // table so reads/writes at 0x200ff000..0x200fffff continue through
-            // callbacks and therefore preserve the v94/v95 LR-slot watches.
-            const std::uint32_t callback_page_guest =
-                kJniProbeStackBase +
-                static_cast<std::uint32_t>(direct_stack_bytes);
-            (*v113_page_table)[callback_page_guest >> page_bits] =
-                nullptr;
+            // v115 keeps the final 4 KiB callback-backed for V94/V95. v117
+            // disables those hot provenance watches, so all 256 stack pages
+            // can safely use Dynarmic's direct page table.
+            if (callback_tail_bytes != 0u) {
+                const std::uint32_t callback_page_guest =
+                    kJniProbeStackBase +
+                    static_cast<std::uint32_t>(direct_stack_bytes);
+                (*v113_page_table)[callback_page_guest >> page_bits] =
+                    nullptr;
+            }
 
             v115_stack_pages_mapped = stack_pages;
-            v115_stack_callback_pages = 1u;
+            v115_stack_callback_pages =
+                callback_tail_bytes != 0u ? 1u : 0u;
             v115_stack_activation_ns =
                 V85SteadyNowNs() - begin_ns;
             v115_stack_page_table_active = true;
@@ -1410,11 +1431,29 @@
             " bytes=" + std::to_string(mem.heap.size()) +
             " pages=" + std::to_string(pages) +
             " activationMs=" + V85FormatMs(v113_activation_ns) +
-            (V115Enabled()
-                ? " mainStackLower=PAGE_TABLE mainStackHigh4K=CALLBACK"
-                : " imageRelroStackTrampolines=CALLBACK"));
+            (V117Enabled()
+                ? " mainStack=PAGE_TABLE(256/256)"
+                : (V115Enabled()
+                    ? " mainStackLower=PAGE_TABLE mainStackHigh4K=CALLBACK"
+                    : " imageRelroStackTrampolines=CALLBACK")));
 
-        if (V115Enabled()) {
+        if (V117Enabled()) {
+            AppendDiagnostic(
+                "V117 FULL MAIN STACK PAGETABLE ACTIVE frame=" +
+                std::to_string(frame) +
+                " base=0x" + JniProbeHex(kJniProbeStackBase) +
+                " directBytes=" +
+                std::to_string(
+                    static_cast<std::uint64_t>(
+                        v115_stack_pages_mapped) *
+                    page_size) +
+                " directPages=" +
+                std::to_string(v115_stack_pages_mapped) +
+                " callbackPages=" +
+                std::to_string(v115_stack_callback_pages) +
+                " activationMs=" +
+                V85FormatMs(v115_stack_activation_ns));
+        } else if (V115Enabled()) {
             AppendDiagnostic(
                 "V115 MAIN STACK PAGETABLE ACTIVE frame=" +
                 std::to_string(frame) +
@@ -3199,6 +3238,9 @@
     }
 
     const char* RuntimeModeTag() const {
+        if (V117Enabled()) return "V117";
+        if (V116Enabled()) return "V116";
+        if (V115Enabled()) return "V115";
         if (V114Enabled()) return "V114";
         if (V113Enabled()) return "V113";
         if (V112Enabled()) return "V112";
@@ -3563,7 +3605,7 @@
         v90_frame_boundary_worker_ns=0u;
         v90_frame_present_ns=0u;
         v90_frame_font_ns=0u;
-        if (V110Enabled()) {
+        if (V110ProfilingEnabled()) {
             v110_frame_audio_ns.fill(0u);
             v110_frame_audio_quanta.fill(0u);
         }
@@ -3715,9 +3757,9 @@
                 :0u;
 
         const std::uint64_t v110_audio_frame_ns =
-            V110Enabled() ? V110FrameAudioNs() : 0u;
+            V110ProfilingEnabled() ? V110FrameAudioNs() : 0u;
         const bool v110_slow_frame =
-            V110Enabled() &&
+            V110ProfilingEnabled() &&
             (guest_ns >= 100000000ull ||
              v110_audio_frame_ns >= 50000000ull);
 
@@ -4484,7 +4526,7 @@
             (reason?reason:"unknown"));
         Append(V90FontSummary());
         Append(V90FrameSummary());
-        if (V110Enabled()) AppendDiagnostic(V110AudioSummary());
+        if (V110ProfilingEnabled()) AppendDiagnostic(V110AudioSummary());
         if (V111Enabled()) AppendDiagnostic(V111AudioSampleSummary());
         if (V112Enabled()) V112EmitAudioBoundarySummary();
         if (V113Enabled()) AppendDiagnostic(V113PageTableSummary());

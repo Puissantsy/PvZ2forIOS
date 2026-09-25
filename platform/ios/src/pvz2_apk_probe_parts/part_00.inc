@@ -1030,6 +1030,17 @@ constexpr std::uint64_t kCapsV115 = kCapsV114;
 // v116 additionally changes only Dynarmic memory access for complete pages of
 // the exact non-writable RX PT_LOAD. Runtime capabilities remain unchanged.
 constexpr std::uint64_t kCapsV116 = kCapsV115;
+// v117 keeps all functional v116 capabilities but removes purely observational
+// hot-path diagnostics that are no longer needed for a production-like timing
+// pass. Direct presentation, long-run execution, scheduler/audio fixes,
+// indexed allocation and RELRO remain enabled.
+constexpr std::uint64_t kCapsV117 =
+    kCapsV116 &
+    ~(kCapHostCost |
+      kCapAllocatorProfiling |
+      kCapReturnProvenance |
+      kCapCallerReturnWatch |
+      kCapPreciseCallerReturnWatch);
 
 constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::PassiveRegistry, "PASSIVE_REGISTRY", nullptr, 0u, false},
@@ -1093,11 +1104,12 @@ constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::V113DynarmicHeapPageTable, "V113_DYNARMIC_HEAP_PAGETABLE", "V113 Heap Page Table", kCapsV113, false},
     {PvZ2DiagnosticMode::V114MainBoundaryProfiler, "V114_MAIN_BOUNDARY_PROFILER", "V114 Main Boundary", kCapsV114, false},
     {PvZ2DiagnosticMode::V115DynarmicMainStackPageTable, "V115_DYNARMIC_MAIN_STACK_PAGETABLE", "V115 Main Stack", kCapsV115, false},
-    {PvZ2DiagnosticMode::V116DynarmicReadOnlyImagePageTable, "V116_DYNARMIC_READONLY_IMAGE_PAGETABLE", "V116 RX Image", kCapsV116, true},
+    {PvZ2DiagnosticMode::V116DynarmicReadOnlyImagePageTable, "V116_DYNARMIC_READONLY_IMAGE_PAGETABLE", "V116 RX Image", kCapsV116, false},
+    {PvZ2DiagnosticMode::V117LeanPerformance, "V117_LEAN_PERFORMANCE", "V117 Lean Performance", kCapsV117, true},
 };
 
 constexpr PvZ2DiagnosticMode kSelectableDiagnosticModes[] = {
-    PvZ2DiagnosticMode::V116DynarmicReadOnlyImagePageTable,
+    PvZ2DiagnosticMode::V117LeanPerformance,
 };
 
 } // namespace

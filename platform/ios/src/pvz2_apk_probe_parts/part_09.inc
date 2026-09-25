@@ -714,7 +714,7 @@
 
                                 for (;;) {
                                     const std::uint32_t v110_start_pc =
-                                        callbacks.V110Enabled()
+                                        callbacks.V110ProfilingEnabled()
                                             ? jit.Regs()[15] : 0u;
                                     callbacks.V110BeginAudioQuantum(
                                         worker_state.id);
@@ -1873,7 +1873,7 @@
 
                             for (;;) {
                                 const std::uint32_t v110_start_pc =
-                                    callbacks.V110Enabled()
+                                    callbacks.V110ProfilingEnabled()
                                         ? jit.Regs()[15] : 0u;
                                 callbacks.V110BeginAudioQuantum(
                                     worker_state.id);

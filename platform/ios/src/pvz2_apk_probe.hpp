@@ -401,6 +401,12 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // The partial tail page plus the complete writable PT_LOAD/GOT/RELRO stay
     // callback-backed.
     V116DynarmicReadOnlyImagePageTable = 61u,
+
+    // v117: production-like lean performance pass. Keep every functional
+    // v116 runtime fix and direct-memory mapping, but remove hot observational
+    // profilers. With V93-V95 watches gone, the complete 1 MiB main stack can
+    // use Dynarmic's direct page table.
+    V117LeanPerformance = 62u,
 };
 
 enum class PvZ2ProbeCapability : std::uint64_t {

@@ -1919,7 +1919,16 @@ bool JniProbePrepareRuntime(
             "and wall time between imports is measured only inside the same "
             "jit.Run worker span so scheduler sleep is excluded.");
     }
-    if (callbacks.V116Enabled()) {
+    if (callbacks.V117Enabled()) {
+        callbacks.AppendDiagnostic(
+            "V117 LEAN PERFORMANCE: functional v116 runtime preserved, including "
+            "heap/RX direct mappings, scheduler/audio/input/render fixes and "
+            "indexed allocator/RELRO. V112/V114 natural import profilers, V110 "
+            "per-AddTicks audio buckets, V90 allocator/host-cost profiling and "
+            "V93-V95 return/LR watches are disabled. The complete main stack "
+            "0x20000000..0x200fffff is direct-mapped (256/256 pages). V90 keeps "
+            "only lightweight frame/worker timing for the performance A/B.");
+    } else if (callbacks.V116Enabled()) {
         callbacks.AppendDiagnostic(
             "V116 DYNARMIC RX IMAGE PAGETABLE: v115 heap/main-stack mappings "
             "and v114 telemetry remain enabled. At frame 1, the 3274 complete "
