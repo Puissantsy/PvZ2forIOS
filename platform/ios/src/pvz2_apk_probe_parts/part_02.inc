@@ -780,9 +780,15 @@
     }
 
 
-    bool V114Enabled() const {
+    bool V115Enabled() const {
         return diagnostic_mode ==
-            PvZ2DiagnosticMode::V114MainBoundaryProfiler;
+            PvZ2DiagnosticMode::V115DynarmicMainStackPageTable;
+    }
+
+    bool V114Enabled() const {
+        return
+            diagnostic_mode == PvZ2DiagnosticMode::V114MainBoundaryProfiler ||
+            V115Enabled();
     }
 
     bool V113Enabled() const {
@@ -1289,6 +1295,12 @@
         static_assert(
             (kJniProbeHeapBase & (page_size - 1u)) == 0u,
             "guest heap must be page aligned");
+        static_assert(
+            (kJniProbeStackBase & (page_size - 1u)) == 0u,
+            "guest stack must be page aligned");
+        static_assert(
+            (kJniProbeStackSize & (page_size - 1u)) == 0u,
+            "guest stack size must be page aligned");
 
         std::uint32_t pages = 0u;
         for (std::size_t offset = 0u;
@@ -1303,6 +1315,42 @@
         }
 
         v113_heap_pages_mapped = pages;
+
+        if (V115Enabled()) {
+            const std::size_t callback_tail_bytes = page_size;
+            const std::size_t direct_stack_bytes =
+                mem.stack.size() >= callback_tail_bytes
+                    ? mem.stack.size() - callback_tail_bytes
+                    : 0u;
+            std::uint32_t stack_pages = 0u;
+
+            for (std::size_t offset = 0u;
+                 offset < direct_stack_bytes;
+                 offset += page_size) {
+                const std::uint32_t guest =
+                    kJniProbeStackBase +
+                    static_cast<std::uint32_t>(offset);
+                (*v113_page_table)[guest >> page_bits] =
+                    mem.stack.data() + offset;
+                ++stack_pages;
+            }
+
+            // Deliberately keep the final 4 KiB page null in the Dynarmic
+            // table so reads/writes at 0x200ff000..0x200fffff continue through
+            // callbacks and therefore preserve the v94/v95 LR-slot watches.
+            const std::uint32_t callback_page_guest =
+                kJniProbeStackBase +
+                static_cast<std::uint32_t>(direct_stack_bytes);
+            (*v113_page_table)[callback_page_guest >> page_bits] =
+                nullptr;
+
+            v115_stack_pages_mapped = stack_pages;
+            v115_stack_callback_pages = 1u;
+            v115_stack_activation_ns =
+                V85SteadyNowNs() - begin_ns;
+            v115_stack_page_table_active = true;
+        }
+
         v113_activation_frame = frame;
         v113_activation_ns =
             V85SteadyNowNs() - begin_ns;
@@ -1315,7 +1363,32 @@
             " bytes=" + std::to_string(mem.heap.size()) +
             " pages=" + std::to_string(pages) +
             " activationMs=" + V85FormatMs(v113_activation_ns) +
-            " imageRelroStackTrampolines=CALLBACK");
+            (V115Enabled()
+                ? " mainStackLower=PAGE_TABLE mainStackHigh4K=CALLBACK"
+                : " imageRelroStackTrampolines=CALLBACK"));
+
+        if (V115Enabled()) {
+            AppendDiagnostic(
+                "V115 MAIN STACK PAGETABLE ACTIVE frame=" +
+                std::to_string(frame) +
+                " base=0x" + JniProbeHex(kJniProbeStackBase) +
+                " directBytes=" +
+                std::to_string(
+                    static_cast<std::uint64_t>(
+                        v115_stack_pages_mapped) *
+                    page_size) +
+                " directPages=" +
+                std::to_string(v115_stack_pages_mapped) +
+                " callbackTailBase=0x" +
+                JniProbeHex(
+                    kJniProbeStackBase +
+                    kJniProbeStackSize -
+                    page_size) +
+                " callbackPages=" +
+                std::to_string(v115_stack_callback_pages) +
+                " activationMs=" +
+                V85FormatMs(v115_stack_activation_ns));
+        }
     }
 
     std::string V113PageTableSummary() const {
@@ -1333,7 +1406,19 @@
                     v113_heap_pages_mapped) *
                 (1ull << Dynarmic::A32::UserConfig::PAGE_BITS)) +
             " activationMs=" +
-            V85FormatMs(v113_activation_ns);
+            V85FormatMs(v113_activation_ns) +
+            (V115Enabled()
+                ? " stackDirect{active=" +
+                    std::string{
+                        v115_stack_page_table_active ? "YES" : "NO"} +
+                    ",pages=" +
+                    std::to_string(v115_stack_pages_mapped) +
+                    ",callbackPages=" +
+                    std::to_string(v115_stack_callback_pages) +
+                    ",activationMs=" +
+                    V85FormatMs(v115_stack_activation_ns) +
+                    "}"
+                : "");
     }
 
     std::uint32_t V112FindCallsiteSlot(
