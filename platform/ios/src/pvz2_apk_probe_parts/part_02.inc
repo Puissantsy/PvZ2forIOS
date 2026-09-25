@@ -780,9 +780,15 @@
     }
 
 
+    bool V130Enabled() const {
+        return diagnostic_mode ==
+            PvZ2DiagnosticMode::V130UserFriendlyRuntime;
+    }
+
     bool V129Enabled() const {
         return diagnostic_mode ==
-            PvZ2DiagnosticMode::V129IosBoardScale;
+                   PvZ2DiagnosticMode::V129IosBoardScale ||
+               V130Enabled();
     }
 
     bool V128Enabled() const {
@@ -1049,13 +1055,19 @@
             current_frame_number <= 12500u;
     }
 
+    bool V126TelemetryEnabled() const {
+        // v130 keeps the functional v127 scheduler correction but deliberately
+        // drops the old v124-v126 forensic windows from normal gameplay.
+        return V126Enabled() && !V130Enabled();
+    }
+
     bool V126InProbeWindow() const {
-        return V126Enabled() &&
+        return V126TelemetryEnabled() &&
             (V126InAnimationWindow() || V126InLateWindow());
     }
 
     void V126PrepareRecorder() {
-        if (V126Enabled())
+        if (V126TelemetryEnabled())
             v126_flight_events.reserve(kV126FlightCapacity);
     }
 
@@ -3850,7 +3862,9 @@
                     guest_buffer,
                     bytes);
 
-            if (V124Enabled() && pcm != nullptr) {
+            if (V124Enabled() &&
+                !V130Enabled() &&
+                pcm != nullptr) {
                 const bool in_anim_window =
                     current_frame_number >= 800u &&
                     current_frame_number <= 2500u;
@@ -4315,6 +4329,7 @@
     }
 
     const char* RuntimeModeTag() const {
+        if (V130Enabled()) return "V130";
         if (V129Enabled()) return "V129";
         if (V128Enabled()) return "V128";
         if (V127Enabled()) return "V127";
@@ -5672,7 +5687,7 @@
                 << " lateWindowJumpGt8192=" << audio.late_window_jump_gt_8192;
             AppendDiagnostic(out.str());
         }
-        if (V124Enabled()) {
+        if (V124Enabled() && !V130Enabled()) {
             std::ostringstream out;
             out << "V124 EXACT PCM PROVENANCE"
                 << " exactRepeatTotal=" << v124_exact_repeat_total
@@ -5696,7 +5711,7 @@
                 << "}";
             AppendDiagnostic(out.str());
         }
-        if (V125Enabled()) {
+        if (V125Enabled() && !V130Enabled()) {
             std::ostringstream out;
             out << "V125 REPEAT CONTEXT SUMMARY"
                 << " events=" << v125_repeat_events
@@ -5715,7 +5730,7 @@
                 << " audioWorkerMisses=" << v104_audio_worker_misses;
             AppendDiagnostic(out.str());
         }
-        if (V126Enabled()) {
+        if (V126TelemetryEnabled()) {
             V126EmitFlightSummary();
         }
         if (V127Enabled()) {

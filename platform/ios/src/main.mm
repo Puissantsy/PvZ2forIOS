@@ -247,6 +247,130 @@ NSString *NSStringFromStd(
         ?: @"(invalid UTF-8)";
 }
 
+// v130 stores only user-supplied runtime files. The IPA itself still contains
+// no PvZ2 APK/OBB data, so public/source builds remain clean.
+NSURL *V130RuntimeDirectoryURL() {
+    NSArray<NSURL *> *urls =
+        [[NSFileManager defaultManager]
+            URLsForDirectory:NSApplicationSupportDirectory
+                   inDomains:NSUserDomainMask];
+
+    NSURL *support = urls.firstObject;
+    if (support == nil) {
+        return nil;
+    }
+
+    NSURL *directory =
+        [support
+            URLByAppendingPathComponent:
+                @"PvZ2Runtime"
+            isDirectory:YES];
+
+    NSError *error = nil;
+    if (![[NSFileManager defaultManager]
+            createDirectoryAtURL:directory
+     withIntermediateDirectories:YES
+                      attributes:nil
+                           error:&error]) {
+        AppendPersistentLog(
+            [NSString stringWithFormat:
+                @"[V130] runtime directory creation failed: %@",
+                error.localizedDescription ?: @"unknown"]);
+        return nil;
+    }
+
+    return directory;
+}
+
+NSURL *V130StoredApkURL() {
+    NSURL *directory = V130RuntimeDirectoryURL();
+    return directory == nil
+        ? nil
+        : [directory URLByAppendingPathComponent:@"pvz2-1.5.252752.apk"];
+}
+
+NSURL *V130StoredObbURL() {
+    NSURL *directory = V130RuntimeDirectoryURL();
+    return directory == nil
+        ? nil
+        : [directory URLByAppendingPathComponent:@"main.7.com.ea.game.pvz2_row.obb"];
+}
+
+BOOL V130RuntimeInstalled() {
+    NSURL *apk = V130StoredApkURL();
+    NSURL *obb = V130StoredObbURL();
+    if (apk == nil || obb == nil) {
+        return NO;
+    }
+
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSDictionary *apkAttrs =
+        [fm attributesOfItemAtPath:apk.path error:nil];
+    NSDictionary *obbAttrs =
+        [fm attributesOfItemAtPath:obb.path error:nil];
+
+    const unsigned long long apkSize =
+        [apkAttrs fileSize];
+    const unsigned long long obbSize =
+        [obbAttrs fileSize];
+
+    // Reject zero/truncated placeholders without hard-coding exact copyrighted
+    // package sizes. The existing exact APK/OBB validators remain authoritative.
+    return apkSize > (1024ull * 1024ull) &&
+           obbSize > (16ull * 1024ull * 1024ull);
+}
+
+BOOL V130CopyRuntimeFile(NSURL *source, NSURL *destination, NSError **error) {
+    if (source == nil || destination == nil) {
+        if (error != nullptr) {
+            *error = [NSError
+                errorWithDomain:@"PvZ2forIOS.V130"
+                           code:1
+                       userInfo:@{NSLocalizedDescriptionKey:
+                           @"Runtime source/destination unavailable."}];
+        }
+        return NO;
+    }
+
+    BOOL scoped =
+        [source startAccessingSecurityScopedResource];
+
+    NSFileManager *fm =
+        [NSFileManager defaultManager];
+    NSURL *temp =
+        [destination
+            URLByAppendingPathExtension:@"importing"];
+
+    [fm removeItemAtURL:temp error:nil];
+
+    NSError *copyError = nil;
+    BOOL ok =
+        [fm copyItemAtURL:source
+                    toURL:temp
+                    error:&copyError];
+
+    if (ok) {
+        [fm removeItemAtURL:destination error:nil];
+        ok =
+            [fm moveItemAtURL:temp
+                        toURL:destination
+                        error:&copyError];
+    }
+
+    if (!ok) {
+        [fm removeItemAtURL:temp error:nil];
+    }
+
+    if (scoped) {
+        [source stopAccessingSecurityScopedResource];
+    }
+
+    if (!ok && error != nullptr) {
+        *error = copyError;
+    }
+    return ok;
+}
+
 } // namespace
 
 // v90: a real EAGL drawable replaces UIImageView as the live presentation
@@ -530,7 +654,7 @@ void PvZ2HostNotifyDirectFrame(
     self.captionLabel.clipsToBounds =
         YES;
     self.captionLabel.text =
-        @"PvZ2 v115 — starting…\nheap + lower main-stack page table + v114 telemetry";
+        @"PvZ2 — starting…";
 
     self.stopButton =
         [UIButton
@@ -603,6 +727,20 @@ void PvZ2HostNotifyDirectFrame(
     [self.view addSubview:self.keyboardField];
     [self.view addSubview:self.captionLabel];
     [self.view addSubview:self.stopButton];
+
+    // v130 production-style presentation: keep these controls constructed so
+    // old diagnostic/error paths remain safe, but remove them from normal play.
+    self.captionLabel.hidden = YES;
+    self.stopButton.hidden = YES;
+
+    UITapGestureRecognizer *diagnosticGesture =
+        [[UITapGestureRecognizer alloc]
+            initWithTarget:self
+                    action:@selector(v130CopyDiagnostics)];
+    diagnosticGesture.numberOfTapsRequired = 3;
+    diagnosticGesture.numberOfTouchesRequired = 4;
+    diagnosticGesture.cancelsTouchesInView = NO;
+    [self.view addGestureRecognizer:diagnosticGesture];
 
     UILayoutGuide *guide =
         self.view.safeAreaLayoutGuide;
@@ -705,6 +843,13 @@ void PvZ2HostNotifyDirectFrame(
             animated];
 }
 
+- (void)v130CopyDiagnostics {
+    NSString *fullLog = ReadPersistentLogFull();
+    UIPasteboard.generalPasteboard.string = fullLog ?: @"";
+    AppendPersistentLog(
+        @"[V130] hidden diagnostics gesture: full log copied to clipboard");
+}
+
 - (void)stopOrClose {
     [self
         setHostKeyboardVisible:
@@ -719,7 +864,7 @@ void PvZ2HostNotifyDirectFrame(
 
     self.inputEnabled = NO;
     self.captionLabel.text =
-        @"PvZ2 v129 LIVE — HARD STOP requested; stopping guest at the next checkpoint…";
+        @"PvZ2 v130 LIVE — HARD STOP requested; stopping guest at the next checkpoint…";
     self.stopButton.enabled = NO;
     PvZ2RequestInteractiveStop();
 }
@@ -1341,7 +1486,7 @@ void PvZ2HostNotifyDirectFrame(
         self.captionLabel.text =
             [NSString
                 stringWithFormat:
-                    @"PvZ2 v129 LIVE • frame %lu • %@\n%lu×%lu guest • direct GPU 1:1 + audio",
+                    @"PvZ2 v130 LIVE • frame %lu • %@\n%lu×%lu guest • direct GPU 1:1 + audio",
                     (unsigned long)frame,
                     touchState,
                     (unsigned long)width,
@@ -1526,6 +1671,17 @@ void PvZ2HostNotifyDirectFrame(
 @property(nonatomic, assign)
     NSInteger v110SelectedUiModeIndex;
 
+// v130 launcher state. The old probe methods remain available internally but
+// are no longer the normal user flow.
+@property(nonatomic, assign)
+    BOOL v130SetupImportMode;
+@property(nonatomic, assign)
+    BOOL v130LaunchStarted;
+@property(nonatomic, assign)
+    BOOL v130JitRequestSent;
+@property(nonatomic, strong)
+    UILabel *v130LauncherLabel;
+
 @end
 
 @implementation ProbeViewController
@@ -1570,262 +1726,184 @@ void PvZ2HostNotifyDirectFrame(
 - (void)viewDidLoad {
     [super viewDidLoad];
 
-    self.view.backgroundColor =
-        UIColor.systemBackgroundColor;
-
-    self.title =
-        @"PvZ2forIOS — v115 Main Stack Page Table";
-
-    UILabel *title =
-        [[UILabel alloc] init];
-
-    title.translatesAutoresizingMaskIntoConstraints =
-        NO;
-
-    title.text =
-        @"PvZ2forIOS — v115 Main Stack Page Table";
-
-    title.font =
-        [UIFont
-            boldSystemFontOfSize:
-                26.0];
-
-    title.numberOfLines = 0;
-
-    UILabel *explanation =
-        [[UILabel alloc] init];
-
-    explanation.translatesAutoresizingMaskIntoConstraints =
-        NO;
-
-    explanation.text =
-        @"v115 keeps the validated v113 heap page table and all v114 natural main-thread telemetry, then directly maps only stack 0x20000000..0x200fefff. The final page 0x200ff000..0x200fffff stays callback-backed to preserve the observed LR-slot/provenance probes. No scheduler, Wwise, input, rendering or guest-code behavior is changed.";
-
-    explanation.numberOfLines = 0;
-
-    explanation.font =
-        [UIFont
-            systemFontOfSize:
-                15.0];
-
-    self.v110UiPackageControl =
-        [[UISegmentedControl alloc]
-            initWithItems:@[
-                @"v115 Main Stack — Android UI control"
-            ]];
-    self.v110UiPackageControl.translatesAutoresizingMaskIntoConstraints = NO;
-    self.v110UiPackageControl.selectedSegmentIndex = 0;
-    self.v110UiPackageControl.userInteractionEnabled = NO;
+    self.view.backgroundColor = UIColor.blackColor;
     self.v110SelectedUiModeIndex = 0;
 
-    self.statusLabel =
-        [[UILabel alloc] init];
+    self.v130LauncherLabel = [[UILabel alloc] init];
+    self.v130LauncherLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    self.v130LauncherLabel.textColor = UIColor.whiteColor;
+    self.v130LauncherLabel.textAlignment = NSTextAlignmentCenter;
+    self.v130LauncherLabel.numberOfLines = 0;
+    self.v130LauncherLabel.font =
+        [UIFont systemFontOfSize:18.0 weight:UIFontWeightMedium];
+    self.v130LauncherLabel.text = @"Preparing Plants vs. Zombies 2…";
+    [self.view addSubview:self.v130LauncherLabel];
 
-    self.statusLabel.translatesAutoresizingMaskIntoConstraints =
-        NO;
+    [NSLayoutConstraint activateConstraints:@[
+        [self.v130LauncherLabel.centerXAnchor
+            constraintEqualToAnchor:self.view.centerXAnchor],
+        [self.v130LauncherLabel.centerYAnchor
+            constraintEqualToAnchor:self.view.centerYAnchor],
+        [self.v130LauncherLabel.leadingAnchor
+            constraintGreaterThanOrEqualToAnchor:self.view.leadingAnchor
+            constant:28.0],
+        [self.v130LauncherLabel.trailingAnchor
+            constraintLessThanOrEqualToAnchor:self.view.trailingAnchor
+            constant:-28.0],
+    ]];
 
-    self.statusLabel.numberOfLines =
-        0;
-
-    self.statusLabel.font =
-        [UIFont
-            monospacedSystemFontOfSize:
-                13.0
-            weight:
-                UIFontWeightRegular];
-
-    UIButton *enableButton =
-        [self
-            makeButton:
-                @"1. Enable JIT\nwith StikDebug"
-            selector:
-                @selector(enableJIT)];
-
-    self.dynarmicButton =
-        [self
-            makeButton:
-                @"2. Dynarmic\nARM32 → 42"
-            selector:
-                @selector(runDynarmic)];
-
-    self.jniButton =
-        [self
-            makeButton:
-                @"3. Run PvZ2\nAPK + OBB"
-            selector:
-                @selector(selectApkForJni)];
-
-    UIStackView *mainButtons =
-        [[UIStackView alloc]
-            initWithArrangedSubviews:
-                @[
-                    enableButton,
-                    self.dynarmicButton,
-                    self.jniButton
-                ]];
-
-    mainButtons.translatesAutoresizingMaskIntoConstraints =
-        NO;
-
-    mainButtons.axis =
-        UILayoutConstraintAxisHorizontal;
-
-    mainButtons.spacing = 12.0;
-
-    mainButtons.distribution =
-        UIStackViewDistributionFillEqually;
-
-    UIButton *refreshButton =
-        [self
-            makeButton:
-                @"Refresh status"
-            selector:
-                @selector(refreshStatus)];
-
-    UIButton *copyLogButton =
-        [self
-            makeButton:
-                @"Copy full log"
-            selector:
-                @selector(copyFullLog)];
-
-    UIStackView *utilityButtons =
-        [[UIStackView alloc]
-            initWithArrangedSubviews:
-                @[
-                    refreshButton,
-                    copyLogButton
-                ]];
-
-    utilityButtons.translatesAutoresizingMaskIntoConstraints =
-        NO;
-
-    utilityButtons.axis =
-        UILayoutConstraintAxisHorizontal;
-
-    utilityButtons.spacing = 12.0;
-
-    utilityButtons.distribution =
-        UIStackViewDistributionFillEqually;
-
-    self.logView =
-        [[UITextView alloc] init];
-
-    self.logView.translatesAutoresizingMaskIntoConstraints =
-        NO;
-
-    self.logView.editable =
-        NO;
-
-    self.logView.font =
-        [UIFont
-            monospacedSystemFontOfSize:
-                11.5
-            weight:
-                UIFontWeightRegular];
-
-    self.logView.layer.borderWidth =
-        1.0;
-
-    self.logView.layer.borderColor =
-        UIColor.separatorColor.CGColor;
-
-    self.logView.layer.cornerRadius =
-        8.0;
-
-    self.logView.text =
-        ReadPersistentLog();
-
-    UIStackView *stack =
-        [[UIStackView alloc]
-            initWithArrangedSubviews:
-                @[
-                    title,
-                    explanation,
-                    self.v110UiPackageControl,
-                    self.statusLabel,
-                    mainButtons,
-                    utilityButtons,
-                    self.logView
-                ]];
-
-    stack.translatesAutoresizingMaskIntoConstraints =
-        NO;
-
-    stack.axis =
-        UILayoutConstraintAxisVertical;
-
-    stack.spacing =
-        12.0;
-
-    [self.view addSubview:stack];
-
-    UILayoutGuide *guide =
-        self.view.safeAreaLayoutGuide;
-
-    [NSLayoutConstraint
-        activateConstraints:
-            @[
-                [stack.leadingAnchor
-                    constraintEqualToAnchor:
-                        guide.leadingAnchor
-                    constant:
-                        24.0],
-
-                [stack.trailingAnchor
-                    constraintEqualToAnchor:
-                        guide.trailingAnchor
-                    constant:
-                        -24.0],
-
-                [stack.topAnchor
-                    constraintEqualToAnchor:
-                        guide.topAnchor
-                    constant:
-                        16.0],
-
-                [stack.bottomAnchor
-                    constraintEqualToAnchor:
-                        guide.bottomAnchor
-                    constant:
-                        -16.0],
-
-                [mainButtons.heightAnchor
-                    constraintEqualToConstant:
-                        62.0],
-
-                [utilityButtons.heightAnchor
-                    constraintEqualToConstant:
-                        38.0],
-
-                [self.logView.heightAnchor
-                    constraintGreaterThanOrEqualToConstant:
-                        290.0],
-            ]];
+    // Keep appendUI/status routines safe without exposing the old probe UI.
+    self.logView = [[UITextView alloc] init];
+    self.statusLabel = [[UILabel alloc] init];
 
     [[NSNotificationCenter defaultCenter]
         addObserver:self
-           selector:@selector(refreshStatus)
+           selector:@selector(v130ApplicationDidBecomeActive)
                name:UIApplicationDidBecomeActiveNotification
              object:nil];
 
-    [self
-        appendUI:
-            [NSString
-                stringWithFormat:
-                    @"=== PvZ2 host-GLES v31 session started; PID=%d ===",
-                    getpid()]];
+    AppendPersistentLog(
+        [NSString stringWithFormat:
+            @"=== PvZ2 v130 launcher session PID=%d debugged=%@ runtime=%@ ===",
+            getpid(),
+            IsDebugged() ? @"YES" : @"NO",
+            V130RuntimeInstalled() ? @"YES" : @"NO"]);
 
-    [self
-        appendUI:
-            @"Milestones carried forward: Non-TXM JIT ✅ | Dynarmic ARM32→42 ✅ | exact PvZ2 ELF mapping ✅ | real JNI_OnLoad returned JNI 1.4 ✅"];
-
-    [self refreshStatus];
+    // didFinishLaunching can occur before the app becomes active; dispatching
+    // once here covers already-active launches while the notification handles
+    // the StikDebug relaunch path.
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [self v130ContinueLaunch];
+    });
 }
 
 - (void)dealloc {
     [[NSNotificationCenter defaultCenter]
         removeObserver:self];
+}
+
+- (void)v130SetStatus:(NSString *)status {
+    self.v130LauncherLabel.text = status ?: @"";
+    AppendPersistentLog(
+        [NSString stringWithFormat:
+            @"[V130 LAUNCHER] %@",
+            status ?: @""]);
+}
+
+- (void)v130ApplicationDidBecomeActive {
+    [self v130ContinueLaunch];
+}
+
+- (void)v130PresentRuntimeImporter {
+    if (self.presentedViewController != nil) {
+        return;
+    }
+
+    self.v130SetupImportMode = YES;
+    [self v130SetStatus:
+        @"First launch\nSelect the PvZ2 APK and OBB once."];
+
+    UIDocumentPickerViewController *picker =
+        [[UIDocumentPickerViewController alloc]
+            initForOpeningContentTypes:@[UTTypeData]
+            asCopy:YES];
+    picker.delegate = self;
+    picker.allowsMultipleSelection = YES;
+    picker.modalPresentationStyle = UIModalPresentationFormSheet;
+    [self presentViewController:picker animated:YES completion:nil];
+}
+
+- (void)v130RequestJIT {
+    if (self.v130JitRequestSent) {
+        [self v130SetStatus:
+            @"Waiting for StikDebug…\nKeep LocalDevVPN enabled."];
+        return;
+    }
+
+    if (!HasGetTaskAllow()) {
+        [self v130SetStatus:
+            @"JIT unavailable\nThis build is missing get-task-allow."];
+        return;
+    }
+
+    NSString *bundleID =
+        NSBundle.mainBundle.bundleIdentifier;
+    if (bundleID.length == 0) {
+        [self v130SetStatus:@"JIT unavailable\nBundle identifier missing."];
+        return;
+    }
+
+    NSURLComponents *components =
+        [[NSURLComponents alloc] init];
+    components.scheme = @"stikdebug";
+    components.host = @"enable-jit";
+    components.queryItems = @[
+        [NSURLQueryItem queryItemWithName:@"bundle-id" value:bundleID],
+    ];
+
+    NSURL *url = components.URL;
+    if (url == nil) {
+        [self v130SetStatus:@"Could not open StikDebug."];
+        return;
+    }
+
+    self.v130JitRequestSent = YES;
+    [self v130SetStatus:
+        @"Enabling JIT with StikDebug…\nKeep LocalDevVPN enabled."];
+
+    [[UIApplication sharedApplication]
+        openURL:url
+        options:@{}
+        completionHandler:^(BOOL success) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                if (!success) {
+                    self.v130JitRequestSent = NO;
+                    [self v130SetStatus:
+                        @"StikDebug could not be opened.\nCheck that it is installed."];
+                }
+            });
+        }];
+}
+
+- (void)v130StartStoredRuntime {
+    if (self.v130LaunchStarted || self.jniRunning) {
+        return;
+    }
+
+    NSURL *apk = V130StoredApkURL();
+    NSURL *obb = V130StoredObbURL();
+    if (apk == nil || obb == nil || !V130RuntimeInstalled()) {
+        [self v130PresentRuntimeImporter];
+        return;
+    }
+
+    self.v130LaunchStarted = YES;
+    self.v130SetupImportMode = NO;
+    [self v130SetStatus:@"Starting Plants vs. Zombies 2…"];
+
+    // Reuse the exact v129-tested launch pipeline rather than maintaining a
+    // second loader path.
+    [self
+        documentPicker:nil
+        didPickDocumentsAtURLs:@[apk, obb]];
+}
+
+- (void)v130ContinueLaunch {
+    if (self.v130LaunchStarted || self.jniRunning) {
+        return;
+    }
+
+    if (!V130RuntimeInstalled()) {
+        [self v130PresentRuntimeImporter];
+        return;
+    }
+
+    if (!IsDebugged()) {
+        [self v130RequestJIT];
+        return;
+    }
+
+    [self v130StartStoredRuntime];
 }
 
 - (void)appendUI:
@@ -2283,7 +2361,7 @@ void PvZ2HostNotifyDirectFrame(
     self.v110SelectedUiModeIndex = 0;
 
     const PvZ2DiagnosticMode selectedMode =
-        PvZ2DiagnosticMode::V129IosBoardScale;
+        PvZ2DiagnosticMode::V130UserFriendlyRuntime;
 
     const auto* selectedDescriptor =
         PvZ2DescribeDiagnosticMode(selectedMode);
@@ -2293,13 +2371,13 @@ void PvZ2HostNotifyDirectFrame(
             ? [NSString
                   stringWithUTF8String:
                       selectedDescriptor->internal_name]
-            : @"V129_IOS_BOARD_SCALE";
+            : @"V130_USER_FRIENDLY_RUNTIME";
 
     [self
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v129 mode=%@. Keeps v128 persistence and v127 audio, but replaces the three verified Android adaptive Board world-scale stores with the historical iOS contract scale=1.0 / offsets=0/0. Reach Ancient Egypt Day 1 and compare lawn size, mower visibility, surrounding margins and SeedBank overlap.",
+                    @"V130 diagnostic launch mode=%@. Normal launches use the cached user-supplied APK/OBB automatically.",
                     selectedModeName]];
 
     [self
@@ -2314,9 +2392,12 @@ void PvZ2HostNotifyDirectFrame(
 - (void)documentPickerWasCancelled:
         (UIDocumentPickerViewController *)controller {
 
+    self.v130SetupImportMode = NO;
+    [self v130SetStatus:
+        @"Game files are required on first launch.\nTap the app again to retry."];
     [self
         appendUI:
-            @"STEP 3: APK/OBB selection cancelled."];
+            @"V130 first-run APK/OBB selection cancelled."];
 }
 
 - (void)documentPicker:
@@ -2354,8 +2435,49 @@ void PvZ2HostNotifyDirectFrame(
         return;
     }
 
+    if (self.v130SetupImportMode) {
+        NSURL *storedApk = V130StoredApkURL();
+        NSURL *storedObb = V130StoredObbURL();
+        NSError *apkCopyError = nil;
+        NSError *obbCopyError = nil;
+
+        [self v130SetStatus:@"Importing game files…"];
+
+        const BOOL apkCopied =
+            V130CopyRuntimeFile(apkURL, storedApk, &apkCopyError);
+        const BOOL obbCopied =
+            apkCopied &&
+            V130CopyRuntimeFile(obbURL, storedObb, &obbCopyError);
+
+        self.v130SetupImportMode = NO;
+
+        if (!apkCopied || !obbCopied || !V130RuntimeInstalled()) {
+            [self v130SetStatus:
+                [NSString stringWithFormat:
+                    @"Import failed\n%@",
+                    !apkCopied
+                        ? (apkCopyError.localizedDescription ?: @"APK copy failed")
+                        : (obbCopyError.localizedDescription ?: @"OBB copy failed")]];
+            AppendPersistentLog(
+                [NSString stringWithFormat:
+                    @"[V130] import failed apk=%@ obb=%@",
+                    apkCopyError.localizedDescription ?: @"OK",
+                    obbCopyError.localizedDescription ?: @"OK"]);
+            return;
+        }
+
+        AppendPersistentLog(
+            @"[V130] user APK/OBB copied into Application Support/PvZ2Runtime");
+
+        [self v130SetStatus:@"Game files ready."];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [self v130ContinueLaunch];
+        });
+        return;
+    }
+
     const PvZ2DiagnosticMode diagnosticMode =
-        PvZ2DiagnosticMode::V129IosBoardScale;
+        PvZ2DiagnosticMode::V130UserFriendlyRuntime;
 
     const auto* diagnosticDescriptor =
         PvZ2DescribeDiagnosticMode(diagnosticMode);
@@ -2374,7 +2496,7 @@ void PvZ2HostNotifyDirectFrame(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v129 iOS Board Scale started mode=%@; PID=%d ===",
+                    @"=== PvZ2 v130 User-Friendly Runtime started mode=%@; PID=%d ===",
                     diagnosticModeName,
                     getpid()]];
 
@@ -2888,14 +3010,14 @@ void PvZ2HostNotifyDirectFrame(
                                     finishRunWithMessage:
                                         [NSString
                                             stringWithFormat:
-                                                @"PvZ2 v129 LIVE — HARD STOPPED after %u guest frames.\nClose to inspect the v129 runtime log.",
+                                                @"PvZ2 v130 LIVE — HARD STOPPED after %u guest frames.\nClose to inspect the v130 runtime log.",
                                                 result.draw_frames_completed]];
                             } else {
                                 [selfRef.liveController
                                     finishRunWithMessage:
                                         [NSString
                                             stringWithFormat:
-                                                @"PvZ2 v129 LIVE — run finished after %u guest frames.\nClose to inspect the v129 runtime log.",
+                                                @"PvZ2 v130 LIVE — run finished after %u guest frames.\nClose to inspect the v130 runtime log.",
                                                 result.draw_frames_completed]];
                             }
 
@@ -2952,11 +3074,11 @@ void PvZ2HostNotifyDirectFrame(
 
                             if (result.hard_stop_requested) {
                                 [selfRef.liveController finishRunWithMessage:
-                                    @"PvZ2 v129 LIVE — HARD STOPPED.\nGuest execution was interrupted at the next Dynarmic checkpoint. Close to inspect the v129 runtime log."];
+                                    @"PvZ2 v130 LIVE — HARD STOPPED.\nGuest execution was interrupted at the next Dynarmic checkpoint. Close to inspect the v130 runtime log."];
                             } else {
                                 [selfRef.liveController finishRunWithMessage:
                                     [NSString stringWithFormat:
-                                        @"PvZ2 v129 LIVE — guest stopped/crashed.\n%@\nClose to inspect the v129 runtime log.", message]];
+                                        @"PvZ2 v130 LIVE — guest stopped/crashed.\n%@\nClose to inspect the v130 runtime log.", message]];
                             }
 
                         } else {
@@ -3011,6 +3133,7 @@ void PvZ2HostNotifyDirectFrame(
         [[UINavigationController alloc]
             initWithRootViewController:
                 controller];
+    nav.navigationBarHidden = YES;
 
     self.window.rootViewController =
         nav;

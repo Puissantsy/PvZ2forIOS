@@ -1055,6 +1055,7 @@ constexpr std::uint64_t kCapsV126 = kCapsV125;
 constexpr std::uint64_t kCapsV127 = kCapsV126;
 constexpr std::uint64_t kCapsV128 = kCapsV127;
 constexpr std::uint64_t kCapsV129 = kCapsV128;
+constexpr std::uint64_t kCapsV130 = kCapsV129;
 
 constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::PassiveRegistry, "PASSIVE_REGISTRY", nullptr, 0u, false},
@@ -1129,11 +1130,12 @@ constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::V126AudioFlightRecorder, "V126_AUDIO_FLIGHT_RECORDER", "V126 Audio Flight", kCapsV126, false},
     {PvZ2DiagnosticMode::V127AudioWorkerDrain, "V127_AUDIO_WORKER_DRAIN", "V127 Audio Worker Drain", kCapsV127, false},
     {PvZ2DiagnosticMode::V128PersistentUserFs, "V128_PERSISTENT_USERFS", "V128 Persistent Save", kCapsV128, false},
-    {PvZ2DiagnosticMode::V129IosBoardScale, "V129_IOS_BOARD_SCALE", "V129 iOS Board Scale", kCapsV129, true},
+    {PvZ2DiagnosticMode::V129IosBoardScale, "V129_IOS_BOARD_SCALE", "V129 iOS Board Scale", kCapsV129, false},
+    {PvZ2DiagnosticMode::V130UserFriendlyRuntime, "V130_USER_FRIENDLY_RUNTIME", "V130 Game Launcher", kCapsV130, true},
 };
 
 constexpr PvZ2DiagnosticMode kSelectableDiagnosticModes[] = {
-    PvZ2DiagnosticMode::V129IosBoardScale,
+    PvZ2DiagnosticMode::V130UserFriendlyRuntime,
 };
 
 } // namespace

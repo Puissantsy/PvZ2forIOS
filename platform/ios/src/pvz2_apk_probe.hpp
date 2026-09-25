@@ -454,6 +454,12 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // v129: preserve v128, but replace Android's adaptive Board world-scale
     // stores with the historical iOS contract: scale=1.0, offsets=0/0.
     V129IosBoardScale = 72u,
+
+    // v130: production-style launcher. Preserve all validated functional
+    // runtime fixes while hiding the probe UI, caching user-supplied APK/OBB,
+    // auto-launching after JIT acquisition, and disabling old heavy audio
+    // flight-recorder windows.
+    V130UserFriendlyRuntime = 73u,
 };
 
 enum class PvZ2ProbeCapability : std::uint64_t {

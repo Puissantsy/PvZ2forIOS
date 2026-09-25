@@ -713,7 +713,7 @@
                                 std::uint32_t persistent_held_chunks = 0u;
 
                                 const bool v126_audio_flight_worker =
-                                    callbacks.V126Enabled() &&
+                                    callbacks.V126TelemetryEnabled() &&
                                     v104_audio_wakeup_round &&
                                     worker_state.id ==
                                         callbacks.v104_audio_worker_tid;
@@ -1986,7 +1986,7 @@
                                 worker_state.regs[14]);
 
                             const bool v126_boundary_audio_worker =
-                                callbacks.V126Enabled() &&
+                                callbacks.V126TelemetryEnabled() &&
                                 worker_state.id ==
                                     callbacks.v104_audio_worker_tid;
                             const std::uint64_t
