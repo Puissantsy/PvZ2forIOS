@@ -310,9 +310,9 @@ BOOL V130RuntimeInstalled() {
         [fm attributesOfItemAtPath:obb.path error:nil];
 
     const unsigned long long apkSize =
-        [apkAttrs fileSize];
+        [apkAttrs[NSFileSize] unsignedLongLongValue];
     const unsigned long long obbSize =
-        [obbAttrs fileSize];
+        [obbAttrs[NSFileSize] unsignedLongLongValue];
 
     // Reject zero/truncated placeholders without hard-coding exact copyrighted
     // package sizes. The existing exact APK/OBB validators remain authoritative.
