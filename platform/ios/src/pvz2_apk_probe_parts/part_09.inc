@@ -712,6 +712,36 @@
                                             : std::vector<std::uint32_t>{};
                                 std::uint32_t persistent_held_chunks = 0u;
 
+                                const bool v126_audio_flight_worker =
+                                    callbacks.V126Enabled() &&
+                                    v104_audio_wakeup_round &&
+                                    worker_state.id ==
+                                        callbacks.v104_audio_worker_tid;
+                                const std::uint64_t
+                                    v126_audio_worker_round_begin_ns =
+                                        v126_audio_flight_worker
+                                            ? V85SteadyNowNs()
+                                            : 0u;
+                                const bool v126_audio_hash_ring =
+                                    v126_audio_flight_worker &&
+                                    callbacks.V126ShouldHashWorkerRing();
+                                if (v126_audio_flight_worker) {
+                                    callbacks.V126RecordFlightEvent(
+                                        PvZ2JniCallbacks::
+                                            V126FlightEventKind::
+                                                WorkerPre,
+                                        callbacks
+                                            .v104_audio_worker_handshakes +
+                                            1u,
+                                        0u,
+                                        0u,
+                                        0u,
+                                        worker_state.regs[15],
+                                        worker_state.regs[14],
+                                        0u,
+                                        v126_audio_hash_ring);
+                                }
+
                                 for (;;) {
                                     const std::uint32_t v110_start_pc =
                                         callbacks.V110ProfilingEnabled()
@@ -1208,6 +1238,24 @@
                                         callbacks.v104_audio_worker_tid &&
                                     !worker_fatal) {
                                     ++callbacks.v104_audio_worker_handshakes;
+                                    if (v126_audio_flight_worker) {
+                                        callbacks.V126RecordFlightEvent(
+                                            PvZ2JniCallbacks::
+                                                V126FlightEventKind::
+                                                    WorkerPost,
+                                            callbacks
+                                                .v104_audio_worker_handshakes,
+                                            0u,
+                                            0u,
+                                            0u,
+                                            worker_state.regs[15],
+                                            worker_state.regs[14],
+                                            V85SteadyNowNs() -
+                                                v126_audio_worker_round_begin_ns,
+                                            v126_audio_hash_ring);
+                                        callbacks.V126FinishWorkerRingHashRound(
+                                            v126_audio_hash_ring);
+                                    }
                                     if (callbacks.V99ShouldLogCounter(
                                             callbacks
                                                 .v104_audio_worker_handshakes)) {
@@ -1871,6 +1919,42 @@
                                         : std::vector<std::uint32_t>{};
                             std::uint32_t persistent_held_chunks = 0u;
 
+                            callbacks.V126RecordBoundaryFlightEvent(
+                                PvZ2JniCallbacks::
+                                    V126FlightEventKind::
+                                        BoundaryWorkerSelected,
+                                boundary_worker_slices + 1u,
+                                0u,
+                                phase,
+                                worker_state.regs[15],
+                                worker_state.regs[14]);
+
+                            const bool v126_boundary_audio_worker =
+                                callbacks.V126Enabled() &&
+                                worker_state.id ==
+                                    callbacks.v104_audio_worker_tid;
+                            const std::uint64_t
+                                v126_boundary_audio_begin_ns =
+                                    v126_boundary_audio_worker
+                                        ? V85SteadyNowNs()
+                                        : 0u;
+                            const bool v126_boundary_hash_ring =
+                                v126_boundary_audio_worker &&
+                                callbacks.V126ShouldHashWorkerRing();
+                            if (v126_boundary_audio_worker) {
+                                callbacks.V126RecordBoundaryFlightEvent(
+                                    PvZ2JniCallbacks::
+                                        V126FlightEventKind::
+                                            BoundaryAudioWorkerPre,
+                                    boundary_worker_slices + 1u,
+                                    0u,
+                                    phase,
+                                    worker_state.regs[15],
+                                    worker_state.regs[14],
+                                    0u,
+                                    v126_boundary_hash_ring);
+                            }
+
                             for (;;) {
                                 const std::uint32_t v110_start_pc =
                                     callbacks.V110ProfilingEnabled()
@@ -2128,6 +2212,23 @@
                                         std::uint64_t>::max();
                                 result.message.clear();
                                 clear_boundary_halts();
+                            }
+
+                            if (v126_boundary_audio_worker) {
+                                callbacks.V126RecordBoundaryFlightEvent(
+                                    PvZ2JniCallbacks::
+                                        V126FlightEventKind::
+                                            BoundaryAudioWorkerPost,
+                                    boundary_worker_slices + 1u,
+                                    0u,
+                                    phase,
+                                    worker_state.regs[15],
+                                    worker_state.regs[14],
+                                    V85SteadyNowNs() -
+                                        v126_boundary_audio_begin_ns,
+                                    v126_boundary_hash_ring);
+                                callbacks.V126FinishWorkerRingHashRound(
+                                    v126_boundary_hash_ring);
                             }
 
                             if (callbacks.V64Enabled() &&
@@ -2432,6 +2533,15 @@
                             newly_consumed;
                         callbacks.v99_audio_pending_callbacks +=
                             newly_consumed;
+                        if (newly_consumed != 0u) {
+                            callbacks.V126RecordBoundaryFlightEvent(
+                                PvZ2JniCallbacks::
+                                    V126FlightEventKind::
+                                        HostCompletionBoundary,
+                                callbacks.v99_audio_host_consumed,
+                                newly_consumed,
+                                phase);
+                        }
 
                         if (callbacks.v99_audio_pending_callbacks == 0u) {
                             return true;
@@ -2503,6 +2613,14 @@
                                         callbacks.v99_queue_context));
                             }
 
+                            callbacks.V126RecordBoundaryFlightEvent(
+                                PvZ2JniCallbacks::
+                                    V126FlightEventKind::
+                                        BoundaryCallbackPre,
+                                callback_number,
+                                0u,
+                                phase);
+
                             if (!run_lifecycle(
                                     callbacks.V100Enabled()
                                         ? "V100_OpenSL_BufferQueueCallback"
@@ -2521,6 +2639,14 @@
                             --callbacks.v99_audio_pending_callbacks;
                             ++callbacks.v99_audio_callback_deliveries;
                             ++delivered;
+
+                            callbacks.V126RecordBoundaryFlightEvent(
+                                PvZ2JniCallbacks::
+                                    V126FlightEventKind::
+                                        BoundaryCallbackPost,
+                                callback_number,
+                                0u,
+                                phase);
                         }
 
                         if (callbacks.V102Enabled() &&

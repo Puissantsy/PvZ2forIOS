@@ -780,9 +780,16 @@
     }
 
 
-    bool V125Enabled() const {
+    bool V126Enabled() const {
         return diagnostic_mode ==
-            PvZ2DiagnosticMode::V125RepeatEnqueueContext;
+            PvZ2DiagnosticMode::V126AudioFlightRecorder;
+    }
+
+    bool V125Enabled() const {
+        return
+            diagnostic_mode ==
+                PvZ2DiagnosticMode::V125RepeatEnqueueContext ||
+            V126Enabled();
     }
 
     bool V124Enabled() const {
@@ -811,6 +818,579 @@
             diagnostic_mode ==
                 PvZ2DiagnosticMode::V121HostAudioTelemetry ||
             V122Enabled();
+    }
+
+
+    bool V126InAnimationWindow() const {
+        return current_frame_number >= 800u &&
+            current_frame_number <= 2500u;
+    }
+
+    bool V126InLateWindow() const {
+        return current_frame_number >= 10000u &&
+            current_frame_number <= 12500u;
+    }
+
+    bool V126InProbeWindow() const {
+        return V126Enabled() &&
+            (V126InAnimationWindow() || V126InLateWindow());
+    }
+
+    void V126PrepareRecorder() {
+        if (V126Enabled())
+            v126_flight_events.reserve(kV126FlightCapacity);
+    }
+
+    std::uint64_t V126HashGuestBytes(
+        std::uint32_t address,
+        std::uint32_t bytes) {
+        if (address == 0u || bytes == 0u) return 0u;
+        const std::uint8_t* ptr = mem.Ptr(address, bytes);
+        if (ptr == nullptr) return 0u;
+        std::uint64_t hash = 1469598103934665603ull;
+        for (std::uint32_t i = 0u; i < bytes; ++i) {
+            hash ^= ptr[i];
+            hash *= 1099511628211ull;
+        }
+        return hash;
+    }
+
+    V126SinkSnapshot V126ReadSinkSnapshot(bool hash_slots) {
+        V126SinkSnapshot snap;
+        if (!V126Enabled() || v99_queue_context == 0u ||
+            mem.Ptr(v99_queue_context, 0x54u) == nullptr)
+            return snap;
+
+        snap.valid = true;
+        snap.channel_mask = mem.Read32Guest(v99_queue_context + 0x0cu);
+        snap.read_index = mem.Read32Guest(v99_queue_context + 0x10u);
+        snap.capacity_frames = mem.Read32Guest(v99_queue_context + 0x14u);
+        snap.available_frames = mem.Read32Guest(v99_queue_context + 0x18u);
+        snap.ring_base = mem.Read32Guest(v99_queue_context + 0x1cu);
+        const std::uint8_t* starved = mem.Ptr(v99_queue_context + 0x24u, 1u);
+        snap.starved = starved != nullptr ? *starved : 0u;
+        snap.platform_buffer_count = mem.Read32Guest(v99_queue_context + 0x28u);
+        snap.silence_run = mem.Read32Guest(v99_queue_context + 0x30u);
+        snap.enqueue_success_count = mem.Read32Guest(v99_queue_context + 0x4cu);
+        const std::uint8_t* playing = mem.Ptr(v99_queue_context + 0x50u, 1u);
+        snap.playing = playing != nullptr ? *playing : 0u;
+
+        std::uint32_t bits = snap.channel_mask;
+        while (bits != 0u) {
+            snap.channel_count += bits & 1u;
+            bits >>= 1u;
+        }
+        if (snap.channel_count == 0u) return snap;
+
+        snap.slot_bytes = snap.channel_count * 2u * 1024u;
+        snap.slot_count = std::min<std::uint32_t>(
+            4u, snap.capacity_frames / 1024u);
+
+        if (hash_slots && snap.ring_base != 0u && snap.slot_bytes != 0u) {
+            snap.slot_hashes_valid = true;
+            for (std::uint32_t slot = 0u; slot < snap.slot_count; ++slot) {
+                snap.slot_hashes[slot] = V126HashGuestBytes(
+                    snap.ring_base + slot * snap.slot_bytes,
+                    snap.slot_bytes);
+            }
+        }
+        return snap;
+    }
+
+    bool V126ShouldHashWorkerRing() const {
+        return V126InProbeWindow() &&
+            v126_ring_hash_rounds_remaining != 0u;
+    }
+
+    void V126FinishWorkerRingHashRound(bool sampled) {
+        if (!V126Enabled() || !sampled) return;
+        ++v126_ring_hash_rounds;
+        if (v126_ring_hash_rounds_remaining != 0u)
+            --v126_ring_hash_rounds_remaining;
+    }
+
+    static const char* V126FlightKindName(V126FlightEventKind kind) {
+        switch (kind) {
+        case V126FlightEventKind::HostCompletionInline: return "host-complete-inline";
+        case V126FlightEventKind::InlineCallbackPre: return "callback-pre-inline";
+        case V126FlightEventKind::Enqueue: return "enqueue";
+        case V126FlightEventKind::QueueGetState: return "queue-getstate";
+        case V126FlightEventKind::InlineCallbackPost: return "callback-post-inline";
+        case V126FlightEventKind::WorkerPre: return "worker-pre";
+        case V126FlightEventKind::WorkerPost: return "worker-post";
+        case V126FlightEventKind::HostCompletionBoundary: return "host-complete-boundary";
+        case V126FlightEventKind::BoundaryCallbackPre: return "callback-pre-boundary";
+        case V126FlightEventKind::BoundaryCallbackPost: return "callback-post-boundary";
+        case V126FlightEventKind::BoundaryWorkerSelected: return "boundary-worker-selected";
+        case V126FlightEventKind::BoundaryAudioWorkerPre: return "boundary-audio-worker-pre";
+        case V126FlightEventKind::BoundaryAudioWorkerPost: return "boundary-audio-worker-post";
+        }
+        return "unknown";
+    }
+
+    static const char* V126EnqueuePathName(std::uint8_t path) {
+        switch (path) {
+        case 1u: return "FRESH";
+        case 2u: return "STARVATION_REPLAY";
+        case 3u: return "OTHER";
+        default: return "N/A";
+        }
+    }
+
+    static std::uint8_t V126BoundaryPhaseCode(const char* phase) {
+        if (phase == nullptr) return 0u;
+        if (std::strcmp(phase, "pre-frame") == 0) return 1u;
+        if (std::strcmp(phase, "frame-boundary") == 0) return 2u;
+        return 3u;
+    }
+
+    static const char* V126BoundaryPhaseName(std::uint8_t phase) {
+        switch (phase) {
+        case 1u: return "pre-frame";
+        case 2u: return "frame-boundary";
+        case 3u: return "other";
+        default: return "n/a";
+        }
+    }
+
+    std::size_t V126RecordFlightEvent(
+        V126FlightEventKind kind,
+        std::uint64_t correlation = 0u,
+        std::uint32_t host_completed_delta = 0u,
+        std::uint32_t buffer = 0u,
+        std::uint32_t bytes = 0u,
+        std::uint32_t explicit_pc = 0u,
+        std::uint32_t explicit_lr = 0u,
+        std::uint64_t worker_elapsed_ns = 0u,
+        bool hash_slots = false) {
+
+        const std::size_t no_event = std::numeric_limits<std::size_t>::max();
+        if (!V126InProbeWindow()) return no_event;
+        if (v126_flight_events.size() >= kV126FlightCapacity) {
+            ++v126_flight_dropped;
+            return no_event;
+        }
+
+        const std::uint64_t now_ns = V85SteadyNowNs();
+        if (v126_flight_origin_ns == 0u)
+            v126_flight_origin_ns = now_ns;
+
+        V126FlightEvent event;
+        event.seq = ++v126_flight_seq;
+        event.time_us =
+            (now_ns - v126_flight_origin_ns) / 1000u;
+        event.kind = kind;
+        event.frame = current_frame_number;
+        event.tid = current_probe_thread_id;
+        event.pc = explicit_pc != 0u ? explicit_pc :
+            (jit != nullptr ? jit->Regs()[15] : 0u);
+        event.lr = explicit_lr != 0u ? explicit_lr :
+            (jit != nullptr ? jit->Regs()[14] : 0u);
+        event.callback_deliveries = v99_audio_callback_deliveries;
+        event.host_consumed = v99_audio_host_consumed;
+        event.pending_callbacks = v99_audio_pending_callbacks;
+        event.worker_handshakes = v104_audio_worker_handshakes;
+        event.correlation = correlation;
+        event.host_completed_delta = host_completed_delta;
+        event.host_queue_before = PvZ2HostAudioQueuedBufferCount();
+        event.host_queue_after = event.host_queue_before;
+        event.sink = V126ReadSinkSnapshot(hash_slots);
+        event.buffer = buffer;
+        event.bytes = bytes;
+        event.worker_elapsed_ns = worker_elapsed_ns;
+
+        if (kind == V126FlightEventKind::Enqueue) {
+            constexpr std::uint32_t kFreshReturn = kGuestBase + 0x00bb0328u;
+            constexpr std::uint32_t kStarvationReturn = kGuestBase + 0x00bb0404u;
+            event.enqueue_path = event.lr == kFreshReturn ? 1u :
+                (event.lr == kStarvationReturn ? 2u : 3u);
+            event.buffer_hash = V126HashGuestBytes(buffer, bytes);
+
+            if (event.sink.valid && event.sink.slot_bytes != 0u &&
+                event.sink.ring_base != 0u && buffer >= event.sink.ring_base) {
+                const std::uint32_t delta = buffer - event.sink.ring_base;
+                if ((delta % event.sink.slot_bytes) == 0u) {
+                    const std::uint32_t slot = delta / event.sink.slot_bytes;
+                    if (slot < event.sink.slot_count) event.slot_index = slot;
+                }
+            }
+
+            if (event.enqueue_path == 1u) {
+                ++v126_enqueue_fresh;
+            } else if (event.enqueue_path == 2u) {
+                ++v126_enqueue_starvation;
+                v126_ring_hash_rounds_remaining =
+                    std::max<std::uint32_t>(
+                        v126_ring_hash_rounds_remaining,
+                        2u);
+                if (V126InAnimationWindow()) {
+                    if (v126_anim_first_starvation_frame == 0u)
+                        v126_anim_first_starvation_frame = current_frame_number;
+                    v126_anim_last_starvation_frame = current_frame_number;
+                } else {
+                    if (v126_late_first_starvation_frame == 0u)
+                        v126_late_first_starvation_frame = current_frame_number;
+                    v126_late_last_starvation_frame = current_frame_number;
+                }
+            } else {
+                ++v126_enqueue_other;
+            }
+        } else if (kind == V126FlightEventKind::QueueGetState) {
+            constexpr std::uint32_t kProducerGetStateReturn =
+                kGuestBase + 0x00bb011cu;
+            constexpr std::uint32_t kCallbackGetStateReturn =
+                kGuestBase + 0x00bb03a8u;
+
+            if (event.lr == kProducerGetStateReturn) {
+                event.getstate_source = 1u;
+                ++v126_getstate_producer;
+                if (event.sink.valid) {
+                    const std::int64_t missing =
+                        static_cast<std::int64_t>(event.sink.capacity_frames) -
+                        static_cast<std::int64_t>(event.sink.available_frames) -
+                        static_cast<std::int64_t>(event.host_queue_before) * 1024ll;
+                    event.computed_needed_buffers = missing > 0 ?
+                        static_cast<std::uint32_t>(missing / 1024ll) : 0u;
+                    v126_producer_needed_total += event.computed_needed_buffers;
+                    v126_producer_needed_max = std::max(
+                        v126_producer_needed_max,
+                        event.computed_needed_buffers);
+                }
+            } else if (event.lr == kCallbackGetStateReturn) {
+                event.getstate_source = 2u;
+                ++v126_getstate_callback;
+            } else {
+                event.getstate_source = 3u;
+                ++v126_getstate_other;
+            }
+        } else if (kind == V126FlightEventKind::HostCompletionInline ||
+                   kind == V126FlightEventKind::HostCompletionBoundary) {
+            ++v126_host_completion_events;
+            v126_host_completed_buffers += host_completed_delta;
+        } else if (kind == V126FlightEventKind::InlineCallbackPre) {
+            ++v126_inline_callbacks;
+        } else if (kind == V126FlightEventKind::BoundaryCallbackPre) {
+            ++v126_boundary_callbacks;
+        }
+
+        const bool worker_pre =
+            kind == V126FlightEventKind::WorkerPre ||
+            kind == V126FlightEventKind::BoundaryAudioWorkerPre;
+        const bool worker_post =
+            kind == V126FlightEventKind::WorkerPost ||
+            kind == V126FlightEventKind::BoundaryAudioWorkerPost;
+
+        if (kind == V126FlightEventKind::BoundaryWorkerSelected) {
+            ++v126_boundary_worker_selected;
+        }
+
+        if (worker_pre) {
+            v126_worker_pre_valid = event.sink.valid;
+            v126_worker_pre_snapshot = event.sink;
+        } else if (worker_post) {
+            ++v126_worker_rounds;
+            v126_worker_total_ns += worker_elapsed_ns;
+            v126_worker_max_ns = std::max(v126_worker_max_ns, worker_elapsed_ns);
+
+            const bool handoff =
+                kind == V126FlightEventKind::WorkerPost;
+            if (handoff) {
+                ++v126_handoff_worker_rounds;
+            } else {
+                ++v126_boundary_audio_worker_rounds;
+            }
+
+            bool produced = false;
+            if (v126_worker_pre_valid && event.sink.valid) {
+                event.worker_available_delta =
+                    static_cast<std::int32_t>(event.sink.available_frames) -
+                    static_cast<std::int32_t>(
+                        v126_worker_pre_snapshot.available_frames);
+                if (event.sink.slot_hashes_valid &&
+                    v126_worker_pre_snapshot.slot_hashes_valid) {
+                    const std::uint32_t slots = std::min(
+                        event.sink.slot_count,
+                        v126_worker_pre_snapshot.slot_count);
+                    for (std::uint32_t slot = 0u; slot < slots; ++slot) {
+                        const std::uint64_t before =
+                            v126_worker_pre_snapshot.slot_hashes[slot];
+                        const std::uint64_t after = event.sink.slot_hashes[slot];
+                        if (before != after)
+                            event.worker_changed_slot_mask |= 1u << slot;
+                    }
+                }
+                produced =
+                    event.worker_available_delta > 0 ||
+                    event.worker_changed_slot_mask != 0u;
+            }
+
+            if (produced) {
+                ++v126_worker_produced;
+                if (handoff)
+                    ++v126_handoff_worker_produced;
+                else
+                    ++v126_boundary_audio_worker_produced;
+            } else {
+                ++v126_worker_no_production;
+                if (handoff)
+                    ++v126_handoff_worker_no_production;
+                else
+                    ++v126_boundary_audio_worker_no_production;
+            }
+            v126_worker_pre_valid = false;
+        }
+
+        v126_flight_events.push_back(event);
+        return v126_flight_events.size() - 1u;
+    }
+
+    void V126RecordBoundaryFlightEvent(
+        V126FlightEventKind kind,
+        std::uint64_t correlation,
+        std::uint32_t host_completed_delta,
+        const char* phase,
+        std::uint32_t explicit_pc = 0u,
+        std::uint32_t explicit_lr = 0u,
+        std::uint64_t worker_elapsed_ns = 0u,
+        bool hash_slots = false) {
+        const std::size_t event_index =
+            V126RecordFlightEvent(
+                kind,
+                correlation,
+                host_completed_delta,
+                0u,
+                0u,
+                explicit_pc,
+                explicit_lr,
+                worker_elapsed_ns,
+                hash_slots);
+        if (event_index < v126_flight_events.size()) {
+            v126_flight_events[event_index].boundary_phase =
+                V126BoundaryPhaseCode(phase);
+        }
+    }
+
+    void V126FinalizeEnqueue(std::size_t event_index, bool success) {
+        if (!V126Enabled() || event_index >= v126_flight_events.size()) return;
+        auto& event = v126_flight_events[event_index];
+        event.enqueue_result = success ? 1u : 2u;
+        event.host_queue_after = PvZ2HostAudioQueuedBufferCount();
+        if (!success) ++v126_enqueue_rejected;
+    }
+
+    void V126MarkExactRepeat(std::size_t event_index) {
+        if (!V126Enabled() || event_index >= v126_flight_events.size()) return;
+        auto& event = v126_flight_events[event_index];
+        if (event.exact_repeat) return;
+        event.exact_repeat = true;
+        if (event.enqueue_path == 1u) ++v126_exact_repeat_fresh;
+        else if (event.enqueue_path == 2u) ++v126_exact_repeat_starvation;
+        else ++v126_exact_repeat_other;
+    }
+
+    std::string V126FormatFlightEvent(const V126FlightEvent& event) const {
+        std::ostringstream out;
+        out << "V126 FLIGHT"
+            << " seq=" << event.seq
+            << " tUs=" << event.time_us
+            << " frame=" << event.frame
+            << " kind=" << V126FlightKindName(event.kind)
+            << " tid=" << event.tid
+            << " pc=0x" << JniProbeHex(event.pc)
+            << " lr=0x" << JniProbeHex(event.lr)
+            << " cb=" << event.callback_deliveries
+            << " host=" << event.host_consumed
+            << " pending=" << event.pending_callbacks
+            << " hs=" << event.worker_handshakes
+            << " corr=" << event.correlation
+            << " hostDelta=" << event.host_completed_delta
+            << " q=" << event.host_queue_before << "->" << event.host_queue_after;
+
+        if (event.sink.valid) {
+            out << " sink{read=" << event.sink.read_index
+                << ",cap=" << event.sink.capacity_frames
+                << ",avail=" << event.sink.available_frames
+                << ",ring=0x" << JniProbeHex(event.sink.ring_base)
+                << ",mask=0x" << JniProbeHex(event.sink.channel_mask)
+                << ",ch=" << event.sink.channel_count
+                << ",starved=" << static_cast<unsigned>(event.sink.starved)
+                << ",platformBuffers=" << event.sink.platform_buffer_count
+                << ",silenceRun=" << event.sink.silence_run
+                << ",guestEnqueues=" << event.sink.enqueue_success_count
+                << ",playing=" << static_cast<unsigned>(event.sink.playing)
+                << "}";
+        } else {
+            out << " sink{INVALID}";
+        }
+
+        if (event.kind == V126FlightEventKind::Enqueue) {
+            out << " enqueue{path=" << V126EnqueuePathName(event.enqueue_path)
+                << ",buffer=0x" << JniProbeHex(event.buffer)
+                << ",bytes=" << event.bytes << ",slot=";
+            if (event.slot_index == 0xffffffffu) out << "n/a";
+            else out << event.slot_index;
+            out << ",hash=0x" << std::hex << event.buffer_hash << std::dec
+                << ",result=" << (event.enqueue_result == 1u ? "OK" :
+                                  (event.enqueue_result == 2u ? "REJECT" : "PENDING"))
+                << ",exactRepeat=" << (event.exact_repeat ? "YES" : "NO")
+                << "}";
+        }
+
+        if (event.boundary_phase != 0u) {
+            out << " boundaryPhase="
+                << V126BoundaryPhaseName(event.boundary_phase);
+        }
+
+        if (event.kind == V126FlightEventKind::QueueGetState) {
+            out << " getState{source="
+                << (event.getstate_source == 1u ? "PRODUCER_IS_DATA_NEEDED" :
+                    (event.getstate_source == 2u ? "CALLBACK_STARVATION_CHECK" : "OTHER"))
+                << ",needed=" << event.computed_needed_buffers << "}";
+        }
+
+        if (event.kind == V126FlightEventKind::WorkerPre ||
+            event.kind == V126FlightEventKind::WorkerPost ||
+            event.kind == V126FlightEventKind::BoundaryAudioWorkerPre ||
+            event.kind == V126FlightEventKind::BoundaryAudioWorkerPost) {
+            if (event.sink.slot_hashes_valid) {
+                out << " ringHashes=[";
+                for (std::uint32_t slot = 0u; slot < event.sink.slot_count; ++slot) {
+                    if (slot != 0u) out << ",";
+                    out << std::hex << event.sink.slot_hashes[slot] << std::dec;
+                }
+                out << "]";
+            } else {
+                out << " ringHashes=NOT_SAMPLED";
+            }
+        }
+
+        if (event.kind == V126FlightEventKind::WorkerPost ||
+            event.kind == V126FlightEventKind::BoundaryAudioWorkerPost) {
+            out << " worker{elapsedUs=" << (event.worker_elapsed_ns / 1000u)
+                << ",availableDelta=" << event.worker_available_delta
+                << ",changedMask=0x" << JniProbeHex(event.worker_changed_slot_mask)
+                << "}";
+        }
+        return out.str();
+    }
+
+    void V126EmitFlightWindow(
+        std::uint32_t first_frame,
+        std::uint32_t last_frame,
+        const char* label) {
+        constexpr std::size_t kMaxLines = 384u;
+        constexpr std::size_t kBefore = 8u;
+        constexpr std::size_t kAfter = 10u;
+        std::size_t anomalies = 0u;
+        std::size_t emitted = 0u;
+        std::size_t last_emitted = std::numeric_limits<std::size_t>::max();
+        bool capped = false;
+
+        for (std::size_t i = 0u; i < v126_flight_events.size(); ++i) {
+            const auto& event = v126_flight_events[i];
+            if (event.frame < first_frame || event.frame > last_frame ||
+                event.kind != V126FlightEventKind::Enqueue ||
+                (event.enqueue_path != 2u && !event.exact_repeat))
+                continue;
+
+            ++anomalies;
+            const std::size_t begin = i > kBefore ? i - kBefore : 0u;
+            const std::size_t end = std::min(
+                v126_flight_events.size(), i + kAfter + 1u);
+            for (std::size_t j = begin; j < end; ++j) {
+                const auto& nearby = v126_flight_events[j];
+                if (nearby.frame < first_frame || nearby.frame > last_frame)
+                    continue;
+                if (last_emitted != std::numeric_limits<std::size_t>::max() &&
+                    j <= last_emitted)
+                    continue;
+                if (emitted >= kMaxLines) {
+                    capped = true;
+                    break;
+                }
+                AppendDiagnostic(V126FormatFlightEvent(nearby));
+                last_emitted = j;
+                ++emitted;
+            }
+            if (capped) break;
+        }
+
+        AppendDiagnostic(
+            std::string{"V126 FLIGHT WINDOW "} +
+            (label != nullptr ? label : "unknown") +
+            " anomalies=" + std::to_string(anomalies) +
+            " emittedLines=" + std::to_string(emitted) +
+            " capped=" + (capped ? "YES" : "NO"));
+    }
+
+    void V126EmitFlightSummary() {
+        if (!V126Enabled()) return;
+
+        std::ostringstream out;
+        out << "V126 AUDIO FLIGHT SUMMARY"
+            << " events=" << v126_flight_events.size()
+            << " dropped=" << v126_flight_dropped
+            << " hostCompletionEvents=" << v126_host_completion_events
+            << " hostCompletedBuffers=" << v126_host_completed_buffers
+            << " callbacks{inline=" << v126_inline_callbacks
+            << ",boundary=" << v126_boundary_callbacks << "}"
+            << " enqueues{fresh=" << v126_enqueue_fresh
+            << ",starvation=" << v126_enqueue_starvation
+            << ",other=" << v126_enqueue_other
+            << ",rejected=" << v126_enqueue_rejected << "}"
+            << " exactByPath{fresh=" << v126_exact_repeat_fresh
+            << ",starvation=" << v126_exact_repeat_starvation
+            << ",other=" << v126_exact_repeat_other << "}"
+            << " getState{producer=" << v126_getstate_producer
+            << ",callback=" << v126_getstate_callback
+            << ",other=" << v126_getstate_other
+            << ",neededTotal=" << v126_producer_needed_total
+            << ",neededMax=" << v126_producer_needed_max << "}"
+            << " workers{rounds=" << v126_worker_rounds
+            << ",produced=" << v126_worker_produced
+            << ",noProduction=" << v126_worker_no_production
+            << ",avgUs=" << (v126_worker_rounds != 0u ?
+                (v126_worker_total_ns / v126_worker_rounds / 1000u) : 0u)
+            << ",maxUs=" << (v126_worker_max_ns / 1000u)
+            << ",handoff=" << v126_handoff_worker_rounds
+            << "/" << v126_handoff_worker_produced
+            << "/" << v126_handoff_worker_no_production
+            << ",boundaryAudio=" << v126_boundary_audio_worker_rounds
+            << "/" << v126_boundary_audio_worker_produced
+            << "/" << v126_boundary_audio_worker_no_production
+            << ",boundarySelected=" << v126_boundary_worker_selected
+            << ",ringHashRounds=" << v126_ring_hash_rounds
+            << "}"
+            << " starvationFrames{anim=" << v126_anim_first_starvation_frame
+            << ".." << v126_anim_last_starvation_frame
+            << ",late=" << v126_late_first_starvation_frame
+            << ".." << v126_late_last_starvation_frame << "}";
+        AppendDiagnostic(out.str());
+
+        AppendDiagnostic(
+            "V126 STATIC CORRELATION: CAkSinkOpenSL fresh Enqueue returns to "
+            "0x10bb0328 and consumes/advances a 1024-frame sink block; the "
+            "queue-empty starvation fallback returns to 0x10bb0404, sets "
+            "sink+0x24 and re-enqueues the current read slot without advancing "
+            "readIndex or consuming availableFrames. IsDataNeeded GetState "
+            "returns to 0x10bb011c.");
+
+        std::ostringstream buckets;
+        buckets << "V126 INSPECTOR PC BUCKETS anim={";
+        for (std::size_t i = 0u; i < 5u; ++i) {
+            if (i != 0u) buckets << ",";
+            buckets << V110AudioBucketName(i) << ":" << v126_anim_inspector_ticks[i];
+        }
+        buckets << "} late={";
+        for (std::size_t i = 0u; i < 5u; ++i) {
+            if (i != 0u) buckets << ",";
+            buckets << V110AudioBucketName(i) << ":" << v126_late_inspector_ticks[i];
+        }
+        buckets << "}";
+        AppendDiagnostic(buckets.str());
+
+        V126EmitFlightWindow(800u, 2500u, "animation-800-2500");
+        V126EmitFlightWindow(10000u, 12500u, "late-10000-12500");
     }
 
     bool V118Enabled() const {
@@ -931,9 +1511,18 @@
     }
 
     void V110RecordAudioTicks(std::uint64_t ticks) {
-        if (!V110ProfilingEnabled() ||
-            !V110IsAudioWorker(current_probe_thread_id) ||
-            jit == nullptr)
+        const bool audio_worker =
+            V110IsAudioWorker(current_probe_thread_id);
+        if (V126InProbeWindow() && audio_worker && jit != nullptr) {
+            const std::size_t bucket = static_cast<std::size_t>(
+                V110AudioBucketForPc(jit->Regs()[15]));
+            if (V126InAnimationWindow())
+                v126_anim_inspector_ticks[bucket] += ticks;
+            else
+                v126_late_inspector_ticks[bucket] += ticks;
+        }
+
+        if (!V110ProfilingEnabled() || !audio_worker || jit == nullptr)
             return;
         const std::size_t bucket = static_cast<std::size_t>(
             V110AudioBucketForPc(jit->Regs()[15]));
@@ -2989,11 +3578,26 @@
             const std::uint32_t bytes =
                 regs[2];
 
+            const std::uint32_t v126_pc =
+                jit != nullptr ? jit->Regs()[15] : 0u;
+            const std::uint32_t v126_lr =
+                jit != nullptr ? jit->Regs()[14] : 0u;
+            const std::size_t v126_enqueue_event =
+                V126RecordFlightEvent(
+                    V126FlightEventKind::Enqueue,
+                    v99_audio_enqueues + 1u,
+                    0u,
+                    guest_buffer,
+                    bytes,
+                    v126_pc,
+                    v126_lr);
+
             if (!v99_audio_configured ||
                 guest_buffer == 0u ||
                 bytes == 0u ||
                 PvZ2HostAudioQueuedBufferCount() >=
                     v99_audio_queue_capacity) {
+                V126FinalizeEnqueue(v126_enqueue_event, false);
                 regs[0] = 1u;
                 return true;
             }
@@ -3041,6 +3645,7 @@
                           v124_prev_exact_frame <= 12500u));
 
                     if (exact_repeat) {
+                        V126MarkExactRepeat(v126_enqueue_event);
                         ++v124_exact_repeat_total;
                         const bool same_buffer =
                             v124_prev_exact_buffer ==
@@ -3195,10 +3800,12 @@
                 !PvZ2HostAudioEnqueuePCM16(
                     pcm,
                     bytes)) {
+                V126FinalizeEnqueue(v126_enqueue_event, false);
                 regs[0] = 1u;
                 return true;
             }
 
+            V126FinalizeEnqueue(v126_enqueue_event, true);
             ++v99_audio_enqueues;
 
             if (V104Enabled() && !V118Enabled()) {
@@ -3291,6 +3898,14 @@
 
         if (name == "__v99_sl_queue_get_state") {
             ++v99_audio_getstate_calls;
+            V126RecordFlightEvent(
+                V126FlightEventKind::QueueGetState,
+                v99_audio_getstate_calls,
+                0u,
+                0u,
+                0u,
+                jit != nullptr ? jit->Regs()[15] : 0u,
+                jit != nullptr ? jit->Regs()[14] : 0u);
             if (regs[1] != 0u) {
                 mem.Write32Guest(
                     regs[1] + 0u,
@@ -3457,6 +4072,7 @@
     }
 
     const char* RuntimeModeTag() const {
+        if (V126Enabled()) return "V126";
         if (V125Enabled()) return "V125";
         if (V124Enabled()) return "V124";
         if (V123Enabled()) return "V123";
@@ -4852,6 +5468,9 @@
                 << " audioWorkerHandshakes=" << v104_audio_worker_handshakes
                 << " audioWorkerMisses=" << v104_audio_worker_misses;
             AppendDiagnostic(out.str());
+        }
+        if (V126Enabled()) {
+            V126EmitFlightSummary();
         }
         if (V110ProfilingEnabled()) AppendDiagnostic(V110AudioSummary());
         if (V111Enabled()) AppendDiagnostic(V111AudioSampleSummary());

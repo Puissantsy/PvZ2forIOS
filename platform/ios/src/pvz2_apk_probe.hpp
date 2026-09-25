@@ -436,6 +436,11 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // v125: context provenance for the exact stale-buffer repeats proven by
     // v124. Record which guest execution context performs each repeat enqueue.
     V125RepeatEnqueueContext = 68u,
+
+    // v126: one-run audio flight recorder. Combine the v124/v125 runtime proof
+    // with the exact static CAkSinkOpenSL starvation branch, sink-ring state,
+    // callback/worker ordering and Inspector-derived tid5 PC buckets.
+    V126AudioFlightRecorder = 69u,
 };
 
 enum class PvZ2ProbeCapability : std::uint64_t {

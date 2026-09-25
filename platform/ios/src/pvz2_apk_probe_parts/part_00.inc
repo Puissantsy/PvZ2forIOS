@@ -1050,6 +1050,8 @@ constexpr std::uint64_t kCapsV122 = kCapsV121;
 constexpr std::uint64_t kCapsV123 = kCapsV122;
 constexpr std::uint64_t kCapsV124 = kCapsV123;
 constexpr std::uint64_t kCapsV125 = kCapsV124;
+// v126 is observational only: no guest scheduling/audio capability changes.
+constexpr std::uint64_t kCapsV126 = kCapsV125;
 
 constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::PassiveRegistry, "PASSIVE_REGISTRY", nullptr, 0u, false},
@@ -1120,11 +1122,12 @@ constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::V122PcmContinuityTelemetry, "V122_PCM_CONTINUITY_TELEMETRY", "V122 PCM Continuity", kCapsV122, false},
     {PvZ2DiagnosticMode::V123NonSilentRepeatTelemetry, "V123_NONSILENT_REPEAT_TELEMETRY", "V123 Non-silent Repeat", kCapsV123, false},
     {PvZ2DiagnosticMode::V124ExactPcmRepeatProvenance, "V124_EXACT_PCM_REPEAT_PROVENANCE", "V124 Exact PCM", kCapsV124, false},
-    {PvZ2DiagnosticMode::V125RepeatEnqueueContext, "V125_REPEAT_ENQUEUE_CONTEXT", "V125 Repeat Context", kCapsV125, true},
+    {PvZ2DiagnosticMode::V125RepeatEnqueueContext, "V125_REPEAT_ENQUEUE_CONTEXT", "V125 Repeat Context", kCapsV125, false},
+    {PvZ2DiagnosticMode::V126AudioFlightRecorder, "V126_AUDIO_FLIGHT_RECORDER", "V126 Audio Flight", kCapsV126, true},
 };
 
 constexpr PvZ2DiagnosticMode kSelectableDiagnosticModes[] = {
-    PvZ2DiagnosticMode::V125RepeatEnqueueContext,
+    PvZ2DiagnosticMode::V126AudioFlightRecorder,
 };
 
 } // namespace
@@ -3429,6 +3432,124 @@ public:
     std::uint64_t v125_repeat_with_pending_callback = 0u;
     std::uint64_t v125_repeat_without_pending_callback = 0u;
     std::uint64_t v125_repeat_log_count = 0u;
+
+    // v126: bounded in-memory audio flight recorder. Static ARM analysis of
+    // CAkSinkOpenSL::EnqueueBufferCallback proves two OpenSL Enqueue callsites:
+    // LR=0x10bb0328 consumes a fresh 1024-frame sink block, while
+    // LR=0x10bb0404 is the queue-empty starvation fallback that re-enqueues the
+    // current read slot without advancing +0x10 or decrementing +0x18.
+    enum class V126FlightEventKind : std::uint8_t {
+        HostCompletionInline,
+        InlineCallbackPre,
+        Enqueue,
+        QueueGetState,
+        InlineCallbackPost,
+        WorkerPre,
+        WorkerPost,
+        HostCompletionBoundary,
+        BoundaryCallbackPre,
+        BoundaryCallbackPost,
+        BoundaryWorkerSelected,
+        BoundaryAudioWorkerPre,
+        BoundaryAudioWorkerPost,
+    };
+
+    struct V126SinkSnapshot {
+        bool valid = false;
+        std::uint32_t channel_mask = 0u;
+        std::uint32_t channel_count = 0u;
+        std::uint32_t read_index = 0u;
+        std::uint32_t capacity_frames = 0u;
+        std::uint32_t available_frames = 0u;
+        std::uint32_t ring_base = 0u;
+        std::uint8_t starved = 0u;
+        std::uint32_t platform_buffer_count = 0u;
+        std::uint32_t silence_run = 0u;
+        std::uint32_t enqueue_success_count = 0u;
+        std::uint8_t playing = 0u;
+        std::uint32_t slot_bytes = 0u;
+        std::uint32_t slot_count = 0u;
+        bool slot_hashes_valid = false;
+        std::array<std::uint64_t, 4> slot_hashes{};
+    };
+
+    struct V126FlightEvent {
+        std::uint64_t seq = 0u;
+        std::uint64_t time_us = 0u;
+        V126FlightEventKind kind = V126FlightEventKind::Enqueue;
+        std::uint32_t frame = 0u;
+        std::uint32_t tid = 0u;
+        std::uint32_t pc = 0u;
+        std::uint32_t lr = 0u;
+        std::uint64_t callback_deliveries = 0u;
+        std::uint64_t host_consumed = 0u;
+        std::uint64_t pending_callbacks = 0u;
+        std::uint64_t worker_handshakes = 0u;
+        std::uint64_t correlation = 0u;
+        std::uint32_t host_completed_delta = 0u;
+        std::uint32_t host_queue_before = 0u;
+        std::uint32_t host_queue_after = 0u;
+        V126SinkSnapshot sink{};
+        std::uint32_t buffer = 0u;
+        std::uint32_t bytes = 0u;
+        std::uint64_t buffer_hash = 0u;
+        std::uint32_t slot_index = 0xffffffffu;
+        std::uint8_t enqueue_path = 0u;
+        std::uint8_t enqueue_result = 0u;
+        bool exact_repeat = false;
+        std::uint8_t getstate_source = 0u;
+        std::uint8_t boundary_phase = 0u; // 1=pre-frame, 2=frame-boundary.
+        std::uint32_t computed_needed_buffers = 0u;
+        std::uint32_t worker_changed_slot_mask = 0u;
+        std::int32_t worker_available_delta = 0;
+        std::uint64_t worker_elapsed_ns = 0u;
+    };
+
+    // ~10 MiB worst case with four ring hashes/event; enough headroom to keep
+    // both crackle windows instead of filling the recorder during window #1.
+    static constexpr std::size_t kV126FlightCapacity = 65536u;
+    std::vector<V126FlightEvent> v126_flight_events;
+    std::uint64_t v126_flight_seq = 0u;
+    std::uint64_t v126_flight_origin_ns = 0u;
+    std::uint64_t v126_flight_dropped = 0u;
+    std::uint64_t v126_host_completion_events = 0u;
+    std::uint64_t v126_host_completed_buffers = 0u;
+    std::uint64_t v126_inline_callbacks = 0u;
+    std::uint64_t v126_boundary_callbacks = 0u;
+    std::uint64_t v126_enqueue_fresh = 0u;
+    std::uint64_t v126_enqueue_starvation = 0u;
+    std::uint64_t v126_enqueue_other = 0u;
+    std::uint64_t v126_enqueue_rejected = 0u;
+    std::uint64_t v126_exact_repeat_fresh = 0u;
+    std::uint64_t v126_exact_repeat_starvation = 0u;
+    std::uint64_t v126_exact_repeat_other = 0u;
+    std::uint64_t v126_getstate_producer = 0u;
+    std::uint64_t v126_getstate_callback = 0u;
+    std::uint64_t v126_getstate_other = 0u;
+    std::uint64_t v126_producer_needed_total = 0u;
+    std::uint32_t v126_producer_needed_max = 0u;
+    std::uint64_t v126_worker_rounds = 0u;
+    std::uint64_t v126_worker_produced = 0u;
+    std::uint64_t v126_worker_no_production = 0u;
+    std::uint64_t v126_worker_total_ns = 0u;
+    std::uint64_t v126_worker_max_ns = 0u;
+    std::uint64_t v126_handoff_worker_rounds = 0u;
+    std::uint64_t v126_handoff_worker_produced = 0u;
+    std::uint64_t v126_handoff_worker_no_production = 0u;
+    std::uint64_t v126_boundary_worker_selected = 0u;
+    std::uint64_t v126_boundary_audio_worker_rounds = 0u;
+    std::uint64_t v126_boundary_audio_worker_produced = 0u;
+    std::uint64_t v126_boundary_audio_worker_no_production = 0u;
+    std::uint32_t v126_ring_hash_rounds_remaining = 0u;
+    std::uint64_t v126_ring_hash_rounds = 0u;
+    std::uint32_t v126_anim_first_starvation_frame = 0u;
+    std::uint32_t v126_anim_last_starvation_frame = 0u;
+    std::uint32_t v126_late_first_starvation_frame = 0u;
+    std::uint32_t v126_late_last_starvation_frame = 0u;
+    bool v126_worker_pre_valid = false;
+    V126SinkSnapshot v126_worker_pre_snapshot{};
+    std::array<std::uint64_t, 5> v126_anim_inspector_ticks{};
+    std::array<std::uint64_t, 5> v126_late_inspector_ticks{};
 
     // v105: observe Wwise resampler state without changing audio semantics.
     // These sites are lifecycle/configuration paths rather than Execute(), so

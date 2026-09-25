@@ -1938,6 +1938,20 @@ bool JniProbePrepareRuntime(
             "and wall time between imports is measured only inside the same "
             "jit.Run worker span so scheduler sleep is excluded.");
     }
+    if (callbacks.V126Enabled()) {
+        callbacks.V126PrepareRecorder();
+        callbacks.AppendDiagnostic(
+            "V126 AUDIO FLIGHT RECORDER: v125/v124/v118 runtime unchanged. "
+            "Static ARM disassembly proves fresh Enqueue LR=0x10bb0328 and "
+            "queue-empty starvation-replay LR=0x10bb0404. In frame windows "
+            "800-2500 and 10000-12500, a bounded in-memory recorder captures "
+            "sink +0x10/+0x14/+0x18/+0x1c/+0x24/+0x28/+0x30/+0x4c/+0x50 state, "
+            "OpenSL GetState/Enqueue callsites, inline-vs-boundary callback "
+            "ordering, tid5 pre/post production, ring-slot hashes, worker wall "
+            "time and Inspector-derived natural AddTicks PC buckets. No PCM, "
+            "callback cadence, scheduler order, SoundBank logic or audio clock "
+            "is modified.");
+    }
     if (callbacks.V125Enabled()) {
         callbacks.AppendDiagnostic(
             "V125 REPEAT ENQUEUE CONTEXT: v124/v123/v118 runtime unchanged. "
@@ -3768,6 +3782,14 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                     newly_consumed;
                                 callbacks.v99_audio_pending_callbacks +=
                                     newly_consumed;
+                                if (newly_consumed != 0u) {
+                                    callbacks.V126RecordFlightEvent(
+                                        PvZ2JniCallbacks::
+                                            V126FlightEventKind::
+                                                HostCompletionInline,
+                                        callbacks.v99_audio_host_consumed,
+                                        newly_consumed);
+                                }
 
                                 if (callbacks.v99_audio_pending_callbacks ==
                                         0u ||
@@ -3907,6 +3929,17 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                             std::uint64_t>::max();
                                     result.message.clear();
 
+                                    callbacks.V126RecordFlightEvent(
+                                        PvZ2JniCallbacks::
+                                            V126FlightEventKind::
+                                                InlineCallbackPre,
+                                        callback_number,
+                                        0u,
+                                        0u,
+                                        0u,
+                                        jit.Regs()[15],
+                                        jit.Regs()[14]);
+
                                     const Dynarmic::HaltReason audio_halt =
                                         jit.Run();
 
@@ -3957,6 +3990,17 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                     ++callbacks
                                           .v102_audio_inline_callbacks;
                                     ++delivered;
+
+                                    callbacks.V126RecordFlightEvent(
+                                        PvZ2JniCallbacks::
+                                            V126FlightEventKind::
+                                                InlineCallbackPost,
+                                        callback_number,
+                                        0u,
+                                        0u,
+                                        0u,
+                                        jit.Regs()[15],
+                                        jit.Regs()[14]);
 
                                     if (callbacks.V99ShouldLogCounter(
                                             callbacks
