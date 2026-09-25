@@ -446,6 +446,10 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // handoff is allowed to continue across normal scheduler quanta until the
     // Wwise event worker reaches a real blocking wait, with a bounded watchdog.
     V127AudioWorkerDrain = 70u,
+
+    // v128: preserve v127 and persist the v51 Android private USERFS in the
+    // app's iOS sandbox while keeping guest-visible Android paths unchanged.
+    V128PersistentUserFs = 71u,
 };
 
 enum class PvZ2ProbeCapability : std::uint64_t {

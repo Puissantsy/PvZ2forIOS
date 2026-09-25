@@ -98,6 +98,11 @@
                             handle.length);
                 }
 
+                if (V128Enabled() && !handle.virtual_path.empty()) {
+                    v128_userfs_dirty_paths.insert(
+                        normalize_v51_user_path(handle.virtual_path));
+                }
+
                 return true;
             };
 
@@ -374,12 +379,31 @@
                 return;
             }
 
+            if (name == "fflush") {
+                const std::uint32_t token = regs[0];
+                const auto path_it = v51_file_token_paths.find(token);
+                if (path_it != v51_file_token_paths.end() && V128Enabled()) {
+                    const bool ok =
+                        v128_userfs_dirty_paths.count(path_it->second) == 0u ||
+                        v128_flush_file(path_it->second);
+                    regs[0] = ok ? 0u : 0xffffffffu;
+                    ++supported_calls;
+                    return;
+                }
+            }
+
             if (name == "fclose") {
                 const std::uint32_t token =
                     regs[0];
                 const auto path_it =
                     v51_file_token_paths.find(
                         token);
+
+                if (path_it != v51_file_token_paths.end() &&
+                    V128Enabled() &&
+                    v128_userfs_dirty_paths.count(path_it->second) != 0u) {
+                    v128_flush_file(path_it->second);
+                }
 
                 if (path_it !=
                         v51_file_token_paths.end() &&
@@ -944,6 +968,12 @@
             if (name == "close") {
                 const std::uint32_t token =
                     regs[0];
+                const auto path_it = v51_fd_token_paths.find(token);
+                if (path_it != v51_fd_token_paths.end() &&
+                    V128Enabled() &&
+                    v128_userfs_dirty_paths.count(path_it->second) != 0u) {
+                    v128_flush_file(path_it->second);
+                }
                 v51_fd_token_paths.erase(token);
 
                 const auto erased =
@@ -1232,6 +1262,18 @@
                 }
             }
 
+            if (name == "fsync") {
+                const auto path_it = v51_fd_token_paths.find(regs[0]);
+                if (path_it != v51_fd_token_paths.end() && V128Enabled()) {
+                    const bool ok =
+                        v128_userfs_dirty_paths.count(path_it->second) == 0u ||
+                        v128_flush_file(path_it->second);
+                    regs[0] = ok ? 0u : 0xffffffffu;
+                    ++supported_calls;
+                    return;
+                }
+            }
+
             if (name == "ftruncate") {
                 const auto it =
                     obb_fds.find(regs[0]);
@@ -1246,6 +1288,10 @@
                         requested,
                         0u);
                     it->second.length = requested;
+                    if (V128Enabled() && !it->second.virtual_path.empty()) {
+                        v128_userfs_dirty_paths.insert(
+                            normalize_v51_user_path(it->second.virtual_path));
+                    }
                     if (it->second.offset >
                         requested) {
                         it->second.offset =
@@ -1274,6 +1320,13 @@
                             guest_path);
                     v51_writable_directories.insert(
                         path);
+                    if (V128Enabled()) {
+                        const std::string host = v128_host_path_for_guest(path);
+                        if (!host.empty() &&
+                            v128_mkdirs_for_file(host + "/.pvz2dir")) {
+                            ++v128_userfs_mkdirs;
+                        }
+                    }
                     regs[0] = 0u;
 
                     if (fallback_logged.insert(
@@ -1302,13 +1355,22 @@
                 if (v51_is_user_data_path(
                         guest_path)) {
                     const auto erased =
-                        v51_writable_files.erase(
-                            guest_path);
+                        v51_writable_files.erase(guest_path);
+                    bool disk_erased = false;
+                    if (V128Enabled()) {
+                        const std::string host =
+                            v128_host_path_for_guest(guest_path);
+                        if (!host.empty() && ::unlink(host.c_str()) == 0) {
+                            disk_erased = true;
+                            ++v128_userfs_unlinks;
+                        }
+                        v128_userfs_dirty_paths.erase(guest_path);
+                    }
                     regs[0] =
-                        erased != 0u
+                        (erased != 0u || disk_erased)
                             ? 0u
                             : 0xffffffffu;
-                    if (erased == 0u) {
+                    if (erased == 0u && !disk_erased) {
                         set_guest_errno(2u);
                     }
                     ++supported_calls;

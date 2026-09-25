@@ -3205,6 +3205,191 @@
                     under(kCache);
             };
 
+        auto v128_host_path_for_guest =
+            [&](const std::string& raw)
+                -> std::string {
+                if (!V128Enabled()) {
+                    return {};
+                }
+
+                const char* home_env = std::getenv("HOME");
+                if (home_env == nullptr || *home_env == '\0') {
+                    return {};
+                }
+
+                const std::string path =
+                    normalize_v51_user_path(raw);
+                static const std::string kFiles =
+                    "/data/data/com.ea.game.pvz2_row/files";
+                static const std::string kCache =
+                    "/data/data/com.ea.game.pvz2_row/cache";
+
+                const auto suffix_for =
+                    [&](const std::string& root)
+                        -> std::optional<std::string> {
+                        if (path == root) return std::string{};
+                        if (path.size() <= root.size() ||
+                            path.compare(0u, root.size(), root) != 0 ||
+                            path[root.size()] != '/') {
+                            return std::nullopt;
+                        }
+                        const std::string suffix = path.substr(root.size());
+                        if (suffix.find("/../") != std::string::npos ||
+                            (suffix.size() >= 3u &&
+                             suffix.compare(suffix.size() - 3u, 3u, "/..") == 0)) {
+                            return std::nullopt;
+                        }
+                        return suffix;
+                    };
+
+                if (const auto suffix = suffix_for(kFiles); suffix.has_value()) {
+                    return std::string{home_env} +
+                        "/Library/Application Support/PvZ2forIOS/UserData" +
+                        *suffix;
+                }
+                if (const auto suffix = suffix_for(kCache); suffix.has_value()) {
+                    return std::string{home_env} +
+                        "/Library/Caches/PvZ2forIOS" + *suffix;
+                }
+                return {};
+            };
+
+        auto v128_mkdirs_for_file =
+            [&](const std::string& full_path)
+                -> bool {
+                const std::size_t last = full_path.find_last_of('/');
+                const std::string directory =
+                    last == std::string::npos
+                        ? std::string{}
+                        : full_path.substr(0u, last);
+                if (directory.empty()) return true;
+
+                std::size_t pos = 1u;
+                while (true) {
+                    pos = directory.find('/', pos);
+                    const std::string prefix =
+                        pos == std::string::npos
+                            ? directory
+                            : directory.substr(0u, pos);
+                    if (!prefix.empty() &&
+                        ::mkdir(prefix.c_str(), 0755) != 0 &&
+                        errno != EEXIST) {
+                        ++v128_userfs_disk_failures;
+                        return false;
+                    }
+                    if (pos == std::string::npos) break;
+                    ++pos;
+                }
+                return true;
+            };
+
+        auto v128_load_file =
+            [&](const std::string& guest_raw)
+                -> bool {
+                if (!V128Enabled()) return false;
+                const std::string guest =
+                    normalize_v51_user_path(guest_raw);
+                if (v51_writable_files.find(guest) !=
+                    v51_writable_files.end()) {
+                    return true;
+                }
+
+                const std::string host =
+                    v128_host_path_for_guest(guest);
+                if (host.empty()) return false;
+
+                struct stat st {};
+                if (::stat(host.c_str(), &st) != 0 ||
+                    !S_ISREG(st.st_mode) || st.st_size < 0) {
+                    return false;
+                }
+
+                std::FILE* file = std::fopen(host.c_str(), "rb");
+                if (file == nullptr) {
+                    ++v128_userfs_disk_failures;
+                    return false;
+                }
+
+                auto bytes = std::make_shared<std::vector<std::uint8_t>>();
+                bytes->resize(static_cast<std::size_t>(st.st_size));
+                const std::size_t got =
+                    bytes->empty()
+                        ? 0u
+                        : std::fread(bytes->data(), 1u, bytes->size(), file);
+                const bool ok = bytes->empty() || got == bytes->size();
+                std::fclose(file);
+                if (!ok) {
+                    ++v128_userfs_disk_failures;
+                    return false;
+                }
+
+                v51_writable_files[guest] = std::move(bytes);
+                ++v128_userfs_disk_loads;
+                v128_userfs_disk_load_bytes +=
+                    static_cast<std::uint64_t>(st.st_size);
+                AppendDiagnostic(
+                    "V128 USERFS LOAD guest=\"" + guest +
+                    "\" host=\"" + host +
+                    "\" bytes=" + std::to_string(st.st_size));
+                return true;
+            };
+
+        auto v128_flush_file =
+            [&](const std::string& guest_raw)
+                -> bool {
+                if (!V128Enabled()) return true;
+                const std::string guest =
+                    normalize_v51_user_path(guest_raw);
+                const auto found = v51_writable_files.find(guest);
+                if (found == v51_writable_files.end() || !found->second) {
+                    return false;
+                }
+
+                const std::string host =
+                    v128_host_path_for_guest(guest);
+                if (host.empty() || !v128_mkdirs_for_file(host)) {
+                    ++v128_userfs_disk_failures;
+                    return false;
+                }
+
+                const std::string temp = host + ".tmp";
+                std::FILE* file = std::fopen(temp.c_str(), "wb");
+                if (file == nullptr) {
+                    ++v128_userfs_disk_failures;
+                    return false;
+                }
+
+                const auto& bytes = *found->second;
+                const std::size_t wrote =
+                    bytes.empty()
+                        ? 0u
+                        : std::fwrite(bytes.data(), 1u, bytes.size(), file);
+                bool ok = bytes.empty() || wrote == bytes.size();
+                if (ok && std::fflush(file) != 0) ok = false;
+                if (ok && ::fsync(::fileno(file)) != 0) ok = false;
+                if (std::fclose(file) != 0) ok = false;
+                if (ok && ::rename(temp.c_str(), host.c_str()) != 0) ok = false;
+
+                if (!ok) {
+                    ::unlink(temp.c_str());
+                    ++v128_userfs_disk_failures;
+                    AppendDiagnostic(
+                        "V128 USERFS FLUSH FAILED guest=\"" + guest +
+                        "\" host=\"" + host + "\"");
+                    return false;
+                }
+
+                v128_userfs_dirty_paths.erase(guest);
+                ++v128_userfs_disk_flushes;
+                v128_userfs_disk_flush_bytes +=
+                    static_cast<std::uint64_t>(bytes.size());
+                AppendDiagnostic(
+                    "V128 USERFS FLUSH guest=\"" + guest +
+                    "\" host=\"" + host +
+                    "\" bytes=" + std::to_string(bytes.size()));
+                return true;
+            };
+
         auto v51_open_memory_file =
             [&](const std::string& raw,
                 bool create,
@@ -3235,6 +3420,11 @@
                 auto it =
                     v51_writable_files.find(path);
 
+                if (it == v51_writable_files.end() && V128Enabled()) {
+                    v128_load_file(path);
+                    it = v51_writable_files.find(path);
+                }
+
                 if (it == v51_writable_files.end()) {
                     if (!create) {
                         return std::nullopt;
@@ -3253,6 +3443,9 @@
 
                 if (truncate) {
                     it->second->clear();
+                    if (V128Enabled()) {
+                        v128_userfs_dirty_paths.insert(path);
+                    }
                 }
 
                 ProbeObbHandle handle;
@@ -3304,6 +3497,25 @@
                         *directory_out = false;
                     }
                     return true;
+                }
+
+                if (V128Enabled()) {
+                    const std::string host =
+                        v128_host_path_for_guest(path);
+                    if (!host.empty()) {
+                        struct stat host_stat {};
+                        if (::stat(host.c_str(), &host_stat) == 0) {
+                            if (size_out) {
+                                *size_out = S_ISREG(host_stat.st_mode)
+                                    ? static_cast<std::uint64_t>(host_stat.st_size)
+                                    : 0u;
+                            }
+                            if (directory_out) {
+                                *directory_out = S_ISDIR(host_stat.st_mode);
+                            }
+                            return true;
+                        }
+                    }
                 }
 
                 const bool known_root =

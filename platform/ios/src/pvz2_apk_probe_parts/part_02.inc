@@ -780,9 +780,15 @@
     }
 
 
+    bool V128Enabled() const {
+        return diagnostic_mode ==
+            PvZ2DiagnosticMode::V128PersistentUserFs;
+    }
+
     bool V127Enabled() const {
         return diagnostic_mode ==
-            PvZ2DiagnosticMode::V127AudioWorkerDrain;
+                   PvZ2DiagnosticMode::V127AudioWorkerDrain ||
+               V128Enabled();
     }
 
     bool V126Enabled() const {
@@ -4103,6 +4109,7 @@
     }
 
     const char* RuntimeModeTag() const {
+        if (V128Enabled()) return "V128";
         if (V127Enabled()) return "V127";
         if (V126Enabled()) return "V126";
         if (V125Enabled()) return "V125";
@@ -5506,6 +5513,18 @@
         }
         if (V127Enabled()) {
             AppendDiagnostic(V127AudioDrainSummary());
+        }
+        if (V128Enabled()) {
+            AppendDiagnostic(
+                "V128 PERSISTENT USERFS SUMMARY loads=" +
+                std::to_string(v128_userfs_disk_loads) +
+                " loadBytes=" + std::to_string(v128_userfs_disk_load_bytes) +
+                " flushes=" + std::to_string(v128_userfs_disk_flushes) +
+                " flushBytes=" + std::to_string(v128_userfs_disk_flush_bytes) +
+                " mkdirs=" + std::to_string(v128_userfs_mkdirs) +
+                " unlinks=" + std::to_string(v128_userfs_unlinks) +
+                " failures=" + std::to_string(v128_userfs_disk_failures) +
+                " dirtyRemaining=" + std::to_string(v128_userfs_dirty_paths.size()));
         }
         if (V110ProfilingEnabled()) AppendDiagnostic(V110AudioSummary());
         if (V111Enabled()) AppendDiagnostic(V111AudioSampleSummary());

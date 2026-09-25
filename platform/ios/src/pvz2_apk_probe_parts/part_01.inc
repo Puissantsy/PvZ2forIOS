@@ -714,6 +714,17 @@
     std::uint64_t v51_userfs_bytes_written = 0u;
     std::uint64_t v51_snapshot2_bytes = 0u;
 
+    // v128 host-backed persistence accounting. v51 remains the active
+    // guest-facing cache; dirty paths are flushed into the iOS sandbox.
+    std::unordered_set<std::string> v128_userfs_dirty_paths;
+    std::uint64_t v128_userfs_disk_loads = 0u;
+    std::uint64_t v128_userfs_disk_load_bytes = 0u;
+    std::uint64_t v128_userfs_disk_flushes = 0u;
+    std::uint64_t v128_userfs_disk_flush_bytes = 0u;
+    std::uint64_t v128_userfs_disk_failures = 0u;
+    std::uint64_t v128_userfs_mkdirs = 0u;
+    std::uint64_t v128_userfs_unlinks = 0u;
+
     std::unordered_set<std::string> v51_config_keys;
     std::unordered_map<std::string, std::string>
         v51_config_strings;

@@ -12,6 +12,8 @@
 #include <cstdint>
 #include <cstring>
 #include <cctype>
+#include <cerrno>
+#include <cstdio>
 #include <deque>
 #include <cwctype>
 #include <cstdlib>
@@ -32,6 +34,10 @@
 #include <mutex>
 #include <unordered_map>
 #include <unordered_set>
+
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
 
 #include <dynarmic/interface/A32/a32.h>
 #include <dynarmic/interface/exclusive_monitor.h>
