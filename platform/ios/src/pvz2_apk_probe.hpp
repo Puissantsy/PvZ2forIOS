@@ -418,6 +418,11 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // gets an immediate CAkAudioThread handoff regardless of checkpoint type,
     // with a bounded catch-up batch no larger than the advertised queue depth.
     V119AudioCatchupHandshake = 64u,
+
+    // v120: fix the v119 handoff-token lifetime regression. Restore the strict
+    // one real completion -> one OpenSL callback -> one CAkAudioThread handoff
+    // ordering, while keeping the useful cross-checkpoint priority extension.
+    V120AudioOneShotHandshake = 65u,
 };
 
 enum class PvZ2ProbeCapability : std::uint64_t {

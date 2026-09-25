@@ -780,9 +780,16 @@
     }
 
 
-    bool V119Enabled() const {
+    bool V120Enabled() const {
         return diagnostic_mode ==
-            PvZ2DiagnosticMode::V119AudioCatchupHandshake;
+            PvZ2DiagnosticMode::V120AudioOneShotHandshake;
+    }
+
+    bool V119Enabled() const {
+        return
+            diagnostic_mode ==
+                PvZ2DiagnosticMode::V119AudioCatchupHandshake ||
+            V120Enabled();
     }
 
     bool V118Enabled() const {
@@ -3253,6 +3260,7 @@
     }
 
     const char* RuntimeModeTag() const {
+        if (V120Enabled()) return "V120";
         if (V119Enabled()) return "V119";
         if (V118Enabled()) return "V118";
         if (V117Enabled()) return "V117";
@@ -4536,15 +4544,28 @@
         }
     }
 
+    bool V120ConsumeAudioHandoffToken() {
+        if (!V120Enabled() ||
+            v119_audio_callbacks_last_service == 0u) {
+            return false;
+        }
+        v119_audio_callbacks_last_service = 0u;
+        ++v120_audio_handoff_tokens_consumed;
+        return true;
+    }
+
     std::string V119AudioCatchupSummary() const {
         std::ostringstream out;
-        out << "V119 AUDIO CATCHUP SUMMARY"
+        out << (V120Enabled()
+                    ? "V120 AUDIO ONESHOT SUMMARY"
+                    : "V119 AUDIO CATCHUP SUMMARY")
             << " services=" << v119_audio_catchup_services
             << " callbacks=" << v119_audio_catchup_callbacks
             << " schedulerHandoffs=" << v119_audio_scheduler_handoffs
             << " boundaryHandoffs=" << v119_audio_boundary_handoffs
             << " maxPending=" << v119_audio_max_pending
             << " maxBatch=" << v119_audio_max_batch
+            << " tokenConsumes=" << v120_audio_handoff_tokens_consumed
             << " hostConsumed=" << v99_audio_host_consumed
             << " callbackDeliveries=" << v99_audio_callback_deliveries
             << " pending=" << v99_audio_pending_callbacks

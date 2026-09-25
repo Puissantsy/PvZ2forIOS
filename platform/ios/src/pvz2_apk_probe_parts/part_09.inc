@@ -72,10 +72,13 @@
                                     // scheduler service that actually delivered
                                     // one or more real consumed-buffer callbacks.
                                     const bool v119_service_handoff =
-                                        callbacks.V119Enabled() &&
-                                        callbacks
-                                            .v119_audio_callbacks_last_service !=
-                                            0u;
+                                        callbacks.V120Enabled()
+                                            ? callbacks
+                                                  .V120ConsumeAudioHandoffToken()
+                                            : (callbacks.V119Enabled() &&
+                                               callbacks
+                                                   .v119_audio_callbacks_last_service !=
+                                                   0u);
                                     if (audio_only_halt ||
                                         v119_service_handoff) {
                                         if (callbacks.V104Enabled() &&
@@ -334,10 +337,15 @@
                                         return false;
                                     }
 
-                                    if (callbacks.V119Enabled() &&
-                                        callbacks
-                                            .v119_audio_callbacks_last_service !=
-                                            0u &&
+                                    const bool v119_blocked_service_handoff =
+                                        callbacks.V120Enabled()
+                                            ? callbacks
+                                                  .V120ConsumeAudioHandoffToken()
+                                            : (callbacks.V119Enabled() &&
+                                               callbacks
+                                                   .v119_audio_callbacks_last_service !=
+                                                   0u);
+                                    if (v119_blocked_service_handoff &&
                                         callbacks.v104_audio_worker_tid !=
                                             0u) {
                                         v104_audio_wakeup_round = true;
@@ -2501,13 +2509,15 @@
 
                         const std::uint32_t
                             kMaxAudioCallbacksPerBoundary =
-                                callbacks.V119Enabled()
-                                    ? std::max<std::uint32_t>(
-                                          1u,
-                                          callbacks.v99_audio_queue_capacity)
-                                    : (callbacks.V104Enabled()
-                                           ? 1u
-                                           : 8u);
+                                callbacks.V120Enabled()
+                                    ? 1u
+                                    : (callbacks.V119Enabled()
+                                           ? std::max<std::uint32_t>(
+                                                 1u,
+                                                 callbacks.v99_audio_queue_capacity)
+                                           : (callbacks.V104Enabled()
+                                                  ? 1u
+                                                  : 8u));
                         std::uint32_t delivered = 0u;
 
                         while (callbacks.v99_audio_pending_callbacks != 0u &&
@@ -2577,6 +2587,9 @@
                         if (callbacks.V119Enabled() &&
                             delivered != 0u &&
                             callbacks.v104_audio_worker_tid != 0u) {
+                            if (callbacks.V120Enabled()) {
+                                callbacks.v119_audio_callbacks_last_service = 0u;
+                            }
                             callbacks.v119_audio_boundary_wakeup_pending = true;
                             ++callbacks.v119_audio_catchup_services;
                             callbacks.v119_audio_max_pending =

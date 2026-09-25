@@ -719,7 +719,7 @@ void PvZ2HostNotifyDirectFrame(
 
     self.inputEnabled = NO;
     self.captionLabel.text =
-        @"PvZ2 v119 LIVE — HARD STOP requested; stopping guest at the next checkpoint…";
+        @"PvZ2 v120 LIVE — HARD STOP requested; stopping guest at the next checkpoint…";
     self.stopButton.enabled = NO;
     PvZ2RequestInteractiveStop();
 }
@@ -1341,7 +1341,7 @@ void PvZ2HostNotifyDirectFrame(
         self.captionLabel.text =
             [NSString
                 stringWithFormat:
-                    @"PvZ2 v119 LIVE • frame %lu • %@\n%lu×%lu guest • direct GPU 1:1 + audio",
+                    @"PvZ2 v120 LIVE • frame %lu • %@\n%lu×%lu guest • direct GPU 1:1 + audio",
                     (unsigned long)frame,
                     touchState,
                     (unsigned long)width,
@@ -2283,7 +2283,7 @@ void PvZ2HostNotifyDirectFrame(
     self.v110SelectedUiModeIndex = 0;
 
     const PvZ2DiagnosticMode selectedMode =
-        PvZ2DiagnosticMode::V119AudioCatchupHandshake;
+        PvZ2DiagnosticMode::V120AudioOneShotHandshake;
 
     const auto* selectedDescriptor =
         PvZ2DescribeDiagnosticMode(selectedMode);
@@ -2293,13 +2293,13 @@ void PvZ2HostNotifyDirectFrame(
             ? [NSString
                   stringWithUTF8String:
                       selectedDescriptor->internal_name]
-            : @"V119_AUDIO_CATCHUP_HANDSHAKE";
+            : @"V120_AUDIO_ONESHOT_HANDSHAKE";
 
     [self
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v119 mode=%@. Run the same full path through Day 4. v119 changes only the OpenSL/Wwise completion handshake: real consumed-buffer callbacks may catch up in a bounded batch (max 4), and every delivered batch immediately prioritizes CAkAudioThread before main resumes. Focus on the end-of-animation crackle and rapid plant-selection SFX stress, then finish Day 4 and Hard Stop.",
+                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v120 mode=%@. First verify that the first real frame arrives normally again. v120 restores strict one-at-a-time OpenSL ordering: one real consumed buffer, one callback, one one-shot CAkAudioThread handoff. If startup is normal, run the same Day 4 audio stress path and Hard Stop.",
                     selectedModeName]];
 
     [self
@@ -2355,7 +2355,7 @@ void PvZ2HostNotifyDirectFrame(
     }
 
     const PvZ2DiagnosticMode diagnosticMode =
-        PvZ2DiagnosticMode::V119AudioCatchupHandshake;
+        PvZ2DiagnosticMode::V120AudioOneShotHandshake;
 
     const auto* diagnosticDescriptor =
         PvZ2DescribeDiagnosticMode(diagnosticMode);
@@ -2374,7 +2374,7 @@ void PvZ2HostNotifyDirectFrame(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v119 Audio Catch-up started mode=%@; PID=%d ===",
+                    @"=== PvZ2 v120 Audio One-shot started mode=%@; PID=%d ===",
                     diagnosticModeName,
                     getpid()]];
 
@@ -2888,14 +2888,14 @@ void PvZ2HostNotifyDirectFrame(
                                     finishRunWithMessage:
                                         [NSString
                                             stringWithFormat:
-                                                @"PvZ2 v119 LIVE — HARD STOPPED after %u guest frames.\nClose to inspect the v119 runtime log.",
+                                                @"PvZ2 v120 LIVE — HARD STOPPED after %u guest frames.\nClose to inspect the v120 runtime log.",
                                                 result.draw_frames_completed]];
                             } else {
                                 [selfRef.liveController
                                     finishRunWithMessage:
                                         [NSString
                                             stringWithFormat:
-                                                @"PvZ2 v119 LIVE — run finished after %u guest frames.\nClose to inspect the v119 runtime log.",
+                                                @"PvZ2 v120 LIVE — run finished after %u guest frames.\nClose to inspect the v120 runtime log.",
                                                 result.draw_frames_completed]];
                             }
 
@@ -2952,11 +2952,11 @@ void PvZ2HostNotifyDirectFrame(
 
                             if (result.hard_stop_requested) {
                                 [selfRef.liveController finishRunWithMessage:
-                                    @"PvZ2 v119 LIVE — HARD STOPPED.\nGuest execution was interrupted at the next Dynarmic checkpoint. Close to inspect the v119 runtime log."];
+                                    @"PvZ2 v120 LIVE — HARD STOPPED.\nGuest execution was interrupted at the next Dynarmic checkpoint. Close to inspect the v120 runtime log."];
                             } else {
                                 [selfRef.liveController finishRunWithMessage:
                                     [NSString stringWithFormat:
-                                        @"PvZ2 v119 LIVE — guest stopped/crashed.\n%@\nClose to inspect the v119 runtime log.", message]];
+                                        @"PvZ2 v120 LIVE — guest stopped/crashed.\n%@\nClose to inspect the v120 runtime log.", message]];
                             }
 
                         } else {

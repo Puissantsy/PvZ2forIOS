@@ -1047,6 +1047,8 @@ constexpr std::uint64_t kCapsV118 = kCapsV117;
 // v119 changes scheduling policy inside the already-enabled OpenSL/Wwise bridge,
 // not the exposed capability set.
 constexpr std::uint64_t kCapsV119 = kCapsV118;
+// v120 is capability-identical; only scheduler token semantics change.
+constexpr std::uint64_t kCapsV120 = kCapsV119;
 
 constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::PassiveRegistry, "PASSIVE_REGISTRY", nullptr, 0u, false},
@@ -1113,11 +1115,12 @@ constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::V116DynarmicReadOnlyImagePageTable, "V116_DYNARMIC_READONLY_IMAGE_PAGETABLE", "V116 RX Image", kCapsV116, false},
     {PvZ2DiagnosticMode::V117LeanPerformance, "V117_LEAN_PERFORMANCE", "V117 Lean Performance", kCapsV117, false},
     {PvZ2DiagnosticMode::V118ProductionLean, "V118_PRODUCTION_LEAN", "V118 Production Lean", kCapsV118, false},
-    {PvZ2DiagnosticMode::V119AudioCatchupHandshake, "V119_AUDIO_CATCHUP_HANDSHAKE", "V119 Audio Catch-up", kCapsV119, true},
+    {PvZ2DiagnosticMode::V119AudioCatchupHandshake, "V119_AUDIO_CATCHUP_HANDSHAKE", "V119 Audio Catch-up", kCapsV119, false},
+    {PvZ2DiagnosticMode::V120AudioOneShotHandshake, "V120_AUDIO_ONESHOT_HANDSHAKE", "V120 Audio One-shot", kCapsV120, true},
 };
 
 constexpr PvZ2DiagnosticMode kSelectableDiagnosticModes[] = {
-    PvZ2DiagnosticMode::V119AudioCatchupHandshake,
+    PvZ2DiagnosticMode::V120AudioOneShotHandshake,
 };
 
 } // namespace
@@ -3399,6 +3402,8 @@ public:
     std::uint64_t v119_audio_scheduler_handoffs = 0u;
     std::uint64_t v119_audio_max_pending = 0u;
     std::uint64_t v119_audio_max_batch = 0u;
+    std::uint64_t v120_audio_handoff_tokens_consumed = 0u;
+    std::uint64_t v120_audio_handoff_tokens_stale = 0u;
 
     // v105: observe Wwise resampler state without changing audio semantics.
     // These sites are lifecycle/configuration paths rather than Execute(), so

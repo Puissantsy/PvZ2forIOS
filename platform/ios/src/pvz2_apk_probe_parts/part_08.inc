@@ -1938,6 +1938,14 @@ bool JniProbePrepareRuntime(
             "and wall time between imports is measured only inside the same "
             "jit.Run worker span so scheduler sleep is excluded.");
     }
+    if (callbacks.V120Enabled()) {
+        callbacks.AppendDiagnostic(
+            "V120 AUDIO ONESHOT HANDSHAKE: fixes v119's sticky scheduler "
+            "handoff token. Ordering is strict again: one real CoreAudio "
+            "completion -> one OpenSL callback -> one immediate CAkAudioThread "
+            "handoff. The handoff token is consumed exactly once. No batch "
+            "delivery; 32 kHz/pitch/AVAudioEngine remain unchanged.");
+    }
     if (callbacks.V119Enabled()) {
         callbacks.AppendDiagnostic(
             "V119 AUDIO CATCHUP HANDSHAKE: v118 production-lean runtime is "
@@ -3821,13 +3829,15 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
 
                                 const std::uint32_t
                                     kMaxInlineCallbacks =
-                                        callbacks.V119Enabled()
-                                            ? std::max<std::uint32_t>(
-                                                  1u,
-                                                  callbacks.v99_audio_queue_capacity)
-                                            : (callbacks.V104Enabled()
-                                                   ? 1u
-                                                   : 8u);
+                                        callbacks.V120Enabled()
+                                            ? 1u
+                                            : (callbacks.V119Enabled()
+                                                   ? std::max<std::uint32_t>(
+                                                         1u,
+                                                         callbacks.v99_audio_queue_capacity)
+                                                   : (callbacks.V104Enabled()
+                                                          ? 1u
+                                                          : 8u));
                                 std::uint32_t delivered = 0u;
                                 bool success = true;
 
