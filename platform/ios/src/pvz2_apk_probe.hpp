@@ -412,6 +412,12 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // remaining diagnostic work that still runs exactly during SFX bursts,
     // rapid touch input and synchronous SoundBank waits.
     V118ProductionLean = 63u,
+
+    // v119: preserve the v118 production-lean baseline and repair the remaining
+    // OpenSL producer/consumer latency. Every real consumed-buffer callback now
+    // gets an immediate CAkAudioThread handoff regardless of checkpoint type,
+    // with a bounded catch-up batch no larger than the advertised queue depth.
+    V119AudioCatchupHandshake = 64u,
 };
 
 enum class PvZ2ProbeCapability : std::uint64_t {

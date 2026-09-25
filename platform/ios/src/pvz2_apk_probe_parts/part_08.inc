@@ -1938,6 +1938,16 @@ bool JniProbePrepareRuntime(
             "and wall time between imports is measured only inside the same "
             "jit.Run worker span so scheduler sleep is excluded.");
     }
+    if (callbacks.V119Enabled()) {
+        callbacks.AppendDiagnostic(
+            "V119 AUDIO CATCHUP HANDSHAKE: v118 production-lean runtime is "
+            "preserved. Real CoreAudio consumed-buffer completions may be "
+            "delivered in a bounded batch up to the advertised OpenSL queue "
+            "depth (4). Every service that delivers at least one real completion "
+            "immediately prioritizes CAkAudioThread before main resumes, "
+            "including scheduler checkpoints, blocked waits and frame boundaries. "
+            "No callback is fabricated and 32 kHz/pitch/AVAudioEngine are unchanged.");
+    }
     if (callbacks.V118Enabled()) {
         callbacks.AppendDiagnostic(
             "V118 PRODUCTION LEAN: v117 functional runtime is unchanged. "
@@ -3799,13 +3809,25 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                 callbacks.v102_audio_inline_active = true;
                                 callbacks.v102_audio_service_requested = false;
                                 callbacks.v102_audio_forced_halt_pending = false;
+                                callbacks.v119_audio_callbacks_last_service = 0u;
                                 ++callbacks.v102_audio_inline_services;
+
+                                if (callbacks.V119Enabled()) {
+                                    callbacks.v119_audio_max_pending =
+                                        std::max<std::uint64_t>(
+                                            callbacks.v119_audio_max_pending,
+                                            callbacks.v99_audio_pending_callbacks);
+                                }
 
                                 const std::uint32_t
                                     kMaxInlineCallbacks =
-                                        callbacks.V104Enabled()
-                                            ? 1u
-                                            : 8u;
+                                        callbacks.V119Enabled()
+                                            ? std::max<std::uint32_t>(
+                                                  1u,
+                                                  callbacks.v99_audio_queue_capacity)
+                                            : (callbacks.V104Enabled()
+                                                   ? 1u
+                                                   : 8u);
                                 std::uint32_t delivered = 0u;
                                 bool success = true;
 
@@ -3917,6 +3939,10 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                           .v102_audio_inline_callbacks;
                                     ++delivered;
 
+                                    if (callbacks.V119Enabled()) {
+                                        ++callbacks.v119_audio_catchup_callbacks;
+                                    }
+
                                     if (callbacks.V99ShouldLogCounter(
                                             callbacks
                                                 .v102_audio_inline_callbacks)) {
@@ -3941,6 +3967,17 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                                                 callbacks
                                                     .v99_audio_pending_callbacks));
                                     }
+                                }
+
+                                if (callbacks.V119Enabled() &&
+                                    delivered != 0u) {
+                                    callbacks.v119_audio_callbacks_last_service =
+                                        delivered;
+                                    ++callbacks.v119_audio_catchup_services;
+                                    callbacks.v119_audio_max_batch =
+                                        std::max<std::uint64_t>(
+                                            callbacks.v119_audio_max_batch,
+                                            delivered);
                                 }
 
                                 callbacks.v102_audio_inline_active = false;

@@ -780,9 +780,16 @@
     }
 
 
-    bool V118Enabled() const {
+    bool V119Enabled() const {
         return diagnostic_mode ==
-            PvZ2DiagnosticMode::V118ProductionLean;
+            PvZ2DiagnosticMode::V119AudioCatchupHandshake;
+    }
+
+    bool V118Enabled() const {
+        return
+            diagnostic_mode ==
+                PvZ2DiagnosticMode::V118ProductionLean ||
+            V119Enabled();
     }
 
     bool V117Enabled() const {
@@ -3246,6 +3253,7 @@
     }
 
     const char* RuntimeModeTag() const {
+        if (V119Enabled()) return "V119";
         if (V118Enabled()) return "V118";
         if (V117Enabled()) return "V117";
         if (V116Enabled()) return "V116";
@@ -4528,6 +4536,23 @@
         }
     }
 
+    std::string V119AudioCatchupSummary() const {
+        std::ostringstream out;
+        out << "V119 AUDIO CATCHUP SUMMARY"
+            << " services=" << v119_audio_catchup_services
+            << " callbacks=" << v119_audio_catchup_callbacks
+            << " schedulerHandoffs=" << v119_audio_scheduler_handoffs
+            << " boundaryHandoffs=" << v119_audio_boundary_handoffs
+            << " maxPending=" << v119_audio_max_pending
+            << " maxBatch=" << v119_audio_max_batch
+            << " hostConsumed=" << v99_audio_host_consumed
+            << " callbackDeliveries=" << v99_audio_callback_deliveries
+            << " pending=" << v99_audio_pending_callbacks
+            << " queued=" << PvZ2HostAudioQueuedBufferCount()
+            << " underrunEvents=" << PvZ2HostAudioUnderrunEvents();
+        return out.str();
+    }
+
     void V90EmitTerminalSummaries(const char* reason) {
         if(!V90Enabled()||
            v90_terminal_summaries_emitted)return;
@@ -4537,6 +4562,7 @@
             (reason?reason:"unknown"));
         Append(V90FontSummary());
         Append(V90FrameSummary());
+        if (V119Enabled()) AppendDiagnostic(V119AudioCatchupSummary());
         if (V110ProfilingEnabled()) AppendDiagnostic(V110AudioSummary());
         if (V111Enabled()) AppendDiagnostic(V111AudioSampleSummary());
         if (V112Enabled()) V112EmitAudioBoundarySummary();

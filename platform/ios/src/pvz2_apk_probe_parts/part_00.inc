@@ -1044,6 +1044,9 @@ constexpr std::uint64_t kCapsV117 =
 // v118 is deliberately capability-identical to v117. It changes only the
 // amount of diagnostic work performed on validated hot functional paths.
 constexpr std::uint64_t kCapsV118 = kCapsV117;
+// v119 changes scheduling policy inside the already-enabled OpenSL/Wwise bridge,
+// not the exposed capability set.
+constexpr std::uint64_t kCapsV119 = kCapsV118;
 
 constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::PassiveRegistry, "PASSIVE_REGISTRY", nullptr, 0u, false},
@@ -1109,11 +1112,12 @@ constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::V115DynarmicMainStackPageTable, "V115_DYNARMIC_MAIN_STACK_PAGETABLE", "V115 Main Stack", kCapsV115, false},
     {PvZ2DiagnosticMode::V116DynarmicReadOnlyImagePageTable, "V116_DYNARMIC_READONLY_IMAGE_PAGETABLE", "V116 RX Image", kCapsV116, false},
     {PvZ2DiagnosticMode::V117LeanPerformance, "V117_LEAN_PERFORMANCE", "V117 Lean Performance", kCapsV117, false},
-    {PvZ2DiagnosticMode::V118ProductionLean, "V118_PRODUCTION_LEAN", "V118 Production Lean", kCapsV118, true},
+    {PvZ2DiagnosticMode::V118ProductionLean, "V118_PRODUCTION_LEAN", "V118 Production Lean", kCapsV118, false},
+    {PvZ2DiagnosticMode::V119AudioCatchupHandshake, "V119_AUDIO_CATCHUP_HANDSHAKE", "V119 Audio Catch-up", kCapsV119, true},
 };
 
 constexpr PvZ2DiagnosticMode kSelectableDiagnosticModes[] = {
-    PvZ2DiagnosticMode::V118ProductionLean,
+    PvZ2DiagnosticMode::V119AudioCatchupHandshake,
 };
 
 } // namespace
@@ -3385,6 +3389,16 @@ public:
     bool v104_pcm_prev_nonzero = false;
     std::uint64_t v104_pcm_repeat_run = 0u;
     std::uint64_t v104_pcm_repeat_total = 0u;
+
+    // v119: real-completion catch-up state. No completion is invented.
+    std::uint32_t v119_audio_callbacks_last_service = 0u;
+    bool v119_audio_boundary_wakeup_pending = false;
+    std::uint64_t v119_audio_catchup_services = 0u;
+    std::uint64_t v119_audio_catchup_callbacks = 0u;
+    std::uint64_t v119_audio_boundary_handoffs = 0u;
+    std::uint64_t v119_audio_scheduler_handoffs = 0u;
+    std::uint64_t v119_audio_max_pending = 0u;
+    std::uint64_t v119_audio_max_batch = 0u;
 
     // v105: observe Wwise resampler state without changing audio semantics.
     // These sites are lifecycle/configuration paths rather than Execute(), so

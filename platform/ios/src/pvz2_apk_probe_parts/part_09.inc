@@ -66,17 +66,26 @@
                                         return false;
                                     }
 
-                                    // v103 consumed an audio-only halt after
-                                    // invoking the OpenSL callback and resumed
-                                    // main immediately. v104 instead honors the
-                                    // real Wwise contract: that callback posts
-                                    // CAkAudioThread's semaphore, so schedule the
-                                    // exact audio worker before main resumes.
-                                    if (audio_only_halt) {
+                                    // v104 prioritized CAkAudioThread only when
+                                    // the checkpoint itself was audio-forced.
+                                    // v119 extends that handshake to every
+                                    // scheduler service that actually delivered
+                                    // one or more real consumed-buffer callbacks.
+                                    const bool v119_service_handoff =
+                                        callbacks.V119Enabled() &&
+                                        callbacks
+                                            .v119_audio_callbacks_last_service !=
+                                            0u;
+                                    if (audio_only_halt ||
+                                        v119_service_handoff) {
                                         if (callbacks.V104Enabled() &&
                                             callbacks.v104_audio_worker_tid !=
                                                 0u) {
                                             v104_audio_wakeup_round = true;
+                                            if (v119_service_handoff) {
+                                                ++callbacks
+                                                     .v119_audio_scheduler_handoffs;
+                                            }
                                         } else {
                                             if (callbacks.V104Enabled()) {
                                                 ++callbacks
@@ -323,6 +332,17 @@
                                         result.trace =
                                             callbacks.Trace();
                                         return false;
+                                    }
+
+                                    if (callbacks.V119Enabled() &&
+                                        callbacks
+                                            .v119_audio_callbacks_last_service !=
+                                            0u &&
+                                        callbacks.v104_audio_worker_tid !=
+                                            0u) {
+                                        v104_audio_wakeup_round = true;
+                                        ++callbacks
+                                             .v119_audio_scheduler_handoffs;
                                     }
                                 }
 
@@ -1673,6 +1693,20 @@
                         std::size_t inspected = 0u;
                         bool v63_boundary_fatal = false;
 
+                        if (callbacks.V119Enabled() &&
+                            callbacks.v119_audio_boundary_wakeup_pending &&
+                            callbacks.v104_audio_worker_tid != 0u) {
+                            for (std::size_t i = 0u;
+                                 i < callbacks.deferred_threads.size();
+                                 ++i) {
+                                if (callbacks.deferred_threads[i].id ==
+                                    callbacks.v104_audio_worker_tid) {
+                                    boundary_worker_cursor = i;
+                                    break;
+                                }
+                            }
+                        }
+
                         while (ran < max_slices &&
                                inspected <
                                    callbacks
@@ -2196,6 +2230,16 @@
                             ++ran;
                             ++boundary_worker_slices;
 
+                            if (callbacks.V119Enabled() &&
+                                callbacks.v119_audio_boundary_wakeup_pending &&
+                                worker_state.id ==
+                                    callbacks.v104_audio_worker_tid &&
+                                !worker_fatal) {
+                                callbacks.v119_audio_boundary_wakeup_pending =
+                                    false;
+                                ++callbacks.v119_audio_boundary_handoffs;
+                            }
+
                             if (!callbacks.V86Enabled() &&
                                 (boundary_worker_slices <= 24u ||
                                  (boundary_worker_slices %
@@ -2457,9 +2501,13 @@
 
                         const std::uint32_t
                             kMaxAudioCallbacksPerBoundary =
-                                callbacks.V104Enabled()
-                                    ? 1u
-                                    : 8u;
+                                callbacks.V119Enabled()
+                                    ? std::max<std::uint32_t>(
+                                          1u,
+                                          callbacks.v99_audio_queue_capacity)
+                                    : (callbacks.V104Enabled()
+                                           ? 1u
+                                           : 8u);
                         std::uint32_t delivered = 0u;
 
                         while (callbacks.v99_audio_pending_callbacks != 0u &&
@@ -2521,6 +2569,25 @@
                             --callbacks.v99_audio_pending_callbacks;
                             ++callbacks.v99_audio_callback_deliveries;
                             ++delivered;
+                            if (callbacks.V119Enabled()) {
+                                ++callbacks.v119_audio_catchup_callbacks;
+                            }
+                        }
+
+                        if (callbacks.V119Enabled() &&
+                            delivered != 0u &&
+                            callbacks.v104_audio_worker_tid != 0u) {
+                            callbacks.v119_audio_boundary_wakeup_pending = true;
+                            ++callbacks.v119_audio_catchup_services;
+                            callbacks.v119_audio_max_pending =
+                                std::max<std::uint64_t>(
+                                    callbacks.v119_audio_max_pending,
+                                    callbacks.v99_audio_pending_callbacks +
+                                        delivered);
+                            callbacks.v119_audio_max_batch =
+                                std::max<std::uint64_t>(
+                                    callbacks.v119_audio_max_batch,
+                                    delivered);
                         }
 
                         if (callbacks.V102Enabled() &&
