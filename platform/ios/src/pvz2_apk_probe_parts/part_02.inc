@@ -780,9 +780,15 @@
     }
 
 
+    bool V127Enabled() const {
+        return diagnostic_mode ==
+            PvZ2DiagnosticMode::V127AudioWorkerDrain;
+    }
+
     bool V126Enabled() const {
         return diagnostic_mode ==
-            PvZ2DiagnosticMode::V126AudioFlightRecorder;
+                   PvZ2DiagnosticMode::V126AudioFlightRecorder ||
+               V127Enabled();
     }
 
     bool V125Enabled() const {
@@ -2415,6 +2421,31 @@
                 " maxGapMs=" + V85FormatMs(s.guest_gap_max_ns) +
                 " hostMs=" + V85FormatMs(s.host_ns));
         }
+    }
+
+    bool V127AudioWorkerAtSemaphoreWait() const {
+        if (!V127Enabled() || v104_audio_worker_tid == 0u) return false;
+        return v66_sem_waits.find(v104_audio_worker_tid) !=
+            v66_sem_waits.end();
+    }
+
+    bool V127AudioWorkerBlockedOther() const {
+        if (!V127Enabled() || v104_audio_worker_tid == 0u) return false;
+        return V87MutexWaitPending(v104_audio_worker_tid) ||
+               V65ThreadBlocked(v104_audio_worker_tid) ||
+               (V66ThreadBlocked(v104_audio_worker_tid) &&
+                !V127AudioWorkerAtSemaphoreWait());
+    }
+
+    std::string V127AudioDrainSummary() const {
+        std::ostringstream out;
+        out << "V127 AUDIO WORKER DRAIN SUMMARY"
+            << " rounds=" << v127_audio_drain_rounds
+            << " continuations=" << v127_audio_drain_continuations
+            << " reachedSemWait=" << v127_audio_drain_reached_sem_wait
+            << " blockedOther=" << v127_audio_drain_blocked_other
+            << " caps=" << v127_audio_drain_caps;
+        return out.str();
     }
 
     bool V109Enabled() const {
@@ -4072,6 +4103,7 @@
     }
 
     const char* RuntimeModeTag() const {
+        if (V127Enabled()) return "V127";
         if (V126Enabled()) return "V126";
         if (V125Enabled()) return "V125";
         if (V124Enabled()) return "V124";
@@ -5471,6 +5503,9 @@
         }
         if (V126Enabled()) {
             V126EmitFlightSummary();
+        }
+        if (V127Enabled()) {
+            AppendDiagnostic(V127AudioDrainSummary());
         }
         if (V110ProfilingEnabled()) AppendDiagnostic(V110AudioSummary());
         if (V111Enabled()) AppendDiagnostic(V111AudioSampleSummary());

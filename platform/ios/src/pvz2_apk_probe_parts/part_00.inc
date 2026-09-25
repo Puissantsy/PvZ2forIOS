@@ -1052,6 +1052,7 @@ constexpr std::uint64_t kCapsV124 = kCapsV123;
 constexpr std::uint64_t kCapsV125 = kCapsV124;
 // v126 is observational only: no guest scheduling/audio capability changes.
 constexpr std::uint64_t kCapsV126 = kCapsV125;
+constexpr std::uint64_t kCapsV127 = kCapsV126;
 
 constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::PassiveRegistry, "PASSIVE_REGISTRY", nullptr, 0u, false},
@@ -1123,11 +1124,12 @@ constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::V123NonSilentRepeatTelemetry, "V123_NONSILENT_REPEAT_TELEMETRY", "V123 Non-silent Repeat", kCapsV123, false},
     {PvZ2DiagnosticMode::V124ExactPcmRepeatProvenance, "V124_EXACT_PCM_REPEAT_PROVENANCE", "V124 Exact PCM", kCapsV124, false},
     {PvZ2DiagnosticMode::V125RepeatEnqueueContext, "V125_REPEAT_ENQUEUE_CONTEXT", "V125 Repeat Context", kCapsV125, false},
-    {PvZ2DiagnosticMode::V126AudioFlightRecorder, "V126_AUDIO_FLIGHT_RECORDER", "V126 Audio Flight", kCapsV126, true},
+    {PvZ2DiagnosticMode::V126AudioFlightRecorder, "V126_AUDIO_FLIGHT_RECORDER", "V126 Audio Flight", kCapsV126, false},
+    {PvZ2DiagnosticMode::V127AudioWorkerDrain, "V127_AUDIO_WORKER_DRAIN", "V127 Audio Worker Drain", kCapsV127, true},
 };
 
 constexpr PvZ2DiagnosticMode kSelectableDiagnosticModes[] = {
-    PvZ2DiagnosticMode::V126AudioFlightRecorder,
+    PvZ2DiagnosticMode::V127AudioWorkerDrain,
 };
 
 } // namespace
@@ -3550,6 +3552,14 @@ public:
     V126SinkSnapshot v126_worker_pre_snapshot{};
     std::array<std::uint64_t, 5> v126_anim_inspector_ticks{};
     std::array<std::uint64_t, 5> v126_late_inspector_ticks{};
+
+    // v127: count functional audio handoff continuations and where each
+    // callback-triggered drain actually terminates.
+    std::uint64_t v127_audio_drain_rounds = 0u;
+    std::uint64_t v127_audio_drain_continuations = 0u;
+    std::uint64_t v127_audio_drain_reached_sem_wait = 0u;
+    std::uint64_t v127_audio_drain_blocked_other = 0u;
+    std::uint64_t v127_audio_drain_caps = 0u;
 
     // v105: observe Wwise resampler state without changing audio semantics.
     // These sites are lifecycle/configuration paths rather than Execute(), so

@@ -1938,6 +1938,14 @@ bool JniProbePrepareRuntime(
             "and wall time between imports is measured only inside the same "
             "jit.Run worker span so scheduler sleep is excluded.");
     }
+    if (callbacks.V127Enabled()) {
+        callbacks.AppendDiagnostic(
+            "V127 AUDIO WORKER DRAIN: functional correction on top of v126. "
+            "After an OpenSL completion wakes CAkAudioThread tid5, the scheduler "
+            "continues that exact worker across normal quanta until it reaches "
+            "a real blocking wait (normally EventMgrThreadFunc sem_wait), with "
+            "a four-continuation watchdog. v126 flight telemetry remains active.");
+    }
     if (callbacks.V126Enabled()) {
         callbacks.V126PrepareRecorder();
         callbacks.AppendDiagnostic(

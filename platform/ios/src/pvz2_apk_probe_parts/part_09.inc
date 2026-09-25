@@ -717,6 +717,16 @@
                                     v104_audio_wakeup_round &&
                                     worker_state.id ==
                                         callbacks.v104_audio_worker_tid;
+                                const bool v127_audio_drain_round =
+                                    callbacks.V127Enabled() &&
+                                    v104_audio_wakeup_round &&
+                                    worker_state.id ==
+                                        callbacks.v104_audio_worker_tid;
+                                std::uint32_t
+                                    v127_audio_drain_continuations = 0u;
+                                if (v127_audio_drain_round) {
+                                    ++callbacks.v127_audio_drain_rounds;
+                                }
                                 const std::uint64_t
                                     v126_audio_worker_round_begin_ns =
                                         v126_audio_flight_worker
@@ -843,6 +853,41 @@
                                                 worker_state.id) ||
                                             callbacks.V66ThreadBlocked(
                                                 worker_state.id);
+
+                                        // v127: v104 selected the exact Wwise
+                                        // event worker because an OpenSL buffer
+                                        // completed. Do not let the generic
+                                        // v87 one-quantum fairness rule cut
+                                        // CAkAudioMgr::Perform in half. Keep
+                                        // running until the worker reaches a
+                                        // real wait, bounded to four extra
+                                        // quanta as a safety watchdog.
+                                        if (v127_audio_drain_round &&
+                                            !worker_blocked) {
+                                            constexpr std::uint32_t
+                                                kV127MaxDrainContinuations = 4u;
+                                            if (v127_audio_drain_continuations <
+                                                kV127MaxDrainContinuations) {
+                                                ++v127_audio_drain_continuations;
+                                                ++callbacks
+                                                     .v127_audio_drain_continuations;
+
+                                                callbacks.control_returned =
+                                                    false;
+                                                callbacks.soft_slice_timeout =
+                                                    true;
+                                                callbacks.ticks_left =
+                                                    kWorkerSliceTicks;
+                                                callbacks.ticks_consumed = 0u;
+                                                callbacks.next_tick_report =
+                                                    std::numeric_limits<
+                                                        std::uint64_t>::max();
+                                                result.message.clear();
+                                                clear_probe_halts();
+                                                continue;
+                                            }
+                                            ++callbacks.v127_audio_drain_caps;
+                                        }
 
                                         if (callbacks.V88Enabled()) {
                                             constexpr std::uint32_t
@@ -1237,6 +1282,17 @@
                                     worker_state.id ==
                                         callbacks.v104_audio_worker_tid &&
                                     !worker_fatal) {
+                                    if (callbacks.V127Enabled()) {
+                                        if (callbacks
+                                                .V127AudioWorkerAtSemaphoreWait()) {
+                                            ++callbacks
+                                                 .v127_audio_drain_reached_sem_wait;
+                                        } else if (callbacks
+                                                       .V127AudioWorkerBlockedOther()) {
+                                            ++callbacks
+                                                 .v127_audio_drain_blocked_other;
+                                        }
+                                    }
                                     ++callbacks.v104_audio_worker_handshakes;
                                     if (v126_audio_flight_worker) {
                                         callbacks.V126RecordFlightEvent(

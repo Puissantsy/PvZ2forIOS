@@ -441,6 +441,11 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // with the exact static CAkSinkOpenSL starvation branch, sink-ring state,
     // callback/worker ordering and Inspector-derived tid5 PC buckets.
     V126AudioFlightRecorder = 69u,
+
+    // v127: functional audio-scheduler correction. A callback-triggered tid5
+    // handoff is allowed to continue across normal scheduler quanta until the
+    // Wwise event worker reaches a real blocking wait, with a bounded watchdog.
+    V127AudioWorkerDrain = 70u,
 };
 
 enum class PvZ2ProbeCapability : std::uint64_t {
