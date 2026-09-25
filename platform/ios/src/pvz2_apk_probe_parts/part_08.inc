@@ -1938,6 +1938,14 @@ bool JniProbePrepareRuntime(
             "and wall time between imports is measured only inside the same "
             "jit.Run worker span so scheduler sleep is excluded.");
     }
+    if (callbacks.V124Enabled()) {
+        callbacks.AppendDiagnostic(
+            "V124 EXACT PCM REPEAT PROVENANCE: v123/v122/v121/v118 runtime unchanged. "
+            "Only inside guest-frame windows 800-2500 and 10000-12500, full PCM "
+            "FNV64 verifies exact consecutive non-zero duplicates and classifies "
+            "them by same-vs-different guest buffer address and queue depth. "
+            "No PCM is dropped or modified and no per-buffer logging is emitted.");
+    }
     if (callbacks.V123Enabled()) {
         callbacks.AppendDiagnostic(
             "V123 NON-SILENT REPEAT TELEMETRY: v122/v121/v118 runtime unchanged. "

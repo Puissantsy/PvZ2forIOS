@@ -1048,6 +1048,7 @@ constexpr std::uint64_t kCapsV118 = kCapsV117;
 constexpr std::uint64_t kCapsV121 = kCapsV118;
 constexpr std::uint64_t kCapsV122 = kCapsV121;
 constexpr std::uint64_t kCapsV123 = kCapsV122;
+constexpr std::uint64_t kCapsV124 = kCapsV123;
 
 constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::PassiveRegistry, "PASSIVE_REGISTRY", nullptr, 0u, false},
@@ -1116,11 +1117,12 @@ constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::V118ProductionLean, "V118_PRODUCTION_LEAN", "V118 Production Lean", kCapsV118, false},
     {PvZ2DiagnosticMode::V121HostAudioTelemetry, "V121_HOST_AUDIO_TELEMETRY", "V121 Host Audio", kCapsV121, false},
     {PvZ2DiagnosticMode::V122PcmContinuityTelemetry, "V122_PCM_CONTINUITY_TELEMETRY", "V122 PCM Continuity", kCapsV122, false},
-    {PvZ2DiagnosticMode::V123NonSilentRepeatTelemetry, "V123_NONSILENT_REPEAT_TELEMETRY", "V123 Non-silent Repeat", kCapsV123, true},
+    {PvZ2DiagnosticMode::V123NonSilentRepeatTelemetry, "V123_NONSILENT_REPEAT_TELEMETRY", "V123 Non-silent Repeat", kCapsV123, false},
+    {PvZ2DiagnosticMode::V124ExactPcmRepeatProvenance, "V124_EXACT_PCM_REPEAT_PROVENANCE", "V124 Exact PCM", kCapsV124, true},
 };
 
 constexpr PvZ2DiagnosticMode kSelectableDiagnosticModes[] = {
-    PvZ2DiagnosticMode::V123NonSilentRepeatTelemetry,
+    PvZ2DiagnosticMode::V124ExactPcmRepeatProvenance,
 };
 
 } // namespace
@@ -3392,6 +3394,29 @@ public:
     bool v104_pcm_prev_nonzero = false;
     std::uint64_t v104_pcm_repeat_run = 0u;
     std::uint64_t v104_pcm_repeat_total = 0u;
+
+    // v124: exact provenance, but only in the two broad user-observed crackle
+    // windows. Full-buffer hashing is intentionally bounded to those windows.
+    bool v124_prev_exact_valid = false;
+    std::uint64_t v124_prev_exact_hash = 0u;
+    std::uint32_t v124_prev_exact_buffer = 0u;
+    std::uint32_t v124_prev_exact_bytes = 0u;
+    std::uint32_t v124_prev_exact_frame = 0u;
+    bool v124_prev_exact_nonzero = false;
+    std::uint64_t v124_exact_repeat_total = 0u;
+    std::uint64_t v124_exact_repeat_same_buffer = 0u;
+    std::uint64_t v124_exact_repeat_different_buffer = 0u;
+    std::uint64_t v124_anim_exact_repeats = 0u;
+    std::uint64_t v124_anim_same_buffer = 0u;
+    std::uint64_t v124_anim_different_buffer = 0u;
+    std::uint32_t v124_anim_first_repeat_frame = 0u;
+    std::uint32_t v124_anim_last_repeat_frame = 0u;
+    std::uint64_t v124_late_exact_repeats = 0u;
+    std::uint64_t v124_late_same_buffer = 0u;
+    std::uint64_t v124_late_different_buffer = 0u;
+    std::uint32_t v124_late_first_repeat_frame = 0u;
+    std::uint32_t v124_late_last_repeat_frame = 0u;
+    std::array<std::uint64_t, 5> v124_exact_repeat_queue_depth{};
 
     // v105: observe Wwise resampler state without changing audio semantics.
     // These sites are lifecycle/configuration paths rather than Execute(), so

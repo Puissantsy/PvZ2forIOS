@@ -427,6 +427,11 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // the signal. Count only sparse-identical blocks with audible-level PCM
     // energy and correlate them with the two user-observed crackle windows.
     V123NonSilentRepeatTelemetry = 66u,
+
+    // v124: provenance pass for the suspicious v123 repeats. In the two
+    // crackle windows only, compute an exact full-buffer hash and classify
+    // exact repeats by guest source-buffer reuse without changing playback.
+    V124ExactPcmRepeatProvenance = 67u,
 };
 
 enum class PvZ2ProbeCapability : std::uint64_t {

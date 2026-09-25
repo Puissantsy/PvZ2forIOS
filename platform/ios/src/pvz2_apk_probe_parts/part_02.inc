@@ -780,9 +780,16 @@
     }
 
 
-    bool V123Enabled() const {
+    bool V124Enabled() const {
         return diagnostic_mode ==
-            PvZ2DiagnosticMode::V123NonSilentRepeatTelemetry;
+            PvZ2DiagnosticMode::V124ExactPcmRepeatProvenance;
+    }
+
+    bool V123Enabled() const {
+        return
+            diagnostic_mode ==
+                PvZ2DiagnosticMode::V123NonSilentRepeatTelemetry ||
+            V124Enabled();
     }
 
     bool V122Enabled() const {
@@ -2989,6 +2996,102 @@
                     guest_buffer,
                     bytes);
 
+            if (V124Enabled() && pcm != nullptr) {
+                const bool in_anim_window =
+                    current_frame_number >= 800u &&
+                    current_frame_number <= 2500u;
+                const bool in_late_window =
+                    current_frame_number >= 10000u &&
+                    current_frame_number <= 12500u;
+                const bool in_probe_window =
+                    in_anim_window || in_late_window;
+
+                if (in_probe_window) {
+                    std::uint64_t exact_hash =
+                        1469598103934665603ull;
+                    bool exact_nonzero = false;
+                    for (std::uint32_t i = 0u;
+                         i < bytes;
+                         ++i) {
+                        const std::uint8_t value = pcm[i];
+                        exact_nonzero =
+                            exact_nonzero || value != 0u;
+                        exact_hash ^= value;
+                        exact_hash *= 1099511628211ull;
+                    }
+
+                    const bool exact_repeat =
+                        v124_prev_exact_valid &&
+                        v124_prev_exact_nonzero &&
+                        exact_nonzero &&
+                        v124_prev_exact_bytes == bytes &&
+                        v124_prev_exact_hash == exact_hash &&
+                        ((in_anim_window &&
+                          v124_prev_exact_frame >= 800u &&
+                          v124_prev_exact_frame <= 2500u) ||
+                         (in_late_window &&
+                          v124_prev_exact_frame >= 10000u &&
+                          v124_prev_exact_frame <= 12500u));
+
+                    if (exact_repeat) {
+                        ++v124_exact_repeat_total;
+                        const bool same_buffer =
+                            v124_prev_exact_buffer ==
+                            guest_buffer;
+                        if (same_buffer) {
+                            ++v124_exact_repeat_same_buffer;
+                        } else {
+                            ++v124_exact_repeat_different_buffer;
+                        }
+
+                        const std::uint32_t queued =
+                            std::min<std::uint32_t>(
+                                PvZ2HostAudioQueuedBufferCount(),
+                                4u);
+                        ++v124_exact_repeat_queue_depth[queued];
+
+                        if (in_anim_window) {
+                            ++v124_anim_exact_repeats;
+                            if (same_buffer) {
+                                ++v124_anim_same_buffer;
+                            } else {
+                                ++v124_anim_different_buffer;
+                            }
+                            if (v124_anim_first_repeat_frame == 0u) {
+                                v124_anim_first_repeat_frame =
+                                    current_frame_number;
+                            }
+                            v124_anim_last_repeat_frame =
+                                current_frame_number;
+                        } else {
+                            ++v124_late_exact_repeats;
+                            if (same_buffer) {
+                                ++v124_late_same_buffer;
+                            } else {
+                                ++v124_late_different_buffer;
+                            }
+                            if (v124_late_first_repeat_frame == 0u) {
+                                v124_late_first_repeat_frame =
+                                    current_frame_number;
+                            }
+                            v124_late_last_repeat_frame =
+                                current_frame_number;
+                        }
+                    }
+
+                    v124_prev_exact_valid = true;
+                    v124_prev_exact_hash = exact_hash;
+                    v124_prev_exact_buffer = guest_buffer;
+                    v124_prev_exact_bytes = bytes;
+                    v124_prev_exact_frame =
+                        current_frame_number;
+                    v124_prev_exact_nonzero =
+                        exact_nonzero;
+                } else {
+                    v124_prev_exact_valid = false;
+                }
+            }
+
             std::uint32_t v104_pcm_hash = 2166136261u;
             bool v104_pcm_nonzero = false;
             if (V104Enabled() && !V118Enabled() && pcm != nullptr) {
@@ -3267,6 +3370,7 @@
     }
 
     const char* RuntimeModeTag() const {
+        if (V124Enabled()) return "V124";
         if (V123Enabled()) return "V123";
         if (V122Enabled()) return "V122";
         if (V121Enabled()) return "V121";
@@ -4616,6 +4720,30 @@
                 << " lateWindowLast=" << audio.late_window_last_repeat_frame
                 << " animWindowJumpGt8192=" << audio.animation_window_jump_gt_8192
                 << " lateWindowJumpGt8192=" << audio.late_window_jump_gt_8192;
+            AppendDiagnostic(out.str());
+        }
+        if (V124Enabled()) {
+            std::ostringstream out;
+            out << "V124 EXACT PCM PROVENANCE"
+                << " exactRepeatTotal=" << v124_exact_repeat_total
+                << " sameGuestBuffer=" << v124_exact_repeat_same_buffer
+                << " differentGuestBuffer=" << v124_exact_repeat_different_buffer
+                << " animExactRepeats=" << v124_anim_exact_repeats
+                << " animSameBuffer=" << v124_anim_same_buffer
+                << " animDifferentBuffer=" << v124_anim_different_buffer
+                << " animFirst=" << v124_anim_first_repeat_frame
+                << " animLast=" << v124_anim_last_repeat_frame
+                << " lateExactRepeats=" << v124_late_exact_repeats
+                << " lateSameBuffer=" << v124_late_same_buffer
+                << " lateDifferentBuffer=" << v124_late_different_buffer
+                << " lateFirst=" << v124_late_first_repeat_frame
+                << " lateLast=" << v124_late_last_repeat_frame
+                << " queueDepth={0:" << v124_exact_repeat_queue_depth[0]
+                << ",1:" << v124_exact_repeat_queue_depth[1]
+                << ",2:" << v124_exact_repeat_queue_depth[2]
+                << ",3:" << v124_exact_repeat_queue_depth[3]
+                << ",4:" << v124_exact_repeat_queue_depth[4]
+                << "}";
             AppendDiagnostic(out.str());
         }
         if (V110ProfilingEnabled()) AppendDiagnostic(V110AudioSummary());
