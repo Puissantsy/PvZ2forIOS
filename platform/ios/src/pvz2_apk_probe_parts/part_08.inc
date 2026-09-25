@@ -1928,6 +1928,14 @@ bool JniProbePrepareRuntime(
             "RELRO, main stack, trampolines, JNI and objects remain callbacks. "
             "v112 boundary telemetry stays enabled for before/after comparison.");
     }
+    if (callbacks.V114Enabled()) {
+        callbacks.AppendDiagnostic(
+            "V114 NATURAL MAIN BOUNDARY PROFILER: v113 heap page-table stays "
+            "enabled unchanged. Native_onDrawFrame main-thread jit.Run spans "
+            "are timed only at existing boundaries; natural imports record "
+            "exact guest LR/callsites and host cost, while no-import spans "
+            "retain natural start/end PCs. No periodic halt or guest patch.");
+    }
     if (callbacks.V108Enabled()) {
         callbacks.AppendDiagnostic(
             "V108 BANK COMPLETION LIVENESS: v107 proved BankMgr wakes and dequeues the final UnloadBank command, but the synchronous completion callback can remain pending after KillBank while CAkUsageSlot still owns live references. Exact traps trace KillSlot -> ProcessMsgQueue(KillBank) -> CAkUsageSlot::Release -> UnloadCompletionNotification -> DefaultBankCallbackFunc. If and only if that real teardown is pending, the OpenSL ring is empty, no guest buffer callback is pending, and CAkAudioThread is asleep on its own event semaphore, a 32 ms liveness pulse wakes only CAkAudioThread so Wwise itself can finish releasing voices; the main UnloadBank completion semaphore is never fabricated.");
@@ -3974,8 +3982,10 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             result.message.clear();
                             clear_probe_halts();
 
+                            callbacks.V114BeginMainRun(jit.Regs()[15]);
                             const Dynarmic::HaltReason lifecycle_halt =
                                 jit.Run();
+                            callbacks.V114EndMainRun(jit.Regs()[15]);
 
                             lifecycle_ticks +=
                                 callbacks.ticks_consumed;

@@ -780,9 +780,15 @@
     }
 
 
-    bool V113Enabled() const {
+    bool V114Enabled() const {
         return diagnostic_mode ==
-            PvZ2DiagnosticMode::V113DynarmicHeapPageTable;
+            PvZ2DiagnosticMode::V114MainBoundaryProfiler;
+    }
+
+    bool V113Enabled() const {
+        return
+            diagnostic_mode == PvZ2DiagnosticMode::V113DynarmicHeapPageTable ||
+            V114Enabled();
     }
 
     bool V112Enabled() const {
@@ -1057,6 +1063,210 @@
         }
         out << "}";
         return out.str();
+    }
+
+    std::uint32_t V114FindCallsiteSlot(std::uint32_t import_index, std::uint32_t lr) {
+        const std::uint64_t key =
+            (static_cast<std::uint64_t>(import_index + 1u) << 32u) |
+            static_cast<std::uint64_t>(lr & ~1u);
+        std::uint64_t mixed = key * 11400714819323198485ull;
+        mixed ^= mixed >> 33u;
+        std::size_t slot = static_cast<std::size_t>(mixed) & (kV114CallsiteSlots - 1u);
+        for (std::size_t probe = 0u; probe < 48u; ++probe) {
+            auto& entry = v114_callsite_stats[slot];
+            if (entry.key == key) return static_cast<std::uint32_t>(slot);
+            if (entry.key == 0u) {
+                entry.key = key;
+                return static_cast<std::uint32_t>(slot);
+            }
+            slot = (slot + 1u) & (kV114CallsiteSlots - 1u);
+        }
+        ++v114_callsite_overflow;
+        return 0xffffffffu;
+    }
+
+    void V114RecordNoImportSpan(std::uint32_t start_pc, std::uint32_t end_pc, std::uint64_t wall_ns) {
+        const std::uint64_t key =
+            (static_cast<std::uint64_t>(start_pc & ~1u) << 32u) |
+            static_cast<std::uint64_t>(end_pc & ~1u);
+        std::uint64_t mixed = key * 11400714819323198485ull;
+        mixed ^= mixed >> 29u;
+        std::size_t slot = static_cast<std::size_t>(mixed) & (kV114SpanSlots - 1u);
+        for (std::size_t probe = 0u; probe < 32u; ++probe) {
+            auto& entry = v114_noimport_span_stats[slot];
+            if (entry.key == 0u) entry.key = key;
+            if (entry.key == key) {
+                ++entry.calls;
+                entry.wall_ns += wall_ns;
+                entry.wall_max_ns = std::max(entry.wall_max_ns, wall_ns);
+                return;
+            }
+            slot = (slot + 1u) & (kV114SpanSlots - 1u);
+        }
+        ++v114_span_overflow;
+    }
+
+    void V114BeginMainRun(std::uint32_t start_pc) {
+        if (!V114Enabled() || current_probe_thread_id != 0u ||
+            current_lifecycle_name != "Native_onDrawFrame") return;
+        const std::uint64_t now = V85SteadyNowNs();
+        v114_main_run_active = true;
+        v114_main_run_had_import = false;
+        v114_main_run_start_pc = start_pc;
+        v114_main_run_start_ns = now;
+        v114_main_prev_import_exit_ns = now;
+        ++v114_main_spans;
+        if (current_frame_number == v90_profile_frame) ++v114_frame_spans;
+    }
+
+    V114ImportToken V114ImportEnter(std::uint32_t swi, std::uint32_t lr) {
+        V114ImportToken token;
+        if (!V114Enabled() || !v114_main_run_active ||
+            current_probe_thread_id != 0u || swi < kJniProbeImportSvcBase) return token;
+        const std::uint32_t import_index = swi - kJniProbeImportSvcBase;
+        if (import_index >= kV114MaxImportSlots) return token;
+        const std::uint64_t now = V85SteadyNowNs();
+        auto& stats = v114_import_stats[import_index];
+        ++stats.calls; ++v114_import_calls;
+        if (current_frame_number == v90_profile_frame) ++v114_frame_import_calls;
+        const std::uint32_t callsite_slot = V114FindCallsiteSlot(import_index, lr);
+        if (callsite_slot != 0xffffffffu) ++v114_callsite_stats[callsite_slot].calls;
+        if (now >= v114_main_prev_import_exit_ns) {
+            const std::uint64_t gap = now - v114_main_prev_import_exit_ns;
+            stats.guest_gap_ns += gap;
+            stats.guest_gap_max_ns = std::max(stats.guest_gap_max_ns, gap);
+            v114_guest_gap_ns += gap;
+            v114_guest_gap_max_ns = std::max(v114_guest_gap_max_ns, gap);
+            if (callsite_slot != 0xffffffffu) {
+                auto& cs = v114_callsite_stats[callsite_slot];
+                cs.guest_gap_ns += gap;
+                cs.guest_gap_max_ns = std::max(cs.guest_gap_max_ns, gap);
+            }
+            if (current_frame_number == v90_profile_frame) {
+                v114_frame_guest_gap_ns += gap;
+                v114_frame_guest_gap_max_ns = std::max(v114_frame_guest_gap_max_ns, gap);
+            }
+        }
+        v114_main_run_had_import = true;
+        token.active = true; token.import_index = import_index;
+        token.callsite_slot = callsite_slot; token.entry_ns = now;
+        return token;
+    }
+
+    void V114ImportExit(const V114ImportToken& token) {
+        if (!token.active || !V114Enabled()) return;
+        const std::uint64_t now = V85SteadyNowNs();
+        const std::uint64_t host_ns = now >= token.entry_ns ? now - token.entry_ns : 0u;
+        auto& stats = v114_import_stats[token.import_index];
+        stats.host_ns += host_ns;
+        stats.host_max_ns = std::max(stats.host_max_ns, host_ns);
+        v114_import_host_ns += host_ns;
+        v114_import_host_max_ns = std::max(v114_import_host_max_ns, host_ns);
+        if (token.callsite_slot != 0xffffffffu) {
+            auto& cs = v114_callsite_stats[token.callsite_slot];
+            cs.host_ns += host_ns;
+            cs.host_max_ns = std::max(cs.host_max_ns, host_ns);
+        }
+        if (current_frame_number == v90_profile_frame) {
+            v114_frame_import_host_ns += host_ns;
+            v114_frame_import_host_max_ns = std::max(v114_frame_import_host_max_ns, host_ns);
+        }
+        v114_main_prev_import_exit_ns = now;
+    }
+
+    void V114EndMainRun(std::uint32_t end_pc) {
+        if (!V114Enabled() || !v114_main_run_active) return;
+        const std::uint64_t now = V85SteadyNowNs();
+        const std::uint64_t run_ns = now >= v114_main_run_start_ns ? now - v114_main_run_start_ns : 0u;
+        v114_main_run_wall_ns += run_ns;
+        if (current_frame_number == v90_profile_frame) v114_frame_run_ns += run_ns;
+        if (v114_main_run_had_import) {
+            const std::uint64_t tail_ns = now >= v114_main_prev_import_exit_ns ? now - v114_main_prev_import_exit_ns : 0u;
+            v114_tail_ns += tail_ns;
+            if (current_frame_number == v90_profile_frame) v114_frame_tail_ns += tail_ns;
+        } else {
+            v114_no_import_run_ns += run_ns;
+            V114RecordNoImportSpan(v114_main_run_start_pc, end_pc, run_ns);
+            if (current_frame_number == v90_profile_frame) v114_frame_no_import_ns += run_ns;
+        }
+        v114_main_run_active = false;
+        v114_main_run_had_import = false;
+        v114_main_run_start_pc = 0u;
+        v114_main_run_start_ns = 0u;
+        v114_main_prev_import_exit_ns = 0u;
+    }
+
+    std::string V114FrameSummary() const {
+        std::ostringstream out;
+        out << std::fixed << std::setprecision(3)
+            << " main114={runMs=" << double(v114_frame_run_ns)/1e6
+            << ",guestGapMs=" << double(v114_frame_guest_gap_ns)/1e6
+            << ",hostImportMs=" << double(v114_frame_import_host_ns)/1e6
+            << ",tailMs=" << double(v114_frame_tail_ns)/1e6
+            << ",noImportMs=" << double(v114_frame_no_import_ns)/1e6
+            << ",spans=" << v114_frame_spans
+            << ",calls=" << v114_frame_import_calls
+            << ",maxGapMs=" << double(v114_frame_guest_gap_max_ns)/1e6
+            << ",maxHostMs=" << double(v114_frame_import_host_max_ns)/1e6 << "}";
+        return out.str();
+    }
+
+    void V114EmitMainBoundarySummary() {
+        if (!V114Enabled()) return;
+        AppendDiagnostic("V114 MAIN BOUNDARY SUMMARY spans=" + std::to_string(v114_main_spans) +
+            " importCalls=" + std::to_string(v114_import_calls) +
+            " runWallMs=" + V85FormatMs(v114_main_run_wall_ns) +
+            " guestGapMs=" + V85FormatMs(v114_guest_gap_ns) +
+            " hostImportMs=" + V85FormatMs(v114_import_host_ns) +
+            " tailMs=" + V85FormatMs(v114_tail_ns) +
+            " noImportRunMs=" + V85FormatMs(v114_no_import_run_ns) +
+            " maxGapMs=" + V85FormatMs(v114_guest_gap_max_ns) +
+            " maxHostMs=" + V85FormatMs(v114_import_host_max_ns) +
+            " callsiteOverflow=" + std::to_string(v114_callsite_overflow) +
+            " spanOverflow=" + std::to_string(v114_span_overflow));
+
+        std::vector<std::uint32_t> imports;
+        for (std::uint32_t i=0u;i<kV114MaxImportSlots;++i) if (v114_import_stats[i].calls) imports.push_back(i);
+        std::sort(imports.begin(),imports.end(),[&](auto a,auto b){return v114_import_stats[a].guest_gap_ns>v114_import_stats[b].guest_gap_ns;});
+        for(std::size_t rank=0;rank<std::min<std::size_t>(16u,imports.size());++rank){
+            const auto i=imports[rank]; const auto&s=v114_import_stats[i];
+            AppendDiagnostic("V114 MAIN IMPORT GAP rank="+std::to_string(rank+1u)+" name="+V112ImportName(i)+
+                " calls="+std::to_string(s.calls)+" guestGapMs="+V85FormatMs(s.guest_gap_ns)+
+                " maxGapMs="+V85FormatMs(s.guest_gap_max_ns)+" hostMs="+V85FormatMs(s.host_ns)+
+                " maxHostMs="+V85FormatMs(s.host_max_ns));
+        }
+        std::sort(imports.begin(),imports.end(),[&](auto a,auto b){return v114_import_stats[a].host_ns>v114_import_stats[b].host_ns;});
+        for(std::size_t rank=0;rank<std::min<std::size_t>(12u,imports.size());++rank){
+            const auto i=imports[rank]; const auto&s=v114_import_stats[i];
+            AppendDiagnostic("V114 MAIN IMPORT HOST rank="+std::to_string(rank+1u)+" name="+V112ImportName(i)+
+                " calls="+std::to_string(s.calls)+" hostMs="+V85FormatMs(s.host_ns)+
+                " maxHostMs="+V85FormatMs(s.host_max_ns)+" guestGapMs="+V85FormatMs(s.guest_gap_ns));
+        }
+
+        std::vector<std::size_t> callsites;
+        for(std::size_t i=0;i<kV114CallsiteSlots;++i) if(v114_callsite_stats[i].key) callsites.push_back(i);
+        std::sort(callsites.begin(),callsites.end(),[&](auto a,auto b){return v114_callsite_stats[a].guest_gap_ns>v114_callsite_stats[b].guest_gap_ns;});
+        for(std::size_t rank=0;rank<std::min<std::size_t>(24u,callsites.size());++rank){
+            const auto&s=v114_callsite_stats[callsites[rank]];
+            const std::uint32_t import_index=static_cast<std::uint32_t>((s.key>>32u)-1u);
+            const std::uint32_t lr=static_cast<std::uint32_t>(s.key);
+            AppendDiagnostic("V114 MAIN CALLSITE GAP rank="+std::to_string(rank+1u)+" import="+V112ImportName(import_index)+
+                " LR="+V46DescribeGuestAddress(lr)+" calls="+std::to_string(s.calls)+
+                " guestGapMs="+V85FormatMs(s.guest_gap_ns)+" maxGapMs="+V85FormatMs(s.guest_gap_max_ns)+
+                " hostMs="+V85FormatMs(s.host_ns));
+        }
+
+        std::vector<std::size_t> spans;
+        for(std::size_t i=0;i<kV114SpanSlots;++i) if(v114_noimport_span_stats[i].key) spans.push_back(i);
+        std::sort(spans.begin(),spans.end(),[&](auto a,auto b){return v114_noimport_span_stats[a].wall_ns>v114_noimport_span_stats[b].wall_ns;});
+        for(std::size_t rank=0;rank<std::min<std::size_t>(16u,spans.size());++rank){
+            const auto&s=v114_noimport_span_stats[spans[rank]];
+            const std::uint32_t start_pc=static_cast<std::uint32_t>(s.key>>32u);
+            const std::uint32_t end_pc=static_cast<std::uint32_t>(s.key);
+            AppendDiagnostic("V114 MAIN NOIMPORT SPAN rank="+std::to_string(rank+1u)+
+                " start="+V46DescribeGuestAddress(start_pc)+" end="+V46DescribeGuestAddress(end_pc)+
+                " calls="+std::to_string(s.calls)+" wallMs="+V85FormatMs(s.wall_ns)+" maxMs="+V85FormatMs(s.wall_max_ns));
+        }
     }
 
     void V113AttachPageTable(V113PageTable* table) {
@@ -2817,6 +3027,7 @@
     }
 
     const char* RuntimeModeTag() const {
+        if (V114Enabled()) return "V114";
         if (V113Enabled()) return "V113";
         if (V112Enabled()) return "V112";
         if (V111Enabled()) return "V111";
@@ -2943,7 +3154,8 @@
                 line.rfind("V110 ", 0u) == 0u ||
                 line.rfind("V111 ", 0u) == 0u ||
                 line.rfind("V112 ", 0u) == 0u ||
-                line.rfind("V113 ", 0u) == 0u) {
+                line.rfind("V113 ", 0u) == 0u ||
+                line.rfind("V114 ", 0u) == 0u) {
                 return true;
             }
 
@@ -3196,6 +3408,17 @@
             v112_frame_guest_gap_max_ns = 0u;
             v112_frame_import_host_max_ns = 0u;
         }
+        if (V114Enabled()) {
+            v114_frame_spans = 0u;
+            v114_frame_run_ns = 0u;
+            v114_frame_guest_gap_ns = 0u;
+            v114_frame_import_host_ns = 0u;
+            v114_frame_tail_ns = 0u;
+            v114_frame_no_import_ns = 0u;
+            v114_frame_import_calls = 0u;
+            v114_frame_guest_gap_max_ns = 0u;
+            v114_frame_import_host_max_ns = 0u;
+        }
         v90_frame_alloc_calls_begin=
             mem.v90_alloc_calls_internal;
         v90_frame_alloc_scan_begin=
@@ -3334,6 +3557,7 @@
                    v90_frame_worker_wait_ns>=250000000ull ||
                    v90_frame_boundary_worker_ns>=250000000ull ||
                    v90_frame_font_ns>=250000000ull ||
+                   (V114Enabled() && v114_frame_run_ns>=100000000ull) ||
                    v110_slow_frame)
                 : (frame<=5u ||
                    (frame%30u)==0u ||
@@ -3342,6 +3566,7 @@
                    v90_frame_boundary_worker_ns>=250000000ull ||
                    v90_frame_font_ns!=0u ||
                    alloc_scan_steps>=4096u ||
+                   (V114Enabled() && v114_frame_run_ns>=100000000ull) ||
                    v110_slow_frame);
 
         if(interesting){
@@ -3367,6 +3592,7 @@
                     o << V112FrameSummary();
                 }
             }
+            if (V114Enabled()) o << V114FrameSummary();
             Append(o.str());
         }
     }
@@ -4090,6 +4316,7 @@
         if (V111Enabled()) AppendDiagnostic(V111AudioSampleSummary());
         if (V112Enabled()) V112EmitAudioBoundarySummary();
         if (V113Enabled()) AppendDiagnostic(V113PageTableSummary());
+        if (V114Enabled()) V114EmitMainBoundarySummary();
         Append(mem.V90AllocatorSummary());
         Append(V90HostCostSummary());
     }

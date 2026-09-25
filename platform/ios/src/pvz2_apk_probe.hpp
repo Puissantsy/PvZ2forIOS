@@ -384,6 +384,11 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // guest Wwise execution. Enable Dynarmic's direct page-table path only
     // for the stable guest heap after startup/at the first real frame.
     V113DynarmicHeapPageTable = 58u,
+
+    // v114: observational main-thread profiler layered on top of the validated
+    // v113 heap page-table optimization. It uses only natural import/SVC and
+    // existing jit.Run boundaries while Native_onDrawFrame is executing.
+    V114MainBoundaryProfiler = 59u,
 };
 
 enum class PvZ2ProbeCapability : std::uint64_t {

@@ -1022,6 +1022,8 @@ constexpr std::uint64_t kCapsV111 = kCapsV110;
 constexpr std::uint64_t kCapsV112 = kCapsV110;
 // v113 changes only Dynarmic memory access for the guest heap after startup.
 constexpr std::uint64_t kCapsV113 = kCapsV112;
+// v114 is diagnostic-only and keeps the v113 runtime/capabilities unchanged.
+constexpr std::uint64_t kCapsV114 = kCapsV113;
 
 constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::PassiveRegistry, "PASSIVE_REGISTRY", nullptr, 0u, false},
@@ -1082,11 +1084,12 @@ constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::V110AudioPinchUiIpad, "V110_AUDIO_PINCH_UI_IPAD", "V110 iPad UI", kCapsV110, false},
     {PvZ2DiagnosticMode::V111AudioSamplingProfiler, "V111_AUDIO_SAMPLING_PROFILER", "V111 Audio Sampling", kCapsV111, false},
     {PvZ2DiagnosticMode::V112AudioBoundaryProfiler, "V112_AUDIO_BOUNDARY_PROFILER", "V112 Audio Boundary", kCapsV112, false},
-    {PvZ2DiagnosticMode::V113DynarmicHeapPageTable, "V113_DYNARMIC_HEAP_PAGETABLE", "V113 Heap Page Table", kCapsV113, true},
+    {PvZ2DiagnosticMode::V113DynarmicHeapPageTable, "V113_DYNARMIC_HEAP_PAGETABLE", "V113 Heap Page Table", kCapsV113, false},
+    {PvZ2DiagnosticMode::V114MainBoundaryProfiler, "V114_MAIN_BOUNDARY_PROFILER", "V114 Main Boundary", kCapsV114, true},
 };
 
 constexpr PvZ2DiagnosticMode kSelectableDiagnosticModes[] = {
-    PvZ2DiagnosticMode::V113DynarmicHeapPageTable,
+    PvZ2DiagnosticMode::V114MainBoundaryProfiler,
 };
 
 } // namespace
@@ -3811,6 +3814,69 @@ public:
     std::uint32_t v113_heap_pages_mapped = 0u;
     std::uint32_t v113_activation_frame = 0u;
     std::uint64_t v113_activation_ns = 0u;
+
+    // v114: natural Native_onDrawFrame/main-thread boundary profiler. No
+    // periodic halt or guest patch is installed. Each existing main jit.Run
+    // span is timed, imports are attributed to their exact guest LR/callsite,
+    // and no-import spans retain their natural start/end PCs.
+    struct V114ImportStats {
+        std::uint64_t calls = 0u;
+        std::uint64_t guest_gap_ns = 0u;
+        std::uint64_t guest_gap_max_ns = 0u;
+        std::uint64_t host_ns = 0u;
+        std::uint64_t host_max_ns = 0u;
+    };
+    struct V114CallsiteStats {
+        std::uint64_t key = 0u;
+        std::uint64_t calls = 0u;
+        std::uint64_t guest_gap_ns = 0u;
+        std::uint64_t guest_gap_max_ns = 0u;
+        std::uint64_t host_ns = 0u;
+        std::uint64_t host_max_ns = 0u;
+    };
+    struct V114SpanStats {
+        std::uint64_t key = 0u;
+        std::uint64_t calls = 0u;
+        std::uint64_t wall_ns = 0u;
+        std::uint64_t wall_max_ns = 0u;
+    };
+    struct V114ImportToken {
+        bool active = false;
+        std::uint32_t import_index = 0u;
+        std::uint32_t callsite_slot = 0xffffffffu;
+        std::uint64_t entry_ns = 0u;
+    };
+    static constexpr std::size_t kV114MaxImportSlots = 512u;
+    static constexpr std::size_t kV114CallsiteSlots = 2048u;
+    static constexpr std::size_t kV114SpanSlots = 512u;
+    std::array<V114ImportStats, kV114MaxImportSlots> v114_import_stats{};
+    std::array<V114CallsiteStats, kV114CallsiteSlots> v114_callsite_stats{};
+    std::array<V114SpanStats, kV114SpanSlots> v114_noimport_span_stats{};
+    std::uint64_t v114_callsite_overflow = 0u;
+    std::uint64_t v114_span_overflow = 0u;
+    bool v114_main_run_active = false;
+    bool v114_main_run_had_import = false;
+    std::uint32_t v114_main_run_start_pc = 0u;
+    std::uint64_t v114_main_run_start_ns = 0u;
+    std::uint64_t v114_main_prev_import_exit_ns = 0u;
+    std::uint64_t v114_main_spans = 0u;
+    std::uint64_t v114_main_run_wall_ns = 0u;
+    std::uint64_t v114_import_calls = 0u;
+    std::uint64_t v114_guest_gap_ns = 0u;
+    std::uint64_t v114_guest_gap_max_ns = 0u;
+    std::uint64_t v114_import_host_ns = 0u;
+    std::uint64_t v114_import_host_max_ns = 0u;
+    std::uint64_t v114_tail_ns = 0u;
+    std::uint64_t v114_no_import_run_ns = 0u;
+    std::uint64_t v114_frame_spans = 0u;
+    std::uint64_t v114_frame_run_ns = 0u;
+    std::uint64_t v114_frame_guest_gap_ns = 0u;
+    std::uint64_t v114_frame_import_host_ns = 0u;
+    std::uint64_t v114_frame_tail_ns = 0u;
+    std::uint64_t v114_frame_no_import_ns = 0u;
+    std::uint64_t v114_frame_import_calls = 0u;
+    std::uint64_t v114_frame_guest_gap_max_ns = 0u;
+    std::uint64_t v114_frame_import_host_max_ns = 0u;
 
     // v81: detailed event serialization provenance. The host-side mapper logs
     // UIKit -> framebuffer-pixel -> logical-point candidates; this counter

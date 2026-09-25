@@ -3039,6 +3039,15 @@
             }
         } v112_import_guard{this, v112_import_token};
 
+        const V114ImportToken v114_import_token = V114ImportEnter(swi, regs[14]);
+        struct V114ImportExitGuard {
+            PvZ2JniCallbacks* self = nullptr;
+            V114ImportToken token{};
+            ~V114ImportExitGuard() {
+                if (self != nullptr && token.active) self->V114ImportExit(token);
+            }
+        } v114_import_guard{this, v114_import_token};
+
         if (V99Enabled() &&
             name.rfind("__v99_sl_", 0u) == 0u) {
             if (V99HandleOpenSLSvc(
