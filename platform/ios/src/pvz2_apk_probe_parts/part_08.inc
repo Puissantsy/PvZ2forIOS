@@ -1919,7 +1919,15 @@ bool JniProbePrepareRuntime(
             "and wall time between imports is measured only inside the same "
             "jit.Run worker span so scheduler sleep is excluded.");
     }
-    if (callbacks.V113Enabled()) {
+    if (callbacks.V115Enabled()) {
+        callbacks.AppendDiagnostic(
+            "V115 DYNARMIC MAIN STACK PAGETABLE: v113 heap mapping and v114 "
+            "natural main-thread telemetry remain enabled. At frame 1, guest "
+            "stack 0x20000000..0x200fefff is mapped directly (255/256 pages); "
+            "0x200ff000..0x200fffff stays callback-backed so the observed "
+            "v94/v95 LR-slot/provenance addresses remain visible. Image/GOT/"
+            "RELRO, trampolines, JNI and objects remain callbacks.");
+    } else if (callbacks.V113Enabled()) {
         callbacks.AppendDiagnostic(
             "V113 DYNARMIC HEAP PAGETABLE: first real optimization after v112. "
             "The JIT starts with an all-null page table so constructors/startup "
