@@ -720,8 +720,10 @@
                                         worker_state.id);
                                     const std::uint64_t v90_worker_begin_ns =
                                         callbacks.V90Enabled() ? V85SteadyNowNs() : 0u;
+                                    callbacks.V112BeginAudioRun(worker_state.id);
                                     const Dynarmic::HaltReason worker_halt =
                                         jit.Run();
+                                    callbacks.V112EndAudioRun(worker_state.id);
                                     const bool v111_sample_checkpoint =
                                         callbacks.V111ConsumeAudioSampleCheckpoint(
                                             worker_state.id,
@@ -1877,8 +1879,10 @@
                                     worker_state.id);
                                 const std::uint64_t v90_worker_begin_ns =
                                     callbacks.V90Enabled() ? V85SteadyNowNs() : 0u;
+                                callbacks.V112BeginAudioRun(worker_state.id);
                                 const Dynarmic::HaltReason worker_halt =
                                     jit.Run();
+                                callbacks.V112EndAudioRun(worker_state.id);
                                 const bool v111_sample_checkpoint =
                                     callbacks.V111ConsumeAudioSampleCheckpoint(
                                         worker_state.id,

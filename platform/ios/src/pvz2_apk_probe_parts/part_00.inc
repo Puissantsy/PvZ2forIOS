@@ -1018,6 +1018,8 @@ constexpr std::uint64_t kCapsV109 =
 constexpr std::uint64_t kCapsV110 = kCapsV109;
 // v111 is diagnostic-only: no runtime capability is added or removed.
 constexpr std::uint64_t kCapsV111 = kCapsV110;
+// v112 remains observational and preserves the validated v110 runtime.
+constexpr std::uint64_t kCapsV112 = kCapsV110;
 
 constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::PassiveRegistry, "PASSIVE_REGISTRY", nullptr, 0u, false},
@@ -1076,11 +1078,12 @@ constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::V109LeanAudioPerformance, "V109_LEAN_AUDIO_PERFORMANCE", "V109 Lean Audio", kCapsV109, false},
     {PvZ2DiagnosticMode::V110AudioPinchUiAndroid, "V110_AUDIO_PINCH_UI_ANDROID", "V110 Android UI", kCapsV110, false},
     {PvZ2DiagnosticMode::V110AudioPinchUiIpad, "V110_AUDIO_PINCH_UI_IPAD", "V110 iPad UI", kCapsV110, false},
-    {PvZ2DiagnosticMode::V111AudioSamplingProfiler, "V111_AUDIO_SAMPLING_PROFILER", "V111 Audio Sampling", kCapsV111, true},
+    {PvZ2DiagnosticMode::V111AudioSamplingProfiler, "V111_AUDIO_SAMPLING_PROFILER", "V111 Audio Sampling", kCapsV111, false},
+    {PvZ2DiagnosticMode::V112AudioBoundaryProfiler, "V112_AUDIO_BOUNDARY_PROFILER", "V112 Audio Boundary", kCapsV112, true},
 };
 
 constexpr PvZ2DiagnosticMode kSelectableDiagnosticModes[] = {
-    PvZ2DiagnosticMode::V111AudioSamplingProfiler,
+    PvZ2DiagnosticMode::V112AudioBoundaryProfiler,
 };
 
 } // namespace
@@ -3741,6 +3744,56 @@ public:
     std::uint64_t v111_audio_pc_overflow = 0u;
     std::unordered_map<std::uint32_t, std::uint64_t>
         v111_audio_pc_samples;
+
+    // v112: natural import-boundary profiler. No new HaltExecution is used.
+    // Fixed-size tables keep the hot tid5 path allocation-free.
+    struct V112ImportStats {
+        std::uint64_t calls = 0u;
+        std::uint64_t guest_gap_ns = 0u;
+        std::uint64_t guest_gap_max_ns = 0u;
+        std::uint64_t host_ns = 0u;
+        std::uint64_t host_max_ns = 0u;
+    };
+    struct V112CallsiteStats {
+        std::uint64_t key = 0u;
+        std::uint64_t calls = 0u;
+        std::uint64_t guest_gap_ns = 0u;
+        std::uint64_t guest_gap_max_ns = 0u;
+        std::uint64_t host_ns = 0u;
+        std::uint64_t host_max_ns = 0u;
+    };
+    struct V112ImportToken {
+        bool active = false;
+        std::uint32_t import_index = 0u;
+        std::uint32_t callsite_slot = 0xffffffffu;
+        std::uint64_t entry_ns = 0u;
+    };
+    static constexpr std::size_t kV112MaxImportSlots = 512u;
+    static constexpr std::size_t kV112CallsiteSlots = 1024u;
+    std::array<V112ImportStats, kV112MaxImportSlots> v112_import_stats{};
+    std::array<V112CallsiteStats, kV112CallsiteSlots> v112_callsite_stats{};
+    std::uint64_t v112_callsite_overflow = 0u;
+    bool v112_audio_run_active = false;
+    bool v112_audio_run_had_import = false;
+    std::uint64_t v112_audio_run_start_ns = 0u;
+    std::uint64_t v112_audio_prev_import_exit_ns = 0u;
+    std::uint64_t v112_audio_runs = 0u;
+    std::uint64_t v112_audio_run_wall_ns = 0u;
+    std::uint64_t v112_import_calls = 0u;
+    std::uint64_t v112_guest_gap_ns = 0u;
+    std::uint64_t v112_guest_gap_max_ns = 0u;
+    std::uint64_t v112_import_host_ns = 0u;
+    std::uint64_t v112_import_host_max_ns = 0u;
+    std::uint64_t v112_tail_ns = 0u;
+    std::uint64_t v112_no_import_run_ns = 0u;
+    std::uint64_t v112_frame_run_ns = 0u;
+    std::uint64_t v112_frame_guest_gap_ns = 0u;
+    std::uint64_t v112_frame_import_host_ns = 0u;
+    std::uint64_t v112_frame_tail_ns = 0u;
+    std::uint64_t v112_frame_no_import_ns = 0u;
+    std::uint64_t v112_frame_import_calls = 0u;
+    std::uint64_t v112_frame_guest_gap_max_ns = 0u;
+    std::uint64_t v112_frame_import_host_max_ns = 0u;
 
     // v81: detailed event serialization provenance. The host-side mapper logs
     // UIKit -> framebuffer-pixel -> logical-point candidates; this counter

@@ -374,6 +374,11 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // validated v110 runtime, pinch bridge, Android UI control and scheduler
     // semantics remain unchanged.
     V111AudioSamplingProfiler = 56u,
+
+    // v112: natural import-boundary profiler. No periodic guest halt is
+    // injected; timing is collected only around import SVCs already executed
+    // by CAkAudioThread and around the existing jit.Run worker spans.
+    V112AudioBoundaryProfiler = 57u,
 };
 
 enum class PvZ2ProbeCapability : std::uint64_t {

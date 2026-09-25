@@ -3028,6 +3028,17 @@
 
         const std::string& name = binding->second.name;
 
+        const V112ImportToken v112_import_token =
+            V112ImportEnter(swi, regs[14]);
+        struct V112ImportExitGuard {
+            PvZ2JniCallbacks* self = nullptr;
+            V112ImportToken token{};
+            ~V112ImportExitGuard() {
+                if (self != nullptr && token.active)
+                    self->V112ImportExit(token);
+            }
+        } v112_import_guard{this, v112_import_token};
+
         if (V99Enabled() &&
             name.rfind("__v99_sl_", 0u) == 0u) {
             if (V99HandleOpenSLSvc(

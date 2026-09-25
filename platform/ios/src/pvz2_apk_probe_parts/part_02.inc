@@ -780,6 +780,11 @@
     }
 
 
+    bool V112Enabled() const {
+        return diagnostic_mode ==
+            PvZ2DiagnosticMode::V112AudioBoundaryProfiler;
+    }
+
     bool V111Enabled() const {
         return diagnostic_mode ==
             PvZ2DiagnosticMode::V111AudioSamplingProfiler;
@@ -789,13 +794,15 @@
         return
             diagnostic_mode == PvZ2DiagnosticMode::V110AudioPinchUiAndroid ||
             diagnostic_mode == PvZ2DiagnosticMode::V110AudioPinchUiIpad ||
-            V111Enabled();
+            V111Enabled() ||
+            V112Enabled();
     }
 
     bool V110AndroidUiControlEnabled() const {
         return
             diagnostic_mode == PvZ2DiagnosticMode::V110AudioPinchUiAndroid ||
-            V111Enabled();
+            V111Enabled() ||
+            V112Enabled();
     }
 
     V110AudioBucket V110AudioBucketForPc(std::uint32_t pc) const {
@@ -1044,6 +1051,245 @@
         }
         out << "}";
         return out.str();
+    }
+
+    std::uint32_t V112FindCallsiteSlot(
+        std::uint32_t import_index,
+        std::uint32_t lr) {
+        const std::uint64_t key =
+            (static_cast<std::uint64_t>(import_index + 1u) << 32u) |
+            static_cast<std::uint64_t>(lr & ~1u);
+        std::uint64_t mixed = key * 11400714819323198485ull;
+        mixed ^= mixed >> 33u;
+        std::size_t slot = static_cast<std::size_t>(mixed) &
+            (kV112CallsiteSlots - 1u);
+        for (std::size_t probe = 0u; probe < 32u; ++probe) {
+            auto& entry = v112_callsite_stats[slot];
+            if (entry.key == key)
+                return static_cast<std::uint32_t>(slot);
+            if (entry.key == 0u) {
+                entry.key = key;
+                return static_cast<std::uint32_t>(slot);
+            }
+            slot = (slot + 1u) & (kV112CallsiteSlots - 1u);
+        }
+        ++v112_callsite_overflow;
+        return 0xffffffffu;
+    }
+
+    void V112BeginAudioRun(std::uint32_t tid) {
+        if (!V112Enabled() || !V110IsAudioWorker(tid)) return;
+        const std::uint64_t now = V85SteadyNowNs();
+        v112_audio_run_active = true;
+        v112_audio_run_had_import = false;
+        v112_audio_run_start_ns = now;
+        v112_audio_prev_import_exit_ns = now;
+        ++v112_audio_runs;
+    }
+
+    V112ImportToken V112ImportEnter(
+        std::uint32_t swi,
+        std::uint32_t lr) {
+        V112ImportToken token;
+        if (!V112Enabled() || !v112_audio_run_active ||
+            !V110IsAudioWorker(current_probe_thread_id) ||
+            swi < kJniProbeImportSvcBase) return token;
+        const std::uint32_t import_index = swi - kJniProbeImportSvcBase;
+        if (import_index >= kV112MaxImportSlots) return token;
+
+        const std::uint64_t now = V85SteadyNowNs();
+        auto& stats = v112_import_stats[import_index];
+        ++stats.calls;
+        ++v112_import_calls;
+        if (current_frame_number == v90_profile_frame)
+            ++v112_frame_import_calls;
+
+        const std::uint32_t callsite_slot =
+            V112FindCallsiteSlot(import_index, lr);
+        if (callsite_slot != 0xffffffffu)
+            ++v112_callsite_stats[callsite_slot].calls;
+
+        if (now >= v112_audio_prev_import_exit_ns) {
+            const std::uint64_t gap = now - v112_audio_prev_import_exit_ns;
+            stats.guest_gap_ns += gap;
+            stats.guest_gap_max_ns = std::max(stats.guest_gap_max_ns, gap);
+            v112_guest_gap_ns += gap;
+            v112_guest_gap_max_ns = std::max(v112_guest_gap_max_ns, gap);
+            if (callsite_slot != 0xffffffffu) {
+                auto& cs = v112_callsite_stats[callsite_slot];
+                cs.guest_gap_ns += gap;
+                cs.guest_gap_max_ns = std::max(cs.guest_gap_max_ns, gap);
+            }
+            if (current_frame_number == v90_profile_frame) {
+                v112_frame_guest_gap_ns += gap;
+                v112_frame_guest_gap_max_ns =
+                    std::max(v112_frame_guest_gap_max_ns, gap);
+            }
+        }
+
+        v112_audio_run_had_import = true;
+        token.active = true;
+        token.import_index = import_index;
+        token.callsite_slot = callsite_slot;
+        token.entry_ns = now;
+        return token;
+    }
+
+    void V112ImportExit(const V112ImportToken& token) {
+        if (!token.active || !V112Enabled()) return;
+        const std::uint64_t now = V85SteadyNowNs();
+        const std::uint64_t host_ns =
+            now >= token.entry_ns ? now - token.entry_ns : 0u;
+        auto& stats = v112_import_stats[token.import_index];
+        stats.host_ns += host_ns;
+        stats.host_max_ns = std::max(stats.host_max_ns, host_ns);
+        v112_import_host_ns += host_ns;
+        v112_import_host_max_ns = std::max(v112_import_host_max_ns, host_ns);
+        if (token.callsite_slot != 0xffffffffu) {
+            auto& cs = v112_callsite_stats[token.callsite_slot];
+            cs.host_ns += host_ns;
+            cs.host_max_ns = std::max(cs.host_max_ns, host_ns);
+        }
+        if (current_frame_number == v90_profile_frame) {
+            v112_frame_import_host_ns += host_ns;
+            v112_frame_import_host_max_ns =
+                std::max(v112_frame_import_host_max_ns, host_ns);
+        }
+        v112_audio_prev_import_exit_ns = now;
+    }
+
+    void V112EndAudioRun(std::uint32_t tid) {
+        if (!V112Enabled() || !V110IsAudioWorker(tid) ||
+            !v112_audio_run_active) return;
+        const std::uint64_t now = V85SteadyNowNs();
+        const std::uint64_t run_ns =
+            now >= v112_audio_run_start_ns
+                ? now - v112_audio_run_start_ns : 0u;
+        v112_audio_run_wall_ns += run_ns;
+        if (current_frame_number == v90_profile_frame)
+            v112_frame_run_ns += run_ns;
+
+        if (v112_audio_run_had_import) {
+            const std::uint64_t tail_ns =
+                now >= v112_audio_prev_import_exit_ns
+                    ? now - v112_audio_prev_import_exit_ns : 0u;
+            v112_tail_ns += tail_ns;
+            if (current_frame_number == v90_profile_frame)
+                v112_frame_tail_ns += tail_ns;
+        } else {
+            v112_no_import_run_ns += run_ns;
+            if (current_frame_number == v90_profile_frame)
+                v112_frame_no_import_ns += run_ns;
+        }
+
+        v112_audio_run_active = false;
+        v112_audio_run_had_import = false;
+        v112_audio_run_start_ns = 0u;
+        v112_audio_prev_import_exit_ns = 0u;
+    }
+
+    std::string V112ImportName(std::uint32_t import_index) const {
+        const auto found = imports_by_svc.find(
+            kJniProbeImportSvcBase + import_index);
+        return found != imports_by_svc.end()
+            ? found->second.name
+            : std::string{"svc#"} + std::to_string(import_index);
+    }
+
+    std::string V112FrameSummary() const {
+        std::ostringstream out;
+        out << std::fixed << std::setprecision(3)
+            << " audio112={runMs=" << double(v112_frame_run_ns) / 1e6
+            << ",guestGapMs=" << double(v112_frame_guest_gap_ns) / 1e6
+            << ",hostImportMs=" << double(v112_frame_import_host_ns) / 1e6
+            << ",tailMs=" << double(v112_frame_tail_ns) / 1e6
+            << ",noImportMs=" << double(v112_frame_no_import_ns) / 1e6
+            << ",calls=" << v112_frame_import_calls
+            << ",maxGapMs=" << double(v112_frame_guest_gap_max_ns) / 1e6
+            << ",maxHostMs=" << double(v112_frame_import_host_max_ns) / 1e6
+            << "}";
+        return out.str();
+    }
+
+    void V112EmitAudioBoundarySummary() {
+        if (!V112Enabled()) return;
+        AppendDiagnostic(
+            "V112 AUDIO BOUNDARY SUMMARY runs=" + std::to_string(v112_audio_runs) +
+            " importCalls=" + std::to_string(v112_import_calls) +
+            " runWallMs=" + V85FormatMs(v112_audio_run_wall_ns) +
+            " guestGapMs=" + V85FormatMs(v112_guest_gap_ns) +
+            " hostImportMs=" + V85FormatMs(v112_import_host_ns) +
+            " tailMs=" + V85FormatMs(v112_tail_ns) +
+            " noImportRunMs=" + V85FormatMs(v112_no_import_run_ns) +
+            " maxGapMs=" + V85FormatMs(v112_guest_gap_max_ns) +
+            " maxHostMs=" + V85FormatMs(v112_import_host_max_ns) +
+            " callsiteOverflow=" + std::to_string(v112_callsite_overflow));
+
+        std::vector<std::uint32_t> imports;
+        for (std::uint32_t i = 0u; i < kV112MaxImportSlots; ++i)
+            if (v112_import_stats[i].calls != 0u) imports.push_back(i);
+
+        std::sort(imports.begin(), imports.end(),
+            [&](std::uint32_t a, std::uint32_t b) {
+                return v112_import_stats[a].guest_gap_ns >
+                       v112_import_stats[b].guest_gap_ns;
+            });
+        for (std::size_t rank = 0u;
+             rank < std::min<std::size_t>(12u, imports.size()); ++rank) {
+            const auto i = imports[rank];
+            const auto& s = v112_import_stats[i];
+            AppendDiagnostic(
+                "V112 IMPORT GAP rank=" + std::to_string(rank + 1u) +
+                " name=" + V112ImportName(i) +
+                " svc=0x" + JniProbeHex(kJniProbeImportSvcBase + i) +
+                " calls=" + std::to_string(s.calls) +
+                " guestGapMs=" + V85FormatMs(s.guest_gap_ns) +
+                " maxGapMs=" + V85FormatMs(s.guest_gap_max_ns) +
+                " hostMs=" + V85FormatMs(s.host_ns) +
+                " maxHostMs=" + V85FormatMs(s.host_max_ns));
+        }
+
+        std::sort(imports.begin(), imports.end(),
+            [&](std::uint32_t a, std::uint32_t b) {
+                return v112_import_stats[a].host_ns >
+                       v112_import_stats[b].host_ns;
+            });
+        for (std::size_t rank = 0u;
+             rank < std::min<std::size_t>(8u, imports.size()); ++rank) {
+            const auto i = imports[rank];
+            const auto& s = v112_import_stats[i];
+            AppendDiagnostic(
+                "V112 IMPORT HOST rank=" + std::to_string(rank + 1u) +
+                " name=" + V112ImportName(i) +
+                " calls=" + std::to_string(s.calls) +
+                " hostMs=" + V85FormatMs(s.host_ns) +
+                " maxHostMs=" + V85FormatMs(s.host_max_ns) +
+                " guestGapMs=" + V85FormatMs(s.guest_gap_ns));
+        }
+
+        std::vector<std::size_t> callsites;
+        for (std::size_t i = 0u; i < kV112CallsiteSlots; ++i)
+            if (v112_callsite_stats[i].key != 0u) callsites.push_back(i);
+        std::sort(callsites.begin(), callsites.end(),
+            [&](std::size_t a, std::size_t b) {
+                return v112_callsite_stats[a].guest_gap_ns >
+                       v112_callsite_stats[b].guest_gap_ns;
+            });
+        for (std::size_t rank = 0u;
+             rank < std::min<std::size_t>(16u, callsites.size()); ++rank) {
+            const auto& s = v112_callsite_stats[callsites[rank]];
+            const std::uint32_t import_index =
+                static_cast<std::uint32_t>((s.key >> 32u) - 1u);
+            const std::uint32_t lr = static_cast<std::uint32_t>(s.key);
+            AppendDiagnostic(
+                "V112 CALLSITE GAP rank=" + std::to_string(rank + 1u) +
+                " import=" + V112ImportName(import_index) +
+                " LR=" + V46DescribeGuestAddress(lr) +
+                " calls=" + std::to_string(s.calls) +
+                " guestGapMs=" + V85FormatMs(s.guest_gap_ns) +
+                " maxGapMs=" + V85FormatMs(s.guest_gap_max_ns) +
+                " hostMs=" + V85FormatMs(s.host_ns));
+        }
     }
 
     bool V109Enabled() const {
@@ -2498,6 +2744,7 @@
     }
 
     const char* RuntimeModeTag() const {
+        if (V112Enabled()) return "V112";
         if (V111Enabled()) return "V111";
         if (V110Enabled()) return "V110";
         if (V109Enabled()) return "V109";
@@ -2620,7 +2867,8 @@
                 line.rfind("V108 ", 0u) == 0u ||
                 line.rfind("V109 ", 0u) == 0u ||
                 line.rfind("V110 ", 0u) == 0u ||
-                line.rfind("V111 ", 0u) == 0u) {
+                line.rfind("V111 ", 0u) == 0u ||
+                line.rfind("V112 ", 0u) == 0u) {
                 return true;
             }
 
@@ -2862,6 +3110,16 @@
         if (V111Enabled()) {
             v111_frame_audio_samples.fill(0u);
         }
+        if (V112Enabled()) {
+            v112_frame_run_ns = 0u;
+            v112_frame_guest_gap_ns = 0u;
+            v112_frame_import_host_ns = 0u;
+            v112_frame_tail_ns = 0u;
+            v112_frame_no_import_ns = 0u;
+            v112_frame_import_calls = 0u;
+            v112_frame_guest_gap_max_ns = 0u;
+            v112_frame_import_host_max_ns = 0u;
+        }
         v90_frame_alloc_calls_begin=
             mem.v90_alloc_calls_internal;
         v90_frame_alloc_scan_begin=
@@ -3028,6 +3286,9 @@
                 o << V110FrameAudioSummary();
                 if (V111Enabled()) {
                     o << V111FrameAudioSampleSummary();
+                }
+                if (V112Enabled()) {
+                    o << V112FrameSummary();
                 }
             }
             Append(o.str());
@@ -3751,6 +4012,7 @@
         Append(V90FrameSummary());
         if (V110Enabled()) AppendDiagnostic(V110AudioSummary());
         if (V111Enabled()) AppendDiagnostic(V111AudioSampleSummary());
+        if (V112Enabled()) V112EmitAudioBoundarySummary();
         Append(mem.V90AllocatorSummary());
         Append(V90HostCostSummary());
     }

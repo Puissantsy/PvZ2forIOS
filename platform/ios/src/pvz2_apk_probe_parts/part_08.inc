@@ -1911,6 +1911,14 @@ bool JniProbePrepareRuntime(
             "the saved PC is sampled, no Wwise SVC is installed, and the same "
             "worker resumes immediately without a scheduler handoff.");
     }
+    if (callbacks.V112Enabled()) {
+        callbacks.AppendDiagnostic(
+            "V112 NATURAL AUDIO BOUNDARY PROFILER: v110 runtime preserved; "
+            "v111 periodic HaltExecution sampling is disabled. Only natural "
+            "tid5 import SVCs are timed. LR identifies the exact guest callsite, "
+            "and wall time between imports is measured only inside the same "
+            "jit.Run worker span so scheduler sleep is excluded.");
+    }
     if (callbacks.V108Enabled()) {
         callbacks.AppendDiagnostic(
             "V108 BANK COMPLETION LIVENESS: v107 proved BankMgr wakes and dequeues the final UnloadBank command, but the synchronous completion callback can remain pending after KillBank while CAkUsageSlot still owns live references. Exact traps trace KillSlot -> ProcessMsgQueue(KillBank) -> CAkUsageSlot::Release -> UnloadCompletionNotification -> DefaultBankCallbackFunc. If and only if that real teardown is pending, the OpenSL ring is empty, no guest buffer callback is pending, and CAkAudioThread is asleep on its own event semaphore, a 32 ms liveness pulse wakes only CAkAudioThread so Wwise itself can finish releasing voices; the main UnloadBank completion semaphore is never fabricated.");
