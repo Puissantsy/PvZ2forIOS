@@ -1938,6 +1938,15 @@ bool JniProbePrepareRuntime(
             "and wall time between imports is measured only inside the same "
             "jit.Run worker span so scheduler sleep is excluded.");
     }
+    if (callbacks.V121Enabled()) {
+        callbacks.AppendDiagnostic(
+            "V121 HOST AUDIO TELEMETRY: direct branch from stable v118. "
+            "Guest scheduler, V104 handshake, Wwise/OpenSL behavior, 32 kHz "
+            "clock, AVAudioEngine output and ring behavior are unchanged. "
+            "Only atomic host-side counters measure ring availability, queue "
+            "depth, underflow type/frame correlation, wraps and enqueue rejects. "
+            "No realtime callback logging is performed.");
+    }
     if (callbacks.V118Enabled()) {
         callbacks.AppendDiagnostic(
             "V118 PRODUCTION LEAN: v117 functional runtime is unchanged. "

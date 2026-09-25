@@ -412,6 +412,11 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // remaining diagnostic work that still runs exactly during SFX bursts,
     // rapid touch input and synchronous SoundBank waits.
     V118ProductionLean = 63u,
+
+    // v121: branch directly from the stable v118 runtime. Guest scheduling,
+    // Wwise/OpenSL semantics and audio output are unchanged; add only atomic
+    // host-side ring/underrun telemetry to isolate the remaining crackle.
+    V121HostAudioTelemetry = 64u,
 };
 
 enum class PvZ2ProbeCapability : std::uint64_t {

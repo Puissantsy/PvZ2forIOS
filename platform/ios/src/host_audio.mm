@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <cstring>
 #include <mutex>
+#include <limits>
 #include <string>
 
 namespace {
@@ -45,6 +46,62 @@ std::atomic<std::uint64_t> gRenderRequestedFrames{0u};
 std::atomic<std::uint64_t> gRenderedPCMFrames{0u};
 std::atomic<std::uint64_t> gUnderrunFrames{0u};
 std::atomic<std::uint64_t> gUnderrunEvents{0u};
+
+// v121 diagnostic-only atomics. They are deliberately independent from the
+// functional v102 counters above so frame-1 reset cannot change audio state.
+std::atomic<std::uint64_t> gDiagGuestFrame{0u};
+std::atomic<std::uint64_t> gDiagRenderCallbacks{0u};
+std::atomic<std::uint64_t> gDiagRequestedFrames{0u};
+std::atomic<std::uint64_t> gDiagRenderedFrames{0u};
+std::atomic<std::uint64_t> gDiagUnderrunEvents{0u};
+std::atomic<std::uint64_t> gDiagUnderrunFrames{0u};
+std::atomic<std::uint64_t> gDiagEmptyUnderruns{0u};
+std::atomic<std::uint64_t> gDiagPartialUnderruns{0u};
+std::atomic<std::uint64_t> gDiagFirstUnderrunGuestFrame{0u};
+std::atomic<std::uint64_t> gDiagLastUnderrunGuestFrame{0u};
+std::atomic<std::uint64_t> gDiagLowWaterEvents{0u};
+std::atomic<std::uint64_t> gDiagMinAvailableFrames{
+    std::numeric_limits<std::uint64_t>::max()};
+std::atomic<std::uint64_t> gDiagMaxAvailableFrames{0u};
+std::atomic<std::uint64_t> gDiagMinQueuedBlocks{
+    std::numeric_limits<std::uint64_t>::max()};
+std::atomic<std::uint64_t> gDiagMaxQueuedBlocks{0u};
+std::atomic<std::uint64_t> gDiagMaxCompletedBlocksPerRender{0u};
+std::atomic<std::uint64_t> gDiagReadWraps{0u};
+std::atomic<std::uint64_t> gDiagEnqueueWraps{0u};
+std::atomic<std::uint64_t> gDiagReadCasConflicts{0u};
+std::atomic<std::uint64_t> gDiagEnqueueCalls{0u};
+std::atomic<std::uint64_t> gDiagEnqueueFrames{0u};
+std::atomic<std::uint64_t> gDiagEnqueueRejectRingFull{0u};
+std::atomic<std::uint64_t> gDiagEnqueueRejectBlockFull{0u};
+
+void DiagnosticAtomicMin(
+    std::atomic<std::uint64_t>& target,
+    std::uint64_t value) {
+    std::uint64_t current =
+        target.load(std::memory_order_relaxed);
+    while (value < current &&
+           !target.compare_exchange_weak(
+               current,
+               value,
+               std::memory_order_relaxed,
+               std::memory_order_relaxed)) {
+    }
+}
+
+void DiagnosticAtomicMax(
+    std::atomic<std::uint64_t>& target,
+    std::uint64_t value) {
+    std::uint64_t current =
+        target.load(std::memory_order_relaxed);
+    while (value > current &&
+           !target.compare_exchange_weak(
+               current,
+               value,
+               std::memory_order_relaxed,
+               std::memory_order_relaxed)) {
+    }
+}
 
 std::mutex gControlMutex;
 std::string gLastError;
@@ -222,16 +279,93 @@ OSStatus RenderAudio(
                 available,
                 frameCount));
 
+    gDiagRenderCallbacks.fetch_add(
+        1u,
+        std::memory_order_relaxed);
+    gDiagRequestedFrames.fetch_add(
+        static_cast<std::uint64_t>(frameCount),
+        std::memory_order_relaxed);
+    gDiagRenderedFrames.fetch_add(
+        static_cast<std::uint64_t>(to_read),
+        std::memory_order_relaxed);
+    DiagnosticAtomicMin(
+        gDiagMinAvailableFrames,
+        available);
+    DiagnosticAtomicMax(
+        gDiagMaxAvailableFrames,
+        available);
+    if (available <=
+        static_cast<std::uint64_t>(frameCount)) {
+        gDiagLowWaterEvents.fetch_add(
+            1u,
+            std::memory_order_relaxed);
+    }
+
+    const std::uint64_t diag_head =
+        gBlockHead.load(std::memory_order_acquire);
+    const std::uint64_t diag_tail =
+        gBlockTail.load(std::memory_order_acquire);
+    const std::uint64_t diag_queued =
+        diag_head >= diag_tail
+            ? diag_head - diag_tail
+            : 0u;
+    DiagnosticAtomicMin(
+        gDiagMinQueuedBlocks,
+        diag_queued);
+    DiagnosticAtomicMax(
+        gDiagMaxQueuedBlocks,
+        diag_queued);
+
     gRenderedPCMFrames.fetch_add(
         static_cast<std::uint64_t>(to_read),
         std::memory_order_relaxed);
 
     if (to_read < frameCount) {
-        gUnderrunFrames.fetch_add(
+        const std::uint64_t missing =
             static_cast<std::uint64_t>(
-                frameCount - to_read),
+                frameCount - to_read);
+        gUnderrunFrames.fetch_add(
+            missing,
             std::memory_order_relaxed);
         gUnderrunEvents.fetch_add(
+            1u,
+            std::memory_order_relaxed);
+        gDiagUnderrunFrames.fetch_add(
+            missing,
+            std::memory_order_relaxed);
+        gDiagUnderrunEvents.fetch_add(
+            1u,
+            std::memory_order_relaxed);
+        if (to_read == 0u) {
+            gDiagEmptyUnderruns.fetch_add(
+                1u,
+                std::memory_order_relaxed);
+        } else {
+            gDiagPartialUnderruns.fetch_add(
+                1u,
+                std::memory_order_relaxed);
+        }
+
+        const std::uint64_t guest_frame =
+            gDiagGuestFrame.load(
+                std::memory_order_relaxed);
+        std::uint64_t expected_first = 0u;
+        gDiagFirstUnderrunGuestFrame
+            .compare_exchange_strong(
+                expected_first,
+                guest_frame,
+                std::memory_order_relaxed,
+                std::memory_order_relaxed);
+        gDiagLastUnderrunGuestFrame.store(
+            guest_frame,
+            std::memory_order_relaxed);
+    }
+
+    if (to_read != 0u &&
+        (read % kRingFrames) +
+                static_cast<std::uint64_t>(to_read) >
+            kRingFrames) {
+        gDiagReadWraps.fetch_add(
             1u,
             std::memory_order_relaxed);
     }
@@ -329,6 +463,9 @@ OSStatus RenderAudio(
             new_read,
             std::memory_order_acq_rel,
             std::memory_order_acquire)) {
+        gDiagReadCasConflicts.fetch_add(
+            1u,
+            std::memory_order_relaxed);
         if (isSilence != nullptr) {
             *isSilence = NO;
         }
@@ -357,6 +494,9 @@ OSStatus RenderAudio(
     }
 
     if (completed != 0u) {
+        DiagnosticAtomicMax(
+            gDiagMaxCompletedBlocksPerRender,
+            completed);
         std::uint64_t expected_tail =
             tail;
         if (gBlockTail.compare_exchange_strong(
@@ -579,6 +719,10 @@ bool PvZ2HostAudioEnqueuePCM16(
     const void* data,
     std::size_t bytes) {
 
+    gDiagEnqueueCalls.fetch_add(
+        1u,
+        std::memory_order_relaxed);
+
     if (data == nullptr ||
         bytes == 0u ||
         !gConfigured.load(
@@ -625,6 +769,9 @@ bool PvZ2HostAudioEnqueuePCM16(
             static_cast<std::uint64_t>(
                 kRingFrames) -
                 (write - read)) {
+        gDiagEnqueueRejectRingFull.fetch_add(
+            1u,
+            std::memory_order_relaxed);
         return false;
     }
 
@@ -638,7 +785,20 @@ bool PvZ2HostAudioEnqueuePCM16(
     if (head < tail ||
         head - tail >=
             kBlockSlots) {
+        gDiagEnqueueRejectBlockFull.fetch_add(
+            1u,
+            std::memory_order_relaxed);
         return false;
+    }
+
+    gDiagEnqueueFrames.fetch_add(
+        frames,
+        std::memory_order_relaxed);
+    if ((write % kRingFrames) + frames >
+        kRingFrames) {
+        gDiagEnqueueWraps.fetch_add(
+            1u,
+            std::memory_order_relaxed);
     }
 
     const auto* src =
@@ -812,6 +972,88 @@ std::uint64_t
 PvZ2HostAudioUnderrunEvents() {
     return gUnderrunEvents.load(
         std::memory_order_acquire);
+}
+
+void PvZ2HostAudioResetDiagnostics() {
+    gDiagRenderCallbacks.store(0u, std::memory_order_relaxed);
+    gDiagRequestedFrames.store(0u, std::memory_order_relaxed);
+    gDiagRenderedFrames.store(0u, std::memory_order_relaxed);
+    gDiagUnderrunEvents.store(0u, std::memory_order_relaxed);
+    gDiagUnderrunFrames.store(0u, std::memory_order_relaxed);
+    gDiagEmptyUnderruns.store(0u, std::memory_order_relaxed);
+    gDiagPartialUnderruns.store(0u, std::memory_order_relaxed);
+    gDiagFirstUnderrunGuestFrame.store(0u, std::memory_order_relaxed);
+    gDiagLastUnderrunGuestFrame.store(0u, std::memory_order_relaxed);
+    gDiagLowWaterEvents.store(0u, std::memory_order_relaxed);
+    gDiagMinAvailableFrames.store(
+        std::numeric_limits<std::uint64_t>::max(),
+        std::memory_order_relaxed);
+    gDiagMaxAvailableFrames.store(0u, std::memory_order_relaxed);
+    gDiagMinQueuedBlocks.store(
+        std::numeric_limits<std::uint64_t>::max(),
+        std::memory_order_relaxed);
+    gDiagMaxQueuedBlocks.store(0u, std::memory_order_relaxed);
+    gDiagMaxCompletedBlocksPerRender.store(0u, std::memory_order_relaxed);
+    gDiagReadWraps.store(0u, std::memory_order_relaxed);
+    gDiagEnqueueWraps.store(0u, std::memory_order_relaxed);
+    gDiagReadCasConflicts.store(0u, std::memory_order_relaxed);
+    gDiagEnqueueCalls.store(0u, std::memory_order_relaxed);
+    gDiagEnqueueFrames.store(0u, std::memory_order_relaxed);
+    gDiagEnqueueRejectRingFull.store(0u, std::memory_order_relaxed);
+    gDiagEnqueueRejectBlockFull.store(0u, std::memory_order_relaxed);
+}
+
+void PvZ2HostAudioSetDiagnosticGuestFrame(
+    std::uint32_t frame) {
+    gDiagGuestFrame.store(
+        frame,
+        std::memory_order_relaxed);
+}
+
+PvZ2HostAudioDiagnostics
+PvZ2HostAudioDiagnosticSnapshot() {
+    PvZ2HostAudioDiagnostics out;
+    out.render_callbacks = gDiagRenderCallbacks.load(std::memory_order_relaxed);
+    out.requested_frames = gDiagRequestedFrames.load(std::memory_order_relaxed);
+    out.rendered_frames = gDiagRenderedFrames.load(std::memory_order_relaxed);
+    out.underrun_events = gDiagUnderrunEvents.load(std::memory_order_relaxed);
+    out.underrun_frames = gDiagUnderrunFrames.load(std::memory_order_relaxed);
+    out.empty_underruns = gDiagEmptyUnderruns.load(std::memory_order_relaxed);
+    out.partial_underruns = gDiagPartialUnderruns.load(std::memory_order_relaxed);
+    out.first_underrun_guest_frame =
+        gDiagFirstUnderrunGuestFrame.load(std::memory_order_relaxed);
+    out.last_underrun_guest_frame =
+        gDiagLastUnderrunGuestFrame.load(std::memory_order_relaxed);
+    out.low_water_events = gDiagLowWaterEvents.load(std::memory_order_relaxed);
+    out.min_available_frames =
+        gDiagMinAvailableFrames.load(std::memory_order_relaxed);
+    if (out.min_available_frames ==
+        std::numeric_limits<std::uint64_t>::max()) {
+        out.min_available_frames = 0u;
+    }
+    out.max_available_frames =
+        gDiagMaxAvailableFrames.load(std::memory_order_relaxed);
+    out.min_queued_blocks =
+        gDiagMinQueuedBlocks.load(std::memory_order_relaxed);
+    if (out.min_queued_blocks ==
+        std::numeric_limits<std::uint64_t>::max()) {
+        out.min_queued_blocks = 0u;
+    }
+    out.max_queued_blocks =
+        gDiagMaxQueuedBlocks.load(std::memory_order_relaxed);
+    out.max_completed_blocks_per_render =
+        gDiagMaxCompletedBlocksPerRender.load(std::memory_order_relaxed);
+    out.read_wraps = gDiagReadWraps.load(std::memory_order_relaxed);
+    out.enqueue_wraps = gDiagEnqueueWraps.load(std::memory_order_relaxed);
+    out.read_cas_conflicts =
+        gDiagReadCasConflicts.load(std::memory_order_relaxed);
+    out.enqueue_calls = gDiagEnqueueCalls.load(std::memory_order_relaxed);
+    out.enqueue_frames = gDiagEnqueueFrames.load(std::memory_order_relaxed);
+    out.enqueue_reject_ring_full =
+        gDiagEnqueueRejectRingFull.load(std::memory_order_relaxed);
+    out.enqueue_reject_block_full =
+        gDiagEnqueueRejectBlockFull.load(std::memory_order_relaxed);
+    return out;
 }
 
 const char* PvZ2HostAudioLastError() {

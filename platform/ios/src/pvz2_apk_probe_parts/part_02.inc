@@ -780,9 +780,16 @@
     }
 
 
-    bool V118Enabled() const {
+    bool V121Enabled() const {
         return diagnostic_mode ==
-            PvZ2DiagnosticMode::V118ProductionLean;
+            PvZ2DiagnosticMode::V121HostAudioTelemetry;
+    }
+
+    bool V118Enabled() const {
+        return
+            diagnostic_mode ==
+                PvZ2DiagnosticMode::V118ProductionLean ||
+            V121Enabled();
     }
 
     bool V117Enabled() const {
@@ -3246,6 +3253,7 @@
     }
 
     const char* RuntimeModeTag() const {
+        if (V121Enabled()) return "V121";
         if (V118Enabled()) return "V118";
         if (V117Enabled()) return "V117";
         if (V116Enabled()) return "V116";
@@ -3611,6 +3619,13 @@
     void V90BeginFrame(std::uint32_t frame) {
         if(!V90Enabled())return;
         V113MaybeActivateHeapPageTable(frame);
+        if (V121Enabled()) {
+            PvZ2HostAudioSetDiagnosticGuestFrame(frame);
+            if (frame == 1u) {
+                PvZ2HostAudioResetDiagnostics();
+                PvZ2HostAudioSetDiagnosticGuestFrame(frame);
+            }
+        }
         v90_profile_frame=frame;
         v90_frame_worker_wait_ns=0u;
         v90_frame_boundary_worker_ns=0u;
@@ -4537,6 +4552,34 @@
             (reason?reason:"unknown"));
         Append(V90FontSummary());
         Append(V90FrameSummary());
+        if (V121Enabled()) {
+            const auto audio = PvZ2HostAudioDiagnosticSnapshot();
+            std::ostringstream out;
+            out << "V121 HOST AUDIO SUMMARY"
+                << " renderCallbacks=" << audio.render_callbacks
+                << " requestedFrames=" << audio.requested_frames
+                << " renderedFrames=" << audio.rendered_frames
+                << " underrunEvents=" << audio.underrun_events
+                << " underrunFrames=" << audio.underrun_frames
+                << " emptyUnderruns=" << audio.empty_underruns
+                << " partialUnderruns=" << audio.partial_underruns
+                << " firstUnderrunGuestFrame=" << audio.first_underrun_guest_frame
+                << " lastUnderrunGuestFrame=" << audio.last_underrun_guest_frame
+                << " lowWaterEvents=" << audio.low_water_events
+                << " minAvailableFrames=" << audio.min_available_frames
+                << " maxAvailableFrames=" << audio.max_available_frames
+                << " minQueuedBlocks=" << audio.min_queued_blocks
+                << " maxQueuedBlocks=" << audio.max_queued_blocks
+                << " maxCompletedBlocksPerRender=" << audio.max_completed_blocks_per_render
+                << " readWraps=" << audio.read_wraps
+                << " enqueueWraps=" << audio.enqueue_wraps
+                << " readCasConflicts=" << audio.read_cas_conflicts
+                << " enqueueCalls=" << audio.enqueue_calls
+                << " enqueueFrames=" << audio.enqueue_frames
+                << " enqueueRejectRingFull=" << audio.enqueue_reject_ring_full
+                << " enqueueRejectBlockFull=" << audio.enqueue_reject_block_full;
+            AppendDiagnostic(out.str());
+        }
         if (V110ProfilingEnabled()) AppendDiagnostic(V110AudioSummary());
         if (V111Enabled()) AppendDiagnostic(V111AudioSampleSummary());
         if (V112Enabled()) V112EmitAudioBoundarySummary();

@@ -35,4 +35,36 @@ std::uint64_t PvZ2HostAudioRenderedPCMFrames();
 std::uint64_t PvZ2HostAudioUnderrunFrames();
 std::uint64_t PvZ2HostAudioUnderrunEvents();
 
+// v121 host-only diagnostic snapshot. These counters never affect queue,
+// callback or scheduler behavior. The CoreAudio render path updates atomics;
+// the guest scheduler only stores the current frame tag once per frame.
+struct PvZ2HostAudioDiagnostics {
+    std::uint64_t render_callbacks = 0u;
+    std::uint64_t requested_frames = 0u;
+    std::uint64_t rendered_frames = 0u;
+    std::uint64_t underrun_events = 0u;
+    std::uint64_t underrun_frames = 0u;
+    std::uint64_t empty_underruns = 0u;
+    std::uint64_t partial_underruns = 0u;
+    std::uint64_t first_underrun_guest_frame = 0u;
+    std::uint64_t last_underrun_guest_frame = 0u;
+    std::uint64_t low_water_events = 0u;
+    std::uint64_t min_available_frames = 0u;
+    std::uint64_t max_available_frames = 0u;
+    std::uint64_t min_queued_blocks = 0u;
+    std::uint64_t max_queued_blocks = 0u;
+    std::uint64_t max_completed_blocks_per_render = 0u;
+    std::uint64_t read_wraps = 0u;
+    std::uint64_t enqueue_wraps = 0u;
+    std::uint64_t read_cas_conflicts = 0u;
+    std::uint64_t enqueue_calls = 0u;
+    std::uint64_t enqueue_frames = 0u;
+    std::uint64_t enqueue_reject_ring_full = 0u;
+    std::uint64_t enqueue_reject_block_full = 0u;
+};
+
+void PvZ2HostAudioResetDiagnostics();
+void PvZ2HostAudioSetDiagnosticGuestFrame(std::uint32_t frame);
+PvZ2HostAudioDiagnostics PvZ2HostAudioDiagnosticSnapshot();
+
 const char* PvZ2HostAudioLastError();
