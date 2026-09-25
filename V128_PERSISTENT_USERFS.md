@@ -29,3 +29,10 @@ Make visible progress, wait for the game to save, fully close the app, relaunch
 the same installation and verify that the profile/progression is restored.
 The terminal summary reports loads, flushes, bytes, mkdirs, unlinks, failures
 and dirtyRemaining.
+
+## Safety notes
+
+The host mapping rejects parent-directory traversal outside the two Android
+private roots. Persistent writes are committed with a temporary file, host
+fsync and rename so an interrupted save cannot replace the previous good file
+with a partially written one.
