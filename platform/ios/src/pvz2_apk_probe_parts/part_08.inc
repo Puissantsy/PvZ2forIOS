@@ -1919,7 +1919,16 @@ bool JniProbePrepareRuntime(
             "and wall time between imports is measured only inside the same "
             "jit.Run worker span so scheduler sleep is excluded.");
     }
-    if (callbacks.V115Enabled()) {
+    if (callbacks.V116Enabled()) {
+        callbacks.AppendDiagnostic(
+            "V116 DYNARMIC RX IMAGE PAGETABLE: v115 heap/main-stack mappings "
+            "and v114 telemetry remain enabled. At frame 1, the 3274 complete "
+            "4 KiB pages fully covered by libPVZ2.so PT_LOAD[0] PF_R|PF_X are "
+            "mapped directly: guest 0x10000000..0x10cc9fff. The partial RX tail "
+            "page at 0x10cca000 and the complete PF_R|PF_W PT_LOAD beginning "
+            "0x10ccbf90 remain callback-backed, preserving mutable data, GOT, "
+            "RELRO and runtime write/probe semantics.");
+    } else if (callbacks.V115Enabled()) {
         callbacks.AppendDiagnostic(
             "V115 DYNARMIC MAIN STACK PAGETABLE: v113 heap mapping and v114 "
             "natural main-thread telemetry remain enabled. At frame 1, guest "
