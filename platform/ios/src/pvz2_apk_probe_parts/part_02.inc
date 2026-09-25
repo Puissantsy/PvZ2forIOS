@@ -780,9 +780,15 @@
     }
 
 
-    bool V115Enabled() const {
+    bool V116Enabled() const {
         return diagnostic_mode ==
-            PvZ2DiagnosticMode::V115DynarmicMainStackPageTable;
+            PvZ2DiagnosticMode::V116DynarmicReadOnlyImagePageTable;
+    }
+
+    bool V115Enabled() const {
+        return
+            diagnostic_mode == PvZ2DiagnosticMode::V115DynarmicMainStackPageTable ||
+            V116Enabled();
     }
 
     bool V114Enabled() const {
@@ -1351,6 +1357,47 @@
             v115_stack_page_table_active = true;
         }
 
+        if (V116Enabled()) {
+            // Exact PvZ2 1.5.252752 PT_LOAD[0]:
+            //   vaddr=0x00000000 memsz=0x00ccaad4 flags=PF_R|PF_X.
+            // Map only pages fully contained in that non-writable segment.
+            // 0x00cca000..0x00ccafff is deliberately left callback-backed
+            // because only its first 0xad4 bytes belong to RX; PT_LOAD[1]
+            // (starting at 0x00ccbf90) is RW and remains entirely callbacks.
+            constexpr std::uint32_t kV116RxFullBytes =
+                0x00cca000u;
+            static_assert(
+                (kGuestBase & (page_size - 1u)) == 0u,
+                "guest image base must be page aligned");
+            static_assert(
+                (kV116RxFullBytes & (page_size - 1u)) == 0u,
+                "v116 RX direct range must be page aligned");
+
+            std::uint32_t image_pages = 0u;
+            if (mem.image.size() >= kV116RxFullBytes) {
+                for (std::uint32_t offset = 0u;
+                     offset < kV116RxFullBytes;
+                     offset += page_size) {
+                    const std::uint32_t guest =
+                        kGuestBase + offset;
+                    (*v113_page_table)[guest >> page_bits] =
+                        mem.image.data() + offset;
+                    ++image_pages;
+                }
+
+                // Keep the first partial/mixed page explicitly callback-backed.
+                (*v113_page_table)[
+                    (kGuestBase + kV116RxFullBytes) >> page_bits] =
+                    nullptr;
+
+                v116_image_pages_mapped = image_pages;
+                v116_image_callback_tail_pages = 1u;
+                v116_image_activation_ns =
+                    V85SteadyNowNs() - begin_ns;
+                v116_image_page_table_active = true;
+            }
+        }
+
         v113_activation_frame = frame;
         v113_activation_ns =
             V85SteadyNowNs() - begin_ns;
@@ -1389,6 +1436,34 @@
                 " activationMs=" +
                 V85FormatMs(v115_stack_activation_ns));
         }
+
+        if (V116Enabled()) {
+            AppendDiagnostic(
+                "V116 RX IMAGE PAGETABLE ACTIVE frame=" +
+                std::to_string(frame) +
+                " base=0x" + JniProbeHex(kGuestBase) +
+                " directEnd=0x" +
+                JniProbeHex(
+                    kGuestBase +
+                    v116_image_pages_mapped *
+                        page_size -
+                    1u) +
+                " directPages=" +
+                std::to_string(v116_image_pages_mapped) +
+                " directBytes=" +
+                std::to_string(
+                    static_cast<std::uint64_t>(
+                        v116_image_pages_mapped) *
+                    page_size) +
+                " partialTailBase=0x" +
+                JniProbeHex(kGuestBase + 0x00cca000u) +
+                " rwLoadBase=0x" +
+                JniProbeHex(kGuestBase + 0x00ccbf90u) +
+                " callbackTailPages=" +
+                std::to_string(v116_image_callback_tail_pages) +
+                " activationMs=" +
+                V85FormatMs(v116_image_activation_ns));
+        }
     }
 
     std::string V113PageTableSummary() const {
@@ -1417,6 +1492,18 @@
                     std::to_string(v115_stack_callback_pages) +
                     ",activationMs=" +
                     V85FormatMs(v115_stack_activation_ns) +
+                    "}"
+                : "") +
+            (V116Enabled()
+                ? " rxImageDirect{active=" +
+                    std::string{
+                        v116_image_page_table_active ? "YES" : "NO"} +
+                    ",pages=" +
+                    std::to_string(v116_image_pages_mapped) +
+                    ",partialTailPages=" +
+                    std::to_string(v116_image_callback_tail_pages) +
+                    ",activationMs=" +
+                    V85FormatMs(v116_image_activation_ns) +
                     "}"
                 : "");
     }
