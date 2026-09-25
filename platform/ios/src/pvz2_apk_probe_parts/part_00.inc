@@ -1046,6 +1046,7 @@ constexpr std::uint64_t kCapsV117 =
 constexpr std::uint64_t kCapsV118 = kCapsV117;
 // v121 changes no guest/runtime capability. It adds host-only atomic telemetry.
 constexpr std::uint64_t kCapsV121 = kCapsV118;
+constexpr std::uint64_t kCapsV122 = kCapsV121;
 
 constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::PassiveRegistry, "PASSIVE_REGISTRY", nullptr, 0u, false},
@@ -1112,11 +1113,12 @@ constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::V116DynarmicReadOnlyImagePageTable, "V116_DYNARMIC_READONLY_IMAGE_PAGETABLE", "V116 RX Image", kCapsV116, false},
     {PvZ2DiagnosticMode::V117LeanPerformance, "V117_LEAN_PERFORMANCE", "V117 Lean Performance", kCapsV117, false},
     {PvZ2DiagnosticMode::V118ProductionLean, "V118_PRODUCTION_LEAN", "V118 Production Lean", kCapsV118, false},
-    {PvZ2DiagnosticMode::V121HostAudioTelemetry, "V121_HOST_AUDIO_TELEMETRY", "V121 Host Audio", kCapsV121, true},
+    {PvZ2DiagnosticMode::V121HostAudioTelemetry, "V121_HOST_AUDIO_TELEMETRY", "V121 Host Audio", kCapsV121, false},
+    {PvZ2DiagnosticMode::V122PcmContinuityTelemetry, "V122_PCM_CONTINUITY_TELEMETRY", "V122 PCM Continuity", kCapsV122, true},
 };
 
 constexpr PvZ2DiagnosticMode kSelectableDiagnosticModes[] = {
-    PvZ2DiagnosticMode::V121HostAudioTelemetry,
+    PvZ2DiagnosticMode::V122PcmContinuityTelemetry,
 };
 
 } // namespace

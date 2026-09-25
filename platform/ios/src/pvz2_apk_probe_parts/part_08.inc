@@ -1938,6 +1938,14 @@ bool JniProbePrepareRuntime(
             "and wall time between imports is measured only inside the same "
             "jit.Run worker span so scheduler sleep is excluded.");
     }
+    if (callbacks.V122Enabled()) {
+        callbacks.AppendDiagnostic(
+            "V122 PCM CONTINUITY TELEMETRY: v121/v118 runtime unchanged. "
+            "Host enqueue observes only PCM block-edge sample deltas and a sparse "
+            "16-point block signature to detect likely consecutive repeats. "
+            "No PCM is modified, no guest scheduler behavior changes and no "
+            "per-buffer logging is emitted.");
+    }
     if (callbacks.V121Enabled()) {
         callbacks.AppendDiagnostic(
             "V121 HOST AUDIO TELEMETRY: direct branch from stable v118. "

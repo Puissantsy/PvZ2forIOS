@@ -61,6 +61,16 @@ struct PvZ2HostAudioDiagnostics {
     std::uint64_t enqueue_frames = 0u;
     std::uint64_t enqueue_reject_ring_full = 0u;
     std::uint64_t enqueue_reject_block_full = 0u;
+    std::uint64_t boundary_checks = 0u;
+    std::uint64_t boundary_jump_gt_4096 = 0u;
+    std::uint64_t boundary_jump_gt_8192 = 0u;
+    std::uint64_t boundary_jump_gt_16384 = 0u;
+    std::uint64_t max_boundary_jump = 0u;
+    std::uint64_t max_boundary_jump_guest_frame = 0u;
+    std::uint64_t repeated_sparse_blocks = 0u;
+    std::uint64_t max_sparse_repeat_run = 0u;
+    std::uint64_t first_sparse_repeat_guest_frame = 0u;
+    std::uint64_t last_sparse_repeat_guest_frame = 0u;
 };
 
 void PvZ2HostAudioResetDiagnostics();

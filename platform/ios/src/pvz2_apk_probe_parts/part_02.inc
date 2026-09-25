@@ -780,9 +780,16 @@
     }
 
 
-    bool V121Enabled() const {
+    bool V122Enabled() const {
         return diagnostic_mode ==
-            PvZ2DiagnosticMode::V121HostAudioTelemetry;
+            PvZ2DiagnosticMode::V122PcmContinuityTelemetry;
+    }
+
+    bool V121Enabled() const {
+        return
+            diagnostic_mode ==
+                PvZ2DiagnosticMode::V121HostAudioTelemetry ||
+            V122Enabled();
     }
 
     bool V118Enabled() const {
@@ -3253,6 +3260,7 @@
     }
 
     const char* RuntimeModeTag() const {
+        if (V122Enabled()) return "V122";
         if (V121Enabled()) return "V121";
         if (V118Enabled()) return "V118";
         if (V117Enabled()) return "V117";
@@ -4577,7 +4585,17 @@
                 << " enqueueCalls=" << audio.enqueue_calls
                 << " enqueueFrames=" << audio.enqueue_frames
                 << " enqueueRejectRingFull=" << audio.enqueue_reject_ring_full
-                << " enqueueRejectBlockFull=" << audio.enqueue_reject_block_full;
+                << " enqueueRejectBlockFull=" << audio.enqueue_reject_block_full
+                << " boundaryChecks=" << audio.boundary_checks
+                << " boundaryJumpGt4096=" << audio.boundary_jump_gt_4096
+                << " boundaryJumpGt8192=" << audio.boundary_jump_gt_8192
+                << " boundaryJumpGt16384=" << audio.boundary_jump_gt_16384
+                << " maxBoundaryJump=" << audio.max_boundary_jump
+                << " maxBoundaryJumpGuestFrame=" << audio.max_boundary_jump_guest_frame
+                << " repeatedSparseBlocks=" << audio.repeated_sparse_blocks
+                << " maxSparseRepeatRun=" << audio.max_sparse_repeat_run
+                << " firstSparseRepeatGuestFrame=" << audio.first_sparse_repeat_guest_frame
+                << " lastSparseRepeatGuestFrame=" << audio.last_sparse_repeat_guest_frame;
             AppendDiagnostic(out.str());
         }
         if (V110ProfilingEnabled()) AppendDiagnostic(V110AudioSummary());

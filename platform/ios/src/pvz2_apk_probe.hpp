@@ -417,6 +417,11 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // Wwise/OpenSL semantics and audio output are unchanged; add only atomic
     // host-side ring/underrun telemetry to isolate the remaining crackle.
     V121HostAudioTelemetry = 64u,
+
+    // v122: keep the complete v121/v118 runtime and add low-cost observation
+    // of the PCM blocks handed from Wwise to the host: inter-block sample
+    // discontinuities plus a sparse consecutive-block signature.
+    V122PcmContinuityTelemetry = 65u,
 };
 
 enum class PvZ2ProbeCapability : std::uint64_t {

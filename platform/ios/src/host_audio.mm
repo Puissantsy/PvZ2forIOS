@@ -75,6 +75,25 @@ std::atomic<std::uint64_t> gDiagEnqueueFrames{0u};
 std::atomic<std::uint64_t> gDiagEnqueueRejectRingFull{0u};
 std::atomic<std::uint64_t> gDiagEnqueueRejectBlockFull{0u};
 
+std::atomic<std::uint64_t> gDiagBoundaryChecks{0u};
+std::atomic<std::uint64_t> gDiagBoundaryJumpGt4096{0u};
+std::atomic<std::uint64_t> gDiagBoundaryJumpGt8192{0u};
+std::atomic<std::uint64_t> gDiagBoundaryJumpGt16384{0u};
+std::atomic<std::uint64_t> gDiagMaxBoundaryJump{0u};
+std::atomic<std::uint64_t> gDiagMaxBoundaryJumpGuestFrame{0u};
+std::atomic<std::uint64_t> gDiagRepeatedSparseBlocks{0u};
+std::atomic<std::uint64_t> gDiagMaxSparseRepeatRun{0u};
+std::atomic<std::uint64_t> gDiagFirstSparseRepeatGuestFrame{0u};
+std::atomic<std::uint64_t> gDiagLastSparseRepeatGuestFrame{0u};
+
+// Producer-side continuity state. EnqueuePCM16 is invoked serially by the
+// cooperative guest thread, so these do not participate in the realtime
+// CoreAudio callback.
+bool gDiagHavePreviousBlock = false;
+std::array<std::int16_t, kMaxChannels> gDiagPreviousLastSample{};
+std::uint64_t gDiagPreviousSparseSignature = 0u;
+std::uint64_t gDiagSparseRepeatRun = 0u;
+
 void DiagnosticAtomicMin(
     std::atomic<std::uint64_t>& target,
     std::uint64_t value) {
@@ -805,6 +824,148 @@ bool PvZ2HostAudioEnqueuePCM16(
         static_cast<const std::uint8_t*>(
             data);
 
+    std::array<std::int16_t, kMaxChannels> first_sample{};
+    std::array<std::int16_t, kMaxChannels> last_sample{};
+    for (std::uint32_t channel = 0u;
+         channel < channels;
+         ++channel) {
+        std::memcpy(
+            &first_sample[channel],
+            src + channel * sizeof(std::int16_t),
+            sizeof(std::int16_t));
+        const std::size_t last_index =
+            (static_cast<std::size_t>(frames - 1u) *
+                 channels +
+             channel) *
+            sizeof(std::int16_t);
+        std::memcpy(
+            &last_sample[channel],
+            src + last_index,
+            sizeof(std::int16_t));
+    }
+
+    const std::uint64_t guest_frame =
+        gDiagGuestFrame.load(
+            std::memory_order_relaxed);
+
+    if (gDiagHavePreviousBlock) {
+        std::uint64_t jump = 0u;
+        for (std::uint32_t channel = 0u;
+             channel < channels;
+             ++channel) {
+            const std::int64_t delta =
+                static_cast<std::int64_t>(
+                    first_sample[channel]) -
+                static_cast<std::int64_t>(
+                    gDiagPreviousLastSample[channel]);
+            const std::uint64_t abs_delta =
+                static_cast<std::uint64_t>(
+                    delta < 0 ? -delta : delta);
+            jump = std::max(jump, abs_delta);
+        }
+
+        gDiagBoundaryChecks.fetch_add(
+            1u,
+            std::memory_order_relaxed);
+        if (jump > 4096u) {
+            gDiagBoundaryJumpGt4096.fetch_add(
+                1u,
+                std::memory_order_relaxed);
+        }
+        if (jump > 8192u) {
+            gDiagBoundaryJumpGt8192.fetch_add(
+                1u,
+                std::memory_order_relaxed);
+        }
+        if (jump > 16384u) {
+            gDiagBoundaryJumpGt16384.fetch_add(
+                1u,
+                std::memory_order_relaxed);
+        }
+
+        std::uint64_t old_max =
+            gDiagMaxBoundaryJump.load(
+                std::memory_order_relaxed);
+        while (jump > old_max) {
+            if (gDiagMaxBoundaryJump
+                    .compare_exchange_weak(
+                        old_max,
+                        jump,
+                        std::memory_order_relaxed,
+                        std::memory_order_relaxed)) {
+                gDiagMaxBoundaryJumpGuestFrame.store(
+                    guest_frame,
+                    std::memory_order_relaxed);
+                break;
+            }
+        }
+    }
+
+    // 16-point sparse FNV-1a signature: 16 frames x <=2 channels.
+    std::uint64_t sparse_signature =
+        1469598103934665603ull;
+    constexpr std::uint64_t kSparsePoints = 16u;
+    for (std::uint64_t point = 0u;
+         point < kSparsePoints;
+         ++point) {
+        const std::uint64_t frame_index =
+            frames > 1u
+                ? (point * (frames - 1u)) /
+                      (kSparsePoints - 1u)
+                : 0u;
+        for (std::uint32_t channel = 0u;
+             channel < channels;
+             ++channel) {
+            std::int16_t sample = 0;
+            const std::size_t byte_index =
+                (static_cast<std::size_t>(frame_index) *
+                     channels +
+                 channel) *
+                sizeof(std::int16_t);
+            std::memcpy(
+                &sample,
+                src + byte_index,
+                sizeof(sample));
+            const std::uint16_t raw =
+                static_cast<std::uint16_t>(sample);
+            sparse_signature ^=
+                static_cast<std::uint8_t>(raw & 0xffu);
+            sparse_signature *= 1099511628211ull;
+            sparse_signature ^=
+                static_cast<std::uint8_t>(raw >> 8u);
+            sparse_signature *= 1099511628211ull;
+        }
+    }
+
+    if (gDiagHavePreviousBlock &&
+        sparse_signature ==
+            gDiagPreviousSparseSignature) {
+        ++gDiagSparseRepeatRun;
+        gDiagRepeatedSparseBlocks.fetch_add(
+            1u,
+            std::memory_order_relaxed);
+        DiagnosticAtomicMax(
+            gDiagMaxSparseRepeatRun,
+            gDiagSparseRepeatRun);
+        std::uint64_t expected_first = 0u;
+        gDiagFirstSparseRepeatGuestFrame
+            .compare_exchange_strong(
+                expected_first,
+                guest_frame,
+                std::memory_order_relaxed,
+                std::memory_order_relaxed);
+        gDiagLastSparseRepeatGuestFrame.store(
+            guest_frame,
+            std::memory_order_relaxed);
+    } else {
+        gDiagSparseRepeatRun = 1u;
+    }
+
+    gDiagPreviousLastSample = last_sample;
+    gDiagPreviousSparseSignature =
+        sparse_signature;
+    gDiagHavePreviousBlock = true;
+
     for (std::uint64_t frame = 0u;
          frame < frames;
          ++frame) {
@@ -1001,6 +1162,20 @@ void PvZ2HostAudioResetDiagnostics() {
     gDiagEnqueueFrames.store(0u, std::memory_order_relaxed);
     gDiagEnqueueRejectRingFull.store(0u, std::memory_order_relaxed);
     gDiagEnqueueRejectBlockFull.store(0u, std::memory_order_relaxed);
+    gDiagBoundaryChecks.store(0u, std::memory_order_relaxed);
+    gDiagBoundaryJumpGt4096.store(0u, std::memory_order_relaxed);
+    gDiagBoundaryJumpGt8192.store(0u, std::memory_order_relaxed);
+    gDiagBoundaryJumpGt16384.store(0u, std::memory_order_relaxed);
+    gDiagMaxBoundaryJump.store(0u, std::memory_order_relaxed);
+    gDiagMaxBoundaryJumpGuestFrame.store(0u, std::memory_order_relaxed);
+    gDiagRepeatedSparseBlocks.store(0u, std::memory_order_relaxed);
+    gDiagMaxSparseRepeatRun.store(0u, std::memory_order_relaxed);
+    gDiagFirstSparseRepeatGuestFrame.store(0u, std::memory_order_relaxed);
+    gDiagLastSparseRepeatGuestFrame.store(0u, std::memory_order_relaxed);
+    gDiagHavePreviousBlock = false;
+    gDiagPreviousLastSample.fill(0);
+    gDiagPreviousSparseSignature = 0u;
+    gDiagSparseRepeatRun = 0u;
 }
 
 void PvZ2HostAudioSetDiagnosticGuestFrame(
@@ -1053,6 +1228,26 @@ PvZ2HostAudioDiagnosticSnapshot() {
         gDiagEnqueueRejectRingFull.load(std::memory_order_relaxed);
     out.enqueue_reject_block_full =
         gDiagEnqueueRejectBlockFull.load(std::memory_order_relaxed);
+    out.boundary_checks =
+        gDiagBoundaryChecks.load(std::memory_order_relaxed);
+    out.boundary_jump_gt_4096 =
+        gDiagBoundaryJumpGt4096.load(std::memory_order_relaxed);
+    out.boundary_jump_gt_8192 =
+        gDiagBoundaryJumpGt8192.load(std::memory_order_relaxed);
+    out.boundary_jump_gt_16384 =
+        gDiagBoundaryJumpGt16384.load(std::memory_order_relaxed);
+    out.max_boundary_jump =
+        gDiagMaxBoundaryJump.load(std::memory_order_relaxed);
+    out.max_boundary_jump_guest_frame =
+        gDiagMaxBoundaryJumpGuestFrame.load(std::memory_order_relaxed);
+    out.repeated_sparse_blocks =
+        gDiagRepeatedSparseBlocks.load(std::memory_order_relaxed);
+    out.max_sparse_repeat_run =
+        gDiagMaxSparseRepeatRun.load(std::memory_order_relaxed);
+    out.first_sparse_repeat_guest_frame =
+        gDiagFirstSparseRepeatGuestFrame.load(std::memory_order_relaxed);
+    out.last_sparse_repeat_guest_frame =
+        gDiagLastSparseRepeatGuestFrame.load(std::memory_order_relaxed);
     return out;
 }
 
