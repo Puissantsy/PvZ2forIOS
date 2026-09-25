@@ -1919,6 +1919,15 @@ bool JniProbePrepareRuntime(
             "and wall time between imports is measured only inside the same "
             "jit.Run worker span so scheduler sleep is excluded.");
     }
+    if (callbacks.V113Enabled()) {
+        callbacks.AppendDiagnostic(
+            "V113 DYNARMIC HEAP PAGETABLE: first real optimization after v112. "
+            "The JIT starts with an all-null page table so constructors/startup "
+            "retain callback memory semantics. At frame 1 only guest heap "
+            "0x30000000..+128MiB becomes direct-page-table memory. Image/GOT/"
+            "RELRO, main stack, trampolines, JNI and objects remain callbacks. "
+            "v112 boundary telemetry stays enabled for before/after comparison.");
+    }
     if (callbacks.V108Enabled()) {
         callbacks.AppendDiagnostic(
             "V108 BANK COMPLETION LIVENESS: v107 proved BankMgr wakes and dequeues the final UnloadBank command, but the synchronous completion callback can remain pending after KillBank while CAkUsageSlot still owns live references. Exact traps trace KillSlot -> ProcessMsgQueue(KillBank) -> CAkUsageSlot::Release -> UnloadCompletionNotification -> DefaultBankCallbackFunc. If and only if that real teardown is pending, the OpenSL ring is empty, no guest buffer callback is pending, and CAkAudioThread is asleep on its own event semaphore, a 32 ms liveness pulse wakes only CAkAudioThread so Wwise itself can finish releasing voices; the main UnloadBank completion semaphore is never fabricated.");
@@ -2731,6 +2740,19 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
         config.check_halt_on_memory_access = true;
         config.code_cache_size =
             32 * 1024 * 1024;
+
+        std::unique_ptr<PvZ2JniCallbacks::V113PageTable>
+            v113_page_table;
+        if (callbacks.V113Enabled()) {
+            v113_page_table =
+                std::make_unique<
+                    PvZ2JniCallbacks::V113PageTable>();
+            v113_page_table->fill(nullptr);
+            config.page_table = v113_page_table.get();
+            config.absolute_offset_page_table = false;
+            callbacks.V113AttachPageTable(
+                v113_page_table.get());
+        }
 
         Dynarmic::A32::Jit jit{config};
         callbacks.jit = &jit;

@@ -1020,6 +1020,8 @@ constexpr std::uint64_t kCapsV110 = kCapsV109;
 constexpr std::uint64_t kCapsV111 = kCapsV110;
 // v112 remains observational and preserves the validated v110 runtime.
 constexpr std::uint64_t kCapsV112 = kCapsV110;
+// v113 changes only Dynarmic memory access for the guest heap after startup.
+constexpr std::uint64_t kCapsV113 = kCapsV112;
 
 constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::PassiveRegistry, "PASSIVE_REGISTRY", nullptr, 0u, false},
@@ -1079,11 +1081,12 @@ constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::V110AudioPinchUiAndroid, "V110_AUDIO_PINCH_UI_ANDROID", "V110 Android UI", kCapsV110, false},
     {PvZ2DiagnosticMode::V110AudioPinchUiIpad, "V110_AUDIO_PINCH_UI_IPAD", "V110 iPad UI", kCapsV110, false},
     {PvZ2DiagnosticMode::V111AudioSamplingProfiler, "V111_AUDIO_SAMPLING_PROFILER", "V111 Audio Sampling", kCapsV111, false},
-    {PvZ2DiagnosticMode::V112AudioBoundaryProfiler, "V112_AUDIO_BOUNDARY_PROFILER", "V112 Audio Boundary", kCapsV112, true},
+    {PvZ2DiagnosticMode::V112AudioBoundaryProfiler, "V112_AUDIO_BOUNDARY_PROFILER", "V112 Audio Boundary", kCapsV112, false},
+    {PvZ2DiagnosticMode::V113DynarmicHeapPageTable, "V113_DYNARMIC_HEAP_PAGETABLE", "V113 Heap Page Table", kCapsV113, true},
 };
 
 constexpr PvZ2DiagnosticMode kSelectableDiagnosticModes[] = {
-    PvZ2DiagnosticMode::V112AudioBoundaryProfiler,
+    PvZ2DiagnosticMode::V113DynarmicHeapPageTable,
 };
 
 } // namespace
@@ -3794,6 +3797,20 @@ public:
     std::uint64_t v112_frame_import_calls = 0u;
     std::uint64_t v112_frame_guest_gap_max_ns = 0u;
     std::uint64_t v112_frame_import_host_max_ns = 0u;
+
+    // v113: Dynarmic page table exists from JIT construction but starts with
+    // every entry null, so startup/constructor memory accesses still use the
+    // exact callback path. At frame 1 only the stable 128 MiB heap region is
+    // mapped direct. Image/GOT/RELRO, main stack, trampolines, JNI and object
+    // regions deliberately remain callback-backed.
+    using V113PageTable = std::array<
+        std::uint8_t*,
+        Dynarmic::A32::UserConfig::NUM_PAGE_TABLE_ENTRIES>;
+    V113PageTable* v113_page_table = nullptr;
+    bool v113_heap_page_table_active = false;
+    std::uint32_t v113_heap_pages_mapped = 0u;
+    std::uint32_t v113_activation_frame = 0u;
+    std::uint64_t v113_activation_ns = 0u;
 
     // v81: detailed event serialization provenance. The host-side mapper logs
     // UIKit -> framebuffer-pixel -> logical-point candidates; this counter

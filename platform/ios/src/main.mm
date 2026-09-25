@@ -530,7 +530,7 @@ void PvZ2HostNotifyDirectFrame(
     self.captionLabel.clipsToBounds =
         YES;
     self.captionLabel.text =
-        @"PvZ2 v112 — starting…\ntid5 natural import-boundary profiler";
+        @"PvZ2 v113 — starting…\nDynarmic heap page-table optimization + v112 telemetry";
 
     self.stopButton =
         [UIButton
@@ -719,7 +719,7 @@ void PvZ2HostNotifyDirectFrame(
 
     self.inputEnabled = NO;
     self.captionLabel.text =
-        @"PvZ2 v112 LIVE — HARD STOP requested; interrupting guest at the next Dynarmic checkpoint…";
+        @"PvZ2 v113 LIVE — HARD STOP requested; stopping optimized guest at the next checkpoint…";
     self.stopButton.enabled = NO;
     PvZ2RequestInteractiveStop();
 }
@@ -1574,7 +1574,7 @@ void PvZ2HostNotifyDirectFrame(
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — v112 Audio Boundary Profiler";
+        @"PvZ2forIOS — v113 Heap Page-Table Optimization";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -1583,7 +1583,7 @@ void PvZ2HostNotifyDirectFrame(
         NO;
 
     title.text =
-        @"PvZ2forIOS — v112 Audio Boundary Profiler";
+        @"PvZ2forIOS — v113 Heap Page-Table Optimization";
 
     title.font =
         [UIFont
@@ -1599,7 +1599,7 @@ void PvZ2HostNotifyDirectFrame(
         NO;
 
     explanation.text =
-        @"v112 preserves the validated v110 runtime and Android UI control. Unlike v111 it injects no periodic audio halt: it times only natural tid5 import boundaries, records exact LR/callsites, and measures guest execution between imports inside each jit.Run. Reproduce heavy-SFX and rapid seed-selection lags, then Hard Stop and export the full log.";
+        @"v113 is the first targeted performance optimization. v112 proved the iOS import bridges cost under 1% while Wwise/Vorbis guest execution dominates. At frame 1 v113 enables Dynarmic direct page-table access only for the stable 128 MiB guest heap, where tid5 stacks/buffers live; sensitive image/RELRO/main-stack regions keep callback protection. v112 telemetry remains enabled to measure the real gain.";
 
     explanation.numberOfLines = 0;
 
@@ -1611,7 +1611,7 @@ void PvZ2HostNotifyDirectFrame(
     self.v110UiPackageControl =
         [[UISegmentedControl alloc]
             initWithItems:@[
-                @"v112 Audio Boundary — Android UI control"
+                @"v113 Heap Page Table — Android UI control"
             ]];
     self.v110UiPackageControl.translatesAutoresizingMaskIntoConstraints = NO;
     self.v110UiPackageControl.selectedSegmentIndex = 0;
@@ -2283,7 +2283,7 @@ void PvZ2HostNotifyDirectFrame(
     self.v110SelectedUiModeIndex = 0;
 
     const PvZ2DiagnosticMode selectedMode =
-        PvZ2DiagnosticMode::V112AudioBoundaryProfiler;
+        PvZ2DiagnosticMode::V113DynarmicHeapPageTable;
 
     const auto* selectedDescriptor =
         PvZ2DescribeDiagnosticMode(selectedMode);
@@ -2293,13 +2293,13 @@ void PvZ2HostNotifyDirectFrame(
             ? [NSString
                   stringWithUTF8String:
                       selectedDescriptor->internal_name]
-            : @"V112_AUDIO_BOUNDARY_PROFILER";
+            : @"V113_DYNARMIC_HEAP_PAGETABLE";
 
     [self
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v112 mode=%@. Reproduce audio-heavy lag and seed spam, then Hard Stop for import/callsite timing.",
+                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v113 mode=%@. Compare animation/audio smoothness with v112, reproduce heavy SFX + seed spam, then Hard Stop for the retained v112 timing.",
                     selectedModeName]];
 
     [self
@@ -2355,7 +2355,7 @@ void PvZ2HostNotifyDirectFrame(
     }
 
     const PvZ2DiagnosticMode diagnosticMode =
-        PvZ2DiagnosticMode::V112AudioBoundaryProfiler;
+        PvZ2DiagnosticMode::V113DynarmicHeapPageTable;
 
     const auto* diagnosticDescriptor =
         PvZ2DescribeDiagnosticMode(diagnosticMode);
@@ -2374,7 +2374,7 @@ void PvZ2HostNotifyDirectFrame(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v112 Audio Boundary Profiler started mode=%@; PID=%d ===",
+                    @"=== PvZ2 v113 Heap Page-Table Optimization started mode=%@; PID=%d ===",
                     diagnosticModeName,
                     getpid()]];
 
@@ -2888,14 +2888,14 @@ void PvZ2HostNotifyDirectFrame(
                                     finishRunWithMessage:
                                         [NSString
                                             stringWithFormat:
-                                                @"PvZ2 v112 LIVE — HARD STOPPED after %u guest frames.\nClose to inspect the v112 runtime log.",
+                                                @"PvZ2 v113 LIVE — HARD STOPPED after %u guest frames.\nClose to inspect the v113 runtime log.",
                                                 result.draw_frames_completed]];
                             } else {
                                 [selfRef.liveController
                                     finishRunWithMessage:
                                         [NSString
                                             stringWithFormat:
-                                                @"PvZ2 v112 LIVE — run finished after %u guest frames.\nClose to inspect the v112 runtime log.",
+                                                @"PvZ2 v113 LIVE — run finished after %u guest frames.\nClose to inspect the v113 runtime log.",
                                                 result.draw_frames_completed]];
                             }
 

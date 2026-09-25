@@ -379,6 +379,11 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // injected; timing is collected only around import SVCs already executed
     // by CAkAudioThread and around the existing jit.Run worker spans.
     V112AudioBoundaryProfiler = 57u,
+
+    // v113: first performance optimization after v112 isolated the cost in
+    // guest Wwise execution. Enable Dynarmic's direct page-table path only
+    // for the stable guest heap after startup/at the first real frame.
+    V113DynarmicHeapPageTable = 58u,
 };
 
 enum class PvZ2ProbeCapability : std::uint64_t {

@@ -780,9 +780,15 @@
     }
 
 
-    bool V112Enabled() const {
+    bool V113Enabled() const {
         return diagnostic_mode ==
-            PvZ2DiagnosticMode::V112AudioBoundaryProfiler;
+            PvZ2DiagnosticMode::V113DynarmicHeapPageTable;
+    }
+
+    bool V112Enabled() const {
+        return
+            diagnostic_mode == PvZ2DiagnosticMode::V112AudioBoundaryProfiler ||
+            V113Enabled();
     }
 
     bool V111Enabled() const {
@@ -1051,6 +1057,73 @@
         }
         out << "}";
         return out.str();
+    }
+
+    void V113AttachPageTable(V113PageTable* table) {
+        v113_page_table = table;
+    }
+
+    void V113MaybeActivateHeapPageTable(std::uint32_t frame) {
+        if (!V113Enabled() ||
+            v113_heap_page_table_active ||
+            v113_page_table == nullptr ||
+            frame == 0u) {
+            return;
+        }
+
+        const std::uint64_t begin_ns = V85SteadyNowNs();
+        constexpr std::uint32_t page_bits =
+            Dynarmic::A32::UserConfig::PAGE_BITS;
+        constexpr std::uint32_t page_size =
+            1u << page_bits;
+        static_assert(
+            (kJniProbeHeapBase & (page_size - 1u)) == 0u,
+            "guest heap must be page aligned");
+
+        std::uint32_t pages = 0u;
+        for (std::size_t offset = 0u;
+             offset < mem.heap.size();
+             offset += page_size) {
+            const std::uint32_t guest =
+                kJniProbeHeapBase +
+                static_cast<std::uint32_t>(offset);
+            (*v113_page_table)[guest >> page_bits] =
+                mem.heap.data() + offset;
+            ++pages;
+        }
+
+        v113_heap_pages_mapped = pages;
+        v113_activation_frame = frame;
+        v113_activation_ns =
+            V85SteadyNowNs() - begin_ns;
+        v113_heap_page_table_active = true;
+
+        AppendDiagnostic(
+            "V113 HEAP PAGETABLE ACTIVE frame=" +
+            std::to_string(frame) +
+            " base=0x" + JniProbeHex(kJniProbeHeapBase) +
+            " bytes=" + std::to_string(mem.heap.size()) +
+            " pages=" + std::to_string(pages) +
+            " activationMs=" + V85FormatMs(v113_activation_ns) +
+            " imageRelroStackTrampolines=CALLBACK");
+    }
+
+    std::string V113PageTableSummary() const {
+        return
+            "V113 HEAP PAGETABLE SUMMARY active=" +
+            std::string{
+                v113_heap_page_table_active ? "YES" : "NO"} +
+            " frame=" +
+            std::to_string(v113_activation_frame) +
+            " pages=" +
+            std::to_string(v113_heap_pages_mapped) +
+            " bytes=" +
+            std::to_string(
+                static_cast<std::uint64_t>(
+                    v113_heap_pages_mapped) *
+                (1ull << Dynarmic::A32::UserConfig::PAGE_BITS)) +
+            " activationMs=" +
+            V85FormatMs(v113_activation_ns);
     }
 
     std::uint32_t V112FindCallsiteSlot(
@@ -2744,6 +2817,7 @@
     }
 
     const char* RuntimeModeTag() const {
+        if (V113Enabled()) return "V113";
         if (V112Enabled()) return "V112";
         if (V111Enabled()) return "V111";
         if (V110Enabled()) return "V110";
@@ -2868,7 +2942,8 @@
                 line.rfind("V109 ", 0u) == 0u ||
                 line.rfind("V110 ", 0u) == 0u ||
                 line.rfind("V111 ", 0u) == 0u ||
-                line.rfind("V112 ", 0u) == 0u) {
+                line.rfind("V112 ", 0u) == 0u ||
+                line.rfind("V113 ", 0u) == 0u) {
                 return true;
             }
 
@@ -3098,6 +3173,7 @@
 
     void V90BeginFrame(std::uint32_t frame) {
         if(!V90Enabled())return;
+        V113MaybeActivateHeapPageTable(frame);
         v90_profile_frame=frame;
         v90_frame_worker_wait_ns=0u;
         v90_frame_boundary_worker_ns=0u;
@@ -4013,6 +4089,7 @@
         if (V110Enabled()) AppendDiagnostic(V110AudioSummary());
         if (V111Enabled()) AppendDiagnostic(V111AudioSampleSummary());
         if (V112Enabled()) V112EmitAudioBoundarySummary();
+        if (V113Enabled()) AppendDiagnostic(V113PageTableSummary());
         Append(mem.V90AllocatorSummary());
         Append(V90HostCostSummary());
     }
