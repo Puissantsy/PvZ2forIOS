@@ -1016,6 +1016,8 @@ constexpr std::uint64_t kCapsV109 =
 // v110 changes input/profiling/package selection only. Keep the validated
 // v109 runtime capability set byte-for-byte identical.
 constexpr std::uint64_t kCapsV110 = kCapsV109;
+// v111 is diagnostic-only: no runtime capability is added or removed.
+constexpr std::uint64_t kCapsV111 = kCapsV110;
 
 constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::PassiveRegistry, "PASSIVE_REGISTRY", nullptr, 0u, false},
@@ -1072,13 +1074,13 @@ constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::V107SemaphoreWakeRepair, "V107_SEMAPHORE_WAKE_REPAIR", "V107 Semaphore Wake", kCapsV107, true},
     {PvZ2DiagnosticMode::V108BankCompletionLiveness, "V108_BANK_COMPLETION_LIVENESS", "V108 Bank Completion", kCapsV108, true},
     {PvZ2DiagnosticMode::V109LeanAudioPerformance, "V109_LEAN_AUDIO_PERFORMANCE", "V109 Lean Audio", kCapsV109, false},
-    {PvZ2DiagnosticMode::V110AudioPinchUiAndroid, "V110_AUDIO_PINCH_UI_ANDROID", "V110 Android UI", kCapsV110, true},
-    {PvZ2DiagnosticMode::V110AudioPinchUiIpad, "V110_AUDIO_PINCH_UI_IPAD", "V110 iPad UI", kCapsV110, true},
+    {PvZ2DiagnosticMode::V110AudioPinchUiAndroid, "V110_AUDIO_PINCH_UI_ANDROID", "V110 Android UI", kCapsV110, false},
+    {PvZ2DiagnosticMode::V110AudioPinchUiIpad, "V110_AUDIO_PINCH_UI_IPAD", "V110 iPad UI", kCapsV110, false},
+    {PvZ2DiagnosticMode::V111AudioSamplingProfiler, "V111_AUDIO_SAMPLING_PROFILER", "V111 Audio Sampling", kCapsV111, true},
 };
 
 constexpr PvZ2DiagnosticMode kSelectableDiagnosticModes[] = {
-    PvZ2DiagnosticMode::V110AudioPinchUiAndroid,
-    PvZ2DiagnosticMode::V110AudioPinchUiIpad,
+    PvZ2DiagnosticMode::V111AudioSamplingProfiler,
 };
 
 } // namespace
@@ -3724,6 +3726,21 @@ public:
     std::uint64_t v110_audio_max_quantum_ns = 0u;
     std::uint64_t v110_pinch_batches = 0u;
     std::uint64_t v110_pinch_events_delivered = 0u;
+
+    // v111: sample the *saved* tid5 PC at sparse internal Dynarmic
+    // checkpoints. A checkpoint resumes the same worker immediately, so it
+    // does not introduce a guest-visible scheduler handoff.
+    static constexpr std::uint64_t kV111AudioSampleIntervalTicks = 131072ull;
+    std::uint64_t v111_audio_sample_tick_accumulator = 0u;
+    bool v111_audio_sample_due = false;
+    bool v111_audio_sample_halt_pending = false;
+    std::array<std::uint64_t, 5> v111_audio_samples{};
+    std::array<std::uint64_t, 5> v111_frame_audio_samples{};
+    std::uint64_t v111_audio_sample_count = 0u;
+    std::uint64_t v111_audio_forced_halts = 0u;
+    std::uint64_t v111_audio_pc_overflow = 0u;
+    std::unordered_map<std::uint32_t, std::uint64_t>
+        v111_audio_pc_samples;
 
     // v81: detailed event serialization provenance. The host-side mapper logs
     // UIKit -> framebuffer-pixel -> logical-point candidates; this counter

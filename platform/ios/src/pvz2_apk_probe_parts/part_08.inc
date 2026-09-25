@@ -358,8 +358,11 @@
 
     void AddTicks(std::uint64_t ticks) override {
         ticks_consumed += ticks;
-        // No clock call and no SVC: only guest PC/tick counters in tid5.
+        // No clock call and no SVC in Wwise. v110 keeps its guest-tick
+        // accounting; v111 only arms a sparse private JIT checkpoint.
         V110RecordAudioTicks(ticks);
+        const bool v111_audio_sample_due =
+            V111AccumulateAudioSampleTicks(ticks);
 
         if (V102Enabled() &&
             V103AudioRealtimeWindow() &&
@@ -507,6 +510,18 @@
                 jit->HaltExecution(
                     Dynarmic::HaltReason::UserDefined4);
             }
+            return;
+        }
+
+        if (v111_audio_sample_due &&
+            jit != nullptr &&
+            V111ArmAudioSampleHalt()) {
+            // The normal slice budget is still authoritative. Consume this
+            // block's ticks, halt only to expose a saved PC, then the worker
+            // loop resumes the same tid immediately with the remaining budget.
+            ticks_left -= ticks;
+            jit->HaltExecution(
+                Dynarmic::HaltReason::UserDefined4);
             return;
         }
 
@@ -1888,6 +1903,13 @@ bool JniProbePrepareRuntime(
             (callbacks.V110AndroidUiControlEnabled()
                  ? "UI_ANDROID native control"
                  : "UI_IPAD v75 remap"));
+    }
+    if (callbacks.V111Enabled()) {
+        callbacks.AppendDiagnostic(
+            "V111 SAMPLED-PC AUDIO PROFILER: v110 runtime preserved. "
+            "tid5 gets one private Dynarmic checkpoint every 131072 guest ticks; "
+            "the saved PC is sampled, no Wwise SVC is installed, and the same "
+            "worker resumes immediately without a scheduler handoff.");
     }
     if (callbacks.V108Enabled()) {
         callbacks.AppendDiagnostic(

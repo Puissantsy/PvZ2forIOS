@@ -780,15 +780,22 @@
     }
 
 
+    bool V111Enabled() const {
+        return diagnostic_mode ==
+            PvZ2DiagnosticMode::V111AudioSamplingProfiler;
+    }
+
     bool V110Enabled() const {
         return
             diagnostic_mode == PvZ2DiagnosticMode::V110AudioPinchUiAndroid ||
-            diagnostic_mode == PvZ2DiagnosticMode::V110AudioPinchUiIpad;
+            diagnostic_mode == PvZ2DiagnosticMode::V110AudioPinchUiIpad ||
+            V111Enabled();
     }
 
     bool V110AndroidUiControlEnabled() const {
-        return diagnostic_mode ==
-            PvZ2DiagnosticMode::V110AudioPinchUiAndroid;
+        return
+            diagnostic_mode == PvZ2DiagnosticMode::V110AudioPinchUiAndroid ||
+            V111Enabled();
     }
 
     V110AudioBucket V110AudioBucketForPc(std::uint32_t pc) const {
@@ -919,6 +926,121 @@
                 << ":wallMs=" << double(v110_audio_wall_ns[i]) / 1e6
                 << "/q=" << v110_audio_quanta[i]
                 << "/guestTicks=" << v110_audio_guest_ticks[i];
+        }
+        out << "}";
+        return out.str();
+    }
+
+    bool V111AccumulateAudioSampleTicks(std::uint64_t ticks) {
+        if (!V111Enabled() ||
+            !V110IsAudioWorker(current_probe_thread_id) ||
+            ticks == 0u) {
+            return false;
+        }
+        if (v111_audio_sample_due) {
+            return true;
+        }
+        v111_audio_sample_tick_accumulator += ticks;
+        if (v111_audio_sample_tick_accumulator >=
+            kV111AudioSampleIntervalTicks) {
+            v111_audio_sample_tick_accumulator %=
+                kV111AudioSampleIntervalTicks;
+            v111_audio_sample_due = true;
+        }
+        return v111_audio_sample_due;
+    }
+
+    bool V111ArmAudioSampleHalt() {
+        if (!V111Enabled() ||
+            !v111_audio_sample_due ||
+            v111_audio_sample_halt_pending) {
+            return false;
+        }
+        v111_audio_sample_halt_pending = true;
+        ++v111_audio_forced_halts;
+        return true;
+    }
+
+    bool V111ConsumeAudioSampleCheckpoint(
+        std::uint32_t tid,
+        std::uint32_t pc) {
+
+        if (!V111Enabled() ||
+            !V110IsAudioWorker(tid) ||
+            !v111_audio_sample_halt_pending) {
+            return false;
+        }
+
+        v111_audio_sample_halt_pending = false;
+        v111_audio_sample_due = false;
+
+        const std::size_t bucket =
+            static_cast<std::size_t>(
+                V110AudioBucketForPc(pc));
+        ++v111_audio_samples[bucket];
+        ++v111_audio_sample_count;
+        if (current_frame_number == v90_profile_frame) {
+            ++v111_frame_audio_samples[bucket];
+        }
+
+        const std::uint32_t pc_bin =
+            (pc & ~1u) & ~0x3fu;
+        const auto found =
+            v111_audio_pc_samples.find(pc_bin);
+        if (found != v111_audio_pc_samples.end()) {
+            ++found->second;
+        } else if (v111_audio_pc_samples.size() < 256u) {
+            v111_audio_pc_samples.emplace(pc_bin, 1u);
+        } else {
+            ++v111_audio_pc_overflow;
+        }
+
+        return true;
+    }
+
+    std::string V111FrameAudioSampleSummary() const {
+        std::ostringstream out;
+        out << " audio111Samples={";
+        for (std::size_t i = 0u; i < 5u; ++i) {
+            if (i != 0u) out << ",";
+            out << V110AudioBucketName(i)
+                << ":" << v111_frame_audio_samples[i];
+        }
+        out << "}";
+        return out.str();
+    }
+
+    std::string V111AudioSampleSummary() const {
+        std::vector<std::pair<std::uint32_t, std::uint64_t>> pcs(
+            v111_audio_pc_samples.begin(),
+            v111_audio_pc_samples.end());
+        std::sort(
+            pcs.begin(),
+            pcs.end(),
+            [](const auto& a, const auto& b) {
+                return a.second > b.second;
+            });
+
+        std::ostringstream out;
+        out << "V111 AUDIO SAMPLE SUMMARY"
+            << " intervalTicks=" << kV111AudioSampleIntervalTicks
+            << " samples=" << v111_audio_sample_count
+            << " forcedHalts=" << v111_audio_forced_halts
+            << " pcBins=" << v111_audio_pc_samples.size()
+            << " pcOverflow=" << v111_audio_pc_overflow
+            << " buckets={";
+        for (std::size_t i = 0u; i < 5u; ++i) {
+            if (i != 0u) out << ",";
+            out << V110AudioBucketName(i)
+                << ":" << v111_audio_samples[i];
+        }
+        out << "} topPcBins={";
+        const std::size_t limit =
+            std::min<std::size_t>(12u, pcs.size());
+        for (std::size_t i = 0u; i < limit; ++i) {
+            if (i != 0u) out << ",";
+            out << V46DescribeGuestAddress(pcs[i].first)
+                << ":" << pcs[i].second;
         }
         out << "}";
         return out.str();
@@ -2376,6 +2498,8 @@
     }
 
     const char* RuntimeModeTag() const {
+        if (V111Enabled()) return "V111";
+        if (V110Enabled()) return "V110";
         if (V109Enabled()) return "V109";
         if (V108Enabled()) return "V108";
         if (V107Enabled()) return "V107";
@@ -2493,7 +2617,10 @@
                 line.rfind("V105 ", 0u) == 0u ||
                 line.rfind("V106 ", 0u) == 0u ||
                 line.rfind("V107 ", 0u) == 0u ||
-                line.rfind("V108 ", 0u) == 0u) {
+                line.rfind("V108 ", 0u) == 0u ||
+                line.rfind("V109 ", 0u) == 0u ||
+                line.rfind("V110 ", 0u) == 0u ||
+                line.rfind("V111 ", 0u) == 0u) {
                 return true;
             }
 
@@ -2732,6 +2859,9 @@
             v110_frame_audio_ns.fill(0u);
             v110_frame_audio_quanta.fill(0u);
         }
+        if (V111Enabled()) {
+            v111_frame_audio_samples.fill(0u);
+        }
         v90_frame_alloc_calls_begin=
             mem.v90_alloc_calls_internal;
         v90_frame_alloc_scan_begin=
@@ -2896,6 +3026,9 @@
              <<" freeBlocks="<<mem.heap_free_blocks.size();
             if (v110_slow_frame) {
                 o << V110FrameAudioSummary();
+                if (V111Enabled()) {
+                    o << V111FrameAudioSampleSummary();
+                }
             }
             Append(o.str());
         }
@@ -3616,7 +3749,8 @@
             (reason?reason:"unknown"));
         Append(V90FontSummary());
         Append(V90FrameSummary());
-        if (V110Enabled()) Append(V110AudioSummary());
+        if (V110Enabled()) AppendDiagnostic(V110AudioSummary());
+        if (V111Enabled()) AppendDiagnostic(V111AudioSampleSummary());
         Append(mem.V90AllocatorSummary());
         Append(V90HostCostSummary());
     }

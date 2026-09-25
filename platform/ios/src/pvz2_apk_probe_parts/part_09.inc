@@ -722,6 +722,10 @@
                                         callbacks.V90Enabled() ? V85SteadyNowNs() : 0u;
                                     const Dynarmic::HaltReason worker_halt =
                                         jit.Run();
+                                    const bool v111_sample_checkpoint =
+                                        callbacks.V111ConsumeAudioSampleCheckpoint(
+                                            worker_state.id,
+                                            jit.Regs()[15]);
                                     if (callbacks.V90Enabled()) {
                                         const std::uint64_t elapsed_ns =
                                             V85SteadyNowNs() - v90_worker_begin_ns;
@@ -753,6 +757,20 @@
                                         Dynarmic::Has(
                                             worker_halt,
                                             Dynarmic::HaltReason::UserDefined3);
+
+                                    if (v111_sample_checkpoint &&
+                                        !worker_returned &&
+                                        !worker_fatal) {
+                                        callbacks.control_returned = false;
+                                        callbacks.soft_slice_timeout = true;
+                                        callbacks.ticks_consumed = 0u;
+                                        callbacks.next_tick_report =
+                                            std::numeric_limits<
+                                                std::uint64_t>::max();
+                                        result.message.clear();
+                                        clear_probe_halts();
+                                        continue;
+                                    }
 
                                     if (worker_returned)
                                         worker_state.runtime_completed = true;
@@ -1861,6 +1879,10 @@
                                     callbacks.V90Enabled() ? V85SteadyNowNs() : 0u;
                                 const Dynarmic::HaltReason worker_halt =
                                     jit.Run();
+                                const bool v111_sample_checkpoint =
+                                    callbacks.V111ConsumeAudioSampleCheckpoint(
+                                        worker_state.id,
+                                        jit.Regs()[15]);
                                 if (callbacks.V90Enabled()) {
                                     const std::uint64_t elapsed_ns =
                                         V85SteadyNowNs() - v90_worker_begin_ns;
@@ -1897,6 +1919,20 @@
                                     Dynarmic::Has(
                                         worker_halt,
                                         Dynarmic::HaltReason::UserDefined3);
+
+                                if (v111_sample_checkpoint &&
+                                    !worker_returned &&
+                                    !worker_fatal) {
+                                    callbacks.control_returned = false;
+                                    callbacks.soft_slice_timeout = true;
+                                    callbacks.ticks_consumed = 0u;
+                                    callbacks.next_tick_report =
+                                        std::numeric_limits<
+                                            std::uint64_t>::max();
+                                    result.message.clear();
+                                    clear_boundary_halts();
+                                    continue;
+                                }
 
                                 if (worker_returned) {
                                     worker_state.runtime_completed =

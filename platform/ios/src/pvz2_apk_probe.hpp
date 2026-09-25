@@ -369,6 +369,11 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // change between the two A/B arms.
     V110AudioPinchUiAndroid = 54u,
     V110AudioPinchUiIpad = 55u,
+
+    // v111: observational-only sampled-PC profiler for CAkAudioThread. The
+    // validated v110 runtime, pinch bridge, Android UI control and scheduler
+    // semantics remain unchanged.
+    V111AudioSamplingProfiler = 56u,
 };
 
 enum class PvZ2ProbeCapability : std::uint64_t {

@@ -530,7 +530,7 @@ void PvZ2HostNotifyDirectFrame(
     self.captionLabel.clipsToBounds =
         YES;
     self.captionLabel.text =
-        @"PvZ2 v110 — starting…\ntid5 profiler + pinch type 3 + UI package A/B";
+        @"PvZ2 v111 — starting…\ntid5 sampled-PC profiler; v110 runtime preserved";
 
     self.stopButton =
         [UIButton
@@ -719,7 +719,7 @@ void PvZ2HostNotifyDirectFrame(
 
     self.inputEnabled = NO;
     self.captionLabel.text =
-        @"PvZ2 v110 LIVE — HARD STOP requested; interrupting guest at the next Dynarmic checkpoint…";
+        @"PvZ2 v111 LIVE — HARD STOP requested; interrupting guest at the next Dynarmic checkpoint…";
     self.stopButton.enabled = NO;
     PvZ2RequestInteractiveStop();
 }
@@ -1574,7 +1574,7 @@ void PvZ2HostNotifyDirectFrame(
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — v110 Audio + Pinch + UI A/B";
+        @"PvZ2forIOS — v111 Audio Sampling Profiler";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -1583,7 +1583,7 @@ void PvZ2HostNotifyDirectFrame(
         NO;
 
     title.text =
-        @"PvZ2forIOS — v110 Audio + Pinch + UI A/B";
+        @"PvZ2forIOS — v111 Audio Sampling Profiler";
 
     title.font =
         [UIFont
@@ -1599,7 +1599,7 @@ void PvZ2HostNotifyDirectFrame(
         NO;
 
     explanation.text =
-        @"v110 preserves the validated v109 runtime. It adds exact Android UIPinchEvent type=3 delivery, low-overhead CAkAudioThread timing buckets, and a clean UI package A/B. Start with Android UI (control), then rerun the same scene with iPad UI (remap). Persistence remains intentionally out of this build.";
+        @"v111 preserves the validated v110 runtime and Android UI control. It adds sparse internal Dynarmic checkpoints on CAkAudioThread to sample the saved guest PC without Wwise SVC hooks or guest-visible scheduler handoffs. Reproduce the heavy-SFX and rapid seed-selection lags, then Hard Stop and export the full log.";
 
     explanation.numberOfLines = 0;
 
@@ -1611,11 +1611,11 @@ void PvZ2HostNotifyDirectFrame(
     self.v110UiPackageControl =
         [[UISegmentedControl alloc]
             initWithItems:@[
-                @"Android UI (control)",
-                @"iPad UI (remap)"
+                @"v111 Audio Sampling — Android UI control"
             ]];
     self.v110UiPackageControl.translatesAutoresizingMaskIntoConstraints = NO;
     self.v110UiPackageControl.selectedSegmentIndex = 0;
+    self.v110UiPackageControl.userInteractionEnabled = NO;
     self.v110SelectedUiModeIndex = 0;
 
     self.statusLabel =
@@ -2280,13 +2280,10 @@ void PvZ2HostNotifyDirectFrame(
     picker.modalPresentationStyle =
         UIModalPresentationFormSheet;
 
-    self.v110SelectedUiModeIndex =
-        self.v110UiPackageControl.selectedSegmentIndex == 1 ? 1 : 0;
+    self.v110SelectedUiModeIndex = 0;
 
     const PvZ2DiagnosticMode selectedMode =
-        self.v110SelectedUiModeIndex == 1
-            ? PvZ2DiagnosticMode::V110AudioPinchUiIpad
-            : PvZ2DiagnosticMode::V110AudioPinchUiAndroid;
+        PvZ2DiagnosticMode::V111AudioSamplingProfiler;
 
     const auto* selectedDescriptor =
         PvZ2DescribeDiagnosticMode(selectedMode);
@@ -2296,13 +2293,13 @@ void PvZ2HostNotifyDirectFrame(
             ? [NSString
                   stringWithUTF8String:
                       selectedDescriptor->internal_name]
-            : @"V110_AUDIO_PINCH_UI_ANDROID";
+            : @"V111_AUDIO_SAMPLING_PROFILER";
 
     [self
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v110 UI arm=%@. Audio profiler and pinch bridge are identical in both arms.",
+                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v111 mode=%@. Reproduce audio-heavy lag, then Hard Stop for the sampled-PC histogram.",
                     selectedModeName]];
 
     [self
@@ -2358,9 +2355,7 @@ void PvZ2HostNotifyDirectFrame(
     }
 
     const PvZ2DiagnosticMode diagnosticMode =
-        self.v110SelectedUiModeIndex == 1
-            ? PvZ2DiagnosticMode::V110AudioPinchUiIpad
-            : PvZ2DiagnosticMode::V110AudioPinchUiAndroid;
+        PvZ2DiagnosticMode::V111AudioSamplingProfiler;
 
     const auto* diagnosticDescriptor =
         PvZ2DescribeDiagnosticMode(diagnosticMode);
@@ -2379,7 +2374,7 @@ void PvZ2HostNotifyDirectFrame(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v110 Audio + Pinch + UI A/B started mode=%@; PID=%d ===",
+                    @"=== PvZ2 v111 Audio Sampling Profiler started mode=%@; PID=%d ===",
                     diagnosticModeName,
                     getpid()]];
 
@@ -2893,14 +2888,14 @@ void PvZ2HostNotifyDirectFrame(
                                     finishRunWithMessage:
                                         [NSString
                                             stringWithFormat:
-                                                @"PvZ2 v110 LIVE — HARD STOPPED after %u guest frames.\nClose to inspect the v110 runtime log.",
+                                                @"PvZ2 v111 LIVE — HARD STOPPED after %u guest frames.\nClose to inspect the v111 runtime log.",
                                                 result.draw_frames_completed]];
                             } else {
                                 [selfRef.liveController
                                     finishRunWithMessage:
                                         [NSString
                                             stringWithFormat:
-                                                @"PvZ2 v110 LIVE — run finished after %u guest frames.\nClose to inspect the v110 runtime log.",
+                                                @"PvZ2 v111 LIVE — run finished after %u guest frames.\nClose to inspect the v111 runtime log.",
                                                 result.draw_frames_completed]];
                             }
 
