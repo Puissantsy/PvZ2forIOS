@@ -530,7 +530,7 @@ void PvZ2HostNotifyDirectFrame(
     self.captionLabel.clipsToBounds =
         YES;
     self.captionLabel.text =
-        @"PvZ2 v114 — starting…\nv113 heap optimization + natural main-thread profiler";
+        @"PvZ2 v115 — starting…\nheap + lower main-stack page table + v114 telemetry";
 
     self.stopButton =
         [UIButton
@@ -719,7 +719,7 @@ void PvZ2HostNotifyDirectFrame(
 
     self.inputEnabled = NO;
     self.captionLabel.text =
-        @"PvZ2 v114 LIVE — HARD STOP requested; stopping profiled guest at the next checkpoint…";
+        @"PvZ2 v115 LIVE — HARD STOP requested; stopping guest at the next checkpoint…";
     self.stopButton.enabled = NO;
     PvZ2RequestInteractiveStop();
 }
@@ -1574,7 +1574,7 @@ void PvZ2HostNotifyDirectFrame(
         UIColor.systemBackgroundColor;
 
     self.title =
-        @"PvZ2forIOS — v114 Main Boundary Profiler";
+        @"PvZ2forIOS — v115 Main Stack Page Table";
 
     UILabel *title =
         [[UILabel alloc] init];
@@ -1583,7 +1583,7 @@ void PvZ2HostNotifyDirectFrame(
         NO;
 
     title.text =
-        @"PvZ2forIOS — v114 Main Boundary Profiler";
+        @"PvZ2forIOS — v115 Main Stack Page Table";
 
     title.font =
         [UIFont
@@ -1599,7 +1599,7 @@ void PvZ2HostNotifyDirectFrame(
         NO;
 
     explanation.text =
-        @"v114 preserves the validated v113 heap page-table optimization and adds a low-overhead natural profiler for the Native_onDrawFrame main thread. It records existing jit.Run spans, natural import LR/callsites, host import cost, and long spans with no imports. No periodic halt, scheduler change, Wwise patch, or new performance optimization is added.";
+        @"v115 keeps the validated v113 heap page table and all v114 natural main-thread telemetry, then directly maps only stack 0x20000000..0x200fefff. The final page 0x200ff000..0x200fffff stays callback-backed to preserve the observed LR-slot/provenance probes. No scheduler, Wwise, input, rendering or guest-code behavior is changed.";
 
     explanation.numberOfLines = 0;
 
@@ -1611,7 +1611,7 @@ void PvZ2HostNotifyDirectFrame(
     self.v110UiPackageControl =
         [[UISegmentedControl alloc]
             initWithItems:@[
-                @"v114 Main Boundary — Android UI control"
+                @"v115 Main Stack — Android UI control"
             ]];
     self.v110UiPackageControl.translatesAutoresizingMaskIntoConstraints = NO;
     self.v110UiPackageControl.selectedSegmentIndex = 0;
@@ -2283,7 +2283,7 @@ void PvZ2HostNotifyDirectFrame(
     self.v110SelectedUiModeIndex = 0;
 
     const PvZ2DiagnosticMode selectedMode =
-        PvZ2DiagnosticMode::V114MainBoundaryProfiler;
+        PvZ2DiagnosticMode::V115DynarmicMainStackPageTable;
 
     const auto* selectedDescriptor =
         PvZ2DescribeDiagnosticMode(selectedMode);
@@ -2293,13 +2293,13 @@ void PvZ2HostNotifyDirectFrame(
             ? [NSString
                   stringWithUTF8String:
                       selectedDescriptor->internal_name]
-            : @"V114_MAIN_BOUNDARY_PROFILER";
+            : @"V115_DYNARMIC_MAIN_STACK_PAGETABLE";
 
     [self
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v114 mode=%@. Reproduce the laggy ~770 animation, seed spam, and a heavy late wave; then Hard Stop for main-thread callsite/span timing.",
+                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v115 mode=%@. Reproduce the ~700–770 animation first, then Day 4/late wave. Confirm performance gain and intact LR-SLOT telemetry, then Hard Stop.",
                     selectedModeName]];
 
     [self
@@ -2355,7 +2355,7 @@ void PvZ2HostNotifyDirectFrame(
     }
 
     const PvZ2DiagnosticMode diagnosticMode =
-        PvZ2DiagnosticMode::V114MainBoundaryProfiler;
+        PvZ2DiagnosticMode::V115DynarmicMainStackPageTable;
 
     const auto* diagnosticDescriptor =
         PvZ2DescribeDiagnosticMode(diagnosticMode);
@@ -2374,7 +2374,7 @@ void PvZ2HostNotifyDirectFrame(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v114 Main Boundary Profiler started mode=%@; PID=%d ===",
+                    @"=== PvZ2 v115 Main Stack Page Table started mode=%@; PID=%d ===",
                     diagnosticModeName,
                     getpid()]];
 
@@ -2888,14 +2888,14 @@ void PvZ2HostNotifyDirectFrame(
                                     finishRunWithMessage:
                                         [NSString
                                             stringWithFormat:
-                                                @"PvZ2 v114 LIVE — HARD STOPPED after %u guest frames.\nClose to inspect the v114 runtime log.",
+                                                @"PvZ2 v115 LIVE — HARD STOPPED after %u guest frames.\nClose to inspect the v115 runtime log.",
                                                 result.draw_frames_completed]];
                             } else {
                                 [selfRef.liveController
                                     finishRunWithMessage:
                                         [NSString
                                             stringWithFormat:
-                                                @"PvZ2 v114 LIVE — run finished after %u guest frames.\nClose to inspect the v114 runtime log.",
+                                                @"PvZ2 v115 LIVE — run finished after %u guest frames.\nClose to inspect the v115 runtime log.",
                                                 result.draw_frames_completed]];
                             }
 
