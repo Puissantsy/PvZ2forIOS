@@ -719,7 +719,7 @@ void PvZ2HostNotifyDirectFrame(
 
     self.inputEnabled = NO;
     self.captionLabel.text =
-        @"PvZ2 v117 LIVE — HARD STOP requested; stopping guest at the next checkpoint…";
+        @"PvZ2 v118 LIVE — HARD STOP requested; stopping guest at the next checkpoint…";
     self.stopButton.enabled = NO;
     PvZ2RequestInteractiveStop();
 }
@@ -1341,7 +1341,7 @@ void PvZ2HostNotifyDirectFrame(
         self.captionLabel.text =
             [NSString
                 stringWithFormat:
-                    @"PvZ2 v117 LIVE • frame %lu • %@\n%lu×%lu guest • direct GPU 1:1 + audio",
+                    @"PvZ2 v118 LIVE • frame %lu • %@\n%lu×%lu guest • direct GPU 1:1 + audio",
                     (unsigned long)frame,
                     touchState,
                     (unsigned long)width,
@@ -2283,7 +2283,7 @@ void PvZ2HostNotifyDirectFrame(
     self.v110SelectedUiModeIndex = 0;
 
     const PvZ2DiagnosticMode selectedMode =
-        PvZ2DiagnosticMode::V117LeanPerformance;
+        PvZ2DiagnosticMode::V118ProductionLean;
 
     const auto* selectedDescriptor =
         PvZ2DescribeDiagnosticMode(selectedMode);
@@ -2293,13 +2293,13 @@ void PvZ2HostNotifyDirectFrame(
             ? [NSString
                   stringWithUTF8String:
                       selectedDescriptor->internal_name]
-            : @"V117_LEAN_PERFORMANCE";
+            : @"V118_PRODUCTION_LEAN";
 
     [self
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v117 mode=%@. Reproduce the laggy animation first and note its frame range. This lean build deliberately removes V112/V114/V110 hot profiling and V93-V95 LR watches while keeping lightweight V90 frame timing. Then sanity-check rapid plant selection/audio and Hard Stop.",
+                    @"STEP 3: select BOTH files at once: the original PvZ2 1.5.252752 APK and main.7.com.ea.game.pvz2_row.obb. v118 mode=%@. Run the same full path through Day 4. Focus on SFX-heavy sections and rapid plant selection: v118 removes the remaining PCM/input/BankMgr diagnostic hot-path work without changing Wwise, scheduler, 32 kHz audio, or gameplay behavior. Note any audio glitch and any visible transition stall, then Hard Stop.",
                     selectedModeName]];
 
     [self
@@ -2355,7 +2355,7 @@ void PvZ2HostNotifyDirectFrame(
     }
 
     const PvZ2DiagnosticMode diagnosticMode =
-        PvZ2DiagnosticMode::V117LeanPerformance;
+        PvZ2DiagnosticMode::V118ProductionLean;
 
     const auto* diagnosticDescriptor =
         PvZ2DescribeDiagnosticMode(diagnosticMode);
@@ -2374,7 +2374,7 @@ void PvZ2HostNotifyDirectFrame(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v117 Lean Performance started mode=%@; PID=%d ===",
+                    @"=== PvZ2 v118 Production Lean started mode=%@; PID=%d ===",
                     diagnosticModeName,
                     getpid()]];
 
@@ -2888,14 +2888,14 @@ void PvZ2HostNotifyDirectFrame(
                                     finishRunWithMessage:
                                         [NSString
                                             stringWithFormat:
-                                                @"PvZ2 v117 LIVE — HARD STOPPED after %u guest frames.\nClose to inspect the v117 runtime log.",
+                                                @"PvZ2 v118 LIVE — HARD STOPPED after %u guest frames.\nClose to inspect the v118 runtime log.",
                                                 result.draw_frames_completed]];
                             } else {
                                 [selfRef.liveController
                                     finishRunWithMessage:
                                         [NSString
                                             stringWithFormat:
-                                                @"PvZ2 v117 LIVE — run finished after %u guest frames.\nClose to inspect the v117 runtime log.",
+                                                @"PvZ2 v118 LIVE — run finished after %u guest frames.\nClose to inspect the v118 runtime log.",
                                                 result.draw_frames_completed]];
                             }
 
@@ -2952,11 +2952,11 @@ void PvZ2HostNotifyDirectFrame(
 
                             if (result.hard_stop_requested) {
                                 [selfRef.liveController finishRunWithMessage:
-                                    @"PvZ2 v117 LIVE — HARD STOPPED.\nGuest execution was interrupted at the next Dynarmic checkpoint. Close to inspect the v117 runtime log."];
+                                    @"PvZ2 v118 LIVE — HARD STOPPED.\nGuest execution was interrupted at the next Dynarmic checkpoint. Close to inspect the v118 runtime log."];
                             } else {
                                 [selfRef.liveController finishRunWithMessage:
                                     [NSString stringWithFormat:
-                                        @"PvZ2 v117 LIVE — guest stopped/crashed.\n%@\nClose to inspect the v117 runtime log.", message]];
+                                        @"PvZ2 v118 LIVE — guest stopped/crashed.\n%@\nClose to inspect the v118 runtime log.", message]];
                             }
 
                         } else {

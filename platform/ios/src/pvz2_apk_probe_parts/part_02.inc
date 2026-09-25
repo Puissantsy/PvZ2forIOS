@@ -780,9 +780,16 @@
     }
 
 
-    bool V117Enabled() const {
+    bool V118Enabled() const {
         return diagnostic_mode ==
-            PvZ2DiagnosticMode::V117LeanPerformance;
+            PvZ2DiagnosticMode::V118ProductionLean;
+    }
+
+    bool V117Enabled() const {
+        return
+            diagnostic_mode ==
+                PvZ2DiagnosticMode::V117LeanPerformance ||
+            V118Enabled();
     }
 
     bool V116Enabled() const {
@@ -2963,7 +2970,7 @@
 
             std::uint32_t v104_pcm_hash = 2166136261u;
             bool v104_pcm_nonzero = false;
-            if (V104Enabled() && pcm != nullptr) {
+            if (V104Enabled() && !V118Enabled() && pcm != nullptr) {
                 for (std::uint32_t i = 0u; i < bytes; ++i) {
                     const std::uint8_t value = pcm[i];
                     v104_pcm_nonzero =
@@ -2983,7 +2990,7 @@
 
             ++v99_audio_enqueues;
 
-            if (V104Enabled()) {
+            if (V104Enabled() && !V118Enabled()) {
                 const bool repeated_nonzero =
                     v104_pcm_nonzero &&
                     v104_pcm_prev_nonzero &&
@@ -3017,7 +3024,8 @@
                 v104_pcm_prev_nonzero = v104_pcm_nonzero;
             }
 
-            if (V99ShouldLogCounter(
+            if (!V118Enabled() &&
+                V99ShouldLogCounter(
                     v99_audio_enqueues)) {
                 const std::uint32_t frame_bytes =
                     std::max<std::uint32_t>(
@@ -3238,6 +3246,7 @@
     }
 
     const char* RuntimeModeTag() const {
+        if (V118Enabled()) return "V118";
         if (V117Enabled()) return "V117";
         if (V116Enabled()) return "V116";
         if (V115Enabled()) return "V115";
@@ -3477,7 +3486,8 @@
         v85_last_touch_phase = event.phase;
         v85_last_touch_x = event.x;
         v85_last_touch_y = event.y;
-        if (event.phase == 0u || event.phase == 3u || event.phase == 4u) {
+        if (!V118Enabled() &&
+            (event.phase == 0u || event.phase == 3u || event.phase == 4u)) {
             Append("V85 PERF input stage=UI_ProcessEvents frame=" +
                    std::to_string(current_frame_number) +
                    " phase=" + std::to_string(event.phase) +
@@ -3494,6 +3504,7 @@
         ++v85_touch_action_samples;
         v85_touch_action_total_ns += elapsed_ns;
         v85_touch_action_max_ns = std::max(v85_touch_action_max_ns, elapsed_ns);
+        if (V118Enabled()) return;
         Append("V85 PERF input stage=guestAction frame=" +
                std::to_string(current_frame_number) +
                " action=" + action +

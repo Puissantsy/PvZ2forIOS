@@ -597,6 +597,25 @@
 
     void AppendDiagnostic(
         const std::string& line) {
+        if (V118Enabled()) {
+            const bool hot_runtime_diagnostic =
+                line.rfind("V96 MAIN BLOCK ", 0u) == 0u ||
+                line.rfind("V99 AUDIO ENQUEUE ", 0u) == 0u ||
+                line.rfind("V99 AUDIO CALLBACK ", 0u) == 0u ||
+                line.rfind("V99 AUDIO CALLBACK BACKLOG", 0u) == 0u ||
+                line.rfind("V100 AUDIO CALLBACK ABI ", 0u) == 0u ||
+                line.rfind("V102 AUDIO PACER ", 0u) == 0u ||
+                line.rfind("V104 AUDIO PCM REPEAT ", 0u) == 0u ||
+                line.rfind("V104 AUDIO HANDSHAKE ", 0u) == 0u ||
+                line.rfind("V106 BANK ", 0u) == 0u ||
+                line.rfind("V107 BANK ", 0u) == 0u ||
+                line.rfind("V108 BANK ", 0u) == 0u ||
+                line.rfind("V108 AUDIO EVENT ", 0u) == 0u ||
+                line.rfind("V108 AUDIO LIVENESS PULSE ", 0u) == 0u;
+            if (hot_runtime_diagnostic) {
+                return;
+            }
+        }
         AppendWithClass(
             ProbeLogClass::Diagnostic,
             line);
@@ -1918,6 +1937,15 @@ bool JniProbePrepareRuntime(
             "tid5 import SVCs are timed. LR identifies the exact guest callsite, "
             "and wall time between imports is measured only inside the same "
             "jit.Run worker span so scheduler sleep is excluded.");
+    }
+    if (callbacks.V118Enabled()) {
+        callbacks.AppendDiagnostic(
+            "V118 PRODUCTION LEAN: v117 functional runtime is unchanged. "
+            "Remaining hot diagnostics are removed: no PCM FNV/repeat scan, "
+            "no per-touch V85 lines, and no V96/V99/V100/V102/V104/V106/V107/"
+            "V108 hot runtime log stream. Audio handshake, 32 kHz clock, "
+            "BankMgr semaphore repair/liveness, heap/stack/RX direct mappings "
+            "and lightweight periodic V90 frame timing remain active.");
     }
     if (callbacks.V117Enabled()) {
         callbacks.AppendDiagnostic(

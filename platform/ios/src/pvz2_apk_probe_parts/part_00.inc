@@ -1041,6 +1041,9 @@ constexpr std::uint64_t kCapsV117 =
       kCapReturnProvenance |
       kCapCallerReturnWatch |
       kCapPreciseCallerReturnWatch);
+// v118 is deliberately capability-identical to v117. It changes only the
+// amount of diagnostic work performed on validated hot functional paths.
+constexpr std::uint64_t kCapsV118 = kCapsV117;
 
 constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::PassiveRegistry, "PASSIVE_REGISTRY", nullptr, 0u, false},
@@ -1105,11 +1108,12 @@ constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::V114MainBoundaryProfiler, "V114_MAIN_BOUNDARY_PROFILER", "V114 Main Boundary", kCapsV114, false},
     {PvZ2DiagnosticMode::V115DynarmicMainStackPageTable, "V115_DYNARMIC_MAIN_STACK_PAGETABLE", "V115 Main Stack", kCapsV115, false},
     {PvZ2DiagnosticMode::V116DynarmicReadOnlyImagePageTable, "V116_DYNARMIC_READONLY_IMAGE_PAGETABLE", "V116 RX Image", kCapsV116, false},
-    {PvZ2DiagnosticMode::V117LeanPerformance, "V117_LEAN_PERFORMANCE", "V117 Lean Performance", kCapsV117, true},
+    {PvZ2DiagnosticMode::V117LeanPerformance, "V117_LEAN_PERFORMANCE", "V117 Lean Performance", kCapsV117, false},
+    {PvZ2DiagnosticMode::V118ProductionLean, "V118_PRODUCTION_LEAN", "V118 Production Lean", kCapsV118, true},
 };
 
 constexpr PvZ2DiagnosticMode kSelectableDiagnosticModes[] = {
-    PvZ2DiagnosticMode::V117LeanPerformance,
+    PvZ2DiagnosticMode::V118ProductionLean,
 };
 
 } // namespace

@@ -407,6 +407,11 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // profilers. With V93-V95 watches gone, the complete 1 MiB main stack can
     // use Dynarmic's direct page table.
     V117LeanPerformance = 62u,
+
+    // v118: preserve the complete v117 functional/runtime path, but remove the
+    // remaining diagnostic work that still runs exactly during SFX bursts,
+    // rapid touch input and synchronous SoundBank waits.
+    V118ProductionLean = 63u,
 };
 
 enum class PvZ2ProbeCapability : std::uint64_t {
