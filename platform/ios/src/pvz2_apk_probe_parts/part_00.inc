@@ -1024,6 +1024,9 @@ constexpr std::uint64_t kCapsV112 = kCapsV110;
 constexpr std::uint64_t kCapsV113 = kCapsV112;
 // v114 is diagnostic-only and keeps the v113 runtime/capabilities unchanged.
 constexpr std::uint64_t kCapsV114 = kCapsV113;
+// v115 changes only Dynarmic memory access for the lower 255/256 main-stack
+// pages; all v114 runtime capabilities and telemetry remain enabled.
+constexpr std::uint64_t kCapsV115 = kCapsV114;
 
 constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::PassiveRegistry, "PASSIVE_REGISTRY", nullptr, 0u, false},
@@ -1085,11 +1088,12 @@ constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::V111AudioSamplingProfiler, "V111_AUDIO_SAMPLING_PROFILER", "V111 Audio Sampling", kCapsV111, false},
     {PvZ2DiagnosticMode::V112AudioBoundaryProfiler, "V112_AUDIO_BOUNDARY_PROFILER", "V112 Audio Boundary", kCapsV112, false},
     {PvZ2DiagnosticMode::V113DynarmicHeapPageTable, "V113_DYNARMIC_HEAP_PAGETABLE", "V113 Heap Page Table", kCapsV113, false},
-    {PvZ2DiagnosticMode::V114MainBoundaryProfiler, "V114_MAIN_BOUNDARY_PROFILER", "V114 Main Boundary", kCapsV114, true},
+    {PvZ2DiagnosticMode::V114MainBoundaryProfiler, "V114_MAIN_BOUNDARY_PROFILER", "V114 Main Boundary", kCapsV114, false},
+    {PvZ2DiagnosticMode::V115DynarmicMainStackPageTable, "V115_DYNARMIC_MAIN_STACK_PAGETABLE", "V115 Main Stack", kCapsV115, true},
 };
 
 constexpr PvZ2DiagnosticMode kSelectableDiagnosticModes[] = {
-    PvZ2DiagnosticMode::V114MainBoundaryProfiler,
+    PvZ2DiagnosticMode::V115DynarmicMainStackPageTable,
 };
 
 } // namespace
@@ -3814,6 +3818,15 @@ public:
     std::uint32_t v113_heap_pages_mapped = 0u;
     std::uint32_t v113_activation_frame = 0u;
     std::uint64_t v113_activation_ns = 0u;
+
+    // v115: direct-map the lower 255/256 pages of the fixed 1 MiB main stack.
+    // The final page 0x200ff000..0x200fffff remains callback-backed because
+    // every v114 LR-slot observation landed there and the v94/v95 provenance
+    // probes depend on callback visibility for those watched addresses.
+    bool v115_stack_page_table_active = false;
+    std::uint32_t v115_stack_pages_mapped = 0u;
+    std::uint32_t v115_stack_callback_pages = 1u;
+    std::uint64_t v115_stack_activation_ns = 0u;
 
     // v114: natural Native_onDrawFrame/main-thread boundary profiler. No
     // periodic halt or guest patch is installed. Each existing main jit.Run
