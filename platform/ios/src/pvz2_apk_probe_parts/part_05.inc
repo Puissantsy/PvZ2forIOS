@@ -701,6 +701,8 @@
                         method_name ==
                             "Config_ConfigKeyExists") {
 
+                        V128LoadConfigOnce();
+
                         const std::string key =
                             java_string_value(
                                 java_arg_word(0u));
@@ -731,6 +733,8 @@
                         method_name ==
                             "Config_ConfigWriteString") {
 
+                        V128LoadConfigOnce();
+
                         const std::string key =
                             java_string_value(
                                 java_arg_word(0u));
@@ -741,6 +745,7 @@
                         v51_config_keys.insert(key);
                         v51_config_strings[key] = value;
                         regs[0] = 1u;
+                        V128FlushConfig();
 
                         if (v51_config_logged_keys
                                 .insert(
@@ -760,6 +765,8 @@
                         method_name ==
                             "Config_ConfigWriteInteger") {
 
+                        V128LoadConfigOnce();
+
                         const std::string key =
                             java_string_value(
                                 java_arg_word(0u));
@@ -770,6 +777,7 @@
                         v51_config_keys.insert(key);
                         v51_config_integers[key] = value;
                         regs[0] = 1u;
+                        V128FlushConfig();
 
                         if (v51_config_logged_keys
                                 .insert(
@@ -788,6 +796,8 @@
                         method_name ==
                             "Config_ConfigWriteBoolean") {
 
+                        V128LoadConfigOnce();
+
                         const std::string key =
                             java_string_value(
                                 java_arg_word(0u));
@@ -797,6 +807,7 @@
                         v51_config_keys.insert(key);
                         v51_config_booleans[key] = value;
                         regs[0] = 1u;
+                        V128FlushConfig();
 
                         if (v51_config_logged_keys
                                 .insert(
@@ -816,6 +827,8 @@
                     if (family == 0 &&
                         method_name ==
                             "Config_ConfigReadString") {
+
+                        V128LoadConfigOnce();
 
                         const std::string key =
                             java_string_value(
@@ -849,6 +862,8 @@
                         method_name ==
                             "Config_ConfigReadInteger") {
 
+                        V128LoadConfigOnce();
+
                         const std::string key =
                             java_string_value(
                                 java_arg_word(0u));
@@ -879,6 +894,8 @@
                     if (family == 1 &&
                         method_name ==
                             "Config_ConfigReadBoolean") {
+
+                        V128LoadConfigOnce();
 
                         const std::string key =
                             java_string_value(

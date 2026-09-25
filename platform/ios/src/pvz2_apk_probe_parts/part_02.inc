@@ -785,6 +785,206 @@
             PvZ2DiagnosticMode::V128PersistentUserFs;
     }
 
+    std::string V128ConfigHostPath() const {
+        const char* home_env = std::getenv("HOME");
+        if (home_env == nullptr || *home_env == '\0') {
+            return {};
+        }
+        return std::string{home_env} +
+            "/Library/Application Support/PvZ2forIOS/config-v1.txt";
+    }
+
+    static std::string V128HexEncode(const std::string& value) {
+        static constexpr char kHex[] = "0123456789abcdef";
+        std::string out;
+        out.reserve(value.size() * 2u);
+        for (const unsigned char ch : value) {
+            out.push_back(kHex[(ch >> 4u) & 0x0fu]);
+            out.push_back(kHex[ch & 0x0fu]);
+        }
+        return out;
+    }
+
+    static bool V128HexDecode(const std::string& value, std::string& out) {
+        if ((value.size() & 1u) != 0u) return false;
+        const auto nibble = [](char ch) -> int {
+            if (ch >= '0' && ch <= '9') return ch - '0';
+            if (ch >= 'a' && ch <= 'f') return ch - 'a' + 10;
+            if (ch >= 'A' && ch <= 'F') return ch - 'A' + 10;
+            return -1;
+        };
+        out.clear();
+        out.reserve(value.size() / 2u);
+        for (std::size_t i = 0u; i < value.size(); i += 2u) {
+            const int hi = nibble(value[i]);
+            const int lo = nibble(value[i + 1u]);
+            if (hi < 0 || lo < 0) return false;
+            out.push_back(static_cast<char>((hi << 4) | lo));
+        }
+        return true;
+    }
+
+    bool V128EnsureHostParent(const std::string& full_path) {
+        const std::size_t last = full_path.find_last_of('/');
+        if (last == std::string::npos) return true;
+        const std::string directory = full_path.substr(0u, last);
+        std::size_t pos = 1u;
+        while (true) {
+            pos = directory.find('/', pos);
+            const std::string prefix =
+                pos == std::string::npos
+                    ? directory
+                    : directory.substr(0u, pos);
+            if (!prefix.empty() &&
+                ::mkdir(prefix.c_str(), 0755) != 0 &&
+                errno != EEXIST) {
+                ++v128_config_failures;
+                return false;
+            }
+            if (pos == std::string::npos) break;
+            ++pos;
+        }
+        return true;
+    }
+
+    void V128LoadConfigOnce() {
+        if (!V128Enabled() || v128_config_loaded) return;
+        v128_config_loaded = true;
+
+        const std::string path = V128ConfigHostPath();
+        if (path.empty()) {
+            ++v128_config_failures;
+            return;
+        }
+
+        std::FILE* file = std::fopen(path.c_str(), "rb");
+        if (file == nullptr) {
+            if (errno != ENOENT) ++v128_config_failures;
+            return;
+        }
+
+        std::string payload;
+        std::array<char, 4096> buffer{};
+        for (;;) {
+            const std::size_t got =
+                std::fread(buffer.data(), 1u, buffer.size(), file);
+            if (got != 0u) payload.append(buffer.data(), got);
+            if (got < buffer.size()) break;
+        }
+        const bool read_ok = !std::ferror(file);
+        std::fclose(file);
+        if (!read_ok) {
+            ++v128_config_failures;
+            return;
+        }
+
+        std::istringstream input(payload);
+        std::string line;
+        while (std::getline(input, line)) {
+            const std::size_t p1 = line.find('\t');
+            const std::size_t p2 =
+                p1 == std::string::npos
+                    ? std::string::npos
+                    : line.find('\t', p1 + 1u);
+            if (p1 == std::string::npos ||
+                p2 == std::string::npos ||
+                p1 != 1u) {
+                continue;
+            }
+
+            std::string key;
+            if (!V128HexDecode(
+                    line.substr(p1 + 1u, p2 - p1 - 1u),
+                    key)) {
+                continue;
+            }
+
+            const char type = line[0];
+            const std::string raw = line.substr(p2 + 1u);
+            if (type == 'S') {
+                std::string value;
+                if (!V128HexDecode(raw, value)) continue;
+                v51_config_keys.insert(key);
+                v51_config_strings[key] = std::move(value);
+            } else if (type == 'I') {
+                try {
+                    const long long value = std::stoll(raw);
+                    v51_config_keys.insert(key);
+                    v51_config_integers[key] =
+                        static_cast<std::int32_t>(value);
+                } catch (...) {
+                }
+            } else if (type == 'B' &&
+                       (raw == "0" || raw == "1")) {
+                v51_config_keys.insert(key);
+                v51_config_booleans[key] = raw == "1";
+            }
+        }
+
+        ++v128_config_loads;
+        AppendDiagnostic(
+            "V128 CONFIG LOAD keys=" +
+            std::to_string(v51_config_keys.size()) +
+            " bytes=" + std::to_string(payload.size()));
+    }
+
+    bool V128FlushConfig() {
+        if (!V128Enabled()) return true;
+        V128LoadConfigOnce();
+
+        const std::string path = V128ConfigHostPath();
+        if (path.empty() || !V128EnsureHostParent(path)) {
+            ++v128_config_failures;
+            return false;
+        }
+
+        std::ostringstream out;
+        for (const auto& entry : v51_config_strings) {
+            out << "S\t" << V128HexEncode(entry.first)
+                << "\t" << V128HexEncode(entry.second) << "\n";
+        }
+        for (const auto& entry : v51_config_integers) {
+            out << "I\t" << V128HexEncode(entry.first)
+                << "\t" << entry.second << "\n";
+        }
+        for (const auto& entry : v51_config_booleans) {
+            out << "B\t" << V128HexEncode(entry.first)
+                << "\t" << (entry.second ? "1" : "0") << "\n";
+        }
+        const std::string payload = out.str();
+        const std::string temp = path + ".tmp";
+
+        std::FILE* file = std::fopen(temp.c_str(), "wb");
+        if (file == nullptr) {
+            ++v128_config_failures;
+            return false;
+        }
+
+        const std::size_t wrote =
+            payload.empty()
+                ? 0u
+                : std::fwrite(payload.data(), 1u, payload.size(), file);
+        bool ok = payload.empty() || wrote == payload.size();
+        if (ok && std::fflush(file) != 0) ok = false;
+        if (ok && ::fsync(::fileno(file)) != 0) ok = false;
+        if (std::fclose(file) != 0) ok = false;
+        if (ok && ::rename(temp.c_str(), path.c_str()) != 0) ok = false;
+
+        if (!ok) {
+            ::unlink(temp.c_str());
+            ++v128_config_failures;
+            AppendDiagnostic("V128 CONFIG FLUSH FAILED");
+            return false;
+        }
+
+        ++v128_config_flushes;
+        AppendDiagnostic(
+            "V128 CONFIG FLUSH keys=" +
+            std::to_string(v51_config_keys.size()) +
+            " bytes=" + std::to_string(payload.size()));
+        return true;
+    }
+
     bool V127Enabled() const {
         return diagnostic_mode ==
                    PvZ2DiagnosticMode::V127AudioWorkerDrain ||
@@ -5524,7 +5724,10 @@
                 " mkdirs=" + std::to_string(v128_userfs_mkdirs) +
                 " unlinks=" + std::to_string(v128_userfs_unlinks) +
                 " failures=" + std::to_string(v128_userfs_disk_failures) +
-                " dirtyRemaining=" + std::to_string(v128_userfs_dirty_paths.size()));
+                " dirtyRemaining=" + std::to_string(v128_userfs_dirty_paths.size()) +
+                " configLoads=" + std::to_string(v128_config_loads) +
+                " configFlushes=" + std::to_string(v128_config_flushes) +
+                " configFailures=" + std::to_string(v128_config_failures));
         }
         if (V110ProfilingEnabled()) AppendDiagnostic(V110AudioSummary());
         if (V111Enabled()) AppendDiagnostic(V111AudioSampleSummary());

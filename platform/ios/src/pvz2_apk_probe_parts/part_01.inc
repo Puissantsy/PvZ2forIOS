@@ -724,6 +724,10 @@
     std::uint64_t v128_userfs_disk_failures = 0u;
     std::uint64_t v128_userfs_mkdirs = 0u;
     std::uint64_t v128_userfs_unlinks = 0u;
+    bool v128_config_loaded = false;
+    std::uint64_t v128_config_loads = 0u;
+    std::uint64_t v128_config_flushes = 0u;
+    std::uint64_t v128_config_failures = 0u;
 
     std::unordered_set<std::string> v51_config_keys;
     std::unordered_map<std::string, std::string>

@@ -21,6 +21,11 @@ loaded lazily on first open. Writes/truncates mark the path dirty. fflush,
 fsync, fclose and close atomically persist dirty bytes through a temporary file,
 host fsync and rename. mkdir/unlink are mirrored to the sandbox.
 
+The synthetic Android Config_ConfigRead/Write surface is persisted separately
+to Application Support/config-v1.txt using a typed, hex-escaped format. This
+keeps first-run/config flags and values across relaunches in addition to the
+game's own profile/save files.
+
 The v127 audio worker-drain fix is inherited unchanged.
 
 ## iPad validation
