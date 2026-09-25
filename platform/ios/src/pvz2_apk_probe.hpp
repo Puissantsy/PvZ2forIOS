@@ -432,6 +432,10 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // crackle windows only, compute an exact full-buffer hash and classify
     // exact repeats by guest source-buffer reuse without changing playback.
     V124ExactPcmRepeatProvenance = 67u,
+
+    // v125: context provenance for the exact stale-buffer repeats proven by
+    // v124. Record which guest execution context performs each repeat enqueue.
+    V125RepeatEnqueueContext = 68u,
 };
 
 enum class PvZ2ProbeCapability : std::uint64_t {

@@ -780,9 +780,16 @@
     }
 
 
-    bool V124Enabled() const {
+    bool V125Enabled() const {
         return diagnostic_mode ==
-            PvZ2DiagnosticMode::V124ExactPcmRepeatProvenance;
+            PvZ2DiagnosticMode::V125RepeatEnqueueContext;
+    }
+
+    bool V124Enabled() const {
+        return
+            diagnostic_mode ==
+                PvZ2DiagnosticMode::V124ExactPcmRepeatProvenance ||
+            V125Enabled();
     }
 
     bool V123Enabled() const {
@@ -3050,6 +3057,86 @@
                                 4u);
                         ++v124_exact_repeat_queue_depth[queued];
 
+                        if (V125Enabled()) {
+                            ++v125_repeat_events;
+                            const bool in_audio_callback =
+                                return_mode == ReturnMode::AudioCallback;
+                            const bool in_audio_worker =
+                                !in_audio_callback &&
+                                v104_audio_worker_tid != 0u &&
+                                current_probe_thread_id ==
+                                    v104_audio_worker_tid;
+                            const bool in_main =
+                                !in_audio_callback &&
+                                current_probe_thread_id == 0u;
+
+                            if (in_audio_callback) {
+                                ++v125_repeat_from_audio_callback;
+                            } else if (in_audio_worker) {
+                                ++v125_repeat_from_audio_worker;
+                            } else if (in_main) {
+                                ++v125_repeat_from_main;
+                            } else {
+                                ++v125_repeat_from_other_worker;
+                            }
+
+                            if (v99_audio_pending_callbacks != 0u) {
+                                ++v125_repeat_with_pending_callback;
+                            } else {
+                                ++v125_repeat_without_pending_callback;
+                            }
+
+                            // Exact repeats are rare (14 in the v124 run), so a
+                            // bounded event line is safe and gives the precise
+                            // execution provenance without hot-path spam.
+                            if (v125_repeat_log_count < 64u) {
+                                ++v125_repeat_log_count;
+                                const std::uint32_t pc =
+                                    jit != nullptr ? jit->Regs()[15] : 0u;
+                                const std::uint32_t lr =
+                                    jit != nullptr ? jit->Regs()[14] : 0u;
+                                std::string context =
+                                    in_audio_callback
+                                        ? "audio-callback"
+                                        : (in_audio_worker
+                                               ? "audio-worker"
+                                               : (in_main
+                                                      ? "main"
+                                                      : "other-worker"));
+                                AppendCritical(
+                                    "V125 EXACT REPEAT EVENT #" +
+                                    std::to_string(v125_repeat_log_count) +
+                                    " frame=" +
+                                    std::to_string(current_frame_number) +
+                                    " context=" + context +
+                                    " tid=" +
+                                    std::to_string(current_probe_thread_id) +
+                                    " pc=" + V46DescribeGuestAddress(pc) +
+                                    " lr=" + V46DescribeGuestAddress(lr) +
+                                    " buffer=" +
+                                    V46DescribeGuestAddress(guest_buffer) +
+                                    " bytes=" +
+                                    std::to_string(bytes) +
+                                    " queueDepth=" +
+                                    std::to_string(queued) +
+                                    " callbackDeliveries=" +
+                                    std::to_string(
+                                        v99_audio_callback_deliveries) +
+                                    " hostConsumed=" +
+                                    std::to_string(
+                                        v99_audio_host_consumed) +
+                                    " pendingCallbacks=" +
+                                    std::to_string(
+                                        v99_audio_pending_callbacks) +
+                                    " workerTid=" +
+                                    std::to_string(
+                                        v104_audio_worker_tid) +
+                                    " workerHandshakes=" +
+                                    std::to_string(
+                                        v104_audio_worker_handshakes));
+                            }
+                        }
+
                         if (in_anim_window) {
                             ++v124_anim_exact_repeats;
                             if (same_buffer) {
@@ -3370,6 +3457,7 @@
     }
 
     const char* RuntimeModeTag() const {
+        if (V125Enabled()) return "V125";
         if (V124Enabled()) return "V124";
         if (V123Enabled()) return "V123";
         if (V122Enabled()) return "V122";
@@ -4744,6 +4832,25 @@
                 << ",3:" << v124_exact_repeat_queue_depth[3]
                 << ",4:" << v124_exact_repeat_queue_depth[4]
                 << "}";
+            AppendDiagnostic(out.str());
+        }
+        if (V125Enabled()) {
+            std::ostringstream out;
+            out << "V125 REPEAT CONTEXT SUMMARY"
+                << " events=" << v125_repeat_events
+                << " audioCallback=" << v125_repeat_from_audio_callback
+                << " audioWorker=" << v125_repeat_from_audio_worker
+                << " main=" << v125_repeat_from_main
+                << " otherWorker=" << v125_repeat_from_other_worker
+                << " withPendingCallback=" << v125_repeat_with_pending_callback
+                << " withoutPendingCallback=" << v125_repeat_without_pending_callback
+                << " logged=" << v125_repeat_log_count
+                << " callbackDeliveries=" << v99_audio_callback_deliveries
+                << " hostConsumed=" << v99_audio_host_consumed
+                << " pendingCallbacks=" << v99_audio_pending_callbacks
+                << " audioWorkerTid=" << v104_audio_worker_tid
+                << " audioWorkerHandshakes=" << v104_audio_worker_handshakes
+                << " audioWorkerMisses=" << v104_audio_worker_misses;
             AppendDiagnostic(out.str());
         }
         if (V110ProfilingEnabled()) AppendDiagnostic(V110AudioSummary());

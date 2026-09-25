@@ -1049,6 +1049,7 @@ constexpr std::uint64_t kCapsV121 = kCapsV118;
 constexpr std::uint64_t kCapsV122 = kCapsV121;
 constexpr std::uint64_t kCapsV123 = kCapsV122;
 constexpr std::uint64_t kCapsV124 = kCapsV123;
+constexpr std::uint64_t kCapsV125 = kCapsV124;
 
 constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::PassiveRegistry, "PASSIVE_REGISTRY", nullptr, 0u, false},
@@ -1118,11 +1119,12 @@ constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::V121HostAudioTelemetry, "V121_HOST_AUDIO_TELEMETRY", "V121 Host Audio", kCapsV121, false},
     {PvZ2DiagnosticMode::V122PcmContinuityTelemetry, "V122_PCM_CONTINUITY_TELEMETRY", "V122 PCM Continuity", kCapsV122, false},
     {PvZ2DiagnosticMode::V123NonSilentRepeatTelemetry, "V123_NONSILENT_REPEAT_TELEMETRY", "V123 Non-silent Repeat", kCapsV123, false},
-    {PvZ2DiagnosticMode::V124ExactPcmRepeatProvenance, "V124_EXACT_PCM_REPEAT_PROVENANCE", "V124 Exact PCM", kCapsV124, true},
+    {PvZ2DiagnosticMode::V124ExactPcmRepeatProvenance, "V124_EXACT_PCM_REPEAT_PROVENANCE", "V124 Exact PCM", kCapsV124, false},
+    {PvZ2DiagnosticMode::V125RepeatEnqueueContext, "V125_REPEAT_ENQUEUE_CONTEXT", "V125 Repeat Context", kCapsV125, true},
 };
 
 constexpr PvZ2DiagnosticMode kSelectableDiagnosticModes[] = {
-    PvZ2DiagnosticMode::V124ExactPcmRepeatProvenance,
+    PvZ2DiagnosticMode::V125RepeatEnqueueContext,
 };
 
 } // namespace
@@ -3417,6 +3419,16 @@ public:
     std::uint32_t v124_late_first_repeat_frame = 0u;
     std::uint32_t v124_late_last_repeat_frame = 0u;
     std::array<std::uint64_t, 5> v124_exact_repeat_queue_depth{};
+
+    // v125: bounded context classification for v124 exact repeats.
+    std::uint64_t v125_repeat_events = 0u;
+    std::uint64_t v125_repeat_from_audio_callback = 0u;
+    std::uint64_t v125_repeat_from_audio_worker = 0u;
+    std::uint64_t v125_repeat_from_main = 0u;
+    std::uint64_t v125_repeat_from_other_worker = 0u;
+    std::uint64_t v125_repeat_with_pending_callback = 0u;
+    std::uint64_t v125_repeat_without_pending_callback = 0u;
+    std::uint64_t v125_repeat_log_count = 0u;
 
     // v105: observe Wwise resampler state without changing audio semantics.
     // These sites are lifecycle/configuration paths rather than Execute(), so

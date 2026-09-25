@@ -1938,6 +1938,14 @@ bool JniProbePrepareRuntime(
             "and wall time between imports is measured only inside the same "
             "jit.Run worker span so scheduler sleep is excluded.");
     }
+    if (callbacks.V125Enabled()) {
+        callbacks.AppendDiagnostic(
+            "V125 REPEAT ENQUEUE CONTEXT: v124/v123/v118 runtime unchanged. "
+            "For each exact repeated non-zero PCM enqueue in the two probe windows, "
+            "record guest thread/context, PC/LR, queue depth, callback-delivery "
+            "counters and v104 audio-worker handshake counters. Bounded to 64 "
+            "event lines; no PCM or scheduling behavior is changed.");
+    }
     if (callbacks.V124Enabled()) {
         callbacks.AppendDiagnostic(
             "V124 EXACT PCM REPEAT PROVENANCE: v123/v122/v121/v118 runtime unchanged. "
