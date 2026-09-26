@@ -731,8 +731,8 @@
                         "V131 srand48 #" +
                         std::to_string(v131_srand48_calls) +
                         " seed=" + std::to_string(regs[0]) +
-                        " state=0x" +
-                        JniProbeHex64(v131_rand48_state));
+                        " state=" +
+                        std::to_string(v131_rand48_state));
                 }
                 regs[0] = 0u;
             } else if (name == "lrand48") {
