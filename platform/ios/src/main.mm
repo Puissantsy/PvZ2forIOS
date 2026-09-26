@@ -864,7 +864,7 @@ void PvZ2HostNotifyDirectFrame(
 
     self.inputEnabled = NO;
     self.captionLabel.text =
-        @"PvZ2 v130 LIVE — HARD STOP requested; stopping guest at the next checkpoint…";
+        @"PvZ2 v131 LIVE — HARD STOP requested; stopping guest at the next checkpoint…";
     self.stopButton.enabled = NO;
     PvZ2RequestInteractiveStop();
 }
@@ -1334,6 +1334,84 @@ void PvZ2HostNotifyDirectFrame(
     }
 }
 
+- (void)queueCoalescedMovedTouches:
+        (NSSet<UITouch *> *)touches
+    withEvent:
+        (UIEvent *)event {
+
+    for (UITouch *touch in touches) {
+        const NSInteger identifier =
+            [self identifierForTouch:touch create:YES];
+
+        if (identifier < 0) {
+            continue;
+        }
+
+        NSArray<UITouch *> *samples =
+            [event coalescedTouchesForTouch:touch];
+
+        if (samples.count == 0u) {
+            samples = @[touch];
+        }
+
+        bool havePrevious = false;
+        std::int32_t previousX = 0;
+        std::int32_t previousY = 0;
+        double previousTimestampMs = -1.0;
+        std::int32_t previousQueuedX = INT32_MIN;
+        std::int32_t previousQueuedY = INT32_MIN;
+
+        for (UITouch *sample in samples) {
+            std::int32_t x = 0;
+            std::int32_t y = 0;
+            std::int32_t samplePreviousX = 0;
+            std::int32_t samplePreviousY = 0;
+
+            if (![self
+                    mapTouch:sample
+                    x:&x
+                    y:&y
+                    previousX:&samplePreviousX
+                    previousY:&samplePreviousY]) {
+                continue;
+            }
+
+            const double timestampMs =
+                sample.timestamp * 1000.0;
+
+            // Some UIKit versions include the current UITouch as the final
+            // coalesced sample. Deduplicate only an exact repeated sample;
+            // equal coordinates at a later timestamp remain meaningful.
+            if (timestampMs == previousTimestampMs &&
+                x == previousQueuedX &&
+                y == previousQueuedY) {
+                continue;
+            }
+
+            const std::int32_t eventPreviousX =
+                havePrevious ? previousX : samplePreviousX;
+            const std::int32_t eventPreviousY =
+                havePrevious ? previousY : samplePreviousY;
+
+            PvZ2QueueTouchEvent(
+                static_cast<std::uint32_t>(identifier),
+                x,
+                y,
+                eventPreviousX,
+                eventPreviousY,
+                1u,
+                timestampMs);
+
+            previousX = x;
+            previousY = y;
+            previousQueuedX = x;
+            previousQueuedY = y;
+            previousTimestampMs = timestampMs;
+            havePrevious = true;
+        }
+    }
+}
+
 - (void)queuePinchFromActiveTouches {
     if (!self.inputEnabled || self.touchIds.count != 2u) {
         return;
@@ -1399,11 +1477,13 @@ void PvZ2HostNotifyDirectFrame(
     withEvent:
         (UIEvent *)event {
 
+    // v131 preserves the complete hardware sample history delivered by UIKit.
+    // PvZ2's own Android-side velocity/fling logic then receives the same kind
+    // of temporal trajectory it expects instead of one collapsed MOVE.
     [self
-        queueTouches:
+        queueCoalescedMovedTouches:
             touches
-        phase:1u
-        release:NO];
+        withEvent:event];
 
     [self queuePinchFromActiveTouches];
 
@@ -1486,7 +1566,7 @@ void PvZ2HostNotifyDirectFrame(
         self.captionLabel.text =
             [NSString
                 stringWithFormat:
-                    @"PvZ2 v130 LIVE • frame %lu • %@\n%lu×%lu guest • direct GPU 1:1 + audio",
+                    @"PvZ2 v131 LIVE • frame %lu • %@\n%lu×%lu guest • direct GPU 1:1 + audio",
                     (unsigned long)frame,
                     touchState,
                     (unsigned long)width,
@@ -2361,7 +2441,7 @@ void PvZ2HostNotifyDirectFrame(
     self.v110SelectedUiModeIndex = 0;
 
     const PvZ2DiagnosticMode selectedMode =
-        PvZ2DiagnosticMode::V130UserFriendlyRuntime;
+        PvZ2DiagnosticMode::V131InputAndRandomness;
 
     const auto* selectedDescriptor =
         PvZ2DescribeDiagnosticMode(selectedMode);
@@ -2371,7 +2451,7 @@ void PvZ2HostNotifyDirectFrame(
             ? [NSString
                   stringWithUTF8String:
                       selectedDescriptor->internal_name]
-            : @"V130_USER_FRIENDLY_RUNTIME";
+            : @"V131_INPUT_RANDOMNESS";
 
     [self
         appendUI:
@@ -2477,7 +2557,7 @@ void PvZ2HostNotifyDirectFrame(
     }
 
     const PvZ2DiagnosticMode diagnosticMode =
-        PvZ2DiagnosticMode::V130UserFriendlyRuntime;
+        PvZ2DiagnosticMode::V131InputAndRandomness;
 
     const auto* diagnosticDescriptor =
         PvZ2DescribeDiagnosticMode(diagnosticMode);
@@ -2496,7 +2576,7 @@ void PvZ2HostNotifyDirectFrame(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v130 User-Friendly Runtime started mode=%@; PID=%d ===",
+                    @"=== PvZ2 v131 Input + Randomness started mode=%@; PID=%d ===",
                     diagnosticModeName,
                     getpid()]];
 
@@ -3010,14 +3090,14 @@ void PvZ2HostNotifyDirectFrame(
                                     finishRunWithMessage:
                                         [NSString
                                             stringWithFormat:
-                                                @"PvZ2 v130 LIVE — HARD STOPPED after %u guest frames.\nClose to inspect the v130 runtime log.",
+                                                @"PvZ2 v131 LIVE — HARD STOPPED after %u guest frames.\nClose to inspect the v130 runtime log.",
                                                 result.draw_frames_completed]];
                             } else {
                                 [selfRef.liveController
                                     finishRunWithMessage:
                                         [NSString
                                             stringWithFormat:
-                                                @"PvZ2 v130 LIVE — run finished after %u guest frames.\nClose to inspect the v130 runtime log.",
+                                                @"PvZ2 v131 LIVE — run finished after %u guest frames.\nClose to inspect the v130 runtime log.",
                                                 result.draw_frames_completed]];
                             }
 
@@ -3074,11 +3154,11 @@ void PvZ2HostNotifyDirectFrame(
 
                             if (result.hard_stop_requested) {
                                 [selfRef.liveController finishRunWithMessage:
-                                    @"PvZ2 v130 LIVE — HARD STOPPED.\nGuest execution was interrupted at the next Dynarmic checkpoint. Close to inspect the v130 runtime log."];
+                                    @"PvZ2 v131 LIVE — HARD STOPPED.\nGuest execution was interrupted at the next Dynarmic checkpoint. Close to inspect the v130 runtime log."];
                             } else {
                                 [selfRef.liveController finishRunWithMessage:
                                     [NSString stringWithFormat:
-                                        @"PvZ2 v130 LIVE — guest stopped/crashed.\n%@\nClose to inspect the v130 runtime log.", message]];
+                                        @"PvZ2 v131 LIVE — guest stopped/crashed.\n%@\nClose to inspect the v130 runtime log.", message]];
                             }
 
                         } else {

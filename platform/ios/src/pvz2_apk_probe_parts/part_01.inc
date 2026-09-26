@@ -983,6 +983,12 @@
     std::uint64_t v72_touch_events_delivered = 0u;
     std::uint64_t v72_invalid_event_buffers = 0u;
 
+    // v131 Android/Bionic drand48-family global state. Android ARM32 long is
+    // 32-bit, so srand48 consumes regs[0] as a 32-bit seed.
+    std::uint64_t v131_rand48_state = 0x1234abcd330eull;
+    std::uint64_t v131_srand48_calls = 0u;
+    std::uint64_t v131_lrand48_calls = 0u;
+
     std::uint64_t v73_text_batches = 0u;
     std::uint64_t v73_text_events_delivered = 0u;
     std::uint64_t v73_text_bytes_delivered = 0u;

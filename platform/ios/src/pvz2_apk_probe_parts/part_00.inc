@@ -1056,6 +1056,7 @@ constexpr std::uint64_t kCapsV127 = kCapsV126;
 constexpr std::uint64_t kCapsV128 = kCapsV127;
 constexpr std::uint64_t kCapsV129 = kCapsV128;
 constexpr std::uint64_t kCapsV130 = kCapsV129;
+constexpr std::uint64_t kCapsV131 = kCapsV130;
 
 constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::PassiveRegistry, "PASSIVE_REGISTRY", nullptr, 0u, false},
@@ -1131,11 +1132,12 @@ constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::V127AudioWorkerDrain, "V127_AUDIO_WORKER_DRAIN", "V127 Audio Worker Drain", kCapsV127, false},
     {PvZ2DiagnosticMode::V128PersistentUserFs, "V128_PERSISTENT_USERFS", "V128 Persistent Save", kCapsV128, false},
     {PvZ2DiagnosticMode::V129IosBoardScale, "V129_IOS_BOARD_SCALE", "V129 iOS Board Scale", kCapsV129, false},
-    {PvZ2DiagnosticMode::V130UserFriendlyRuntime, "V130_USER_FRIENDLY_RUNTIME", "V130 Game Launcher", kCapsV130, true},
+    {PvZ2DiagnosticMode::V130UserFriendlyRuntime, "V130_USER_FRIENDLY_RUNTIME", "V130 Game Launcher", kCapsV130, false},
+    {PvZ2DiagnosticMode::V131InputAndRandomness, "V131_INPUT_RANDOMNESS", "V131 Input + Randomness", kCapsV131, true},
 };
 
 constexpr PvZ2DiagnosticMode kSelectableDiagnosticModes[] = {
-    PvZ2DiagnosticMode::V130UserFriendlyRuntime,
+    PvZ2DiagnosticMode::V131InputAndRandomness,
 };
 
 } // namespace
@@ -1269,7 +1271,10 @@ struct V72TouchEvent {
 
 constexpr std::size_t kV72EventHeaderBytes = 16u;
 constexpr std::size_t kV72TouchRecordBytes = 48u;
-constexpr std::size_t kV72MaxQueuedTouches = 256u;
+// v131 can enqueue several hardware samples for one UIKit callback. Keep a
+// larger bounded queue so a fast swipe is not truncated while the guest is
+// between ProcessEvents calls.
+constexpr std::size_t kV72MaxQueuedTouches = 1024u;
 
 std::mutex gV72TouchMutex;
 std::deque<V72TouchEvent> gV72TouchQueue;

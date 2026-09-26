@@ -780,9 +780,15 @@
     }
 
 
+    bool V131Enabled() const {
+        return diagnostic_mode ==
+            PvZ2DiagnosticMode::V131InputAndRandomness;
+    }
+
     bool V130Enabled() const {
         return diagnostic_mode ==
-            PvZ2DiagnosticMode::V130UserFriendlyRuntime;
+                   PvZ2DiagnosticMode::V130UserFriendlyRuntime ||
+               V131Enabled();
     }
 
     bool V129Enabled() const {
@@ -4329,6 +4335,7 @@
     }
 
     const char* RuntimeModeTag() const {
+        if (V131Enabled()) return "V131";
         if (V130Enabled()) return "V130";
         if (V129Enabled()) return "V129";
         if (V128Enabled()) return "V128";

@@ -717,8 +717,41 @@
                 regs[0] = 0;
             } else if (name == "qsort") {
                 regs[0] = 0;
+            } else if (name == "srand48") {
+                // POSIX/Bionic srand48: X0 = (seed << 16) | 0x330e.
+                // Android armeabi-v7a uses a 32-bit long.
+                const std::uint64_t seed =
+                    static_cast<std::uint64_t>(regs[0]);
+                v131_rand48_state =
+                    ((seed << 16u) | 0x330eull) &
+                    0x0000ffffffffffffull;
+                ++v131_srand48_calls;
+                if (V131Enabled() && v131_srand48_calls <= 4u) {
+                    AppendDiagnostic(
+                        "V131 srand48 #" +
+                        std::to_string(v131_srand48_calls) +
+                        " seed=" + std::to_string(regs[0]) +
+                        " state=0x" +
+                        JniProbeHex64(v131_rand48_state));
+                }
+                regs[0] = 0u;
             } else if (name == "lrand48") {
-                regs[0] = 0x12345678u;
+                // POSIX 48-bit LCG:
+                // X(n+1)=(0x5deece66d*X(n)+0xb) mod 2^48,
+                // lrand48 returns the high 31 bits.
+                v131_rand48_state =
+                    (0x5deece66dull * v131_rand48_state +
+                     0xbull) &
+                    0x0000ffffffffffffull;
+                regs[0] = static_cast<std::uint32_t>(
+                    v131_rand48_state >> 17u);
+                ++v131_lrand48_calls;
+                if (V131Enabled() && v131_lrand48_calls <= 8u) {
+                    AppendDiagnostic(
+                        "V131 lrand48 #" +
+                        std::to_string(v131_lrand48_calls) +
+                        " value=" + std::to_string(regs[0]));
+                }
             } else {
                 regs[0] = 0;
             }

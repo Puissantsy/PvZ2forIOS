@@ -460,6 +460,10 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // auto-launching after JIT acquisition, and disabling old heavy audio
     // flight-recorder windows.
     V130UserFriendlyRuntime = 73u,
+
+    // v131: preserve v130 while restoring real UIKit move history for fling
+    // velocity and implementing Android-compatible srand48/lrand48 state.
+    V131InputAndRandomness = 74u,
 };
 
 enum class PvZ2ProbeCapability : std::uint64_t {
