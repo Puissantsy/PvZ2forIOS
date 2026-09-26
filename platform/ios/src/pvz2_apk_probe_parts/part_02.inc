@@ -780,9 +780,15 @@
     }
 
 
+    bool V134Enabled() const {
+        return diagnostic_mode ==
+            PvZ2DiagnosticMode::V134ExactAndroidFlingRouting;
+    }
+
     bool V133Enabled() const {
         return diagnostic_mode ==
-            PvZ2DiagnosticMode::V133ExactFlickAbi;
+                   PvZ2DiagnosticMode::V133ExactFlickAbi ||
+               V134Enabled();
     }
 
     bool V132Enabled() const {
@@ -4347,6 +4353,7 @@
     }
 
     const char* RuntimeModeTag() const {
+        if (V134Enabled()) return "V134";
         if (V133Enabled()) return "V133";
         if (V132Enabled()) return "V132";
         if (V131Enabled()) return "V131";
