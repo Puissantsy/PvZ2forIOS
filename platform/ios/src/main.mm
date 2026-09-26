@@ -881,7 +881,7 @@ void PvZ2HostNotifyDirectFrame(
 
     self.inputEnabled = NO;
     self.captionLabel.text =
-        @"PvZ2 v132 LIVE — HARD STOP requested; stopping guest at the next checkpoint…";
+        @"PvZ2 v133 LIVE — HARD STOP requested; stopping guest at the next checkpoint…";
     self.stopButton.enabled = NO;
     PvZ2RequestInteractiveStop();
 }
@@ -1436,9 +1436,9 @@ void PvZ2HostNotifyDirectFrame(
     y:
         (std::int32_t *)outY
     velocityX:
-        (double *)outVelocityX
+        (float *)outVelocityX
     velocityY:
-        (double *)outVelocityY {
+        (float *)outVelocityY {
 
     const std::uintptr_t key =
         [self v132TouchKey:touch];
@@ -1511,8 +1511,10 @@ void PvZ2HostNotifyDirectFrame(
 
     *outX = end.x;
     *outY = end.y;
-    *outVelocityX = velocity_x;
-    *outVelocityY = velocity_y;
+    *outVelocityX =
+        static_cast<float>(velocity_x);
+    *outVelocityY =
+        static_cast<float>(velocity_y);
     return YES;
 }
 
@@ -1655,8 +1657,8 @@ void PvZ2HostNotifyDirectFrame(
         if (identifier >= 0 && mapped) {
             std::int32_t flickX = 0;
             std::int32_t flickY = 0;
-            double velocityX = 0.0;
-            double velocityY = 0.0;
+            float velocityX = 0.0f;
+            float velocityY = 0.0f;
 
             const BOOL hasFlick =
                 singleTouchGesture &&
@@ -1793,7 +1795,7 @@ void PvZ2HostNotifyDirectFrame(
         self.captionLabel.text =
             [NSString
                 stringWithFormat:
-                    @"PvZ2 v132 LIVE • frame %lu • %@\n%lu×%lu guest • direct GPU 1:1 + audio",
+                    @"PvZ2 v133 LIVE • frame %lu • %@\n%lu×%lu guest • direct GPU 1:1 + audio",
                     (unsigned long)frame,
                     touchState,
                     (unsigned long)width,
@@ -2668,7 +2670,7 @@ void PvZ2HostNotifyDirectFrame(
     self.v110SelectedUiModeIndex = 0;
 
     const PvZ2DiagnosticMode selectedMode =
-        PvZ2DiagnosticMode::V132AndroidFlickBridge;
+        PvZ2DiagnosticMode::V133ExactFlickAbi;
 
     const auto* selectedDescriptor =
         PvZ2DescribeDiagnosticMode(selectedMode);
@@ -2678,7 +2680,7 @@ void PvZ2HostNotifyDirectFrame(
             ? [NSString
                   stringWithUTF8String:
                       selectedDescriptor->internal_name]
-            : @"V132_ANDROID_FLICK_BRIDGE";
+            : @"V133_EXACT_FLICK_ABI";
 
     [self
         appendUI:
@@ -2784,7 +2786,7 @@ void PvZ2HostNotifyDirectFrame(
     }
 
     const PvZ2DiagnosticMode diagnosticMode =
-        PvZ2DiagnosticMode::V132AndroidFlickBridge;
+        PvZ2DiagnosticMode::V133ExactFlickAbi;
 
     const auto* diagnosticDescriptor =
         PvZ2DescribeDiagnosticMode(diagnosticMode);
@@ -2803,7 +2805,7 @@ void PvZ2HostNotifyDirectFrame(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v132 Android Flick Bridge started mode=%@; PID=%d ===",
+                    @"=== PvZ2 v133 Exact Flick ABI started mode=%@; PID=%d ===",
                     diagnosticModeName,
                     getpid()]];
 
@@ -3317,14 +3319,14 @@ void PvZ2HostNotifyDirectFrame(
                                     finishRunWithMessage:
                                         [NSString
                                             stringWithFormat:
-                                                @"PvZ2 v132 LIVE — HARD STOPPED after %u guest frames.\nClose to inspect the v130 runtime log.",
+                                                @"PvZ2 v133 LIVE — HARD STOPPED after %u guest frames.\nClose to inspect the v130 runtime log.",
                                                 result.draw_frames_completed]];
                             } else {
                                 [selfRef.liveController
                                     finishRunWithMessage:
                                         [NSString
                                             stringWithFormat:
-                                                @"PvZ2 v132 LIVE — run finished after %u guest frames.\nClose to inspect the v130 runtime log.",
+                                                @"PvZ2 v133 LIVE — run finished after %u guest frames.\nClose to inspect the v130 runtime log.",
                                                 result.draw_frames_completed]];
                             }
 
@@ -3381,11 +3383,11 @@ void PvZ2HostNotifyDirectFrame(
 
                             if (result.hard_stop_requested) {
                                 [selfRef.liveController finishRunWithMessage:
-                                    @"PvZ2 v132 LIVE — HARD STOPPED.\nGuest execution was interrupted at the next Dynarmic checkpoint. Close to inspect the v130 runtime log."];
+                                    @"PvZ2 v133 LIVE — HARD STOPPED.\nGuest execution was interrupted at the next Dynarmic checkpoint. Close to inspect the v130 runtime log."];
                             } else {
                                 [selfRef.liveController finishRunWithMessage:
                                     [NSString stringWithFormat:
-                                        @"PvZ2 v132 LIVE — guest stopped/crashed.\n%@\nClose to inspect the v130 runtime log.", message]];
+                                        @"PvZ2 v133 LIVE — guest stopped/crashed.\n%@\nClose to inspect the v130 runtime log.", message]];
                             }
 
                         } else {

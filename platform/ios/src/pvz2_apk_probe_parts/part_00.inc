@@ -1058,6 +1058,7 @@ constexpr std::uint64_t kCapsV129 = kCapsV128;
 constexpr std::uint64_t kCapsV130 = kCapsV129;
 constexpr std::uint64_t kCapsV131 = kCapsV130;
 constexpr std::uint64_t kCapsV132 = kCapsV131;
+constexpr std::uint64_t kCapsV133 = kCapsV132;
 
 constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::PassiveRegistry, "PASSIVE_REGISTRY", nullptr, 0u, false},
@@ -1135,11 +1136,12 @@ constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::V129IosBoardScale, "V129_IOS_BOARD_SCALE", "V129 iOS Board Scale", kCapsV129, false},
     {PvZ2DiagnosticMode::V130UserFriendlyRuntime, "V130_USER_FRIENDLY_RUNTIME", "V130 Game Launcher", kCapsV130, false},
     {PvZ2DiagnosticMode::V131InputAndRandomness, "V131_INPUT_RANDOMNESS", "V131 Input + Randomness", kCapsV131, false},
-    {PvZ2DiagnosticMode::V132AndroidFlickBridge, "V132_ANDROID_FLICK_BRIDGE", "V132 Android Flick", kCapsV132, true},
+    {PvZ2DiagnosticMode::V132AndroidFlickBridge, "V132_ANDROID_FLICK_BRIDGE", "V132 Android Flick", kCapsV132, false},
+    {PvZ2DiagnosticMode::V133ExactFlickAbi, "V133_EXACT_FLICK_ABI", "V133 Exact Flick ABI", kCapsV133, true},
 };
 
 constexpr PvZ2DiagnosticMode kSelectableDiagnosticModes[] = {
-    PvZ2DiagnosticMode::V132AndroidFlickBridge,
+    PvZ2DiagnosticMode::V133ExactFlickAbi,
 };
 
 } // namespace
@@ -1276,8 +1278,8 @@ struct V72TouchEvent {
     bool has_flick_before = false;
     std::int32_t flick_x = 0;
     std::int32_t flick_y = 0;
-    double flick_velocity_x = 0.0;
-    double flick_velocity_y = 0.0;
+    float flick_velocity_x = 0.0f;
+    float flick_velocity_y = 0.0f;
 };
 
 constexpr std::size_t kV72EventHeaderBytes = 16u;

@@ -2419,8 +2419,8 @@ void PvZ2QueueTouchEndWithFlick(
     double timestamp_ms,
     std::int32_t flick_x,
     std::int32_t flick_y,
-    double velocity_x,
-    double velocity_y) {
+    float velocity_x,
+    float velocity_y) {
 
     if (!std::isfinite(velocity_x) ||
         !std::isfinite(velocity_y)) {

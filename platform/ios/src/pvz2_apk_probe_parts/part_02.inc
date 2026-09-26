@@ -780,9 +780,15 @@
     }
 
 
+    bool V133Enabled() const {
+        return diagnostic_mode ==
+            PvZ2DiagnosticMode::V133ExactFlickAbi;
+    }
+
     bool V132Enabled() const {
         return diagnostic_mode ==
-            PvZ2DiagnosticMode::V132AndroidFlickBridge;
+                   PvZ2DiagnosticMode::V132AndroidFlickBridge ||
+               V133Enabled();
     }
 
     bool V131Enabled() const {
@@ -4341,6 +4347,7 @@
     }
 
     const char* RuntimeModeTag() const {
+        if (V133Enabled()) return "V133";
         if (V132Enabled()) return "V132";
         if (V131Enabled()) return "V131";
         if (V130Enabled()) return "V130";

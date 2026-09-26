@@ -1091,8 +1091,18 @@
                                         static_cast<std::uint32_t>(
                                             event.flick_y));
 
-                                    std::uint64_t vx_bits = 0u;
-                                    std::uint64_t vy_bits = 0u;
+                                    // Exact Java UIFlickEvent ABI:
+                                    // GestureDetector.onFling receives float
+                                    // velocities; Serialize uses putFloat for
+                                    // both fields, then three sentinels.
+                                    std::uint32_t vx_bits = 0u;
+                                    std::uint32_t vy_bits = 0u;
+                                    static_assert(
+                                        sizeof(vx_bits) ==
+                                        sizeof(event.flick_velocity_x));
+                                    static_assert(
+                                        sizeof(vy_bits) ==
+                                        sizeof(event.flick_velocity_y));
                                     std::memcpy(
                                         &vx_bits,
                                         &event.flick_velocity_x,
@@ -1101,19 +1111,11 @@
                                         &vy_bits,
                                         &event.flick_velocity_y,
                                         sizeof(vy_bits));
-                                    for (std::size_t byte = 0u;
-                                         byte < 8u;
-                                         ++byte) {
-                                        flick[0x0cu + byte] =
-                                            static_cast<std::uint8_t>(
-                                                vx_bits >> (byte * 8u));
-                                        flick[0x14u + byte] =
-                                            static_cast<std::uint8_t>(
-                                                vy_bits >> (byte * 8u));
-                                    }
-                                    Write32(
-                                        flick + 0x1cu,
-                                        0xdeadbeefu);
+                                    Write32(flick + 0x0cu, vx_bits);
+                                    Write32(flick + 0x10u, vy_bits);
+                                    Write32(flick + 0x14u, 0xdeadbeefu);
+                                    Write32(flick + 0x18u, 0xdeadbeefu);
+                                    Write32(flick + 0x1cu, 0xdeadbeefu);
 
                                     write_offset +=
                                         kV132FlickRecordBytes;

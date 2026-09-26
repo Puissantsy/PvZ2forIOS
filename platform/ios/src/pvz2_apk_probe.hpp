@@ -75,8 +75,8 @@ void PvZ2QueueTouchEndWithFlick(
     double timestamp_ms,
     std::int32_t flick_x,
     std::int32_t flick_y,
-    double velocity_x,
-    double velocity_y);
+    float velocity_x,
+    float velocity_y);
 
 // v73: exact Android UITextInputEvent path. action=0 mirrors commitText,
 // action=3 mirrors deleteSurroundingText. The bytes are UTF-8 and copied
@@ -483,6 +483,10 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // v132: preserve v131 RNG, but match the real Android gesture contract:
     // GestureDetector emits UIFlickEvent type=4 before the final touch UP.
     V132AndroidFlickBridge = 75u,
+
+    // v133: correct the exact UIFlickEvent field ABI: Android GestureDetector
+    // supplies float velocities, not doubles.
+    V133ExactFlickAbi = 76u,
 };
 
 enum class PvZ2ProbeCapability : std::uint64_t {
