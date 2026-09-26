@@ -780,9 +780,15 @@
     }
 
 
+    bool V132Enabled() const {
+        return diagnostic_mode ==
+            PvZ2DiagnosticMode::V132AndroidFlickBridge;
+    }
+
     bool V131Enabled() const {
         return diagnostic_mode ==
-            PvZ2DiagnosticMode::V131InputAndRandomness;
+                   PvZ2DiagnosticMode::V131InputAndRandomness ||
+               V132Enabled();
     }
 
     bool V130Enabled() const {
@@ -4335,6 +4341,7 @@
     }
 
     const char* RuntimeModeTag() const {
+        if (V132Enabled()) return "V132";
         if (V131Enabled()) return "V131";
         if (V130Enabled()) return "V130";
         if (V129Enabled()) return "V129";

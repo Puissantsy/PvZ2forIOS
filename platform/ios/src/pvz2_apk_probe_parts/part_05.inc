@@ -1033,9 +1033,14 @@
                                 kV72EventHeaderBytes;
                             std::uint32_t event_count = 0u;
 
+                            // v132 touch items may carry one 32-byte
+                            // UIFlickEvent before the 48-byte terminal UP.
+                            // Reserve the worst case per item so no guest
+                            // event record can overrun the ProcessEvents buffer.
                             const std::size_t max_touch_events =
                                 (cleared - write_offset) /
-                                kV72TouchRecordBytes;
+                                (kV72TouchRecordBytes +
+                                 kV132FlickRecordBytes);
 
                             bool more_touch = false;
                             const std::vector<V72TouchEvent> events =
@@ -1067,6 +1072,69 @@
                                             std::to_string(v82_touch_radar_logs) +
                                             " " + V82TouchContext() + " " +
                                             V82RadarSnapshot(event.x, event.y));
+                                    }
+                                }
+
+                                if (event.has_flick_before) {
+                                    // AndroidUIEventManager$UIFlickEvent.Serialize:
+                                    // type=4, X, Y, velocityX(double),
+                                    // velocityY(double), 0xDEADBEEF.
+                                    std::uint8_t* flick =
+                                        buffer + write_offset;
+                                    Write32(flick + 0x00u, 4u);
+                                    Write32(
+                                        flick + 0x04u,
+                                        static_cast<std::uint32_t>(
+                                            event.flick_x));
+                                    Write32(
+                                        flick + 0x08u,
+                                        static_cast<std::uint32_t>(
+                                            event.flick_y));
+
+                                    std::uint64_t vx_bits = 0u;
+                                    std::uint64_t vy_bits = 0u;
+                                    std::memcpy(
+                                        &vx_bits,
+                                        &event.flick_velocity_x,
+                                        sizeof(vx_bits));
+                                    std::memcpy(
+                                        &vy_bits,
+                                        &event.flick_velocity_y,
+                                        sizeof(vy_bits));
+                                    for (std::size_t byte = 0u;
+                                         byte < 8u;
+                                         ++byte) {
+                                        flick[0x0cu + byte] =
+                                            static_cast<std::uint8_t>(
+                                                vx_bits >> (byte * 8u));
+                                        flick[0x14u + byte] =
+                                            static_cast<std::uint8_t>(
+                                                vy_bits >> (byte * 8u));
+                                    }
+                                    Write32(
+                                        flick + 0x1cu,
+                                        0xdeadbeefu);
+
+                                    write_offset +=
+                                        kV132FlickRecordBytes;
+                                    ++event_count;
+                                    ++v132_flick_events_delivered;
+
+                                    if (v132_flick_events_delivered <= 16u) {
+                                        AppendDiagnostic(
+                                            "V132 FLICK DELIVER #" +
+                                            std::to_string(
+                                                v132_flick_events_delivered) +
+                                            " xy=" +
+                                            std::to_string(event.flick_x) +
+                                            "," +
+                                            std::to_string(event.flick_y) +
+                                            " velocity=" +
+                                            std::to_string(
+                                                event.flick_velocity_x) +
+                                            "," +
+                                            std::to_string(
+                                                event.flick_velocity_y));
                                     }
                                 }
 

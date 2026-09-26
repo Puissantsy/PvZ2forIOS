@@ -14,7 +14,9 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <deque>
 #include <string>
+#include <unordered_map>
 
 #include "dynarmic_smoke.hpp"
 #include "host_gles.hpp"
@@ -491,6 +493,21 @@ static std::atomic<bool>
 static std::atomic<std::uint64_t>
     gV81TouchMapTraceCount{0u};
 
+// v132 mirrors Android GestureDetector's missing host-side role. Coalesced
+// UIKit samples are used only to estimate release velocity; they are NOT
+// serialized as extra MOVE records.
+struct V132VelocitySample {
+    std::int32_t x = 0;
+    std::int32_t y = 0;
+    double timestamp_ms = 0.0;
+};
+
+std::unordered_map<std::uintptr_t, std::deque<V132VelocitySample>>
+    gV132VelocityHistory;
+std::unordered_map<std::uintptr_t, V132VelocitySample>
+    gV132GestureStart;
+std::uint64_t gV132FlicksQueued = 0u;
+
 static std::atomic<bool>
     gV85PerformanceBaselineActive{false};
 
@@ -864,7 +881,7 @@ void PvZ2HostNotifyDirectFrame(
 
     self.inputEnabled = NO;
     self.captionLabel.text =
-        @"PvZ2 v131 LIVE — HARD STOP requested; stopping guest at the next checkpoint…";
+        @"PvZ2 v132 LIVE — HARD STOP requested; stopping guest at the next checkpoint…";
     self.stopButton.enabled = NO;
     PvZ2RequestInteractiveStop();
 }
@@ -1334,82 +1351,178 @@ void PvZ2HostNotifyDirectFrame(
     }
 }
 
-- (void)queueCoalescedMovedTouches:
-        (NSSet<UITouch *> *)touches
+- (std::uintptr_t)v132TouchKey:(UITouch *)touch {
+    return reinterpret_cast<std::uintptr_t>(
+        (__bridge void *)touch);
+}
+
+- (void)v132RecordVelocitySamplesForTouch:
+        (UITouch *)touch
     withEvent:
-        (UIEvent *)event {
+        (UIEvent *)event
+    reset:
+        (BOOL)reset {
 
-    for (UITouch *touch in touches) {
-        const NSInteger identifier =
-            [self identifierForTouch:touch create:YES];
+    const std::uintptr_t key =
+        [self v132TouchKey:touch];
 
-        if (identifier < 0) {
+    auto& history =
+        gV132VelocityHistory[key];
+
+    if (reset) {
+        history.clear();
+        gV132GestureStart.erase(key);
+    }
+
+    NSArray<UITouch *> *samples =
+        event != nil
+            ? [event coalescedTouchesForTouch:touch]
+            : nil;
+    if (samples.count == 0u) {
+        samples = @[touch];
+    }
+
+    for (UITouch *sample in samples) {
+        std::int32_t x = 0;
+        std::int32_t y = 0;
+        std::int32_t previousX = 0;
+        std::int32_t previousY = 0;
+
+        if (![self
+                mapTouch:sample
+                x:&x
+                y:&y
+                previousX:&previousX
+                previousY:&previousY]) {
             continue;
         }
 
-        NSArray<UITouch *> *samples =
-            [event coalescedTouchesForTouch:touch];
+        V132VelocitySample value{
+            x,
+            y,
+            sample.timestamp * 1000.0};
 
-        if (samples.count == 0u) {
-            samples = @[touch];
+        if (!history.empty() &&
+            history.back().timestamp_ms == value.timestamp_ms &&
+            history.back().x == value.x &&
+            history.back().y == value.y) {
+            continue;
         }
 
-        bool havePrevious = false;
-        std::int32_t previousX = 0;
-        std::int32_t previousY = 0;
-        double previousTimestampMs = -1.0;
-        std::int32_t previousQueuedX = INT32_MIN;
-        std::int32_t previousQueuedY = INT32_MIN;
+        history.push_back(value);
+        if (gV132GestureStart.find(key) ==
+            gV132GestureStart.end()) {
+            gV132GestureStart[key] = value;
+        }
 
-        for (UITouch *sample in samples) {
-            std::int32_t x = 0;
-            std::int32_t y = 0;
-            std::int32_t samplePreviousX = 0;
-            std::int32_t samplePreviousY = 0;
-
-            if (![self
-                    mapTouch:sample
-                    x:&x
-                    y:&y
-                    previousX:&samplePreviousX
-                    previousY:&samplePreviousY]) {
-                continue;
-            }
-
-            const double timestampMs =
-                sample.timestamp * 1000.0;
-
-            // Some UIKit versions include the current UITouch as the final
-            // coalesced sample. Deduplicate only an exact repeated sample;
-            // equal coordinates at a later timestamp remain meaningful.
-            if (timestampMs == previousTimestampMs &&
-                x == previousQueuedX &&
-                y == previousQueuedY) {
-                continue;
-            }
-
-            const std::int32_t eventPreviousX =
-                havePrevious ? previousX : samplePreviousX;
-            const std::int32_t eventPreviousY =
-                havePrevious ? previousY : samplePreviousY;
-
-            PvZ2QueueTouchEvent(
-                static_cast<std::uint32_t>(identifier),
-                x,
-                y,
-                eventPreviousX,
-                eventPreviousY,
-                1u,
-                timestampMs);
-
-            previousX = x;
-            previousY = y;
-            previousQueuedX = x;
-            previousQueuedY = y;
-            previousTimestampMs = timestampMs;
-            havePrevious = true;
+        // Android VelocityTracker uses a recent trajectory; keep a compact
+        // ~200 ms window plus a hard sample cap.
+        while (history.size() > 2u &&
+               value.timestamp_ms -
+                       history.front().timestamp_ms >
+                   200.0) {
+            history.pop_front();
+        }
+        while (history.size() > 32u) {
+            history.pop_front();
         }
     }
+}
+
+- (BOOL)v132ComputeFlickForTouch:
+        (UITouch *)touch
+    x:
+        (std::int32_t *)outX
+    y:
+        (std::int32_t *)outY
+    velocityX:
+        (double *)outVelocityX
+    velocityY:
+        (double *)outVelocityY {
+
+    const std::uintptr_t key =
+        [self v132TouchKey:touch];
+    const auto historyIt =
+        gV132VelocityHistory.find(key);
+    const auto startIt =
+        gV132GestureStart.find(key);
+
+    if (historyIt == gV132VelocityHistory.end() ||
+        startIt == gV132GestureStart.end() ||
+        historyIt->second.size() < 2u) {
+        return NO;
+    }
+
+    const auto& history = historyIt->second;
+    const V132VelocitySample& end = history.back();
+
+    const V132VelocitySample* base =
+        &history.front();
+    for (const auto& sample : history) {
+        const double age =
+            end.timestamp_ms - sample.timestamp_ms;
+        if (age <= 120.0) {
+            base = &sample;
+            break;
+        }
+    }
+
+    const double dt_ms =
+        end.timestamp_ms - base->timestamp_ms;
+    if (dt_ms < 8.0) {
+        return NO;
+    }
+
+    const double total_dx =
+        static_cast<double>(
+            end.x - startIt->second.x);
+    const double total_dy =
+        static_cast<double>(
+            end.y - startIt->second.y);
+    const double total_distance =
+        std::hypot(total_dx, total_dy);
+
+    double velocity_x =
+        static_cast<double>(end.x - base->x) *
+        1000.0 / dt_ms;
+    double velocity_y =
+        static_cast<double>(end.y - base->y) *
+        1000.0 / dt_ms;
+    double speed =
+        std::hypot(velocity_x, velocity_y);
+
+    // Old Android GestureDetector/ViewConfiguration uses a small touch-slop
+    // plus minimum fling velocity. These thresholds are deliberately
+    // conservative in the guest coordinate space to avoid turning taps into
+    // flicks while preserving normal Almanac swipes.
+    if (total_distance < 12.0 ||
+        speed < 50.0) {
+        return NO;
+    }
+
+    constexpr double kMaxFlingVelocity = 8000.0;
+    if (speed > kMaxFlingVelocity) {
+        const double factor =
+            kMaxFlingVelocity / speed;
+        velocity_x *= factor;
+        velocity_y *= factor;
+        speed = kMaxFlingVelocity;
+    }
+
+    *outX = end.x;
+    *outY = end.y;
+    *outVelocityX = velocity_x;
+    *outVelocityY = velocity_y;
+    return YES;
+}
+
+- (void)v132ForgetTouch:
+        (UITouch *)touch {
+
+    const std::uintptr_t key =
+        [self v132TouchKey:touch];
+    gV132VelocityHistory.erase(key);
+    gV132GestureStart.erase(key);
 }
 
 - (void)queuePinchFromActiveTouches {
@@ -1465,6 +1578,13 @@ void PvZ2HostNotifyDirectFrame(
         phase:0u
         release:NO];
 
+    for (UITouch *touch in touches) {
+        [self
+            v132RecordVelocitySamplesForTouch:touch
+            withEvent:event
+            reset:YES];
+    }
+
     [super
         touchesBegan:
             touches
@@ -1477,13 +1597,21 @@ void PvZ2HostNotifyDirectFrame(
     withEvent:
         (UIEvent *)event {
 
-    // v131 preserves the complete hardware sample history delivered by UIKit.
-    // PvZ2's own Android-side velocity/fling logic then receives the same kind
-    // of temporal trajectory it expects instead of one collapsed MOVE.
+    // AndroidSurfaceView forwards the current MotionEvent once to
+    // HandleTouchEvent. Keep that one-MOVE contract; coalesced UIKit samples
+    // feed only the host velocity estimator used to recreate GestureDetector.
     [self
-        queueCoalescedMovedTouches:
+        queueTouches:
             touches
-        withEvent:event];
+        phase:1u
+        release:NO];
+
+    for (UITouch *touch in touches) {
+        [self
+            v132RecordVelocitySamplesForTouch:touch
+            withEvent:event
+            reset:NO];
+    }
 
     [self queuePinchFromActiveTouches];
 
@@ -1499,11 +1627,106 @@ void PvZ2HostNotifyDirectFrame(
     withEvent:
         (UIEvent *)event {
 
-    [self
-        queueTouches:
-            touches
-        phase:3u
-        release:YES];
+    const BOOL singleTouchGesture =
+        self.touchIds.count == 1u;
+
+    for (UITouch *touch in touches) {
+        const NSInteger identifier =
+            [self identifierForTouch:touch create:NO];
+
+        [self
+            v132RecordVelocitySamplesForTouch:touch
+            withEvent:event
+            reset:NO];
+
+        std::int32_t x = 0;
+        std::int32_t y = 0;
+        std::int32_t previousX = 0;
+        std::int32_t previousY = 0;
+
+        const BOOL mapped =
+            [self
+                mapTouch:touch
+                x:&x
+                y:&y
+                previousX:&previousX
+                previousY:&previousY];
+
+        if (identifier >= 0 && mapped) {
+            std::int32_t flickX = 0;
+            std::int32_t flickY = 0;
+            double velocityX = 0.0;
+            double velocityY = 0.0;
+
+            const BOOL hasFlick =
+                singleTouchGesture &&
+                [self
+                    v132ComputeFlickForTouch:touch
+                    x:&flickX
+                    y:&flickY
+                    velocityX:&velocityX
+                    velocityY:&velocityY];
+
+            if (hasFlick) {
+                PvZ2QueueTouchEndWithFlick(
+                    static_cast<std::uint32_t>(identifier),
+                    x,
+                    y,
+                    previousX,
+                    previousY,
+                    touch.timestamp * 1000.0,
+                    flickX,
+                    flickY,
+                    velocityX,
+                    velocityY);
+
+                ++gV132FlicksQueued;
+                if (gV132FlicksQueued <= 16u) {
+                    AppendPersistentLog(
+                        [NSString
+                            stringWithFormat:
+                                @"[V132 FLICK QUEUE] #%llu xy=(%d,%d) velocity=(%.1f,%.1f)",
+                                (unsigned long long)gV132FlicksQueued,
+                                flickX,
+                                flickY,
+                                velocityX,
+                                velocityY]);
+                }
+            } else {
+                PvZ2QueueTouchEvent(
+                    static_cast<std::uint32_t>(identifier),
+                    x,
+                    y,
+                    previousX,
+                    previousY,
+                    3u,
+                    touch.timestamp * 1000.0);
+            }
+        } else if (identifier >= 0) {
+            // UIKit continues ownership of a touch even if its final sample is
+            // marginally outside the rendered rectangle. Never strand the
+            // guest capture: release at the last valid mapped point.
+            const auto it =
+                gV132VelocityHistory.find(
+                    [self v132TouchKey:touch]);
+            if (it != gV132VelocityHistory.end() &&
+                !it->second.empty()) {
+                const auto& last =
+                    it->second.back();
+                PvZ2QueueTouchEvent(
+                    static_cast<std::uint32_t>(identifier),
+                    last.x,
+                    last.y,
+                    last.x,
+                    last.y,
+                    3u,
+                    touch.timestamp * 1000.0);
+            }
+        }
+
+        [self v132ForgetTouch:touch];
+        [self releaseIdentifierForTouch:touch];
+    }
 
     [super
         touchesEnded:
@@ -1522,6 +1745,10 @@ void PvZ2HostNotifyDirectFrame(
             touches
         phase:4u
         release:YES];
+
+    for (UITouch *touch in touches) {
+        [self v132ForgetTouch:touch];
+    }
 
     [super
         touchesCancelled:
@@ -1566,7 +1793,7 @@ void PvZ2HostNotifyDirectFrame(
         self.captionLabel.text =
             [NSString
                 stringWithFormat:
-                    @"PvZ2 v131 LIVE • frame %lu • %@\n%lu×%lu guest • direct GPU 1:1 + audio",
+                    @"PvZ2 v132 LIVE • frame %lu • %@\n%lu×%lu guest • direct GPU 1:1 + audio",
                     (unsigned long)frame,
                     touchState,
                     (unsigned long)width,
@@ -2441,7 +2668,7 @@ void PvZ2HostNotifyDirectFrame(
     self.v110SelectedUiModeIndex = 0;
 
     const PvZ2DiagnosticMode selectedMode =
-        PvZ2DiagnosticMode::V131InputAndRandomness;
+        PvZ2DiagnosticMode::V132AndroidFlickBridge;
 
     const auto* selectedDescriptor =
         PvZ2DescribeDiagnosticMode(selectedMode);
@@ -2451,7 +2678,7 @@ void PvZ2HostNotifyDirectFrame(
             ? [NSString
                   stringWithUTF8String:
                       selectedDescriptor->internal_name]
-            : @"V131_INPUT_RANDOMNESS";
+            : @"V132_ANDROID_FLICK_BRIDGE";
 
     [self
         appendUI:
@@ -2557,7 +2784,7 @@ void PvZ2HostNotifyDirectFrame(
     }
 
     const PvZ2DiagnosticMode diagnosticMode =
-        PvZ2DiagnosticMode::V131InputAndRandomness;
+        PvZ2DiagnosticMode::V132AndroidFlickBridge;
 
     const auto* diagnosticDescriptor =
         PvZ2DescribeDiagnosticMode(diagnosticMode);
@@ -2576,7 +2803,7 @@ void PvZ2HostNotifyDirectFrame(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v131 Input + Randomness started mode=%@; PID=%d ===",
+                    @"=== PvZ2 v132 Android Flick Bridge started mode=%@; PID=%d ===",
                     diagnosticModeName,
                     getpid()]];
 
@@ -3090,14 +3317,14 @@ void PvZ2HostNotifyDirectFrame(
                                     finishRunWithMessage:
                                         [NSString
                                             stringWithFormat:
-                                                @"PvZ2 v131 LIVE — HARD STOPPED after %u guest frames.\nClose to inspect the v130 runtime log.",
+                                                @"PvZ2 v132 LIVE — HARD STOPPED after %u guest frames.\nClose to inspect the v130 runtime log.",
                                                 result.draw_frames_completed]];
                             } else {
                                 [selfRef.liveController
                                     finishRunWithMessage:
                                         [NSString
                                             stringWithFormat:
-                                                @"PvZ2 v131 LIVE — run finished after %u guest frames.\nClose to inspect the v130 runtime log.",
+                                                @"PvZ2 v132 LIVE — run finished after %u guest frames.\nClose to inspect the v130 runtime log.",
                                                 result.draw_frames_completed]];
                             }
 
@@ -3154,11 +3381,11 @@ void PvZ2HostNotifyDirectFrame(
 
                             if (result.hard_stop_requested) {
                                 [selfRef.liveController finishRunWithMessage:
-                                    @"PvZ2 v131 LIVE — HARD STOPPED.\nGuest execution was interrupted at the next Dynarmic checkpoint. Close to inspect the v130 runtime log."];
+                                    @"PvZ2 v132 LIVE — HARD STOPPED.\nGuest execution was interrupted at the next Dynarmic checkpoint. Close to inspect the v130 runtime log."];
                             } else {
                                 [selfRef.liveController finishRunWithMessage:
                                     [NSString stringWithFormat:
-                                        @"PvZ2 v131 LIVE — guest stopped/crashed.\n%@\nClose to inspect the v130 runtime log.", message]];
+                                        @"PvZ2 v132 LIVE — guest stopped/crashed.\n%@\nClose to inspect the v130 runtime log.", message]];
                             }
 
                         } else {

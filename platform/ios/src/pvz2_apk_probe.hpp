@@ -63,6 +63,21 @@ void PvZ2QueueTouchEvent(
     std::uint32_t phase,
     double timestamp_ms);
 
+// v132: AndroidSurfaceView feeds GestureDetector before HandleTouchEvent.
+// When onFling fires, UIFlickEvent type=4 is queued before the terminal
+// UITouchEvent. Keep that ordering inside one atomic host queue item.
+void PvZ2QueueTouchEndWithFlick(
+    std::uint32_t pointer_id,
+    std::int32_t x,
+    std::int32_t y,
+    std::int32_t previous_x,
+    std::int32_t previous_y,
+    double timestamp_ms,
+    std::int32_t flick_x,
+    std::int32_t flick_y,
+    double velocity_x,
+    double velocity_y);
+
 // v73: exact Android UITextInputEvent path. action=0 mirrors commitText,
 // action=3 mirrors deleteSurroundingText. The bytes are UTF-8 and copied
 // synchronously into the host event queue.
@@ -464,6 +479,10 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // v131: preserve v130 while restoring real UIKit move history for fling
     // velocity and implementing Android-compatible srand48/lrand48 state.
     V131InputAndRandomness = 74u,
+
+    // v132: preserve v131 RNG, but match the real Android gesture contract:
+    // GestureDetector emits UIFlickEvent type=4 before the final touch UP.
+    V132AndroidFlickBridge = 75u,
 };
 
 enum class PvZ2ProbeCapability : std::uint64_t {

@@ -2410,6 +2410,65 @@ void PvZ2QueueTouchEvent(
         std::memory_order_release);
 }
 
+void PvZ2QueueTouchEndWithFlick(
+    std::uint32_t pointer_id,
+    std::int32_t x,
+    std::int32_t y,
+    std::int32_t previous_x,
+    std::int32_t previous_y,
+    double timestamp_ms,
+    std::int32_t flick_x,
+    std::int32_t flick_y,
+    double velocity_x,
+    double velocity_y) {
+
+    if (!std::isfinite(velocity_x) ||
+        !std::isfinite(velocity_y)) {
+        PvZ2QueueTouchEvent(
+            pointer_id,
+            x,
+            y,
+            previous_x,
+            previous_y,
+            3u,
+            timestamp_ms);
+        return;
+    }
+
+    V72TouchEvent event{
+        pointer_id,
+        x,
+        y,
+        previous_x,
+        previous_y,
+        3u,
+        timestamp_ms,
+        V85SteadyNowNs()};
+    event.has_flick_before = true;
+    event.flick_x = flick_x;
+    event.flick_y = flick_y;
+    event.flick_velocity_x = velocity_x;
+    event.flick_velocity_y = velocity_y;
+
+    {
+        std::lock_guard<std::mutex> lock(gV72TouchMutex);
+        if (gV72TouchQueue.size() >= kV72MaxQueuedTouches) {
+            gV72TouchQueue.pop_front();
+            gV72DroppedTouches.fetch_add(
+                1u,
+                std::memory_order_relaxed);
+        }
+        gV72TouchQueue.push_back(event);
+    }
+
+    gV72QueuedTouches.fetch_add(
+        1u,
+        std::memory_order_relaxed);
+    gV72TouchGeneration.fetch_add(
+        1u,
+        std::memory_order_release);
+}
+
 void PvZ2QueuePinchEvent(
     std::int32_t x,
     std::int32_t y,

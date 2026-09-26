@@ -1057,6 +1057,7 @@ constexpr std::uint64_t kCapsV128 = kCapsV127;
 constexpr std::uint64_t kCapsV129 = kCapsV128;
 constexpr std::uint64_t kCapsV130 = kCapsV129;
 constexpr std::uint64_t kCapsV131 = kCapsV130;
+constexpr std::uint64_t kCapsV132 = kCapsV131;
 
 constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::PassiveRegistry, "PASSIVE_REGISTRY", nullptr, 0u, false},
@@ -1133,11 +1134,12 @@ constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::V128PersistentUserFs, "V128_PERSISTENT_USERFS", "V128 Persistent Save", kCapsV128, false},
     {PvZ2DiagnosticMode::V129IosBoardScale, "V129_IOS_BOARD_SCALE", "V129 iOS Board Scale", kCapsV129, false},
     {PvZ2DiagnosticMode::V130UserFriendlyRuntime, "V130_USER_FRIENDLY_RUNTIME", "V130 Game Launcher", kCapsV130, false},
-    {PvZ2DiagnosticMode::V131InputAndRandomness, "V131_INPUT_RANDOMNESS", "V131 Input + Randomness", kCapsV131, true},
+    {PvZ2DiagnosticMode::V131InputAndRandomness, "V131_INPUT_RANDOMNESS", "V131 Input + Randomness", kCapsV131, false},
+    {PvZ2DiagnosticMode::V132AndroidFlickBridge, "V132_ANDROID_FLICK_BRIDGE", "V132 Android Flick", kCapsV132, true},
 };
 
 constexpr PvZ2DiagnosticMode kSelectableDiagnosticModes[] = {
-    PvZ2DiagnosticMode::V131InputAndRandomness,
+    PvZ2DiagnosticMode::V132AndroidFlickBridge,
 };
 
 } // namespace
@@ -1267,14 +1269,21 @@ struct V72TouchEvent {
     std::uint32_t phase = 0u;
     double timestamp_ms = 0.0;
     std::uint64_t queued_steady_ns = 0u;
+
+    // v132: optional Android GestureDetector onFling payload. It is serialized
+    // immediately before this touch record so ACTION_UP ordering matches
+    // AndroidSurfaceView$1.onTouch exactly.
+    bool has_flick_before = false;
+    std::int32_t flick_x = 0;
+    std::int32_t flick_y = 0;
+    double flick_velocity_x = 0.0;
+    double flick_velocity_y = 0.0;
 };
 
 constexpr std::size_t kV72EventHeaderBytes = 16u;
 constexpr std::size_t kV72TouchRecordBytes = 48u;
-// v131 can enqueue several hardware samples for one UIKit callback. Keep a
-// larger bounded queue so a fast swipe is not truncated while the guest is
-// between ProcessEvents calls.
-constexpr std::size_t kV72MaxQueuedTouches = 1024u;
+constexpr std::size_t kV132FlickRecordBytes = 32u;
+constexpr std::size_t kV72MaxQueuedTouches = 256u;
 
 std::mutex gV72TouchMutex;
 std::deque<V72TouchEvent> gV72TouchQueue;
