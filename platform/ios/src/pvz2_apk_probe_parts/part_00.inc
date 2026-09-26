@@ -1060,6 +1060,7 @@ constexpr std::uint64_t kCapsV131 = kCapsV130;
 constexpr std::uint64_t kCapsV132 = kCapsV131;
 constexpr std::uint64_t kCapsV133 = kCapsV132;
 constexpr std::uint64_t kCapsV134 = kCapsV133;
+constexpr std::uint64_t kCapsV135 = kCapsV134;
 
 constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::PassiveRegistry, "PASSIVE_REGISTRY", nullptr, 0u, false},
@@ -1139,11 +1140,12 @@ constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::V131InputAndRandomness, "V131_INPUT_RANDOMNESS", "V131 Input + Randomness", kCapsV131, false},
     {PvZ2DiagnosticMode::V132AndroidFlickBridge, "V132_ANDROID_FLICK_BRIDGE", "V132 Android Flick", kCapsV132, false},
     {PvZ2DiagnosticMode::V133ExactFlickAbi, "V133_EXACT_FLICK_ABI", "V133 Exact Flick ABI", kCapsV133, false},
-    {PvZ2DiagnosticMode::V134ExactAndroidFlingRouting, "V134_EXACT_ANDROID_FLING_ROUTING", "V134 Exact Android Fling", kCapsV134, true},
+    {PvZ2DiagnosticMode::V134ExactAndroidFlingRouting, "V134_EXACT_ANDROID_FLING_ROUTING", "V134 Exact Android Fling", kCapsV134, false},
+    {PvZ2DiagnosticMode::V135AlmanacFlingRecorder, "V135_ALMANAC_FLING_RECORDER", "V135 Almanac Fling Recorder", kCapsV135, true},
 };
 
 constexpr PvZ2DiagnosticMode kSelectableDiagnosticModes[] = {
-    PvZ2DiagnosticMode::V134ExactAndroidFlingRouting,
+    PvZ2DiagnosticMode::V135AlmanacFlingRecorder,
 };
 
 } // namespace

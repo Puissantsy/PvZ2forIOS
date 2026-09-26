@@ -780,9 +780,15 @@
     }
 
 
+    bool V135Enabled() const {
+        return diagnostic_mode ==
+            PvZ2DiagnosticMode::V135AlmanacFlingRecorder;
+    }
+
     bool V134Enabled() const {
         return diagnostic_mode ==
-            PvZ2DiagnosticMode::V134ExactAndroidFlingRouting;
+                   PvZ2DiagnosticMode::V134ExactAndroidFlingRouting ||
+               V135Enabled();
     }
 
     bool V133Enabled() const {
@@ -4353,6 +4359,7 @@
     }
 
     const char* RuntimeModeTag() const {
+        if (V135Enabled()) return "V135";
         if (V134Enabled()) return "V134";
         if (V133Enabled()) return "V133";
         if (V132Enabled()) return "V132";
@@ -4593,6 +4600,103 @@
                    " frameCaptureMs=" + V85FormatMs(elapsed_ns) +
                    " bytes=" + std::to_string(bytes));
         }
+    }
+
+    void V135TraceLine(const std::string& line) {
+        if (!V135Enabled()) return;
+
+        const std::string decorated =
+            "V135 INPUT TRACE frame=" +
+            std::to_string(current_frame_number) +
+            " tid=" +
+            std::to_string(current_probe_thread_id) +
+            " " + line;
+
+        if (!v135_trace_triggered) {
+            v135_pretrace.push_back(decorated);
+            while (v135_pretrace.size() > 160u) {
+                v135_pretrace.pop_front();
+            }
+            return;
+        }
+
+        if (current_frame_number <= v135_trace_end_frame) {
+            AppendDiagnostic(decorated);
+            ++v135_trace_lines;
+        } else if (!v135_trace_finished_logged) {
+            v135_trace_finished_logged = true;
+            AppendDiagnostic(
+                "V135 INPUT TRACE END triggerFrame=" +
+                std::to_string(v135_trigger_frame) +
+                " endFrame=" +
+                std::to_string(v135_trace_end_frame) +
+                " lines=" +
+                std::to_string(v135_trace_lines));
+        }
+    }
+
+    void V135MaybeTrigger(
+        const V72TouchEvent& event,
+        std::uint32_t caller_lr,
+        std::uint32_t buffer_handle,
+        std::size_t buffer_bytes) {
+
+        if (!V135Enabled() ||
+            v135_trace_triggered ||
+            !event.has_flick_before) {
+            return;
+        }
+
+        const double abs_vx =
+            std::fabs(event.flick_velocity_x);
+        const double abs_vy =
+            std::fabs(event.flick_velocity_y);
+
+        const bool lower_screen =
+            event.flick_y >= 900;
+        const bool horizontal =
+            abs_vx >= abs_vy &&
+            abs_vx >= 50.0;
+
+        if (!lower_screen || !horizontal) {
+            return;
+        }
+
+        v135_trace_triggered = true;
+        v135_trigger_frame = current_frame_number;
+        v135_trace_end_frame =
+            current_frame_number + 120u;
+
+        AppendDiagnostic(
+            "V135 INPUT TRACE BEGIN frame=" +
+            std::to_string(current_frame_number) +
+            " callerLR=" +
+            V46DescribeGuestAddress(caller_lr) +
+            " bufferHandle=0x" +
+            JniProbeHex(buffer_handle) +
+            " bufferBytes=" +
+            std::to_string(buffer_bytes) +
+            " flickStart=" +
+            std::to_string(event.flick_x) + "," +
+            std::to_string(event.flick_y) +
+            " velocity=" +
+            std::to_string(event.flick_velocity_x) + "," +
+            std::to_string(event.flick_velocity_y) +
+            " touchEnd=" +
+            std::to_string(event.x) + "," +
+            std::to_string(event.y) +
+            " timestampMs=" +
+            std::to_string(event.timestamp_ms));
+
+        AppendDiagnostic(
+            "V135 INPUT TRACE PREHISTORY lines=" +
+            std::to_string(v135_pretrace.size()));
+
+        for (const std::string& previous : v135_pretrace) {
+            AppendDiagnostic(previous);
+            ++v135_trace_lines;
+        }
+        v135_pretrace.clear();
     }
 
     void V85RecordTouchProcess(const V72TouchEvent& event) {

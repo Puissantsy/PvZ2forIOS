@@ -491,6 +491,11 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // v134: exact Android onFling routing. UIFlickEvent uses gesture START
     // coordinates (MotionEvent e1), double velocity fields, then touch UP.
     V134ExactAndroidFlingRouting = 77u,
+
+    // v135: targeted Almanac fling flight recorder. No functional input
+    // change; records the first lower-screen horizontal flick with prehistory
+    // and ~120 frames of host->JNI delivery diagnostics.
+    V135AlmanacFlingRecorder = 78u,
 };
 
 enum class PvZ2ProbeCapability : std::uint64_t {

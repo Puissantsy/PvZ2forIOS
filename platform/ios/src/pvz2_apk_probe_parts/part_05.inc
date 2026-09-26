@@ -995,6 +995,24 @@
 
                         ++v52_ui_process_events_calls;
 
+                        if (V135Enabled()) {
+                            V135TraceLine(
+                                "UI_ProcessEvents ENTER call=" +
+                                std::to_string(v52_ui_process_events_calls) +
+                                " LR=" +
+                                V46DescribeGuestAddress(regs[14]) +
+                                " handle=0x" +
+                                JniProbeHex(buffer_handle) +
+                                " bytes=" +
+                                std::to_string(cleared) +
+                                " pendingTouch=" +
+                                std::to_string(V72PendingTouchCount()) +
+                                " pendingPinch=" +
+                                std::to_string(V110PendingPinchCount()) +
+                                " pendingText=" +
+                                std::to_string(V73PendingTextCount()));
+                        }
+
                         if (V72Enabled()) {
                             if (buffer == nullptr ||
                                 cleared <
@@ -1075,6 +1093,26 @@
                                     }
                                 }
 
+                                if (V135Enabled()) {
+                                    V135TraceLine(
+                                        "TOUCH item phase=" +
+                                        std::to_string(event.phase) +
+                                        " ident=" +
+                                        std::to_string(event.pointer_id + 1u) +
+                                        " xy=" +
+                                        std::to_string(event.x) + "," +
+                                        std::to_string(event.y) +
+                                        " prev=" +
+                                        std::to_string(event.previous_x) + "," +
+                                        std::to_string(event.previous_y) +
+                                        " tsMs=" +
+                                        std::to_string(event.timestamp_ms) +
+                                        " queuedNs=" +
+                                        std::to_string(event.queued_steady_ns) +
+                                        " hasFlick=" +
+                                        (event.has_flick_before ? "YES" : "NO"));
+                                }
+
                                 if (event.has_flick_before) {
                                     // AndroidUIEventManager$UIFlickEvent.Serialize:
                                     // type=4, X, Y, velocityX(double),
@@ -1124,6 +1162,39 @@
                                     Write32(
                                         flick + 0x1cu,
                                         0xdeadbeefu);
+
+                                    if (V135Enabled()) {
+                                        V135MaybeTrigger(
+                                            event,
+                                            regs[14],
+                                            buffer_handle,
+                                            cleared);
+                                        V135TraceLine(
+                                            "FLICK SERIALIZED offset=" +
+                                            std::to_string(write_offset) +
+                                            " type=4 start=" +
+                                            std::to_string(event.flick_x) + "," +
+                                            std::to_string(event.flick_y) +
+                                            " velocity=" +
+                                            std::to_string(event.flick_velocity_x) + "," +
+                                            std::to_string(event.flick_velocity_y) +
+                                            " rawVxLo=0x" +
+                                            JniProbeHex(
+                                                static_cast<std::uint32_t>(
+                                                    vx_bits & 0xffffffffu)) +
+                                            " rawVxHi=0x" +
+                                            JniProbeHex(
+                                                static_cast<std::uint32_t>(
+                                                    vx_bits >> 32u)) +
+                                            " rawVyLo=0x" +
+                                            JniProbeHex(
+                                                static_cast<std::uint32_t>(
+                                                    vy_bits & 0xffffffffu)) +
+                                            " rawVyHi=0x" +
+                                            JniProbeHex(
+                                                static_cast<std::uint32_t>(
+                                                    vy_bits >> 32u)));
+                                    }
 
                                     write_offset +=
                                         kV132FlickRecordBytes;
@@ -1205,6 +1276,18 @@
                                 Write32(
                                     record + 0x2cu,
                                     0xdeadbeefu);
+
+                                if (V135Enabled()) {
+                                    V135TraceLine(
+                                        "TOUCH SERIALIZED offset=" +
+                                        std::to_string(write_offset) +
+                                        " phase=" +
+                                        std::to_string(event.phase) +
+                                        " nextOffset=" +
+                                        std::to_string(
+                                            write_offset +
+                                            kV72TouchRecordBytes));
+                                }
 
                                 write_offset +=
                                     kV72TouchRecordBytes;
@@ -1465,6 +1548,20 @@
                             Write32(
                                 buffer,
                                 event_count);
+
+                            if (V135Enabled()) {
+                                V135TraceLine(
+                                    "UI_ProcessEvents EXIT eventCount=" +
+                                    std::to_string(event_count) +
+                                    " bytesWritten=" +
+                                    std::to_string(write_offset) +
+                                    " moreTouch=" +
+                                    (more_touch ? "YES" : "NO") +
+                                    " morePinch=" +
+                                    (more_pinch ? "YES" : "NO") +
+                                    " moreText=" +
+                                    (more_text ? "YES" : "NO"));
+                            }
 
                             regs[0] =
                                 (more_touch ||

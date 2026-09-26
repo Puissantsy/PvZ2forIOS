@@ -984,6 +984,14 @@
     std::uint64_t v72_invalid_event_buffers = 0u;
     std::uint64_t v132_flick_events_delivered = 0u;
 
+    // v135 targeted input flight recorder.
+    bool v135_trace_triggered = false;
+    bool v135_trace_finished_logged = false;
+    std::uint32_t v135_trigger_frame = 0u;
+    std::uint32_t v135_trace_end_frame = 0u;
+    std::uint64_t v135_trace_lines = 0u;
+    std::deque<std::string> v135_pretrace;
+
     // v131 Android/Bionic drand48-family global state. Android ARM32 long is
     // 32-bit, so srand48 consumes regs[0] as a 32-bit seed.
     std::uint64_t v131_rand48_state = 0x1234abcd330eull;

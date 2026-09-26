@@ -881,7 +881,7 @@ void PvZ2HostNotifyDirectFrame(
 
     self.inputEnabled = NO;
     self.captionLabel.text =
-        @"PvZ2 v134 LIVE — HARD STOP requested; stopping guest at the next checkpoint…";
+        @"PvZ2 v135 LIVE — HARD STOP requested; stopping guest at the next checkpoint…";
     self.stopButton.enabled = NO;
     PvZ2RequestInteractiveStop();
 }
@@ -1515,6 +1515,23 @@ void PvZ2HostNotifyDirectFrame(
     *outY = startIt->second.y;
     *outVelocityX = velocity_x;
     *outVelocityY = velocity_y;
+
+    AppendPersistentLog(
+        [NSString stringWithFormat:
+            @"[V135 HOST FLING] start=(%d,%d) end=(%d,%d) base=(%d,%d) samples=%lu dtMs=%.3f totalDist=%.3f velocity=(%.3f,%.3f) speed=%.3f",
+            startIt->second.x,
+            startIt->second.y,
+            end.x,
+            end.y,
+            base->x,
+            base->y,
+            (unsigned long)history.size(),
+            dt_ms,
+            total_distance,
+            velocity_x,
+            velocity_y,
+            speed]);
+
     return YES;
 }
 
@@ -1795,7 +1812,7 @@ void PvZ2HostNotifyDirectFrame(
         self.captionLabel.text =
             [NSString
                 stringWithFormat:
-                    @"PvZ2 v134 LIVE • frame %lu • %@\n%lu×%lu guest • direct GPU 1:1 + audio",
+                    @"PvZ2 v135 LIVE • frame %lu • %@\n%lu×%lu guest • direct GPU 1:1 + audio",
                     (unsigned long)frame,
                     touchState,
                     (unsigned long)width,
@@ -2670,7 +2687,7 @@ void PvZ2HostNotifyDirectFrame(
     self.v110SelectedUiModeIndex = 0;
 
     const PvZ2DiagnosticMode selectedMode =
-        PvZ2DiagnosticMode::V134ExactAndroidFlingRouting;
+        PvZ2DiagnosticMode::V135AlmanacFlingRecorder;
 
     const auto* selectedDescriptor =
         PvZ2DescribeDiagnosticMode(selectedMode);
@@ -2680,7 +2697,7 @@ void PvZ2HostNotifyDirectFrame(
             ? [NSString
                   stringWithUTF8String:
                       selectedDescriptor->internal_name]
-            : @"V134_EXACT_ANDROID_FLING_ROUTING";
+            : @"V135_ALMANAC_FLING_RECORDER";
 
     [self
         appendUI:
@@ -2786,7 +2803,7 @@ void PvZ2HostNotifyDirectFrame(
     }
 
     const PvZ2DiagnosticMode diagnosticMode =
-        PvZ2DiagnosticMode::V134ExactAndroidFlingRouting;
+        PvZ2DiagnosticMode::V135AlmanacFlingRecorder;
 
     const auto* diagnosticDescriptor =
         PvZ2DescribeDiagnosticMode(diagnosticMode);
@@ -2805,7 +2822,7 @@ void PvZ2HostNotifyDirectFrame(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v134 Exact Android Fling Routing started mode=%@; PID=%d ===",
+                    @"=== PvZ2 v135 Almanac Fling Recorder started mode=%@; PID=%d ===",
                     diagnosticModeName,
                     getpid()]];
 
@@ -3319,14 +3336,14 @@ void PvZ2HostNotifyDirectFrame(
                                     finishRunWithMessage:
                                         [NSString
                                             stringWithFormat:
-                                                @"PvZ2 v134 LIVE — HARD STOPPED after %u guest frames.\nClose to inspect the v130 runtime log.",
+                                                @"PvZ2 v135 LIVE — HARD STOPPED after %u guest frames.\nClose to inspect the v130 runtime log.",
                                                 result.draw_frames_completed]];
                             } else {
                                 [selfRef.liveController
                                     finishRunWithMessage:
                                         [NSString
                                             stringWithFormat:
-                                                @"PvZ2 v134 LIVE — run finished after %u guest frames.\nClose to inspect the v130 runtime log.",
+                                                @"PvZ2 v135 LIVE — run finished after %u guest frames.\nClose to inspect the v130 runtime log.",
                                                 result.draw_frames_completed]];
                             }
 
@@ -3383,11 +3400,11 @@ void PvZ2HostNotifyDirectFrame(
 
                             if (result.hard_stop_requested) {
                                 [selfRef.liveController finishRunWithMessage:
-                                    @"PvZ2 v134 LIVE — HARD STOPPED.\nGuest execution was interrupted at the next Dynarmic checkpoint. Close to inspect the v130 runtime log."];
+                                    @"PvZ2 v135 LIVE — HARD STOPPED.\nGuest execution was interrupted at the next Dynarmic checkpoint. Close to inspect the v130 runtime log."];
                             } else {
                                 [selfRef.liveController finishRunWithMessage:
                                     [NSString stringWithFormat:
-                                        @"PvZ2 v134 LIVE — guest stopped/crashed.\n%@\nClose to inspect the v130 runtime log.", message]];
+                                        @"PvZ2 v135 LIVE — guest stopped/crashed.\n%@\nClose to inspect the v130 runtime log.", message]];
                             }
 
                         } else {
