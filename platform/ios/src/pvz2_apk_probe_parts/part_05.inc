@@ -1105,8 +1105,8 @@
                                         " prev=" +
                                         std::to_string(event.previous_x) + "," +
                                         std::to_string(event.previous_y) +
-                                        " tsMs=" +
-                                        std::to_string(event.timestamp_ms) +
+                                        " tsSec=" +
+                                        std::to_string(event.timestamp_seconds) +
                                         " queuedNs=" +
                                         std::to_string(event.queued_steady_ns) +
                                         " hasFlick=" +
@@ -1251,10 +1251,10 @@
                                 std::uint64_t timestamp_bits = 0u;
                                 static_assert(
                                     sizeof(timestamp_bits) ==
-                                    sizeof(event.timestamp_ms));
+                                    sizeof(event.timestamp_seconds));
                                 std::memcpy(
                                     &timestamp_bits,
-                                    &event.timestamp_ms,
+                                    &event.timestamp_seconds,
                                     sizeof(timestamp_bits));
 
                                 for (std::size_t byte = 0u;

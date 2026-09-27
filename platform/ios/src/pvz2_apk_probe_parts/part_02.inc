@@ -780,9 +780,15 @@
     }
 
 
+    bool V136Enabled() const {
+        return diagnostic_mode ==
+            PvZ2DiagnosticMode::V136TouchTimestampSeconds;
+    }
+
     bool V135Enabled() const {
         return diagnostic_mode ==
-            PvZ2DiagnosticMode::V135AlmanacFlingRecorder;
+                   PvZ2DiagnosticMode::V135AlmanacFlingRecorder ||
+               V136Enabled();
     }
 
     bool V134Enabled() const {
@@ -4359,6 +4365,7 @@
     }
 
     const char* RuntimeModeTag() const {
+        if (V136Enabled()) return "V136";
         if (V135Enabled()) return "V135";
         if (V134Enabled()) return "V134";
         if (V133Enabled()) return "V133";
@@ -4685,8 +4692,8 @@
             " touchEnd=" +
             std::to_string(event.x) + "," +
             std::to_string(event.y) +
-            " timestampMs=" +
-            std::to_string(event.timestamp_ms));
+            " timestampSec=" +
+            std::to_string(event.timestamp_seconds));
 
         AppendDiagnostic(
             "V135 INPUT TRACE PREHISTORY lines=" +

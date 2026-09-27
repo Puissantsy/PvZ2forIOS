@@ -61,7 +61,7 @@ void PvZ2QueueTouchEvent(
     std::int32_t previous_x,
     std::int32_t previous_y,
     std::uint32_t phase,
-    double timestamp_ms);
+    double timestamp_seconds);
 
 // v132: AndroidSurfaceView feeds GestureDetector before HandleTouchEvent.
 // When onFling fires, UIFlickEvent type=4 is queued before the terminal
@@ -72,7 +72,7 @@ void PvZ2QueueTouchEndWithFlick(
     std::int32_t y,
     std::int32_t previous_x,
     std::int32_t previous_y,
-    double timestamp_ms,
+    double timestamp_seconds,
     std::int32_t flick_x,
     std::int32_t flick_y,
     double velocity_x,
@@ -496,6 +496,12 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // change; records the first lower-screen horizontal flick with prehistory
     // and ~120 frames of host->JNI delivery diagnostics.
     V135AlmanacFlingRecorder = 78u,
+
+    // v136: exact shared-engine touch timebase. Android GetTimeStamp() returns
+    // System.nanoTime()/1e9 and legacy iOS UITouch.timestamp is also seconds.
+    // Previous host code multiplied UIKit timestamps by 1000, making gestures
+    // appear ~1000x slower to ScrollWidget/inertial touch consumers.
+    V136TouchTimestampSeconds = 79u,
 };
 
 enum class PvZ2ProbeCapability : std::uint64_t {

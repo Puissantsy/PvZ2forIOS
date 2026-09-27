@@ -1061,6 +1061,7 @@ constexpr std::uint64_t kCapsV132 = kCapsV131;
 constexpr std::uint64_t kCapsV133 = kCapsV132;
 constexpr std::uint64_t kCapsV134 = kCapsV133;
 constexpr std::uint64_t kCapsV135 = kCapsV134;
+constexpr std::uint64_t kCapsV136 = kCapsV135;
 
 constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::PassiveRegistry, "PASSIVE_REGISTRY", nullptr, 0u, false},
@@ -1141,11 +1142,12 @@ constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::V132AndroidFlickBridge, "V132_ANDROID_FLICK_BRIDGE", "V132 Android Flick", kCapsV132, false},
     {PvZ2DiagnosticMode::V133ExactFlickAbi, "V133_EXACT_FLICK_ABI", "V133 Exact Flick ABI", kCapsV133, false},
     {PvZ2DiagnosticMode::V134ExactAndroidFlingRouting, "V134_EXACT_ANDROID_FLING_ROUTING", "V134 Exact Android Fling", kCapsV134, false},
-    {PvZ2DiagnosticMode::V135AlmanacFlingRecorder, "V135_ALMANAC_FLING_RECORDER", "V135 Almanac Fling Recorder", kCapsV135, true},
+    {PvZ2DiagnosticMode::V135AlmanacFlingRecorder, "V135_ALMANAC_FLING_RECORDER", "V135 Almanac Fling Recorder", kCapsV135, false},
+    {PvZ2DiagnosticMode::V136TouchTimestampSeconds, "V136_TOUCH_TIMESTAMP_SECONDS", "V136 Touch Timestamp Seconds", kCapsV136, true},
 };
 
 constexpr PvZ2DiagnosticMode kSelectableDiagnosticModes[] = {
-    PvZ2DiagnosticMode::V135AlmanacFlingRecorder,
+    PvZ2DiagnosticMode::V136TouchTimestampSeconds,
 };
 
 } // namespace
@@ -1273,7 +1275,8 @@ struct V72TouchEvent {
     std::int32_t previous_x = 0;
     std::int32_t previous_y = 0;
     std::uint32_t phase = 0u;
-    double timestamp_ms = 0.0;
+    // Shared Sexy::Touch timebase is seconds on both Android and legacy iOS.
+    double timestamp_seconds = 0.0;
     std::uint64_t queued_steady_ns = 0u;
 
     // v132: optional Android GestureDetector onFling payload. It is serialized

@@ -2369,7 +2369,7 @@ void PvZ2QueueTouchEvent(
     std::int32_t previous_x,
     std::int32_t previous_y,
     std::uint32_t phase,
-    double timestamp_ms) {
+    double timestamp_seconds) {
 
     if (phase > 4u) {
         return;
@@ -2398,7 +2398,7 @@ void PvZ2QueueTouchEvent(
                 previous_x,
                 previous_y,
                 phase,
-                timestamp_ms,
+                timestamp_seconds,
                 V85SteadyNowNs()});
     }
 
@@ -2416,7 +2416,7 @@ void PvZ2QueueTouchEndWithFlick(
     std::int32_t y,
     std::int32_t previous_x,
     std::int32_t previous_y,
-    double timestamp_ms,
+    double timestamp_seconds,
     std::int32_t flick_x,
     std::int32_t flick_y,
     double velocity_x,
@@ -2431,7 +2431,7 @@ void PvZ2QueueTouchEndWithFlick(
             previous_x,
             previous_y,
             3u,
-            timestamp_ms);
+            timestamp_seconds);
         return;
     }
 
@@ -2442,7 +2442,7 @@ void PvZ2QueueTouchEndWithFlick(
         previous_x,
         previous_y,
         3u,
-        timestamp_ms,
+        timestamp_seconds,
         V85SteadyNowNs()};
     event.has_flick_before = true;
     event.flick_x = flick_x;
