@@ -2,7 +2,18 @@
             return;
         }
 
-        if (final_blit) {
+        if (v137_powerup_fan) {
+            if (v137_powerup_fan_traces >= 600u) {
+                return;
+            }
+            if (v137_powerup_trace_frame != current_frame_number) {
+                v137_powerup_trace_frame = current_frame_number;
+                v137_powerup_traces_this_frame = 0u;
+            }
+            if (v137_powerup_traces_this_frame >= 12u) {
+                return;
+            }
+        } else if (final_blit) {
             if (v84_final_blit_draw_traces >= 160u) {
                 return;
             }
@@ -210,7 +221,12 @@
         std::uint64_t trace_number = 0u;
         const char* trace_label = nullptr;
 
-        if (final_blit) {
+        if (v137_powerup_fan) {
+            ++v137_powerup_traces_this_frame;
+            ++v137_powerup_fan_traces;
+            trace_number = v137_powerup_fan_traces;
+            trace_label = "V137 POWERUP FAN #";
+        } else if (final_blit) {
             ++v84_final_traces_this_frame;
             ++v84_final_blit_draw_traces;
             trace_number = v84_final_blit_draw_traces;
@@ -252,12 +268,23 @@
             << gles_bound_guest_framebuffer
             << " hostFBO="
             << gles_bound_host_framebuffer
+            << " drawMode=0x"
+            << JniProbeHex(static_cast<std::uint32_t>(draw_mode))
             << " viewport=("
             << last_gles_viewport[0] << ","
             << last_gles_viewport[1] << ","
             << last_gles_viewport[2] << ","
             << last_gles_viewport[3]
-            << ") first="
+            << ") scissor="
+            << (gles_scissor_enabled ? "ON" : "OFF")
+            << "("
+            << last_gles_scissor[0] << ","
+            << last_gles_scissor[1] << ","
+            << last_gles_scissor[2] << ","
+            << last_gles_scissor[3]
+            << ") blend="
+            << (gles_blend_enabled ? "ON" : "OFF")
+            << " first="
             << first
             << " count="
             << count

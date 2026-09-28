@@ -1062,6 +1062,8 @@ constexpr std::uint64_t kCapsV133 = kCapsV132;
 constexpr std::uint64_t kCapsV134 = kCapsV133;
 constexpr std::uint64_t kCapsV135 = kCapsV134;
 constexpr std::uint64_t kCapsV136 = kCapsV135;
+// v137 is observation-only and capability-identical to v136.
+constexpr std::uint64_t kCapsV137 = kCapsV136;
 
 constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::PassiveRegistry, "PASSIVE_REGISTRY", nullptr, 0u, false},
@@ -1143,11 +1145,12 @@ constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::V133ExactFlickAbi, "V133_EXACT_FLICK_ABI", "V133 Exact Flick ABI", kCapsV133, false},
     {PvZ2DiagnosticMode::V134ExactAndroidFlingRouting, "V134_EXACT_ANDROID_FLING_ROUTING", "V134 Exact Android Fling", kCapsV134, false},
     {PvZ2DiagnosticMode::V135AlmanacFlingRecorder, "V135_ALMANAC_FLING_RECORDER", "V135 Almanac Fling Recorder", kCapsV135, false},
-    {PvZ2DiagnosticMode::V136TouchTimestampSeconds, "V136_TOUCH_TIMESTAMP_SECONDS", "V136 Touch Timestamp Seconds", kCapsV136, true},
+    {PvZ2DiagnosticMode::V136TouchTimestampSeconds, "V136_TOUCH_TIMESTAMP_SECONDS", "V136 Touch Timestamp Seconds", kCapsV136, false},
+    {PvZ2DiagnosticMode::V137PowerupTimerProbe, "V137_POWERUP_TIMER_PROBE", "V137 Powerup Timer Probe", kCapsV137, true},
 };
 
 constexpr PvZ2DiagnosticMode kSelectableDiagnosticModes[] = {
-    PvZ2DiagnosticMode::V136TouchTimestampSeconds,
+    PvZ2DiagnosticMode::V137PowerupTimerProbe,
 };
 
 } // namespace
@@ -3899,6 +3902,10 @@ public:
         gles_uniform_matrix4_values;
     std::uint64_t v80_screen_matrix_uploads = 0u;
     std::uint64_t v80_screen_matrix_changes = 0u;
+    // v137: independent late-game radial timer trace budget.
+    std::uint64_t v137_powerup_fan_traces = 0u;
+    std::uint32_t v137_powerup_trace_frame = 0u;
+    std::uint32_t v137_powerup_traces_this_frame = 0u;
     std::uint64_t v80_array_draws_seen = 0u;
     std::uint64_t v80_transform_draw_traces = 0u;
     std::uint32_t v80_trace_frame = 0xffffffffu;
@@ -4392,6 +4399,7 @@ public:
     }
 
     void V80TraceArrayTransform(
+        GLenum draw_mode,
         GLint first,
         GLsizei count) {
 
@@ -4399,16 +4407,25 @@ public:
 
         const bool final_blit =
             gles_bound_guest_framebuffer == 0u;
+        // A radial rectangle wipe needs only center/current-ray/corner vertices.
+        // Keep the probe narrow so its budget survives until Power Up gameplay.
+        const bool v137_powerup_fan =
+            V137Enabled() &&
+            draw_mode == GL_TRIANGLE_FAN &&
+            count >= 3 &&
+            count <= 16;
 
-        if (!V80Enabled() ||
+        if ((!V80Enabled() && !v137_powerup_fan) ||
             first < 0 ||
             count <= 0 ||
-            (final_blit && !V84FinalBlitEnabled())) {
+            (!v137_powerup_fan &&
+             final_blit && !V84FinalBlitEnabled())) {
             return;
         }
 
-        // Three bounded windows: early EA, title/loading, then Profile.
+        // Three bounded historical v80 windows, or every narrow v137 fan.
         const bool sample_frame =
+            v137_powerup_fan ||
             current_frame_number <= 12u ||
             (current_frame_number >= 50u &&
              current_frame_number <= 95u &&

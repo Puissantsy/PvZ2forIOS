@@ -3532,6 +3532,7 @@
                         count);
 
                     V80TraceArrayTransform(
+                        draw_mode,
                         first,
                         count);
 

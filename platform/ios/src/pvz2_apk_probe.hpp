@@ -502,6 +502,11 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // Previous host code multiplied UIKit timestamps by 1000, making gestures
     // appear ~1000x slower to ScrollWidget/inertial touch consumers.
     V136TouchTimestampSeconds = 79u,
+
+    // v137: observation-only PowerupTimeUI / BoardTimerColor geometry probe.
+    // Preserve every v136 runtime fix and trace small GL_TRIANGLE_FAN
+    // primitives used by radial/full-board timer candidates.
+    V137PowerupTimerProbe = 80u,
 };
 
 enum class PvZ2ProbeCapability : std::uint64_t {
