@@ -3544,6 +3544,13 @@
                         first,
                         count);
 
+                    V142TraceBoardTimerColor(
+                        draw_mode,
+                        first,
+                        count,
+                        nullptr,
+                        0u);
+
                     V138TraceLargePrimitive(
                         draw_mode,
                         first,
@@ -3862,6 +3869,13 @@
                         "elements",
                         draw_mode,
                         count);
+
+                    V142TraceBoardTimerColor(
+                        draw_mode,
+                        0,
+                        count,
+                        indices,
+                        type);
 
                     V138TraceLargePrimitive(
                         draw_mode,

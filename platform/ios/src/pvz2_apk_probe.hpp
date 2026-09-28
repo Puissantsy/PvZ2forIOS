@@ -525,6 +525,10 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // activations are reversible on restart, and arm detailed rendering traces
     // only when the late-level pp.dat flush marks a real Power Up purchase/use.
     V141PowerupLab = 84u,
+
+    // v142: exact BoardTimerColor recorder. Detect the real solid-color timer
+    // draw by vertex RGBA and remove the old <=256-vertex blind spot.
+    V142BoardTimerColor = 85u,
 };
 
 enum class PvZ2ProbeCapability : std::uint64_t {

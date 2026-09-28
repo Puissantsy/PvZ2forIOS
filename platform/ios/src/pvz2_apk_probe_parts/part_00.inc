@@ -1069,6 +1069,7 @@ constexpr std::uint64_t kCapsV138 = kCapsV137;
 constexpr std::uint64_t kCapsV139 = kCapsV138;
 constexpr std::uint64_t kCapsV140 = kCapsV139;
 constexpr std::uint64_t kCapsV141 = kCapsV140;
+constexpr std::uint64_t kCapsV142 = kCapsV141;
 
 constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::PassiveRegistry, "PASSIVE_REGISTRY", nullptr, 0u, false},
@@ -1155,11 +1156,12 @@ constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::V138PowerupDynamicGeometry, "V138_POWERUP_DYNAMIC_GEOMETRY", "V138 Powerup Dynamic Geometry", kCapsV138, false},
     {PvZ2DiagnosticMode::V139PowerupTintDetail, "V139_POWERUP_TINT_DETAIL", "V139 Powerup Tint Detail", kCapsV139, false},
     {PvZ2DiagnosticMode::V140PowerupSuperProbe, "V140_POWERUP_SUPER_PROBE", "V140 Powerup Super Probe", kCapsV140, false},
-    {PvZ2DiagnosticMode::V141PowerupLab, "V141_POWERUP_LAB", "V141 Powerup Lab", kCapsV141, true},
+    {PvZ2DiagnosticMode::V141PowerupLab, "V141_POWERUP_LAB", "V141 Powerup Lab", kCapsV141, false},
+    {PvZ2DiagnosticMode::V142BoardTimerColor, "V142_BOARD_TIMER_COLOR", "V142 Board Timer Color", kCapsV142, true},
 };
 
 constexpr PvZ2DiagnosticMode kSelectableDiagnosticModes[] = {
-    PvZ2DiagnosticMode::V141PowerupLab,
+    PvZ2DiagnosticMode::V142BoardTimerColor,
 };
 
 } // namespace
@@ -3934,6 +3936,8 @@ public:
     std::uint32_t v141_powerup_capture_start_frame = 0u;
     std::uint32_t v141_powerup_capture_end_frame = 0u;
     std::uint64_t v141_ppdat_flush_suppressed = 0u;
+    std::uint64_t v142_board_timer_color_traces = 0u;
+    std::uint32_t v142_last_trace_frame = 0u;
     std::uint64_t v80_array_draws_seen = 0u;
     std::uint64_t v80_transform_draw_traces = 0u;
     std::uint32_t v80_trace_frame = 0xffffffffu;

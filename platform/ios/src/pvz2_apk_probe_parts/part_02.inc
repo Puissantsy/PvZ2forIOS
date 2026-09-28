@@ -780,8 +780,13 @@
     }
 
 
+    bool V142Enabled() const {
+        return diagnostic_mode == PvZ2DiagnosticMode::V142BoardTimerColor;
+    }
+
     bool V141Enabled() const {
-        return diagnostic_mode == PvZ2DiagnosticMode::V141PowerupLab;
+        return diagnostic_mode == PvZ2DiagnosticMode::V141PowerupLab ||
+               V142Enabled();
     }
 
     bool V140Enabled() const {
@@ -4391,6 +4396,7 @@
     }
 
     const char* RuntimeModeTag() const {
+        if (V142Enabled()) return "V142";
         if (V141Enabled()) return "V141";
         if (V140Enabled()) return "V140";
         if (V139Enabled()) return "V139";
