@@ -780,8 +780,13 @@
     }
 
 
+    bool V140Enabled() const {
+        return diagnostic_mode == PvZ2DiagnosticMode::V140PowerupSuperProbe;
+    }
+
     bool V139Enabled() const {
-        return diagnostic_mode == PvZ2DiagnosticMode::V139PowerupTintDetail;
+        return diagnostic_mode == PvZ2DiagnosticMode::V139PowerupTintDetail ||
+               V140Enabled();
     }
 
     bool V138Enabled() const {
@@ -4381,6 +4386,7 @@
     }
 
     const char* RuntimeModeTag() const {
+        if (V140Enabled()) return "V140";
         if (V139Enabled()) return "V139";
         if (V138Enabled()) return "V138";
         if (V137Enabled()) return "V137";

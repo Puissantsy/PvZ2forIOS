@@ -515,6 +515,11 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // v139: targeted BoardTimerColor candidate recorder (program 12, tex15/16,
     // near-fullscreen bbox) with vertex/color/blend capture.
     V139PowerupTintDetail = 82u,
+
+    // v140: one-run Power Up super-probe. Keeps all previous probes and
+    // snapshots every large blended full-board candidate: geometry, UV/color
+    // attributes, uniforms, textures, blend state and projection.
+    V140PowerupSuperProbe = 83u,
 };
 
 enum class PvZ2ProbeCapability : std::uint64_t {

@@ -2072,6 +2072,14 @@
 
                     ++gles_uniform4_calls;
 
+                    if (count > 0 && values != nullptr) {
+                        const std::uint64_t key =
+                            (static_cast<std::uint64_t>(gles_current_program) << 32u) |
+                            static_cast<std::uint32_t>(location);
+                        gles_uniform4_values[key] = {
+                            values[0], values[1], values[2], values[3]};
+                    }
+
                     if (gles_uniform4_calls <= 128u &&
                         count > 0 &&
                         values != nullptr) {

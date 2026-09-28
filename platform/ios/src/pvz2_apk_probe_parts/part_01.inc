@@ -484,6 +484,223 @@
 
         if (!spatially_interesting) return;
 
+        // v140: one-run super-probe. Sample all plausible large blended
+        // full-board/timer primitives, not only the tex15/16 candidate.
+        const bool v140_near_fullscreen =
+            width >= 1500.0f && height >= 1100.0f;
+        const bool v140_timer_texture_pair =
+            gles_bound_texture_2d[0u] == 15u &&
+            gles_bound_texture_2d[1u] == 16u;
+        const bool v140_candidate =
+            V140Enabled() &&
+            (v140_near_fullscreen || v140_timer_texture_pair);
+
+        if (v140_candidate) {
+            if (v140_powerup_super_frame != current_frame_number) {
+                v140_powerup_super_frame = current_frame_number;
+                v140_powerup_super_traces_this_frame = 0u;
+            }
+
+            // Keep enough temporal resolution for a 5-10 s timer while
+            // preventing normal gameplay draws from exploding the logfile.
+            const bool sample_this_frame =
+                (current_frame_number % 2u) == 0u ||
+                v140_timer_texture_pair;
+
+            if (sample_this_frame &&
+                v140_powerup_super_traces_this_frame < 3u &&
+                v140_powerup_super_traces < 900u) {
+                ++v140_powerup_super_traces_this_frame;
+                ++v140_powerup_super_traces;
+
+                auto vertex_index_at =
+                    [&](std::size_t i, std::uint32_t& out) -> bool {
+                        if (raw_indices == nullptr) {
+                            out = static_cast<std::uint32_t>(
+                                std::max<GLint>(0, first)) +
+                                static_cast<std::uint32_t>(i);
+                            return true;
+                        }
+                        if (index_type == GL_UNSIGNED_BYTE) {
+                            out = static_cast<const std::uint8_t*>(raw_indices)[i];
+                            return true;
+                        }
+                        if (index_type == GL_UNSIGNED_SHORT) {
+                            out = static_cast<const std::uint16_t*>(raw_indices)[i];
+                            return true;
+                        }
+                        if (index_type == GL_UNSIGNED_INT) {
+                            out = static_cast<const std::uint32_t*>(raw_indices)[i];
+                            return true;
+                        }
+                        return false;
+                    };
+
+                auto append_attrib_sample =
+                    [&](std::ostringstream& d, GLuint attrib_index) {
+                        if (attrib_index >= gles_attrib_state.size()) return;
+                        const auto& a = gles_attrib_state[attrib_index];
+                        if (!a.enabled || a.guest_pointer == 0u) return;
+
+                        const std::uint64_t key =
+                            (static_cast<std::uint64_t>(gles_current_program) << 32u) |
+                            attrib_index;
+                        const auto name_it = gles_attrib_names.find(key);
+                        const std::string name =
+                            name_it != gles_attrib_names.end()
+                                ? name_it->second
+                                : std::string{"?"};
+
+                        std::size_t component_bytes = 0u;
+                        if (a.type == GL_FLOAT) component_bytes = sizeof(GLfloat);
+                        else if (a.type == GL_UNSIGNED_BYTE) component_bytes = 1u;
+                        else if (a.type == GL_UNSIGNED_SHORT || a.type == GL_SHORT) component_bytes = 2u;
+                        else component_bytes = 4u;
+
+                        const std::size_t stride =
+                            a.stride > 0
+                                ? static_cast<std::size_t>(a.stride)
+                                : static_cast<std::size_t>(std::max(1, a.size)) * component_bytes;
+
+                        d << " attr" << attrib_index
+                          << "{name=" << name
+                          << ",size=" << a.size
+                          << ",type=0x" << JniProbeHex(static_cast<std::uint32_t>(a.type))
+                          << ",norm=" << (a.normalized == GL_TRUE ? 1 : 0)
+                          << ",stride=" << a.stride
+                          << ",samples=[";
+
+                        const std::size_t n = std::min<std::size_t>(sample_count, 8u);
+                        for (std::size_t i = 0u; i < n; ++i) {
+                            if (i) d << ";";
+                            std::uint32_t vi = 0u;
+                            if (!vertex_index_at(i, vi)) { d << "?"; continue; }
+                            const std::uint64_t address64 =
+                                static_cast<std::uint64_t>(a.guest_pointer) +
+                                static_cast<std::uint64_t>(vi) * stride;
+                            if (address64 > std::numeric_limits<std::uint32_t>::max()) {
+                                d << "?"; continue;
+                            }
+
+                            const std::size_t need =
+                                static_cast<std::size_t>(std::max(1, a.size)) * component_bytes;
+                            const auto* bytes = mem.Ptr(
+                                static_cast<std::uint32_t>(address64), need);
+                            if (!bytes) { d << "?"; continue; }
+
+                            d << "(";
+                            const int comps = std::min(4, std::max(1, a.size));
+                            for (int k = 0; k < comps; ++k) {
+                                if (k) d << ",";
+                                if (a.type == GL_FLOAT) {
+                                    GLfloat value = 0.0f;
+                                    std::memcpy(&value, bytes + k * sizeof(GLfloat), sizeof(value));
+                                    d << value;
+                                } else if (a.type == GL_UNSIGNED_BYTE) {
+                                    d << static_cast<unsigned>(bytes[k]);
+                                } else if (a.type == GL_UNSIGNED_SHORT) {
+                                    std::uint16_t value = 0u;
+                                    std::memcpy(&value, bytes + k * sizeof(value), sizeof(value));
+                                    d << value;
+                                } else if (a.type == GL_SHORT) {
+                                    std::int16_t value = 0;
+                                    std::memcpy(&value, bytes + k * sizeof(value), sizeof(value));
+                                    d << value;
+                                } else {
+                                    std::uint32_t value = 0u;
+                                    std::memcpy(&value, bytes + k * sizeof(value), sizeof(value));
+                                    d << "0x" << JniProbeHex(value);
+                                }
+                            }
+                            d << ")";
+                        }
+                        d << "]}";
+                    };
+
+                auto texture_summary = [&](GLuint texture) {
+                    std::ostringstream v;
+                    v << texture;
+                    const auto it = gles_texture_info.find(texture);
+                    if (it != gles_texture_info.end()) {
+                        v << "(" << it->second.width << "x" << it->second.height
+                          << ",fmt=0x" << JniProbeHex(static_cast<std::uint32_t>(it->second.format))
+                          << ",type=0x" << JniProbeHex(static_cast<std::uint32_t>(it->second.type))
+                          << ",pixels=" << (it->second.has_pixels ? 1 : 0) << ")";
+                    }
+                    return v.str();
+                };
+
+                std::ostringstream d;
+                d << "V140 POWERUP SUPER #" << v140_powerup_super_traces
+                  << " frame=" << current_frame_number
+                  << " kind=" << (raw_indices ? "elements" : "arrays")
+                  << " program=" << gles_current_program
+                  << " mode=0x" << JniProbeHex(static_cast<std::uint32_t>(draw_mode))
+                  << " count=" << count
+                  << " bbox=(" << min_x << "," << min_y << ")-("
+                  << max_x << "," << max_y << ")"
+                  << " size=" << width << "x" << height
+                  << " blend=" << (gles_blend_enabled ? "ON" : "OFF")
+                  << " src=0x" << JniProbeHex(static_cast<std::uint32_t>(gles_blend_src))
+                  << " dst=0x" << JniProbeHex(static_cast<std::uint32_t>(gles_blend_dst))
+                  << " colorMask="
+                  << static_cast<int>(gles_color_mask[0])
+                  << static_cast<int>(gles_color_mask[1])
+                  << static_cast<int>(gles_color_mask[2])
+                  << static_cast<int>(gles_color_mask[3])
+                  << " viewport=(" << last_gles_viewport[0] << ","
+                  << last_gles_viewport[1] << ","
+                  << last_gles_viewport[2] << ","
+                  << last_gles_viewport[3] << ")"
+                  << " scissor=" << (gles_scissor_enabled ? "ON" : "OFF")
+                  << "(" << last_gles_scissor[0] << ","
+                  << last_gles_scissor[1] << ","
+                  << last_gles_scissor[2] << ","
+                  << last_gles_scissor[3] << ")"
+                  << " tex0=" << texture_summary(gles_bound_texture_2d[0u])
+                  << " tex1=" << texture_summary(gles_bound_texture_2d[1u])
+                  << " tex2=" << texture_summary(gles_bound_texture_2d[2u])
+                  << " tex3=" << texture_summary(gles_bound_texture_2d[3u]);
+
+                // Dump every enabled vertex stream by semantic name. This gives
+                // positions + UVs + colors even if attribute indices differ.
+                for (GLuint ai = 0u; ai < gles_attrib_state.size(); ++ai) {
+                    if (gles_attrib_state[ai].enabled) append_attrib_sample(d, ai);
+                }
+
+                d << " uniforms={";
+                bool first_uniform = true;
+                std::size_t uniform_count = 0u;
+                for (const auto& entry : gles_uniform_names) {
+                    const GLuint program = static_cast<GLuint>(entry.first >> 32u);
+                    if (program != gles_current_program || uniform_count >= 24u) continue;
+                    if (!first_uniform) d << ";";
+                    first_uniform = false;
+                    ++uniform_count;
+                    d << entry.second << "=";
+
+                    const auto i1 = gles_uniform1i_values.find(entry.first);
+                    const auto v4 = gles_uniform4_values.find(entry.first);
+                    const auto m4 = gles_uniform_matrix4_values.find(entry.first);
+                    if (v4 != gles_uniform4_values.end()) {
+                        d << "vec4(" << v4->second[0] << "," << v4->second[1]
+                          << "," << v4->second[2] << "," << v4->second[3] << ")";
+                    } else if (i1 != gles_uniform1i_values.end()) {
+                        d << "int(" << i1->second << ")";
+                    } else if (m4 != gles_uniform_matrix4_values.end()) {
+                        d << "mat4[m00=" << m4->second[0]
+                          << ",m11=" << m4->second[5]
+                          << ",tx=" << m4->second[12]
+                          << ",ty=" << m4->second[13] << "]";
+                    } else {
+                        d << "(untracked)";
+                    }
+                }
+                d << "}";
+                AppendDiagnostic(d.str());
+            }
+        }
+
         // v139: the v138 iPad run isolated a rare near-fullscreen candidate
         // on program 12 with textures 15/16. Capture its real vertex payload,
         // color attribute and blend factors without changing rendering.

@@ -1067,6 +1067,7 @@ constexpr std::uint64_t kCapsV137 = kCapsV136;
 // v138 remains observation-only and capability-identical to v137/v136.
 constexpr std::uint64_t kCapsV138 = kCapsV137;
 constexpr std::uint64_t kCapsV139 = kCapsV138;
+constexpr std::uint64_t kCapsV140 = kCapsV139;
 
 constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::PassiveRegistry, "PASSIVE_REGISTRY", nullptr, 0u, false},
@@ -1151,11 +1152,12 @@ constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::V136TouchTimestampSeconds, "V136_TOUCH_TIMESTAMP_SECONDS", "V136 Touch Timestamp Seconds", kCapsV136, false},
     {PvZ2DiagnosticMode::V137PowerupTimerProbe, "V137_POWERUP_TIMER_PROBE", "V137 Powerup Timer Probe", kCapsV137, false},
     {PvZ2DiagnosticMode::V138PowerupDynamicGeometry, "V138_POWERUP_DYNAMIC_GEOMETRY", "V138 Powerup Dynamic Geometry", kCapsV138, false},
-    {PvZ2DiagnosticMode::V139PowerupTintDetail, "V139_POWERUP_TINT_DETAIL", "V139 Powerup Tint Detail", kCapsV139, true},
+    {PvZ2DiagnosticMode::V139PowerupTintDetail, "V139_POWERUP_TINT_DETAIL", "V139 Powerup Tint Detail", kCapsV139, false},
+    {PvZ2DiagnosticMode::V140PowerupSuperProbe, "V140_POWERUP_SUPER_PROBE", "V140 Powerup Super Probe", kCapsV140, true},
 };
 
 constexpr PvZ2DiagnosticMode kSelectableDiagnosticModes[] = {
-    PvZ2DiagnosticMode::V139PowerupTintDetail,
+    PvZ2DiagnosticMode::V140PowerupSuperProbe,
 };
 
 } // namespace
@@ -3917,6 +3919,12 @@ public:
     std::uint32_t v138_powerup_traces_this_frame = 0u;
     std::unordered_set<std::string> v138_powerup_geometry_signatures;
     std::uint64_t v139_powerup_tint_detail_traces = 0u;
+    // v140: broad one-run snapshots for all plausible full-board Power Up draws.
+    std::uint64_t v140_powerup_super_traces = 0u;
+    std::uint32_t v140_powerup_super_frame = 0u;
+    std::uint32_t v140_powerup_super_traces_this_frame = 0u;
+    std::unordered_map<std::uint64_t, std::array<GLfloat, 4>>
+        gles_uniform4_values;
     std::uint64_t v80_array_draws_seen = 0u;
     std::uint64_t v80_transform_draw_traces = 0u;
     std::uint32_t v80_trace_frame = 0xffffffffu;
