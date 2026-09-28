@@ -780,9 +780,13 @@
     }
 
 
+    bool V139Enabled() const {
+        return diagnostic_mode == PvZ2DiagnosticMode::V139PowerupTintDetail;
+    }
+
     bool V138Enabled() const {
-        return diagnostic_mode ==
-            PvZ2DiagnosticMode::V138PowerupDynamicGeometry;
+        return diagnostic_mode == PvZ2DiagnosticMode::V138PowerupDynamicGeometry ||
+               V139Enabled();
     }
 
     bool V137Enabled() const {
@@ -4377,6 +4381,7 @@
     }
 
     const char* RuntimeModeTag() const {
+        if (V139Enabled()) return "V139";
         if (V138Enabled()) return "V138";
         if (V137Enabled()) return "V137";
         if (V136Enabled()) return "V136";

@@ -511,6 +511,10 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // v138: broaden the Power Up probe to all large blended dynamic geometry,
     // including indexed glDrawElements paths, after the Board becomes active.
     V138PowerupDynamicGeometry = 81u,
+
+    // v139: targeted BoardTimerColor candidate recorder (program 12, tex15/16,
+    // near-fullscreen bbox) with vertex/color/blend capture.
+    V139PowerupTintDetail = 82u,
 };
 
 enum class PvZ2ProbeCapability : std::uint64_t {

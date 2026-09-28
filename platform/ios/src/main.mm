@@ -881,7 +881,7 @@ void PvZ2HostNotifyDirectFrame(
 
     self.inputEnabled = NO;
     self.captionLabel.text =
-        @"PvZ2 v138 LIVE — HARD STOP requested; stopping guest at the next checkpoint…";
+        @"PvZ2 v139 LIVE — HARD STOP requested; stopping guest at the next checkpoint…";
     self.stopButton.enabled = NO;
     PvZ2RequestInteractiveStop();
 }
@@ -1814,7 +1814,7 @@ void PvZ2HostNotifyDirectFrame(
         self.captionLabel.text =
             [NSString
                 stringWithFormat:
-                    @"PvZ2 v138 LIVE • frame %lu • %@\n%lu×%lu guest • direct GPU 1:1 + audio",
+                    @"PvZ2 v139 LIVE • frame %lu • %@\n%lu×%lu guest • direct GPU 1:1 + audio",
                     (unsigned long)frame,
                     touchState,
                     (unsigned long)width,
@@ -2689,7 +2689,7 @@ void PvZ2HostNotifyDirectFrame(
     self.v110SelectedUiModeIndex = 0;
 
     const PvZ2DiagnosticMode selectedMode =
-        PvZ2DiagnosticMode::V138PowerupDynamicGeometry;
+        PvZ2DiagnosticMode::V139PowerupTintDetail;
 
     const auto* selectedDescriptor =
         PvZ2DescribeDiagnosticMode(selectedMode);
@@ -2699,7 +2699,7 @@ void PvZ2HostNotifyDirectFrame(
             ? [NSString
                   stringWithUTF8String:
                       selectedDescriptor->internal_name]
-            : @"V138_POWERUP_DYNAMIC_GEOMETRY";
+            : @"V139_POWERUP_TINT_DETAIL";
 
     [self
         appendUI:
@@ -2805,7 +2805,7 @@ void PvZ2HostNotifyDirectFrame(
     }
 
     const PvZ2DiagnosticMode diagnosticMode =
-        PvZ2DiagnosticMode::V138PowerupDynamicGeometry;
+        PvZ2DiagnosticMode::V139PowerupTintDetail;
 
     const auto* diagnosticDescriptor =
         PvZ2DescribeDiagnosticMode(diagnosticMode);
@@ -2824,7 +2824,7 @@ void PvZ2HostNotifyDirectFrame(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v138 Powerup Dynamic Geometry started mode=%@; PID=%d ===",
+                    @"=== PvZ2 v139 Powerup Tint Detail started mode=%@; PID=%d ===",
                     diagnosticModeName,
                     getpid()]];
 
@@ -3338,14 +3338,14 @@ void PvZ2HostNotifyDirectFrame(
                                     finishRunWithMessage:
                                         [NSString
                                             stringWithFormat:
-                                                @"PvZ2 v138 LIVE — HARD STOPPED after %u guest frames.\nClose to inspect the v130 runtime log.",
+                                                @"PvZ2 v139 LIVE — HARD STOPPED after %u guest frames.\nClose to inspect the v130 runtime log.",
                                                 result.draw_frames_completed]];
                             } else {
                                 [selfRef.liveController
                                     finishRunWithMessage:
                                         [NSString
                                             stringWithFormat:
-                                                @"PvZ2 v138 LIVE — run finished after %u guest frames.\nClose to inspect the v130 runtime log.",
+                                                @"PvZ2 v139 LIVE — run finished after %u guest frames.\nClose to inspect the v130 runtime log.",
                                                 result.draw_frames_completed]];
                             }
 
@@ -3402,11 +3402,11 @@ void PvZ2HostNotifyDirectFrame(
 
                             if (result.hard_stop_requested) {
                                 [selfRef.liveController finishRunWithMessage:
-                                    @"PvZ2 v138 LIVE — HARD STOPPED.\nGuest execution was interrupted at the next Dynarmic checkpoint. Close to inspect the v130 runtime log."];
+                                    @"PvZ2 v139 LIVE — HARD STOPPED.\nGuest execution was interrupted at the next Dynarmic checkpoint. Close to inspect the v130 runtime log."];
                             } else {
                                 [selfRef.liveController finishRunWithMessage:
                                     [NSString stringWithFormat:
-                                        @"PvZ2 v138 LIVE — guest stopped/crashed.\n%@\nClose to inspect the v130 runtime log.", message]];
+                                        @"PvZ2 v139 LIVE — guest stopped/crashed.\n%@\nClose to inspect the v130 runtime log.", message]];
                             }
 
                         } else {

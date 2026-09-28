@@ -484,6 +484,105 @@
 
         if (!spatially_interesting) return;
 
+        // v139: the v138 iPad run isolated a rare near-fullscreen candidate
+        // on program 12 with textures 15/16. Capture its real vertex payload,
+        // color attribute and blend factors without changing rendering.
+        const bool v139_tint_candidate =
+            V139Enabled() &&
+            gles_current_program == 12u &&
+            gles_bound_texture_2d[0u] == 15u &&
+            gles_bound_texture_2d[1u] == 16u &&
+            min_x <= 40.0f && min_y <= 10.0f &&
+            max_x >= 1950.0f && max_y >= 1530.0f;
+
+        if (v139_tint_candidate &&
+            v139_powerup_tint_detail_traces < 160u) {
+            ++v139_powerup_tint_detail_traces;
+
+            std::optional<GLuint> color_index;
+            for (GLuint index = 0u; index < gles_attrib_state.size(); ++index) {
+                const auto& state = gles_attrib_state[index];
+                if (!state.enabled) continue;
+                const std::uint64_t key =
+                    (static_cast<std::uint64_t>(gles_current_program) << 32u) |
+                    index;
+                const auto it = gles_attrib_names.find(key);
+                if (it == gles_attrib_names.end()) continue;
+                std::string lowered = it->second;
+                std::transform(lowered.begin(), lowered.end(), lowered.begin(),
+                    [](unsigned char c){ return static_cast<char>(std::tolower(c)); });
+                if (lowered.find("color") != std::string::npos) {
+                    color_index = index;
+                    break;
+                }
+            }
+
+            std::ostringstream d;
+            d << "V139 POWERUP TINT DETAIL #" << v139_powerup_tint_detail_traces
+              << " frame=" << current_frame_number
+              << " count=" << count
+              << " bbox=(" << min_x << "," << min_y << ")-("
+              << max_x << "," << max_y << ")"
+              << " blend=" << (gles_blend_enabled ? "ON" : "OFF")
+              << " src=0x" << JniProbeHex(static_cast<std::uint32_t>(gles_blend_src))
+              << " dst=0x" << JniProbeHex(static_cast<std::uint32_t>(gles_blend_dst));
+
+            if (color_index.has_value()) {
+                const auto& c = gles_attrib_state[*color_index];
+                d << " colorAttrib=" << *color_index
+                  << " size=" << c.size
+                  << " type=0x" << JniProbeHex(static_cast<std::uint32_t>(c.type))
+                  << " norm=" << (c.normalized == GL_TRUE ? 1 : 0)
+                  << " stride=" << c.stride;
+
+                if (c.guest_pointer != 0u) {
+                    const std::size_t color_stride = c.stride > 0
+                        ? static_cast<std::size_t>(c.stride)
+                        : (c.type == GL_UNSIGNED_BYTE
+                            ? static_cast<std::size_t>(std::max(1,c.size))
+                            : static_cast<std::size_t>(std::max(1,c.size)) * sizeof(GLfloat));
+                    d << " samples=[";
+                    const std::size_t n = std::min<std::size_t>(sample_count, 12u);
+                    for (std::size_t i=0;i<n;++i) {
+                        if (i) d << ";";
+                        const std::uint64_t vi = raw_indices == nullptr
+                            ? static_cast<std::uint64_t>(std::max<GLint>(0,first)) + i
+                            : i;
+                        const std::uint64_t ca = static_cast<std::uint64_t>(c.guest_pointer) + vi*color_stride;
+                        if (ca > std::numeric_limits<std::uint32_t>::max()) { d << "?"; continue; }
+                        if (c.type == GL_UNSIGNED_BYTE) {
+                            const auto* cp = mem.Ptr(static_cast<std::uint32_t>(ca), static_cast<std::size_t>(std::max(1,c.size)));
+                            if (!cp) { d << "?"; continue; }
+                            d << "(";
+                            for (int k=0;k<c.size && k<4;++k) { if(k) d << ","; d << static_cast<unsigned>(cp[k]); }
+                            d << ")";
+                        } else if (c.type == GL_FLOAT) {
+                            const auto* cp = mem.Ptr(static_cast<std::uint32_t>(ca), sizeof(GLfloat)*static_cast<std::size_t>(std::max(1,c.size)));
+                            if (!cp) { d << "?"; continue; }
+                            d << "(";
+                            for (int k=0;k<c.size && k<4;++k) { GLfloat fv=0; std::memcpy(&fv,cp+k*sizeof(GLfloat),sizeof(fv)); if(k)d<<","; d<<fv; }
+                            d << ")";
+                        } else d << "type?";
+                    }
+                    d << "]";
+                }
+            } else {
+                d << " colorAttrib=NONE";
+            }
+
+            d << " pos=[";
+            const std::size_t pn = std::min<std::size_t>(sample_count, 18u);
+            for (std::size_t i=0;i<pn;++i) {
+                if (i) d << ";";
+                std::uint32_t vi = static_cast<std::uint32_t>(std::max<GLint>(0,first)) + static_cast<std::uint32_t>(i);
+                float vx=0.0f, vy=0.0f;
+                if (read_vertex_xy(vi,vx,vy)) d << "(" << vx << "," << vy << ")";
+                else d << "?";
+            }
+            d << "]";
+            AppendDiagnostic(d.str());
+        }
+
         if (v138_powerup_trace_frame != current_frame_number) {
             v138_powerup_trace_frame = current_frame_number;
             v138_powerup_traces_this_frame = 0u;

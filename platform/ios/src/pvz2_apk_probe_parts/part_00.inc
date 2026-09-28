@@ -1066,6 +1066,7 @@ constexpr std::uint64_t kCapsV136 = kCapsV135;
 constexpr std::uint64_t kCapsV137 = kCapsV136;
 // v138 remains observation-only and capability-identical to v137/v136.
 constexpr std::uint64_t kCapsV138 = kCapsV137;
+constexpr std::uint64_t kCapsV139 = kCapsV138;
 
 constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::PassiveRegistry, "PASSIVE_REGISTRY", nullptr, 0u, false},
@@ -1149,11 +1150,12 @@ constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::V135AlmanacFlingRecorder, "V135_ALMANAC_FLING_RECORDER", "V135 Almanac Fling Recorder", kCapsV135, false},
     {PvZ2DiagnosticMode::V136TouchTimestampSeconds, "V136_TOUCH_TIMESTAMP_SECONDS", "V136 Touch Timestamp Seconds", kCapsV136, false},
     {PvZ2DiagnosticMode::V137PowerupTimerProbe, "V137_POWERUP_TIMER_PROBE", "V137 Powerup Timer Probe", kCapsV137, false},
-    {PvZ2DiagnosticMode::V138PowerupDynamicGeometry, "V138_POWERUP_DYNAMIC_GEOMETRY", "V138 Powerup Dynamic Geometry", kCapsV138, true},
+    {PvZ2DiagnosticMode::V138PowerupDynamicGeometry, "V138_POWERUP_DYNAMIC_GEOMETRY", "V138 Powerup Dynamic Geometry", kCapsV138, false},
+    {PvZ2DiagnosticMode::V139PowerupTintDetail, "V139_POWERUP_TINT_DETAIL", "V139 Powerup Tint Detail", kCapsV139, true},
 };
 
 constexpr PvZ2DiagnosticMode kSelectableDiagnosticModes[] = {
-    PvZ2DiagnosticMode::V138PowerupDynamicGeometry,
+    PvZ2DiagnosticMode::V139PowerupTintDetail,
 };
 
 } // namespace
@@ -3914,6 +3916,7 @@ public:
     std::uint32_t v138_powerup_trace_frame = 0u;
     std::uint32_t v138_powerup_traces_this_frame = 0u;
     std::unordered_set<std::string> v138_powerup_geometry_signatures;
+    std::uint64_t v139_powerup_tint_detail_traces = 0u;
     std::uint64_t v80_array_draws_seen = 0u;
     std::uint64_t v80_transform_draw_traces = 0u;
     std::uint32_t v80_trace_frame = 0xffffffffu;
