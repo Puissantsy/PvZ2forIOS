@@ -529,6 +529,12 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // v142: exact BoardTimerColor recorder. Detect the real solid-color timer
     // draw by vertex RGBA and remove the old <=256-vertex blind spot.
     V142BoardTimerColor = 85u,
+
+    // v143: observe the BoardTimerColor pipeline before purchase/activation.
+    // Records exact Power Up colors and rare solid program-11 draws together
+    // with the guest GL caller LR, so selection and active timer geometry can
+    // be tied back to the exact native libPVZ2.so code path.
+    V143PowerupSelectionCaller = 86u,
 };
 
 enum class PvZ2ProbeCapability : std::uint64_t {

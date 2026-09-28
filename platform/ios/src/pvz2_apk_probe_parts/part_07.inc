@@ -3544,6 +3544,14 @@
                         first,
                         count);
 
+                    V143TracePowerupSelectionColor(
+                        draw_mode,
+                        first,
+                        count,
+                        nullptr,
+                        0u,
+                        regs[14]);
+
                     V142TraceBoardTimerColor(
                         draw_mode,
                         first,
@@ -3869,6 +3877,14 @@
                         "elements",
                         draw_mode,
                         count);
+
+                    V143TracePowerupSelectionColor(
+                        draw_mode,
+                        0,
+                        count,
+                        indices,
+                        type,
+                        regs[14]);
 
                     V142TraceBoardTimerColor(
                         draw_mode,

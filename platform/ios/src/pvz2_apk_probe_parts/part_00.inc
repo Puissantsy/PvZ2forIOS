@@ -1070,6 +1070,7 @@ constexpr std::uint64_t kCapsV139 = kCapsV138;
 constexpr std::uint64_t kCapsV140 = kCapsV139;
 constexpr std::uint64_t kCapsV141 = kCapsV140;
 constexpr std::uint64_t kCapsV142 = kCapsV141;
+constexpr std::uint64_t kCapsV143 = kCapsV142;
 
 constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::PassiveRegistry, "PASSIVE_REGISTRY", nullptr, 0u, false},
@@ -1157,11 +1158,12 @@ constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::V139PowerupTintDetail, "V139_POWERUP_TINT_DETAIL", "V139 Powerup Tint Detail", kCapsV139, false},
     {PvZ2DiagnosticMode::V140PowerupSuperProbe, "V140_POWERUP_SUPER_PROBE", "V140 Powerup Super Probe", kCapsV140, false},
     {PvZ2DiagnosticMode::V141PowerupLab, "V141_POWERUP_LAB", "V141 Powerup Lab", kCapsV141, false},
-    {PvZ2DiagnosticMode::V142BoardTimerColor, "V142_BOARD_TIMER_COLOR", "V142 Board Timer Color", kCapsV142, true},
+    {PvZ2DiagnosticMode::V142BoardTimerColor, "V142_BOARD_TIMER_COLOR", "V142 Board Timer Color", kCapsV142, false},
+    {PvZ2DiagnosticMode::V143PowerupSelectionCaller, "V143_POWERUP_SELECTION_CALLER", "V143 Powerup Selection Caller", kCapsV143, true},
 };
 
 constexpr PvZ2DiagnosticMode kSelectableDiagnosticModes[] = {
-    PvZ2DiagnosticMode::V142BoardTimerColor,
+    PvZ2DiagnosticMode::V143PowerupSelectionCaller,
 };
 
 } // namespace
@@ -3938,6 +3940,13 @@ public:
     std::uint64_t v141_ppdat_flush_suppressed = 0u;
     std::uint64_t v142_board_timer_color_traces = 0u;
     std::uint32_t v142_last_trace_frame = 0u;
+
+    // v143: selection/full-fill recorder. It runs before the paid pp.dat
+    // trigger and de-duplicates stable solid-color geometry while retaining
+    // the guest GL caller so we can disassemble the responsible native path.
+    std::uint64_t v143_selection_color_traces = 0u;
+    std::uint64_t v143_generic_solid_traces = 0u;
+    std::unordered_set<std::string> v143_selection_signatures;
     std::uint64_t v80_array_draws_seen = 0u;
     std::uint64_t v80_transform_draw_traces = 0u;
     std::uint32_t v80_trace_frame = 0xffffffffu;

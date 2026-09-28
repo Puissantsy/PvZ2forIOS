@@ -315,6 +315,271 @@
 
 
 
+
+    void V143TracePowerupSelectionColor(
+        GLenum draw_mode,
+        GLint first,
+        GLsizei count,
+        const void* raw_indices,
+        GLenum index_type,
+        std::uint32_t caller_lr) {
+
+        if (!V143Enabled() ||
+            v129_board_scale_forces == 0u ||
+            count <= 0 ||
+            count > 32768 ||
+            !gles_blend_enabled ||
+            gles_current_program != 11u) {
+            return;
+        }
+
+        std::optional<GLuint> position_index;
+        std::optional<GLuint> color_index;
+
+        for (GLuint index = 0u; index < gles_attrib_state.size(); ++index) {
+            const auto& state = gles_attrib_state[index];
+            if (!state.enabled) continue;
+
+            const std::uint64_t key =
+                (static_cast<std::uint64_t>(gles_current_program) << 32u) |
+                index;
+            const auto it = gles_attrib_names.find(key);
+            if (it == gles_attrib_names.end()) continue;
+
+            std::string lowered = it->second;
+            std::transform(
+                lowered.begin(), lowered.end(), lowered.begin(),
+                [](unsigned char c) {
+                    return static_cast<char>(std::tolower(c));
+                });
+
+            if (lowered.find("position") != std::string::npos) {
+                position_index = index;
+            } else if (lowered.find("color") != std::string::npos) {
+                color_index = index;
+            }
+        }
+
+        if (!position_index.has_value() || !color_index.has_value()) return;
+
+        const auto& pos = gles_attrib_state[*position_index];
+        const auto& col = gles_attrib_state[*color_index];
+
+        if (pos.type != GL_FLOAT || pos.size < 2 ||
+            pos.guest_pointer == 0u ||
+            col.type != GL_UNSIGNED_BYTE || col.size < 4 ||
+            col.guest_pointer == 0u) {
+            return;
+        }
+
+        const std::size_t pos_stride =
+            pos.stride > 0
+                ? static_cast<std::size_t>(pos.stride)
+                : static_cast<std::size_t>(pos.size) * sizeof(GLfloat);
+        const std::size_t col_stride =
+            col.stride > 0
+                ? static_cast<std::size_t>(col.stride)
+                : static_cast<std::size_t>(col.size);
+
+        auto vertex_index_at =
+            [&](std::size_t i, std::uint32_t& out) -> bool {
+                if (raw_indices == nullptr) {
+                    out = static_cast<std::uint32_t>(
+                        std::max<GLint>(0, first)) +
+                        static_cast<std::uint32_t>(i);
+                    return true;
+                }
+                if (index_type == GL_UNSIGNED_BYTE) {
+                    out = static_cast<const std::uint8_t*>(raw_indices)[i];
+                    return true;
+                }
+                if (index_type == GL_UNSIGNED_SHORT) {
+                    out = static_cast<const std::uint16_t*>(raw_indices)[i];
+                    return true;
+                }
+                if (index_type == GL_UNSIGNED_INT) {
+                    out = static_cast<const std::uint32_t*>(raw_indices)[i];
+                    return true;
+                }
+                return false;
+            };
+
+        std::uint32_t first_vi = 0u;
+        if (!vertex_index_at(0u, first_vi)) return;
+
+        const std::uint64_t first_color_address =
+            static_cast<std::uint64_t>(col.guest_pointer) +
+            static_cast<std::uint64_t>(first_vi) * col_stride;
+        if (first_color_address >
+            std::numeric_limits<std::uint32_t>::max()) {
+            return;
+        }
+
+        const auto* first_color =
+            mem.Ptr(static_cast<std::uint32_t>(first_color_address), 4u);
+        if (first_color == nullptr) return;
+
+        const std::array<std::array<std::uint8_t,4>,3> powerup_colors{{
+            {{150u,250u,120u,125u}}, // pinch
+            {{255u,145u,250u,125u}}, // wizard
+            {{255u,230u, 60u,125u}}, // flick
+        }};
+
+        bool exact_powerup_color = false;
+        const char* powerup_name = "unknown";
+        for (std::size_t i=0u;i<powerup_colors.size();++i) {
+            const auto& c=powerup_colors[i];
+            if (first_color[0]==c[0] &&
+                first_color[1]==c[1] &&
+                first_color[2]==c[2] &&
+                first_color[3]==c[3]) {
+                exact_powerup_color = true;
+                powerup_name = i==0u ? "pinch" : (i==1u ? "wizard" : "flick");
+                break;
+            }
+        }
+
+        // Also keep rare large uniform solid-color draws. If the selection
+        // path modifies the BoardTimerColor before vertex submission, this
+        // catches it without flooding the log with ordinary six-vertex UI.
+        if (!exact_powerup_color && count < 300) return;
+
+        bool have_bounds=false;
+        float min_x=0.0f,min_y=0.0f,max_x=0.0f,max_y=0.0f;
+        bool uniform_color=true;
+        std::size_t verified_colors=0u;
+        std::vector<std::pair<float,float>> samples;
+        samples.reserve(20u);
+
+        for (std::size_t i=0u;
+             i<static_cast<std::size_t>(count);
+             ++i) {
+            std::uint32_t vi=0u;
+            if (!vertex_index_at(i,vi)) continue;
+
+            const std::uint64_t paddr64 =
+                static_cast<std::uint64_t>(pos.guest_pointer) +
+                static_cast<std::uint64_t>(vi) * pos_stride;
+            const std::uint64_t caddr64 =
+                static_cast<std::uint64_t>(col.guest_pointer) +
+                static_cast<std::uint64_t>(vi) * col_stride;
+            if (paddr64>std::numeric_limits<std::uint32_t>::max() ||
+                caddr64>std::numeric_limits<std::uint32_t>::max()) {
+                continue;
+            }
+
+            const auto* pb=mem.Ptr(static_cast<std::uint32_t>(paddr64),
+                                   sizeof(GLfloat)*2u);
+            if (pb!=nullptr) {
+                GLfloat x=0.0f,y=0.0f;
+                std::memcpy(&x,pb,sizeof(x));
+                std::memcpy(&y,pb+sizeof(GLfloat),sizeof(y));
+                if (std::isfinite(x) && std::isfinite(y)) {
+                    if (!have_bounds) {
+                        min_x=max_x=x; min_y=max_y=y; have_bounds=true;
+                    } else {
+                        min_x=std::min(min_x,x); max_x=std::max(max_x,x);
+                        min_y=std::min(min_y,y); max_y=std::max(max_y,y);
+                    }
+                    if (samples.size()<12u ||
+                        i+4u>=static_cast<std::size_t>(count)) {
+                        if (samples.size()<20u) samples.emplace_back(x,y);
+                    }
+                }
+            }
+
+            // A bounded color sample is enough to classify the scanline mesh
+            // as a solid fill without making this probe expensive.
+            if (verified_colors<32u) {
+                const auto* cb=mem.Ptr(static_cast<std::uint32_t>(caddr64),4u);
+                if (cb!=nullptr) {
+                    ++verified_colors;
+                    if (cb[0]!=first_color[0] ||
+                        cb[1]!=first_color[1] ||
+                        cb[2]!=first_color[2] ||
+                        cb[3]!=first_color[3]) {
+                        uniform_color=false;
+                    }
+                }
+            }
+        }
+
+        if (!have_bounds || !uniform_color) return;
+
+        const float width=max_x-min_x;
+        const float height=max_y-min_y;
+
+        // Generic fallback is deliberately board-like only.
+        if (!exact_powerup_color &&
+            (width < 500.0f || height < 200.0f)) {
+            return;
+        }
+
+        const int qx0=static_cast<int>(std::lround(min_x));
+        const int qy0=static_cast<int>(std::lround(min_y));
+        const int qx1=static_cast<int>(std::lround(max_x));
+        const int qy1=static_cast<int>(std::lround(max_y));
+
+        std::ostringstream sig;
+        sig << (exact_powerup_color ? "P" : "G")
+            << ":" << static_cast<unsigned>(first_color[0])
+            << "," << static_cast<unsigned>(first_color[1])
+            << "," << static_cast<unsigned>(first_color[2])
+            << "," << static_cast<unsigned>(first_color[3])
+            << ":" << count
+            << ":" << qx0 << "," << qy0 << "," << qx1 << "," << qy1
+            << ":lr=" << JniProbeHex(caller_lr & ~1u);
+
+        // Selection/full-fill is expected to be stable for many frames, so
+        // one record per exact geometry/caller signature is sufficient.
+        if (!v143_selection_signatures.insert(sig.str()).second) return;
+
+        if (exact_powerup_color) {
+            if (v143_selection_color_traces >= 1200u) return;
+            ++v143_selection_color_traces;
+        } else {
+            if (v143_generic_solid_traces >= 300u) return;
+            ++v143_generic_solid_traces;
+        }
+
+        std::ostringstream d;
+        d << (exact_powerup_color
+                  ? "V143 POWERUP BOARD COLOR #"
+                  : "V143 SOLID BOARD CANDIDATE #")
+          << (exact_powerup_color
+                  ? v143_selection_color_traces
+                  : v143_generic_solid_traces)
+          << " phase="
+          << (v141_powerup_capture_armed ? "post-purchase" : "pre-purchase")
+          << " powerup=" << powerup_name
+          << " frame=" << current_frame_number
+          << " kind=" << (raw_indices ? "elements" : "arrays")
+          << " mode=0x" << JniProbeHex(static_cast<std::uint32_t>(draw_mode))
+          << " count=" << count
+          << " bbox=(" << min_x << "," << min_y << ")-("
+          << max_x << "," << max_y << ")"
+          << " size=" << width << "x" << height
+          << " rgba=("
+          << static_cast<unsigned>(first_color[0]) << ","
+          << static_cast<unsigned>(first_color[1]) << ","
+          << static_cast<unsigned>(first_color[2]) << ","
+          << static_cast<unsigned>(first_color[3]) << ")"
+          << " callerLR=" << V46DescribeGuestAddress(caller_lr)
+          << " blendSrc=0x"
+          << JniProbeHex(static_cast<std::uint32_t>(gles_blend_src))
+          << " blendDst=0x"
+          << JniProbeHex(static_cast<std::uint32_t>(gles_blend_dst))
+          << " samples=[";
+
+        for(std::size_t i=0u;i<samples.size();++i) {
+            if(i) d << ";";
+            d << "(" << samples[i].first << "," << samples[i].second << ")";
+        }
+        d << "]";
+        AppendDiagnostic(d.str());
+    }
+
+
     void V142TraceBoardTimerColor(
         GLenum draw_mode,
         GLint first,
