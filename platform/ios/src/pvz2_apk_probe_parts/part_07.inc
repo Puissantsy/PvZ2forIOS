@@ -3536,6 +3536,13 @@
                         first,
                         count);
 
+                    V138TraceLargePrimitive(
+                        draw_mode,
+                        first,
+                        count,
+                        nullptr,
+                        0u);
+
                     glDrawArrays(
                         draw_mode,
                         first,
@@ -3847,6 +3854,13 @@
                         "elements",
                         draw_mode,
                         count);
+
+                    V138TraceLargePrimitive(
+                        draw_mode,
+                        0,
+                        count,
+                        indices,
+                        type);
 
                     glDrawElements(
                         draw_mode,

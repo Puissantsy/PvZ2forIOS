@@ -507,6 +507,10 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // Preserve every v136 runtime fix and trace small GL_TRIANGLE_FAN
     // primitives used by radial/full-board timer candidates.
     V137PowerupTimerProbe = 80u,
+
+    // v138: broaden the Power Up probe to all large blended dynamic geometry,
+    // including indexed glDrawElements paths, after the Board becomes active.
+    V138PowerupDynamicGeometry = 81u,
 };
 
 enum class PvZ2ProbeCapability : std::uint64_t {

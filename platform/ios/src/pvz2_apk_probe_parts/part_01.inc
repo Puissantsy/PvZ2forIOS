@@ -313,6 +313,327 @@
         Append(diagnostic.str());
     }
 
+
+    void V138TraceLargePrimitive(
+        GLenum draw_mode,
+        GLint first,
+        GLsizei count,
+        const void* raw_indices,
+        GLenum index_type) {
+
+        if (!V138Enabled() ||
+            v129_board_scale_forces == 0u ||
+            count <= 0 ||
+            count > 256 ||
+            !gles_blend_enabled) {
+            return;
+        }
+
+        std::optional<GLuint> position_index;
+        for (GLuint index = 0u;
+             index < gles_attrib_state.size();
+             ++index) {
+            const auto& state = gles_attrib_state[index];
+            if (!state.enabled) continue;
+
+            const std::uint64_t key =
+                (static_cast<std::uint64_t>(gles_current_program) << 32u) |
+                index;
+            const auto name_it = gles_attrib_names.find(key);
+            if (name_it == gles_attrib_names.end()) continue;
+
+            std::string lowered = name_it->second;
+            std::transform(
+                lowered.begin(),
+                lowered.end(),
+                lowered.begin(),
+                [](unsigned char c) {
+                    return static_cast<char>(std::tolower(c));
+                });
+            if (lowered.find("position") != std::string::npos) {
+                position_index = index;
+                break;
+            }
+        }
+
+        if (!position_index.has_value()) return;
+        const auto& position = gles_attrib_state[*position_index];
+        if (position.type != GL_FLOAT ||
+            position.size < 2 ||
+            position.guest_pointer == 0u) {
+            return;
+        }
+
+        const std::size_t packed_stride =
+            static_cast<std::size_t>(position.size) *
+            sizeof(GLfloat);
+        const std::size_t stride =
+            position.stride > 0
+                ? static_cast<std::size_t>(position.stride)
+                : packed_stride;
+
+        auto read_vertex_xy =
+            [&](std::uint32_t vertex_index,
+                float& out_x,
+                float& out_y) -> bool {
+
+                const std::uint64_t address64 =
+                    static_cast<std::uint64_t>(
+                        position.guest_pointer) +
+                    static_cast<std::uint64_t>(vertex_index) *
+                        stride;
+                if (address64 >
+                    std::numeric_limits<std::uint32_t>::max()) {
+                    return false;
+                }
+
+                const auto* bytes =
+                    mem.Ptr(
+                        static_cast<std::uint32_t>(address64),
+                        sizeof(GLfloat) * 2u);
+                if (bytes == nullptr) return false;
+
+                std::memcpy(&out_x, bytes, sizeof(out_x));
+                std::memcpy(
+                    &out_y,
+                    bytes + sizeof(GLfloat),
+                    sizeof(out_y));
+
+                return
+                    std::isfinite(out_x) &&
+                    std::isfinite(out_y);
+            };
+
+        bool have_bounds = false;
+        float min_x = 0.0f;
+        float min_y = 0.0f;
+        float max_x = 0.0f;
+        float max_y = 0.0f;
+
+        const std::size_t sample_count =
+            std::min<std::size_t>(
+                static_cast<std::size_t>(count),
+                256u);
+
+        for (std::size_t i = 0u;
+             i < sample_count;
+             ++i) {
+
+            std::uint32_t vertex_index = 0u;
+
+            if (raw_indices != nullptr) {
+                if (index_type == GL_UNSIGNED_BYTE) {
+                    vertex_index =
+                        static_cast<
+                            const std::uint8_t*>(
+                                raw_indices)[i];
+                } else if (
+                    index_type == GL_UNSIGNED_SHORT) {
+                    vertex_index =
+                        static_cast<
+                            const std::uint16_t*>(
+                                raw_indices)[i];
+                } else if (
+                    index_type == GL_UNSIGNED_INT) {
+                    vertex_index =
+                        static_cast<
+                            const std::uint32_t*>(
+                                raw_indices)[i];
+                } else {
+                    return;
+                }
+            } else {
+                vertex_index =
+                    static_cast<std::uint32_t>(
+                        std::max<GLint>(0, first)) +
+                    static_cast<std::uint32_t>(i);
+            }
+
+            float x = 0.0f;
+            float y = 0.0f;
+            if (!read_vertex_xy(vertex_index, x, y)) {
+                continue;
+            }
+
+            if (!have_bounds) {
+                min_x = max_x = x;
+                min_y = max_y = y;
+                have_bounds = true;
+            } else {
+                min_x = std::min(min_x, x);
+                min_y = std::min(min_y, y);
+                max_x = std::max(max_x, x);
+                max_y = std::max(max_y, y);
+            }
+        }
+
+        if (!have_bounds) return;
+
+        const float width = max_x - min_x;
+        const float height = max_y - min_y;
+
+        // Full-board tint/timer geometry must either be spatially large or
+        // visibly escape the 2048x1536 canvas when transformed incorrectly.
+        const bool spatially_interesting =
+            width >= 700.0f ||
+            height >= 500.0f ||
+            min_x < -64.0f ||
+            min_y < -64.0f ||
+            max_x > 2112.0f ||
+            max_y > 1600.0f;
+
+        if (!spatially_interesting) return;
+
+        if (v138_powerup_trace_frame != current_frame_number) {
+            v138_powerup_trace_frame = current_frame_number;
+            v138_powerup_traces_this_frame = 0u;
+        }
+        if (v138_powerup_traces_this_frame >= 8u ||
+            v138_powerup_geometry_traces >= 1200u) {
+            return;
+        }
+
+        bool have_matrix = false;
+        std::array<GLfloat, 16> matrix{};
+        std::string matrix_name = "(none)";
+
+        for (const auto& entry : gles_uniform_names) {
+            const GLuint program =
+                static_cast<GLuint>(entry.first >> 32u);
+            if (program != gles_current_program) continue;
+
+            std::string lowered = entry.second;
+            std::transform(
+                lowered.begin(),
+                lowered.end(),
+                lowered.begin(),
+                [](unsigned char c) {
+                    return static_cast<char>(std::tolower(c));
+                });
+            if (lowered.find("screenmatrix") ==
+                std::string::npos) {
+                continue;
+            }
+
+            const auto matrix_it =
+                gles_uniform_matrix4_values.find(entry.first);
+            if (matrix_it !=
+                gles_uniform_matrix4_values.end()) {
+                matrix = matrix_it->second;
+                matrix_name = entry.second;
+                have_matrix = true;
+                break;
+            }
+        }
+
+        double inferred_w = 0.0;
+        double inferred_h = 0.0;
+        if (have_matrix &&
+            std::fabs(matrix[0]) > 1.0e-9f &&
+            std::fabs(matrix[5]) > 1.0e-9f) {
+            inferred_w =
+                2.0 /
+                std::fabs(
+                    static_cast<double>(matrix[0]));
+            inferred_h =
+                2.0 /
+                std::fabs(
+                    static_cast<double>(matrix[5]));
+        }
+
+        // Quantize bounds so static lawn/background draws log once while a
+        // rotating/radial timer continues to produce changing signatures.
+        auto q = [](float value) {
+            return static_cast<int>(
+                std::lround(
+                    static_cast<double>(value) /
+                    8.0));
+        };
+
+        std::ostringstream signature;
+        signature
+            << gles_current_program << ":"
+            << static_cast<std::uint32_t>(draw_mode) << ":"
+            << count << ":"
+            << q(min_x) << ":"
+            << q(min_y) << ":"
+            << q(max_x) << ":"
+            << q(max_y) << ":"
+            << (raw_indices != nullptr ? "E" : "A");
+
+        if (!v138_powerup_geometry_signatures
+                 .insert(signature.str())
+                 .second) {
+            return;
+        }
+
+        ++v138_powerup_traces_this_frame;
+        ++v138_powerup_geometry_traces;
+
+        std::ostringstream diagnostic;
+        diagnostic
+            << "V138 POWERUP GEOM #"
+            << v138_powerup_geometry_traces
+            << " frame="
+            << current_frame_number
+            << " kind="
+            << (raw_indices != nullptr
+                    ? "elements"
+                    : "arrays")
+            << " program="
+            << gles_current_program
+            << " mode=0x"
+            << JniProbeHex(
+                   static_cast<std::uint32_t>(
+                       draw_mode))
+            << " count="
+            << count
+            << " posBBox=("
+            << min_x << "," << min_y << ")-("
+            << max_x << "," << max_y << ")"
+            << " size="
+            << width << "x" << height
+            << " guestFBO="
+            << gles_bound_guest_framebuffer
+            << " hostFBO="
+            << gles_bound_host_framebuffer
+            << " viewport=("
+            << last_gles_viewport[0] << ","
+            << last_gles_viewport[1] << ","
+            << last_gles_viewport[2] << ","
+            << last_gles_viewport[3] << ")"
+            << " scissor="
+            << (gles_scissor_enabled
+                    ? "ON"
+                    : "OFF")
+            << "("
+            << last_gles_scissor[0] << ","
+            << last_gles_scissor[1] << ","
+            << last_gles_scissor[2] << ","
+            << last_gles_scissor[3] << ")"
+            << " tex0="
+            << gles_bound_texture_2d[0u]
+            << " tex1="
+            << gles_bound_texture_2d[1u]
+            << " matrix="
+            << matrix_name;
+
+        if (have_matrix) {
+            diagnostic
+                << " m00=" << matrix[0]
+                << " m11=" << matrix[5]
+                << " tx=" << matrix[12]
+                << " ty=" << matrix[13]
+                << " inferredCanvas="
+                << inferred_w << "x"
+                << inferred_h;
+        } else {
+            diagnostic << " unavailable";
+        }
+
+        AppendDiagnostic(diagnostic.str());
+    }
+
     std::string V80TransformSummary() const {
         std::ostringstream out;
         out
