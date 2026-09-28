@@ -3340,6 +3340,53 @@
                 if (!V128Enabled()) return true;
                 const std::string guest =
                     normalize_v51_user_path(guest_raw);
+
+                // v141 diagnostic economy sandbox: pp.dat is loaded from the
+                // real persistent profile, but never committed back to disk.
+                // The in-memory guest still sees its normal deduction during
+                // this run; restarting the app reloads the untouched profile.
+                static const std::string kV141PpDat =
+                    "/data/data/com.ea.game.pvz2_row/files/No_Backup/pp.dat";
+                if (V141Enabled() && guest == kV141PpDat) {
+                    ++v141_ppdat_flush_suppressed;
+
+                    // Previous real runs show normal level startup around
+                    // frame ~850 and the paid Power Up flush around ~3300.
+                    // A >=2500 gate prevents unrelated startup/profile writes
+                    // from consuming the render recorder before the purchase.
+                    if (!v141_powerup_capture_armed &&
+                        current_frame_number >= 2500u) {
+                        v141_powerup_capture_armed = true;
+                        v141_powerup_capture_start_frame = current_frame_number;
+                        v141_powerup_capture_end_frame = current_frame_number + 1200u;
+                        v140_powerup_super_traces = 0u;
+                        v140_powerup_super_frame = 0u;
+                        v140_powerup_super_traces_this_frame = 0u;
+                        v138_powerup_geometry_traces = 0u;
+                        v138_powerup_geometry_signatures.clear();
+                        AppendDiagnostic(
+                            "V141 POWERUP LAB ARMED frame=" +
+                            std::to_string(current_frame_number) +
+                            " endFrame=" +
+                            std::to_string(v141_powerup_capture_end_frame) +
+                            " trigger=late-pp.dat-flush");
+                    }
+
+                    v128_userfs_dirty_paths.erase(guest);
+                    AppendDiagnostic(
+                        "V141 PPDAT SANDBOX flush suppressed #" +
+                        std::to_string(v141_ppdat_flush_suppressed) +
+                        " frame=" +
+                        std::to_string(current_frame_number) +
+                        " bytes=" +
+                        std::to_string(
+                            v51_writable_files.count(guest) &&
+                            v51_writable_files[guest]
+                                ? v51_writable_files[guest]->size()
+                                : 0u));
+                    return true;
+                }
+
                 const auto found = v51_writable_files.find(guest);
                 if (found == v51_writable_files.end() || !found->second) {
                     return false;

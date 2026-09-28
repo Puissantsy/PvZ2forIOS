@@ -520,6 +520,11 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // snapshots every large blended full-board candidate: geometry, UV/color
     // attributes, uniforms, textures, blend state and projection.
     V140PowerupSuperProbe = 83u,
+
+    // v141: Power Up laboratory mode. Sandbox pp.dat persistence so paid
+    // activations are reversible on restart, and arm detailed rendering traces
+    // only when the late-level pp.dat flush marks a real Power Up purchase/use.
+    V141PowerupLab = 84u,
 };
 
 enum class PvZ2ProbeCapability : std::uint64_t {

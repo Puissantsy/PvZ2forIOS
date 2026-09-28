@@ -1068,6 +1068,7 @@ constexpr std::uint64_t kCapsV137 = kCapsV136;
 constexpr std::uint64_t kCapsV138 = kCapsV137;
 constexpr std::uint64_t kCapsV139 = kCapsV138;
 constexpr std::uint64_t kCapsV140 = kCapsV139;
+constexpr std::uint64_t kCapsV141 = kCapsV140;
 
 constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::PassiveRegistry, "PASSIVE_REGISTRY", nullptr, 0u, false},
@@ -1153,11 +1154,12 @@ constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::V137PowerupTimerProbe, "V137_POWERUP_TIMER_PROBE", "V137 Powerup Timer Probe", kCapsV137, false},
     {PvZ2DiagnosticMode::V138PowerupDynamicGeometry, "V138_POWERUP_DYNAMIC_GEOMETRY", "V138 Powerup Dynamic Geometry", kCapsV138, false},
     {PvZ2DiagnosticMode::V139PowerupTintDetail, "V139_POWERUP_TINT_DETAIL", "V139 Powerup Tint Detail", kCapsV139, false},
-    {PvZ2DiagnosticMode::V140PowerupSuperProbe, "V140_POWERUP_SUPER_PROBE", "V140 Powerup Super Probe", kCapsV140, true},
+    {PvZ2DiagnosticMode::V140PowerupSuperProbe, "V140_POWERUP_SUPER_PROBE", "V140 Powerup Super Probe", kCapsV140, false},
+    {PvZ2DiagnosticMode::V141PowerupLab, "V141_POWERUP_LAB", "V141 Powerup Lab", kCapsV141, true},
 };
 
 constexpr PvZ2DiagnosticMode kSelectableDiagnosticModes[] = {
-    PvZ2DiagnosticMode::V140PowerupSuperProbe,
+    PvZ2DiagnosticMode::V141PowerupLab,
 };
 
 } // namespace
@@ -3925,6 +3927,13 @@ public:
     std::uint32_t v140_powerup_super_traces_this_frame = 0u;
     std::unordered_map<std::uint64_t, std::array<GLfloat, 4>>
         gles_uniform4_values;
+
+    // v141 Power Up lab: armed by a late-level pp.dat flush. The capture
+    // window intentionally outlives every known Power Up timer.
+    bool v141_powerup_capture_armed = false;
+    std::uint32_t v141_powerup_capture_start_frame = 0u;
+    std::uint32_t v141_powerup_capture_end_frame = 0u;
+    std::uint64_t v141_ppdat_flush_suppressed = 0u;
     std::uint64_t v80_array_draws_seen = 0u;
     std::uint64_t v80_transform_draw_traces = 0u;
     std::uint32_t v80_trace_frame = 0xffffffffu;

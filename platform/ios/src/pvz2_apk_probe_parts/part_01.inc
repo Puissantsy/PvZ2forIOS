@@ -482,7 +482,16 @@
             max_x > 2112.0f ||
             max_y > 1600.0f;
 
-        if (!spatially_interesting) return;
+        const bool v141_capture_window =
+            V141Enabled() &&
+            v141_powerup_capture_armed &&
+            current_frame_number >= v141_powerup_capture_start_frame &&
+            current_frame_number <= v141_powerup_capture_end_frame;
+
+        // v141 deliberately bypasses the old "large geometry" filter once a
+        // real paid Power Up has armed the lab. This captures the early small
+        // wedge/sector too, before it grows into a near-fullscreen primitive.
+        if (!spatially_interesting && !v141_capture_window) return;
 
         // v140: one-run super-probe. Sample all plausible large blended
         // full-board/timer primitives, not only the tex15/16 candidate.
@@ -493,7 +502,11 @@
             gles_bound_texture_2d[1u] == 16u;
         const bool v140_candidate =
             V140Enabled() &&
-            (v140_near_fullscreen || v140_timer_texture_pair);
+            (v140_near_fullscreen ||
+             v140_timer_texture_pair ||
+             (v141_capture_window &&
+              (gles_current_program == 11u ||
+               gles_current_program == 12u)));
 
         if (v140_candidate) {
             if (v140_powerup_super_frame != current_frame_number) {
@@ -504,12 +517,18 @@
             // Keep enough temporal resolution for a 5-10 s timer while
             // preventing normal gameplay draws from exploding the logfile.
             const bool sample_this_frame =
+                v141_capture_window ||
                 (current_frame_number % 2u) == 0u ||
                 v140_timer_texture_pair;
 
+            const std::uint32_t per_frame_limit =
+                v141_capture_window ? 16u : 3u;
+            const std::uint64_t total_limit =
+                v141_capture_window ? 6000u : 900u;
+
             if (sample_this_frame &&
-                v140_powerup_super_traces_this_frame < 3u &&
-                v140_powerup_super_traces < 900u) {
+                v140_powerup_super_traces_this_frame < per_frame_limit &&
+                v140_powerup_super_traces < total_limit) {
                 ++v140_powerup_super_traces_this_frame;
                 ++v140_powerup_super_traces;
 
@@ -631,7 +650,10 @@
                 };
 
                 std::ostringstream d;
-                d << "V140 POWERUP SUPER #" << v140_powerup_super_traces
+                d << (v141_capture_window
+                           ? "V141 POWERUP WINDOW #"
+                           : "V140 POWERUP SUPER #")
+                  << v140_powerup_super_traces
                   << " frame=" << current_frame_number
                   << " kind=" << (raw_indices ? "elements" : "arrays")
                   << " program=" << gles_current_program
