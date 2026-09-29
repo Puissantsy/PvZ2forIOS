@@ -535,6 +535,12 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // with the guest GL caller LR, so selection and active timer geometry can
     // be tied back to the exact native libPVZ2.so code path.
     V143PowerupSelectionCaller = 86u,
+
+    // v144: touch-window Power Up selection flight recorder. Around each
+    // late ACTION_UP, capture de-duplicated draw signatures across all GLES
+    // programs together with guest LR/SP stack candidates. This is
+    // observation-only and targets selection vs deselection provenance.
+    V144PowerupSelectionFlightRecorder = 87u,
 };
 
 enum class PvZ2ProbeCapability : std::uint64_t {

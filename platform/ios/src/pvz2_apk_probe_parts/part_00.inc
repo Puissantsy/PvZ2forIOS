@@ -1071,6 +1071,7 @@ constexpr std::uint64_t kCapsV140 = kCapsV139;
 constexpr std::uint64_t kCapsV141 = kCapsV140;
 constexpr std::uint64_t kCapsV142 = kCapsV141;
 constexpr std::uint64_t kCapsV143 = kCapsV142;
+constexpr std::uint64_t kCapsV144 = kCapsV143;
 
 constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::PassiveRegistry, "PASSIVE_REGISTRY", nullptr, 0u, false},
@@ -1160,10 +1161,11 @@ constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::V141PowerupLab, "V141_POWERUP_LAB", "V141 Powerup Lab", kCapsV141, false},
     {PvZ2DiagnosticMode::V142BoardTimerColor, "V142_BOARD_TIMER_COLOR", "V142 Board Timer Color", kCapsV142, false},
     {PvZ2DiagnosticMode::V143PowerupSelectionCaller, "V143_POWERUP_SELECTION_CALLER", "V143 Powerup Selection Caller", kCapsV143, true},
+    {PvZ2DiagnosticMode::V144PowerupSelectionFlightRecorder, "V144_POWERUP_SELECTION_FLIGHT_RECORDER", "V144 Powerup Selection Flight Recorder", kCapsV144, true},
 };
 
 constexpr PvZ2DiagnosticMode kSelectableDiagnosticModes[] = {
-    PvZ2DiagnosticMode::V143PowerupSelectionCaller,
+    PvZ2DiagnosticMode::V144PowerupSelectionFlightRecorder,
 };
 
 } // namespace
@@ -3947,6 +3949,17 @@ public:
     std::uint64_t v143_selection_color_traces = 0u;
     std::uint64_t v143_generic_solid_traces = 0u;
     std::unordered_set<std::string> v143_selection_signatures;
+
+    // v144: bounded draw flight recorder keyed to late touch releases.
+    std::uint64_t v144_touch_window_serial = 0u;
+    std::uint32_t v144_capture_start_frame = 0u;
+    std::uint32_t v144_capture_end_frame = 0u;
+    std::uint64_t v144_draw_traces = 0u;
+    std::uint32_t v144_window_draw_traces = 0u;
+    std::int32_t v144_last_touch_x = 0;
+    std::int32_t v144_last_touch_y = 0;
+    std::unordered_set<std::string> v144_window_signatures;
+
     std::uint64_t v80_array_draws_seen = 0u;
     std::uint64_t v80_transform_draw_traces = 0u;
     std::uint32_t v80_trace_frame = 0xffffffffu;

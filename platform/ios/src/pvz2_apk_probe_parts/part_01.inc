@@ -316,6 +316,298 @@
 
 
 
+
+    void V144RecordTouch(const V72TouchEvent& event) {
+        if (!V144Enabled()) return;
+
+        if (event.phase != 0u &&
+            event.phase != 3u &&
+            event.phase != 4u) {
+            return;
+        }
+
+        std::ostringstream touch;
+        touch << "V144 TOUCH phase=" << event.phase
+              << " frame=" << current_frame_number
+              << " xy=" << event.x << "," << event.y
+              << " prev=" << event.previous_x << "," << event.previous_y;
+
+        // The early startup/menu stream is irrelevant to Power Up selection.
+        // Once gameplay is mature, every terminal tap opens one bounded
+        // post-touch window. The user test deliberately performs only
+        // select -> wait -> deselect, so the last two windows are directly
+        // comparable without guessing a hard-coded Power Up hitbox.
+        if (event.phase == 3u && current_frame_number >= 1000u) {
+            ++v144_touch_window_serial;
+            v144_capture_start_frame = current_frame_number;
+            v144_capture_end_frame = current_frame_number + 150u;
+            v144_window_draw_traces = 0u;
+            v144_last_touch_x = event.x;
+            v144_last_touch_y = event.y;
+            v144_window_signatures.clear();
+
+            touch << " OPEN_WINDOW#" << v144_touch_window_serial
+                  << " untilFrame=" << v144_capture_end_frame;
+        }
+
+        AppendDiagnostic(touch.str());
+    }
+
+    void V144TraceSelectionDraw(
+        const char* draw_kind,
+        GLenum draw_mode,
+        GLint first,
+        GLsizei count,
+        const void* raw_indices,
+        GLenum index_type,
+        std::uint32_t caller_lr,
+        std::uint32_t guest_sp) {
+
+        if (!V144Enabled() ||
+            v144_touch_window_serial == 0u ||
+            current_frame_number < v144_capture_start_frame ||
+            current_frame_number > v144_capture_end_frame ||
+            count <= 0 ||
+            count > 32768 ||
+            !gles_blend_enabled ||
+            gles_current_program == 0u ||
+            v144_draw_traces >= 2500u ||
+            v144_window_draw_traces >= 180u) {
+            return;
+        }
+
+        std::optional<GLuint> position_index;
+        std::optional<GLuint> color_index;
+
+        for (GLuint index = 0u; index < gles_attrib_state.size(); ++index) {
+            const auto& state = gles_attrib_state[index];
+            if (!state.enabled) continue;
+
+            const std::uint64_t key =
+                (static_cast<std::uint64_t>(gles_current_program) << 32u) |
+                index;
+            const auto it = gles_attrib_names.find(key);
+            if (it == gles_attrib_names.end()) continue;
+
+            std::string lowered = it->second;
+            std::transform(
+                lowered.begin(), lowered.end(), lowered.begin(),
+                [](unsigned char c) {
+                    return static_cast<char>(std::tolower(c));
+                });
+
+            if (lowered.find("position") != std::string::npos) {
+                position_index = index;
+            } else if (lowered.find("color") != std::string::npos) {
+                color_index = index;
+            }
+        }
+
+        if (!position_index.has_value()) return;
+        const auto& pos = gles_attrib_state[*position_index];
+        if (pos.type != GL_FLOAT ||
+            pos.size < 2 ||
+            pos.guest_pointer == 0u) {
+            return;
+        }
+
+        const std::size_t pos_stride =
+            pos.stride > 0
+                ? static_cast<std::size_t>(pos.stride)
+                : static_cast<std::size_t>(pos.size) * sizeof(GLfloat);
+
+        auto vertex_index_at =
+            [&](std::size_t i, std::uint32_t& out) -> bool {
+                if (raw_indices == nullptr) {
+                    out =
+                        static_cast<std::uint32_t>(std::max<GLint>(0, first)) +
+                        static_cast<std::uint32_t>(i);
+                    return true;
+                }
+                if (index_type == GL_UNSIGNED_BYTE) {
+                    out = static_cast<const std::uint8_t*>(raw_indices)[i];
+                    return true;
+                }
+                if (index_type == GL_UNSIGNED_SHORT) {
+                    out = static_cast<const std::uint16_t*>(raw_indices)[i];
+                    return true;
+                }
+                if (index_type == GL_UNSIGNED_INT) {
+                    out = static_cast<const std::uint32_t*>(raw_indices)[i];
+                    return true;
+                }
+                return false;
+            };
+
+        bool have_bounds = false;
+        float min_x = 0.0f;
+        float min_y = 0.0f;
+        float max_x = 0.0f;
+        float max_y = 0.0f;
+        std::uint32_t first_vi = 0u;
+        bool have_first_vi = false;
+
+        for (std::size_t i = 0u;
+             i < static_cast<std::size_t>(count);
+             ++i) {
+
+            std::uint32_t vi = 0u;
+            if (!vertex_index_at(i, vi)) continue;
+            if (!have_first_vi) {
+                first_vi = vi;
+                have_first_vi = true;
+            }
+
+            const std::uint64_t addr64 =
+                static_cast<std::uint64_t>(pos.guest_pointer) +
+                static_cast<std::uint64_t>(vi) * pos_stride;
+            if (addr64 > std::numeric_limits<std::uint32_t>::max()) continue;
+
+            const auto* pb =
+                mem.Ptr(static_cast<std::uint32_t>(addr64),
+                        sizeof(GLfloat) * 2u);
+            if (pb == nullptr) continue;
+
+            GLfloat x = 0.0f;
+            GLfloat y = 0.0f;
+            std::memcpy(&x, pb, sizeof(x));
+            std::memcpy(&y, pb + sizeof(GLfloat), sizeof(y));
+            if (!std::isfinite(x) || !std::isfinite(y)) continue;
+
+            if (!have_bounds) {
+                min_x = max_x = x;
+                min_y = max_y = y;
+                have_bounds = true;
+            } else {
+                min_x = std::min(min_x, x);
+                max_x = std::max(max_x, x);
+                min_y = std::min(min_y, y);
+                max_y = std::max(max_y, y);
+            }
+        }
+
+        if (!have_bounds) return;
+
+        const float width = max_x - min_x;
+        const float height = max_y - min_y;
+
+        // Keep all known Power Up shader programs, plus any other blended draw
+        // large enough to plausibly represent a lawn overlay/border/UI state.
+        if (gles_current_program != 11u &&
+            gles_current_program != 12u &&
+            width < 300.0f &&
+            height < 180.0f) {
+            return;
+        }
+
+        const auto q = [](float value) -> int {
+            return static_cast<int>(std::lround(value / 16.0f));
+        };
+
+        std::ostringstream sig;
+        sig << gles_current_program
+            << ":" << static_cast<std::uint32_t>(draw_mode)
+            << ":" << count
+            << ":" << gles_bound_texture_2d[0u]
+            << ":" << gles_bound_texture_2d[1u]
+            << ":" << q(min_x) << "," << q(min_y)
+            << "," << q(max_x) << "," << q(max_y)
+            << ":lr=" << JniProbeHex(caller_lr & ~1u);
+
+        if (!v144_window_signatures.insert(sig.str()).second) return;
+
+        std::array<unsigned,4> rgba{{0u,0u,0u,0u}};
+        bool have_rgba = false;
+
+        if (color_index.has_value() && have_first_vi) {
+            const auto& col = gles_attrib_state[*color_index];
+            if (col.type == GL_UNSIGNED_BYTE &&
+                col.size >= 4 &&
+                col.guest_pointer != 0u) {
+                const std::size_t stride =
+                    col.stride > 0
+                        ? static_cast<std::size_t>(col.stride)
+                        : static_cast<std::size_t>(col.size);
+                const std::uint64_t caddr64 =
+                    static_cast<std::uint64_t>(col.guest_pointer) +
+                    static_cast<std::uint64_t>(first_vi) * stride;
+                if (caddr64 <= std::numeric_limits<std::uint32_t>::max()) {
+                    const auto* cb =
+                        mem.Ptr(static_cast<std::uint32_t>(caddr64), 4u);
+                    if (cb != nullptr) {
+                        for (std::size_t c = 0u; c < 4u; ++c) rgba[c] = cb[c];
+                        have_rgba = true;
+                    }
+                }
+            }
+        }
+
+        std::vector<std::uint32_t> stack_candidates;
+        stack_candidates.reserve(8u);
+        for (std::uint32_t i = 0u; i < 48u && stack_candidates.size() < 8u; ++i) {
+            const std::uint64_t addr64 =
+                static_cast<std::uint64_t>(guest_sp) +
+                static_cast<std::uint64_t>(i) * 4u;
+            if (addr64 > std::numeric_limits<std::uint32_t>::max()) break;
+            const auto* wordp =
+                mem.Ptr(static_cast<std::uint32_t>(addr64), 4u);
+            if (wordp == nullptr) continue;
+            std::uint32_t value = 0u;
+            std::memcpy(&value, wordp, sizeof(value));
+            const std::uint32_t normalized = value & ~1u;
+            if (normalized >= 0x10000000u &&
+                normalized < 0x11000000u &&
+                normalized != (caller_lr & ~1u)) {
+                if (std::find(stack_candidates.begin(),
+                              stack_candidates.end(),
+                              value) == stack_candidates.end()) {
+                    stack_candidates.push_back(value);
+                }
+            }
+        }
+
+        ++v144_draw_traces;
+        ++v144_window_draw_traces;
+
+        std::ostringstream d;
+        d << "V144 SELECTION DRAW #" << v144_draw_traces
+          << " window=" << v144_touch_window_serial
+          << " age=" << (current_frame_number - v144_capture_start_frame)
+          << " frame=" << current_frame_number
+          << " touchXY=" << v144_last_touch_x << "," << v144_last_touch_y
+          << " kind=" << (draw_kind != nullptr ? draw_kind : "?")
+          << " program=" << gles_current_program
+          << " mode=0x" << JniProbeHex(static_cast<std::uint32_t>(draw_mode))
+          << " count=" << count
+          << " bbox=(" << min_x << "," << min_y << ")-("
+          << max_x << "," << max_y << ")"
+          << " size=" << width << "x" << height
+          << " tex0=" << gles_bound_texture_2d[0u]
+          << " tex1=" << gles_bound_texture_2d[1u]
+          << " blendSrc=0x"
+          << JniProbeHex(static_cast<std::uint32_t>(gles_blend_src))
+          << " blendDst=0x"
+          << JniProbeHex(static_cast<std::uint32_t>(gles_blend_dst))
+          << " callerLR=" << V46DescribeGuestAddress(caller_lr)
+          << " SP=0x" << JniProbeHex(guest_sp);
+
+        if (have_rgba) {
+            d << " firstRGBA=("
+              << rgba[0] << "," << rgba[1] << ","
+              << rgba[2] << "," << rgba[3] << ")";
+        }
+
+        d << " stack=[";
+        for (std::size_t i = 0u; i < stack_candidates.size(); ++i) {
+            if (i) d << ";";
+            d << V46DescribeGuestAddress(stack_candidates[i]);
+        }
+        d << "]";
+
+        AppendDiagnostic(d.str());
+    }
+
+
     void V143TracePowerupSelectionColor(
         GLenum draw_mode,
         GLint first,

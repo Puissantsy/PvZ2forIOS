@@ -1093,6 +1093,10 @@
                                     }
                                 }
 
+                                if (V144Enabled()) {
+                                    V144RecordTouch(event);
+                                }
+
                                 if (V135Enabled()) {
                                     V135TraceLine(
                                         "TOUCH item phase=" +

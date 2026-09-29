@@ -3544,6 +3544,16 @@
                         first,
                         count);
 
+                    V144TraceSelectionDraw(
+                        "arrays",
+                        draw_mode,
+                        first,
+                        count,
+                        nullptr,
+                        0u,
+                        regs[14],
+                        regs[13]);
+
                     V143TracePowerupSelectionColor(
                         draw_mode,
                         first,
@@ -3877,6 +3887,16 @@
                         "elements",
                         draw_mode,
                         count);
+
+                    V144TraceSelectionDraw(
+                        "elements",
+                        draw_mode,
+                        0,
+                        count,
+                        indices,
+                        type,
+                        regs[14],
+                        regs[13]);
 
                     V143TracePowerupSelectionColor(
                         draw_mode,
