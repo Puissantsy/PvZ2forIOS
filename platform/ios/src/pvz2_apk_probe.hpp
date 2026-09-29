@@ -547,6 +547,10 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // logs the already-prepared radial geometry/colors, emulates the MOV, and
     // leaves the original draw path untouched.
     V145PowerupBoardRadialProbe = 88u,
+
+    // v147: restore normal persistent profile writes while preserving v145's
+    // Power Up radial probe. The v141 pp.dat sandbox is exact-mode-only.
+    V147RestoreProfilePersistence = 89u,
 };
 
 enum class PvZ2ProbeCapability : std::uint64_t {

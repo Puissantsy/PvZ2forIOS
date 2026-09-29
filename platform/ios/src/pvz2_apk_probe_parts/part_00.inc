@@ -1073,6 +1073,7 @@ constexpr std::uint64_t kCapsV142 = kCapsV141;
 constexpr std::uint64_t kCapsV143 = kCapsV142;
 constexpr std::uint64_t kCapsV144 = kCapsV143;
 constexpr std::uint64_t kCapsV145 = kCapsV144;
+constexpr std::uint64_t kCapsV147 = kCapsV145;
 
 constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::PassiveRegistry, "PASSIVE_REGISTRY", nullptr, 0u, false},
@@ -1164,10 +1165,11 @@ constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::V143PowerupSelectionCaller, "V143_POWERUP_SELECTION_CALLER", "V143 Powerup Selection Caller", kCapsV143, true},
     {PvZ2DiagnosticMode::V144PowerupSelectionFlightRecorder, "V144_POWERUP_SELECTION_FLIGHT_RECORDER", "V144 Powerup Selection Flight Recorder", kCapsV144, true},
     {PvZ2DiagnosticMode::V145PowerupBoardRadialProbe, "V145_POWERUP_BOARD_RADIAL_PROBE", "V145 Powerup Board Radial Probe", kCapsV145, true},
+    {PvZ2DiagnosticMode::V147RestoreProfilePersistence, "V147_RESTORE_PROFILE_PERSISTENCE", "V147 Restore Profile Persistence", kCapsV147, true},
 };
 
 constexpr PvZ2DiagnosticMode kSelectableDiagnosticModes[] = {
-    PvZ2DiagnosticMode::V145PowerupBoardRadialProbe,
+    PvZ2DiagnosticMode::V147RestoreProfilePersistence,
 };
 
 } // namespace

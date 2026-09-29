@@ -3341,13 +3341,15 @@
                 const std::string guest =
                     normalize_v51_user_path(guest_raw);
 
-                // v141 diagnostic economy sandbox: pp.dat is loaded from the
-                // real persistent profile, but never committed back to disk.
-                // The in-memory guest still sees its normal deduction during
-                // this run; restarting the app reloads the untouched profile.
+                // v141 diagnostic economy sandbox: exact-mode only.
+                // Later probe versions must persist pp.dat normally; using the
+                // inherited V141Enabled() chain here would discard progression
+                // made by v142+ after an app restart.
                 static const std::string kV141PpDat =
                     "/data/data/com.ea.game.pvz2_row/files/No_Backup/pp.dat";
-                if (V141Enabled() && guest == kV141PpDat) {
+                if (diagnostic_mode ==
+                        PvZ2DiagnosticMode::V141PowerupLab &&
+                    guest == kV141PpDat) {
                     ++v141_ppdat_flush_suppressed;
 
                     // Previous real runs show normal level startup around
