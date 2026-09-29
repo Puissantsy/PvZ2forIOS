@@ -541,6 +541,12 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // programs together with guest LR/SP stack candidates. This is
     // observation-only and targets selection vs deselection provenance.
     V144PowerupSelectionFlightRecorder = 87u,
+
+    // v145: direct Board-wide Power Up radial argument probe. Replaces only
+    // the verified MOV r0,r4 immediately before the original 0x546CC4 call,
+    // logs the already-prepared radial geometry/colors, emulates the MOV, and
+    // leaves the original draw path untouched.
+    V145PowerupBoardRadialProbe = 88u,
 };
 
 enum class PvZ2ProbeCapability : std::uint64_t {

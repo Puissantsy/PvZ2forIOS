@@ -1754,6 +1754,17 @@ bool JniProbePrepareRuntime(
         return false;
     }
 
+    if (callbacks.V145Enabled() &&
+        !patch_resource_native_miss(
+            0x004620bcu,
+            0xe1a00004u,
+            kJniProbeSvcV145PowerupBoardRadialArgs)) {
+
+        error =
+            "v145 Power Up radial signature mismatch at 0x104620bc; refusing to patch an unverified PvZ2 1.5.252752 image.";
+        return false;
+    }
+
     if (callbacks.V94Enabled() &&
         (!patch_resource_native_miss(
              0x00868978u,

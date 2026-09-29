@@ -458,6 +458,123 @@
             v94_svc_watch_slot,
             v94_svc_before};
 
+        if (V145Enabled() &&
+            swi == kJniProbeSvcV145PowerupBoardRadialArgs) {
+
+            // Original @0x104620bc: MOV r0,r4.
+            // Preserve guest semantics first; the untouched BL 0x10546cc4
+            // executes immediately after this SVC returns.
+            regs[0] = regs[4];
+
+            const std::uint32_t sp = regs[13];
+
+            auto bits_to_float = [](std::uint32_t bits) {
+                float value = 0.0f;
+                std::memcpy(&value, &bits, sizeof(value));
+                return value;
+            };
+
+            const float ratio = bits_to_float(regs[1]);
+            const float cx = bits_to_float(regs[2]);
+            const float cy = bits_to_float(regs[3]);
+            const float radius =
+                bits_to_float(mem.Read32Guest(sp + 0u));
+
+            const std::uint32_t clear_color_ptr =
+                mem.Read32Guest(sp + 4u);
+            const std::uint32_t timer_color_ptr =
+                mem.Read32Guest(sp + 8u);
+
+            auto read_color =
+                [&](std::uint32_t ptr,
+                    std::array<std::uint32_t, 4>& out) -> bool {
+                    const auto* bytes = mem.Ptr(ptr, 16u);
+                    if (bytes == nullptr) return false;
+                    for (std::size_t i = 0u; i < 4u; ++i) {
+                        std::memcpy(
+                            &out[i],
+                            bytes + i * sizeof(std::uint32_t),
+                            sizeof(std::uint32_t));
+                    }
+                    return true;
+                };
+
+            std::array<std::uint32_t, 4> clear_color{{0u,0u,0u,0u}};
+            std::array<std::uint32_t, 4> timer_color{{0u,0u,0u,0u}};
+            const bool have_clear =
+                read_color(clear_color_ptr, clear_color);
+            const bool have_timer =
+                read_color(timer_color_ptr, timer_color);
+
+            const bool known_timer =
+                have_timer &&
+                ((timer_color[0] == 150u &&
+                  timer_color[1] == 250u &&
+                  timer_color[2] == 120u &&
+                  timer_color[3] == 125u) ||
+                 (timer_color[0] == 255u &&
+                  timer_color[1] == 145u &&
+                  timer_color[2] == 250u &&
+                  timer_color[3] == 125u) ||
+                 (timer_color[0] == 255u &&
+                  timer_color[1] == 230u &&
+                  timer_color[2] == 60u &&
+                  timer_color[3] == 125u));
+
+            if (known_timer &&
+                std::isfinite(ratio) &&
+                std::isfinite(cx) &&
+                std::isfinite(cy) &&
+                std::isfinite(radius) &&
+                ratio >= -0.01f &&
+                ratio <= 1.01f &&
+                radius > 0.0f &&
+                current_frame_number != v145_last_radial_frame &&
+                v145_radial_traces < 900u) {
+
+                v145_last_radial_frame =
+                    current_frame_number;
+                ++v145_radial_traces;
+
+                // These rect values remain live at the verified callsite:
+                // r9=x, r10=y, r6=width, r11=height.
+                const std::int32_t rect_x =
+                    static_cast<std::int32_t>(regs[9]);
+                const std::int32_t rect_y =
+                    static_cast<std::int32_t>(regs[10]);
+                const std::int32_t rect_w =
+                    static_cast<std::int32_t>(regs[6]);
+                const std::int32_t rect_h =
+                    static_cast<std::int32_t>(regs[11]);
+
+                std::ostringstream d;
+                d << "V145 POWERUP RADIAL #"
+                  << v145_radial_traces
+                  << " frame=" << current_frame_number
+                  << " ratio=" << ratio
+                  << " rect=("
+                  << rect_x << "," << rect_y << ","
+                  << rect_w << "," << rect_h << ")"
+                  << " center=(" << cx << "," << cy << ")"
+                  << " radius=" << radius
+                  << " clearRGBA=("
+                  << (have_clear ? clear_color[0] : 0u) << ","
+                  << (have_clear ? clear_color[1] : 0u) << ","
+                  << (have_clear ? clear_color[2] : 0u) << ","
+                  << (have_clear ? clear_color[3] : 0u) << ")"
+                  << " timerRGBA=("
+                  << timer_color[0] << ","
+                  << timer_color[1] << ","
+                  << timer_color[2] << ","
+                  << timer_color[3] << ")"
+                  << " graphics=0x" << JniProbeHex(regs[0]);
+
+                AppendDiagnostic(d.str());
+            }
+
+            return;
+        }
+
         if (V129Enabled() &&
             (swi == kJniProbeSvcV129BoardScaleState ||
              swi == kJniProbeSvcV129BoardScaleInit ||

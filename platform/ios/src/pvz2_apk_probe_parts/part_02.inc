@@ -780,9 +780,15 @@
     }
 
 
+    bool V145Enabled() const {
+        return diagnostic_mode ==
+            PvZ2DiagnosticMode::V145PowerupBoardRadialProbe;
+    }
+
     bool V144Enabled() const {
         return diagnostic_mode ==
-            PvZ2DiagnosticMode::V144PowerupSelectionFlightRecorder;
+                   PvZ2DiagnosticMode::V144PowerupSelectionFlightRecorder ||
+               V145Enabled();
     }
 
     bool V143Enabled() const {
@@ -4407,6 +4413,7 @@
     }
 
     const char* RuntimeModeTag() const {
+        if (V145Enabled()) return "V145";
         if (V144Enabled()) return "V144";
         if (V143Enabled()) return "V143";
         if (V142Enabled()) return "V142";
