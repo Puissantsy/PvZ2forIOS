@@ -2514,6 +2514,112 @@
                             callbacks.google_play_purchase_java_object != 0u &&
                             callbacks.google_play_purchase_native_driver != 0u;
 
+                        // QA-only bootstrap for the first offline store test.
+                        // Make the wallet at least 60k exactly once, then store
+                        // a host-backed V128 marker. This is deliberately a
+                        // floor, not "+60k", so even a failed marker write
+                        // cannot compound coins repeatedly within a launch.
+                        if (!callbacks.offline_store_test_coin_grant_checked) {
+                            static constexpr char kTestCoinGrantKey[] =
+                                "offline_store_test_coin_grant_60000_v1";
+                            static constexpr std::uint32_t
+                                kTestCoinFloor = 60000u;
+                            constexpr std::uint32_t kGetCurrentProfile =
+                                kGuestBase + 0x0047f8b0u;
+                            constexpr std::uint32_t kGetCoins =
+                                kGuestBase + 0x0042e680u;
+                            constexpr std::uint32_t kSetCoins =
+                                kGuestBase + 0x0042e5acu;
+
+                            callbacks.V128LoadConfigOnce();
+
+                            if (callbacks.v51_config_keys.count(
+                                    kTestCoinGrantKey) != 0u) {
+                                callbacks.offline_store_test_coin_grant_checked =
+                                    true;
+                                callbacks.Append(
+                                    "OFFLINE STORE TEST COINS already granted; persistent marker present.");
+                            } else {
+                                if (!run_lifecycle(
+                                        "OfflineStore_TestCoins_GetCurrentProfile",
+                                        kGetCurrentProfile,
+                                        0u,
+                                        0u,
+                                        0u,
+                                        false,
+                                        true)) {
+                                    return false;
+                                }
+
+                                const std::uint32_t grant_profile =
+                                    jit.Regs()[0];
+
+                                if (grant_profile != 0u &&
+                                    memory.Ptr(grant_profile, 0x18u) != nullptr) {
+
+                                    if (!run_lifecycle(
+                                            "OfflineStore_TestCoins_GetCoins",
+                                            kGetCoins,
+                                            grant_profile,
+                                            0u,
+                                            0u,
+                                            false,
+                                            true)) {
+                                        return false;
+                                    }
+
+                                    const std::uint32_t coins_before_grant =
+                                        jit.Regs()[0];
+                                    const std::uint32_t coins_after_grant =
+                                        std::max<std::uint32_t>(
+                                            coins_before_grant,
+                                            kTestCoinFloor);
+
+                                    if (coins_after_grant !=
+                                        coins_before_grant) {
+                                        if (!run_lifecycle(
+                                                "OfflineStore_TestCoins_SetCoins",
+                                                kSetCoins,
+                                                grant_profile,
+                                                coins_after_grant,
+                                                0u,
+                                                false,
+                                                true)) {
+                                            return false;
+                                        }
+                                    }
+
+                                    callbacks.v51_config_keys.insert(
+                                        kTestCoinGrantKey);
+                                    callbacks.v51_config_booleans[
+                                        kTestCoinGrantKey] = true;
+
+                                    const bool marker_persisted =
+                                        callbacks.V128FlushConfig();
+
+                                    callbacks.offline_store_test_coin_grant_checked =
+                                        true;
+
+                                    callbacks.Append(
+                                        "OFFLINE STORE TEST COINS before=" +
+                                        std::to_string(coins_before_grant) +
+                                        " after=" +
+                                        std::to_string(coins_after_grant) +
+                                        " floor=" +
+                                        std::to_string(kTestCoinFloor) +
+                                        " markerPersisted=" +
+                                        (marker_persisted
+                                            ? std::string{"YES"}
+                                            : std::string{"NO"}));
+
+                                    if (!marker_persisted) {
+                                        callbacks.AppendCritical(
+                                            "OFFLINE STORE TEST COINS: V128 marker flush failed; wallet floor remains idempotent for this launch.");
+                                    }
+                                }
+                            }
+                        }
+
                         if (callbacks.pending_offline_catalog_refresh) {
                             if (!driver_ready ||
                                 callbacks.native_purchase_fire_did_refresh_address == 0u) {
