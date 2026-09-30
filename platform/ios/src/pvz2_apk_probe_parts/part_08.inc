@@ -2485,6 +2485,9 @@ void PvZ2ResetInteractiveInput() {
     gV152FastMotionRequested.store(
         false,
         std::memory_order_release);
+    gV153FastForwardAvailable.store(
+        false,
+        std::memory_order_release);
     gV72TouchGeneration.store(
         0u,
         std::memory_order_release);
@@ -2715,6 +2718,11 @@ void PvZ2RequestHostFastMotion(bool enabled) {
 
 bool PvZ2HostFastMotionRequested() {
     return gV152FastMotionRequested.load(
+        std::memory_order_acquire);
+}
+
+bool PvZ2HostFastForwardAvailable() {
+    return gV153FastForwardAvailable.load(
         std::memory_order_acquire);
 }
 

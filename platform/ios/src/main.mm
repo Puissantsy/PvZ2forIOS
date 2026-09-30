@@ -782,7 +782,8 @@ void PvZ2HostNotifyDirectFrame(
     // old diagnostic/error paths remain safe, but remove them from normal play.
     self.captionLabel.hidden = YES;
     self.stopButton.hidden = YES;
-    self.timeScaleButton.hidden = NO;
+    // v153: fast-forward exists only while a real level is active.
+    self.timeScaleButton.hidden = YES;
 
     UITapGestureRecognizer *diagnosticGesture =
         [[UITapGestureRecognizer alloc]
@@ -913,6 +914,10 @@ void PvZ2HostNotifyDirectFrame(
 }
 
 - (void)toggleTimeScale {
+    if (!PvZ2HostFastForwardAvailable()) {
+        return;
+    }
+
     const BOOL enableFast =
         !PvZ2HostFastMotionRequested();
 
@@ -930,9 +935,9 @@ void PvZ2HostNotifyDirectFrame(
     AppendPersistentLog(
         [NSString
             stringWithFormat:
-                @"[V152 HOST TIMESCALE] requested=%@ guestValue=%@",
-                enableFast ? @"FAST" : @"NORMAL",
-                enableFast ? @"0.5" : @"1.0"]);
+                @"[V153 HOST FAST-FORWARD] requested=%@ guestValue=%@",
+                enableFast ? @"FAST_X2" : @"NORMAL_X1",
+                enableFast ? @"2.0" : @"1.0"]);
 }
 
 - (void)stopOrClose {
@@ -1861,6 +1866,18 @@ void PvZ2HostNotifyDirectFrame(
     self.sourceWidth = width;
     self.sourceHeight = height;
 
+    const BOOL fastForwardAvailable =
+        PvZ2HostFastForwardAvailable() ? YES : NO;
+    self.timeScaleButton.hidden = !fastForwardAvailable;
+    self.timeScaleButton.enabled =
+        fastForwardAvailable && !self.runFinished;
+    if (!fastForwardAvailable) {
+        [self.timeScaleButton
+            setTitle:@"×2"
+            forState:UIControlStateNormal];
+        self.timeScaleButton.accessibilityValue = @"Off";
+    }
+
     if (frame >= 3u &&
         !gPvZ2KeyboardHostReady.exchange(
             true,
@@ -1941,6 +1958,18 @@ void PvZ2HostNotifyDirectFrame(
 
     self.sourceWidth = width;
     self.sourceHeight = height;
+
+    const BOOL fastForwardAvailable =
+        PvZ2HostFastForwardAvailable() ? YES : NO;
+    self.timeScaleButton.hidden = !fastForwardAvailable;
+    self.timeScaleButton.enabled =
+        fastForwardAvailable && !self.runFinished;
+    if (!fastForwardAvailable) {
+        [self.timeScaleButton
+            setTitle:@"×2"
+            forState:UIControlStateNormal];
+        self.timeScaleButton.accessibilityValue = @"Off";
+    }
 
     if (frame >= 3u &&
         !gPvZ2KeyboardHostReady.exchange(

@@ -3137,30 +3137,42 @@
                     result.draw_frames_completed =
                         frame_number;
 
-                    // v152: consume UIKit's x1/x2 request only after
-                    // Native_onDrawFrame has fully returned. This keeps all
-                    // guest execution on the scheduler thread and avoids
-                    // racing Dynarmic from UIKit. Static analysis of the exact
-                    // 1.5.252752 libPVZ2.so identifies SetTimeScale at
-                    // +0x003761DC; FastMotion uses 0.5f and normal speed 1.0f.
-                    const std::uint32_t v152_time_scale_request =
+                    // v153: this is the in-level fast-forward control.
+                    // GAME_Game is state 5. Availability is published after each
+                    // completed draw, and leaving gameplay forces normal speed.
+                    const bool v153_in_level =
+                        callbacks.V53CurrentGameState() == 5;
+                    gV153FastForwardAvailable.store(
+                        v153_in_level,
+                        std::memory_order_release);
+
+                    std::uint32_t v153_time_scale_request =
                         gV152PendingTimeScale.exchange(
                             0u,
                             std::memory_order_acq_rel);
-                    if (v152_time_scale_request != 0u) {
+
+                    if (!v153_in_level &&
+                        gV152FastMotionRequested.exchange(
+                            false,
+                            std::memory_order_acq_rel)) {
+                        v153_time_scale_request = 1u;
+                    }
+
+                    if (v153_time_scale_request != 0u) {
                         constexpr std::uint32_t kSetTimeScale =
                             kGuestBase + 0x003761dcu;
                         const bool fast =
-                            v152_time_scale_request == 2u;
+                            v153_in_level &&
+                            v153_time_scale_request == 2u;
                         const std::uint32_t scale_bits =
                             fast
-                                ? 0x3f000000u  // 0.5f = FastMotion / x2
+                                ? 0x40000000u  // 2.0f = x2 from real iPad test
                                 : 0x3f800000u; // 1.0f = normal
 
                         if (!run_lifecycle(
                                 fast
-                                    ? "V152_SetTimeScale_0.5"
-                                    : "V152_SetTimeScale_1.0",
+                                    ? "V153_SetTimeScale_2.0"
+                                    : "V153_SetTimeScale_1.0",
                                 kSetTimeScale,
                                 0u,
                                 scale_bits,
@@ -3170,14 +3182,23 @@
                             return result;
                         }
 
+                        if (!fast) {
+                            gV152FastMotionRequested.store(
+                                false,
+                                std::memory_order_release);
+                        }
+
                         callbacks.Append(
                             std::string{
-                                "V152 TIMESCALE APPLIED frame="} +
+                                "V153 FAST-FORWARD APPLIED frame="} +
                             std::to_string(frame_number) +
+                            " gameState=" +
+                            std::to_string(
+                                callbacks.V53CurrentGameState()) +
                             " mode=" +
                             (fast ? "FAST_X2" : "NORMAL_X1") +
                             " guestValue=" +
-                            (fast ? "0.5" : "1.0"));
+                            (fast ? "2.0" : "1.0"));
                     }
 
                     if (callbacks.V90Enabled() &&

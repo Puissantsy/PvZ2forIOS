@@ -112,6 +112,7 @@ void PvZ2RequestInteractiveStop();
 // scheduler applies SetTimeScale only at a completed frame boundary.
 void PvZ2RequestHostFastMotion(bool enabled);
 bool PvZ2HostFastMotionRequested();
+bool PvZ2HostFastForwardAvailable();
 
 enum class PvZ2DiagnosticMode : std::uint32_t {
     PassiveRegistry = 0u,

@@ -1332,6 +1332,7 @@ std::atomic<bool> gV72StopRequested{false};
 // Dynarmic instance from UIKit's main thread. 0=no request, 1=normal, 2=fast.
 std::atomic<std::uint32_t> gV152PendingTimeScale{0u};
 std::atomic<bool> gV152FastMotionRequested{false};
+std::atomic<bool> gV153FastForwardAvailable{false};
 std::atomic<std::uint64_t> gV72TouchGeneration{0u};
 std::atomic<std::uint64_t> gV72QueuedTouches{0u};
 std::atomic<std::uint64_t> gV72DroppedTouches{0u};
