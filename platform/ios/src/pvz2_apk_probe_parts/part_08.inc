@@ -1754,6 +1754,17 @@ bool JniProbePrepareRuntime(
         return false;
     }
 
+    if (callbacks.V149Enabled() &&
+        !patch_resource_native_miss(
+            0x00547028u,
+            0xe3a03000u,
+            kJniProbeSvcV149PowerupRadialSource)) {
+
+        error =
+            "v149 radial source-polygon signature mismatch at 0x10547028; refusing to patch an unverified PvZ2 1.5.252752 image.";
+        return false;
+    }
+
     if (callbacks.V145Enabled() &&
         !patch_resource_native_miss(
             0x004620bcu,

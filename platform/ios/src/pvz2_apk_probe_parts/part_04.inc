@@ -458,6 +458,100 @@
             v94_svc_watch_slot,
             v94_svc_before};
 
+        if (V149Enabled() &&
+            swi == kJniProbeSvcV149PowerupRadialSource) {
+
+            // Original @0x10547028: MOV r3,#0.
+            regs[3] = 0u;
+
+            const std::uint32_t graphics = regs[0];
+            const std::uint32_t points = regs[1];
+            const std::uint32_t count = regs[2];
+
+            if (graphics != 0u &&
+                points != 0u &&
+                count >= 3u &&
+                count <= 40u &&
+                current_frame_number != v149_last_source_polygon_frame &&
+                v149_source_polygon_traces < 900u) {
+
+                const std::int32_t cr =
+                    static_cast<std::int32_t>(mem.Read32Guest(graphics + 0x4cu));
+                const std::int32_t cg =
+                    static_cast<std::int32_t>(mem.Read32Guest(graphics + 0x50u));
+                const std::int32_t cb =
+                    static_cast<std::int32_t>(mem.Read32Guest(graphics + 0x54u));
+                const std::int32_t ca =
+                    static_cast<std::int32_t>(mem.Read32Guest(graphics + 0x58u));
+
+                const bool known_timer =
+                    (cr == 150 && cg == 250 && cb == 120 && ca == 125) ||
+                    (cr == 255 && cg == 145 && cb == 250 && ca == 125) ||
+                    (cr == 255 && cg == 230 && cb == 60  && ca == 125);
+
+                if (known_timer) {
+                    bool have = false;
+                    std::int32_t min_x = 0, min_y = 0, max_x = 0, max_y = 0;
+                    std::array<std::pair<std::int32_t,std::int32_t>,3> sample{{
+                        {0,0},{0,0},{0,0}
+                    }};
+
+                    for (std::uint32_t i = 0u; i < count; ++i) {
+                        const std::uint32_t p = points + i * 8u;
+                        const std::int32_t x =
+                            static_cast<std::int32_t>(mem.Read32Guest(p));
+                        const std::int32_t y =
+                            static_cast<std::int32_t>(mem.Read32Guest(p + 4u));
+
+                        if (!have) {
+                            min_x = max_x = x;
+                            min_y = max_y = y;
+                            have = true;
+                        } else {
+                            min_x = std::min(min_x, x);
+                            min_y = std::min(min_y, y);
+                            max_x = std::max(max_x, x);
+                            max_y = std::max(max_y, y);
+                        }
+
+                        if (i == 0u) sample[0] = {x,y};
+                        if (i == count / 2u) sample[1] = {x,y};
+                        if (i + 1u == count) sample[2] = {x,y};
+                    }
+
+                    if (have) {
+                        v149_last_source_polygon_frame = current_frame_number;
+                        ++v149_source_polygon_traces;
+
+                        const std::int32_t clip_x =
+                            static_cast<std::int32_t>(mem.Read32Guest(graphics + 0x20u));
+                        const std::int32_t clip_y =
+                            static_cast<std::int32_t>(mem.Read32Guest(graphics + 0x24u));
+                        const std::int32_t clip_w =
+                            static_cast<std::int32_t>(mem.Read32Guest(graphics + 0x28u));
+                        const std::int32_t clip_h =
+                            static_cast<std::int32_t>(mem.Read32Guest(graphics + 0x2cu));
+
+                        std::ostringstream d;
+                        d << "V149 RADIAL SOURCE #" << v149_source_polygon_traces
+                          << " frame=" << current_frame_number
+                          << " count=" << count
+                          << " bbox=(" << min_x << "," << min_y << ")-("
+                          << max_x << "," << max_y << ")"
+                          << " clip=(" << clip_x << "," << clip_y << ","
+                          << clip_w << "," << clip_h << ")"
+                          << " rgba=(" << cr << "," << cg << "," << cb << "," << ca << ")"
+                          << " p0=(" << sample[0].first << "," << sample[0].second << ")"
+                          << " pmid=(" << sample[1].first << "," << sample[1].second << ")"
+                          << " plast=(" << sample[2].first << "," << sample[2].second << ")";
+                        AppendDiagnostic(d.str());
+                    }
+                }
+            }
+
+            return;
+        }
+
         if (V145Enabled() &&
             swi == kJniProbeSvcV145PowerupBoardRadialArgs) {
 

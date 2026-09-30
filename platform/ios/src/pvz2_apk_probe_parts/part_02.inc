@@ -780,9 +780,15 @@
     }
 
 
+    bool V149Enabled() const {
+        return diagnostic_mode ==
+            PvZ2DiagnosticMode::V149PowerupRadialSourcePolygon;
+    }
+
     bool V148Enabled() const {
         return diagnostic_mode ==
-            PvZ2DiagnosticMode::V148DiagnosticModeRoutingFix;
+                   PvZ2DiagnosticMode::V148DiagnosticModeRoutingFix ||
+               V149Enabled();
     }
 
     bool V147Enabled() const {
@@ -4425,6 +4431,7 @@
     }
 
     const char* RuntimeModeTag() const {
+        if (V149Enabled()) return "V149";
         if (V148Enabled()) return "V148";
         if (V147Enabled()) return "V147";
         if (V145Enabled()) return "V145";

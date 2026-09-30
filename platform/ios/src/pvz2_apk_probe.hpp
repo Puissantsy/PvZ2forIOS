@@ -555,6 +555,10 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // v148: fix launcher routing so the newest selectable diagnostic mode is
     // actually passed into the probe instead of main.mm hardcoding v144.
     V148DiagnosticModeRoutingFix = 90u,
+
+    // v149: observe the already-built BoardTimerColor source polygon and the
+    // effective Graphics clip immediately before DrawPoly. Observation-only.
+    V149PowerupRadialSourcePolygon = 91u,
 };
 
 enum class PvZ2ProbeCapability : std::uint64_t {

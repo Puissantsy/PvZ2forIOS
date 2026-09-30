@@ -1075,6 +1075,7 @@ constexpr std::uint64_t kCapsV144 = kCapsV143;
 constexpr std::uint64_t kCapsV145 = kCapsV144;
 constexpr std::uint64_t kCapsV147 = kCapsV145;
 constexpr std::uint64_t kCapsV148 = kCapsV147;
+constexpr std::uint64_t kCapsV149 = kCapsV148;
 
 constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::PassiveRegistry, "PASSIVE_REGISTRY", nullptr, 0u, false},
@@ -1168,10 +1169,11 @@ constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::V145PowerupBoardRadialProbe, "V145_POWERUP_BOARD_RADIAL_PROBE", "V145 Powerup Board Radial Probe", kCapsV145, true},
     {PvZ2DiagnosticMode::V147RestoreProfilePersistence, "V147_RESTORE_PROFILE_PERSISTENCE", "V147 Restore Profile Persistence", kCapsV147, true},
     {PvZ2DiagnosticMode::V148DiagnosticModeRoutingFix, "V148_DIAGNOSTIC_MODE_ROUTING_FIX", "V148 Diagnostic Mode Routing Fix", kCapsV148, true},
+    {PvZ2DiagnosticMode::V149PowerupRadialSourcePolygon, "V149_POWERUP_RADIAL_SOURCE_POLYGON", "V149 Powerup Radial Source Polygon", kCapsV149, true},
 };
 
 constexpr PvZ2DiagnosticMode kSelectableDiagnosticModes[] = {
-    PvZ2DiagnosticMode::V148DiagnosticModeRoutingFix,
+    PvZ2DiagnosticMode::V149PowerupRadialSourcePolygon,
 };
 
 } // namespace
@@ -1619,6 +1621,11 @@ constexpr std::uint32_t kJniProbeSvcV129BoardScaleRefresh = 0x00f0d2u;
 // MOV r0,r4; CallSVC emulates it after recording the finalized arguments for
 // the original Board-wide radial draw at 0x10546cc4.
 constexpr std::uint32_t kJniProbeSvcV145PowerupBoardRadialArgs = 0x00f0d3u;
+
+// v149: original @0x10547028 = MOV r3,#0 immediately before the colored
+// sector's DrawPoly call. Handler inspects r0=Graphics*, r1=Point*, r2=count,
+// then restores r3=0 and leaves the BL @0x1054702c untouched.
+constexpr std::uint32_t kJniProbeSvcV149PowerupRadialSource = 0x00f0d4u;
 
 constexpr std::uint32_t kJniProbeSvcUnsupportedJniBase = 0x00e000u;
 constexpr std::uint32_t kJniProbeJniSlotCount = 256u;
@@ -3975,6 +3982,9 @@ public:
     // enough to reconstruct the Board wipe while keeping the hot draw path lean.
     std::uint64_t v145_radial_traces = 0u;
     std::uint32_t v145_last_radial_frame = 0xffffffffu;
+
+    std::uint64_t v149_source_polygon_traces = 0u;
+    std::uint32_t v149_last_source_polygon_frame = 0xffffffffu;
 
     std::uint64_t v80_array_draws_seen = 0u;
     std::uint64_t v80_transform_draw_traces = 0u;
