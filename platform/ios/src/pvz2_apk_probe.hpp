@@ -559,6 +559,10 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // v149: observe the already-built BoardTimerColor source polygon and the
     // effective Graphics clip immediately before DrawPoly. Observation-only.
     V149PowerupRadialSourcePolygon = 91u,
+
+    // v150: restore POSIX qsort with a guest-native ARM shim so PopCap guest
+    // comparators execute normally; also bypass Power Up cost only for testing.
+    V150GuestQsortCompat = 92u,
 };
 
 enum class PvZ2ProbeCapability : std::uint64_t {

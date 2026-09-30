@@ -458,6 +458,23 @@
             v94_svc_watch_slot,
             v94_svc_before};
 
+        if (V150Enabled() &&
+            swi == kJniProbeSvcV150PowerupIgnoreCost) {
+
+            // Original @0x1045e0ec: STRB r8,[r4,#0x30] with r8=0.
+            // v150 deliberately forces only PowerupManager::m_ignoreCost=true
+            // so repeated Power Up tests do not consume coins. pp.dat remains
+            // normally persistent; no profile-wide sandbox is reintroduced.
+            mem.Write8Guest(
+                regs[4] + 0x30u,
+                static_cast<std::uint8_t>(1u));
+
+            AppendDiagnostic(
+                "V150 POWERUP ignoreCost=1 manager=0x" +
+                JniProbeHex(regs[4]));
+            return;
+        }
+
         if (V149Enabled() &&
             swi == kJniProbeSvcV149PowerupRadialSource) {
 

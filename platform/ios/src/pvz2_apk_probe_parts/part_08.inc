@@ -728,6 +728,70 @@ std::uint32_t JniProbeMakePthreadOnceShim(
 }
 
 
+std::uint32_t JniProbeMakeQsortShim(
+    JniProbeGuestMemory& memory) {
+
+    // Generic POSIX qsort compatibility shim executed entirely as ARMv7 guest
+    // code. It uses an in-place heapsort and invokes the comparator through
+    // BLX, so ARM/Thumb PopCap comparators (including comparators that call
+    // other guest code/imports) execute in the normal guest context.
+    //
+    // ABI: r0=base, r1=nmemb, r2=size, r3=compar.
+    // The machine code below was linked for this fixed trampoline address;
+    // its only direct BL targets are internal to the same blob.
+    constexpr std::uint32_t kShimAddress =
+        kJniProbeTrampolineBase + 0x00090000u;
+
+    constexpr std::uint32_t words[] = {
+        0xE3500000u, 0x012FFF1Eu, 0xE3510002u, 0x3A00002Au,
+        0xE92D4DF0u, 0xE28DB018u, 0xE24DD008u, 0xE3520000u,
+        0xE1A05002u, 0x11A08003u, 0x13530000u, 0x0A000020u,
+        0xE1A06000u, 0xE2410002u, 0xE2417001u, 0xE1A040A0u,
+        0xE1A00006u, 0xE1A01004u, 0xE1A02007u, 0xE1A03005u,
+        0xE58D8000u, 0xEB000019u, 0xE2444001u, 0xE3740001u,
+        0x1AFFFFF6u, 0xE0040795u, 0xE0860004u, 0xE3A01000u,
+        0xE7D62001u, 0xE7D03001u, 0xE7C63001u, 0xE7C02001u,
+        0xE2811001u, 0xE1550001u, 0x1AFFFFF8u, 0xE2477001u,
+        0xE1A00006u, 0xE3A01000u, 0xE1A03005u, 0xE1A02007u,
+        0xE58D8000u, 0xEB000005u, 0xE0444005u, 0xE3570000u,
+        0x1AFFFFECu, 0xE24BD018u, 0xE8BD4DF0u, 0xE12FFF1Eu,
+        0xE92D4FF0u, 0xE28DB01Cu, 0xE24DD00Cu, 0xE1520081u,
+        0xE58D2008u, 0x9A000029u, 0xE59BA008u, 0xE1A08003u,
+        0xE1A06001u, 0xE1A04000u, 0xE1A09081u, 0xE58D0004u,
+        0xE3895001u, 0xE0274896u, 0xE0214895u, 0xE1A00007u,
+        0xE12FFF3Au, 0xE3500000u, 0xE59D0008u, 0xE2894002u,
+        0x51A05006u, 0xE1540000u, 0x8A000005u, 0xE59D1004u,
+        0xE0201895u, 0xE0211894u, 0xE12FFF3Au, 0xE3500000u,
+        0x41A05004u, 0xE59BA008u, 0xE1550006u, 0xE59D4004u,
+        0x0A00000Eu, 0xE3580000u, 0x0A000007u, 0xE0204895u,
+        0xE1A01008u, 0xE5D72000u, 0xE2511001u, 0xE5D06000u,
+        0xE4C76001u, 0xE4C02001u, 0x1AFFFFF9u, 0xE59D0008u,
+        0xE1A09085u, 0xE1A06005u, 0xE1500085u, 0x8AFFFFDBu,
+        0xE24BD01Cu, 0xE8BD8FF0u,
+    };
+
+    auto* p =
+        memory.Ptr(
+            kShimAddress,
+            sizeof(words));
+
+    if (!p) {
+        return 0;
+    }
+
+    for (std::size_t i = 0;
+         i < sizeof(words) / sizeof(words[0]);
+         ++i) {
+
+        Write32(
+            p + i * 4u,
+            words[i]);
+    }
+
+    return kShimAddress;
+}
+
+
 std::uint32_t JniProbeMakePthreadCreateShim(
     JniProbeGuestMemory& memory) {
 
@@ -1175,6 +1239,37 @@ bool JniProbePrepareRuntime(
 
                 callbacks.Append(
                     "installed guest-native pthread_once shim at 0x" +
+                    JniProbeHex(shim));
+
+                ++result.imports_patched;
+                continue;
+            }
+
+            if (name == "qsort" &&
+                callbacks.V150Enabled()) {
+                const std::uint32_t shim =
+                    JniProbeMakeQsortShim(
+                        memory);
+
+                if (!shim) {
+                    error =
+                        "JNI probe could not allocate qsort guest shim.";
+                    return false;
+                }
+
+                Write32(
+                    memory.image.data() +
+                    rel.offset,
+                    shim);
+
+                callbacks.V91RegisterProtectedImport(
+                    kGuestBase + rel.offset,
+                    shim,
+                    name,
+                    type);
+
+                callbacks.Append(
+                    "V150 installed guest-native qsort shim at 0x" +
                     JniProbeHex(shim));
 
                 ++result.imports_patched;
@@ -1751,6 +1846,17 @@ bool JniProbePrepareRuntime(
 
         error =
             "v129 Board iOS-scale signature mismatch at 0x10174a50/0x10178a58/0x101791b8; refusing to patch an unverified PvZ2 1.5.252752 image.";
+        return false;
+    }
+
+    if (callbacks.V150Enabled() &&
+        !patch_resource_native_miss(
+            0x0045e0ecu,
+            0xe5c48030u,
+            kJniProbeSvcV150PowerupIgnoreCost)) {
+
+        error =
+            "v150 PowerupManager ignoreCost signature mismatch at 0x1045e0ec; refusing to patch an unverified PvZ2 1.5.252752 image.";
         return false;
     }
 

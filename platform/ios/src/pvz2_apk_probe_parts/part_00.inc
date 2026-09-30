@@ -1076,6 +1076,7 @@ constexpr std::uint64_t kCapsV145 = kCapsV144;
 constexpr std::uint64_t kCapsV147 = kCapsV145;
 constexpr std::uint64_t kCapsV148 = kCapsV147;
 constexpr std::uint64_t kCapsV149 = kCapsV148;
+constexpr std::uint64_t kCapsV150 = kCapsV149;
 
 constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::PassiveRegistry, "PASSIVE_REGISTRY", nullptr, 0u, false},
@@ -1170,10 +1171,11 @@ constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::V147RestoreProfilePersistence, "V147_RESTORE_PROFILE_PERSISTENCE", "V147 Restore Profile Persistence", kCapsV147, true},
     {PvZ2DiagnosticMode::V148DiagnosticModeRoutingFix, "V148_DIAGNOSTIC_MODE_ROUTING_FIX", "V148 Diagnostic Mode Routing Fix", kCapsV148, true},
     {PvZ2DiagnosticMode::V149PowerupRadialSourcePolygon, "V149_POWERUP_RADIAL_SOURCE_POLYGON", "V149 Powerup Radial Source Polygon", kCapsV149, true},
+    {PvZ2DiagnosticMode::V150GuestQsortCompat, "V150_GUEST_QSORT_COMPAT", "V150 Guest qsort Compat", kCapsV150, true},
 };
 
 constexpr PvZ2DiagnosticMode kSelectableDiagnosticModes[] = {
-    PvZ2DiagnosticMode::V149PowerupRadialSourcePolygon,
+    PvZ2DiagnosticMode::V150GuestQsortCompat,
 };
 
 } // namespace
@@ -1626,6 +1628,10 @@ constexpr std::uint32_t kJniProbeSvcV145PowerupBoardRadialArgs = 0x00f0d3u;
 // sector's DrawPoly call. Handler inspects r0=Graphics*, r1=Point*, r2=count,
 // then restores r3=0 and leaves the BL @0x1054702c untouched.
 constexpr std::uint32_t kJniProbeSvcV149PowerupRadialSource = 0x00f0d4u;
+
+// v150: original @0x1045e0ec = STRB r8,[r4,#0x30], where r8=0 in the
+// PowerupManager ctor. The handler writes 1 instead, preserving all registers.
+constexpr std::uint32_t kJniProbeSvcV150PowerupIgnoreCost = 0x00f0d5u;
 
 constexpr std::uint32_t kJniProbeSvcUnsupportedJniBase = 0x00e000u;
 constexpr std::uint32_t kJniProbeJniSlotCount = 256u;
