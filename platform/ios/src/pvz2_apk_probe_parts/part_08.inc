@@ -3550,7 +3550,8 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                         std::uint32_t arg2,
                         std::uint32_t arg3,
                         bool first_draw,
-                        bool raw_arm_abi = false) -> bool {
+                        bool raw_arm_abi = false,
+                        const std::vector<std::uint32_t>& stack_args = {}) -> bool {
 
                         auto clear_probe_halts =
                             [&]() {
@@ -4009,10 +4010,20 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                             jit.Regs()[3] =
                                 arg3;
                         }
-                        jit.Regs()[13] =
+                        const std::uint32_t call_sp =
                             kJniProbeStackBase +
                             kJniProbeStackSize -
                             0x200u;
+                        for (std::size_t stack_index = 0u;
+                             stack_index < stack_args.size();
+                             ++stack_index) {
+                            memory.Write32Guest(
+                                call_sp +
+                                    static_cast<std::uint32_t>(
+                                        stack_index * 4u),
+                                stack_args[stack_index]);
+                        }
+                        jit.Regs()[13] = call_sp;
                         jit.Regs()[14] =
                             return_trampoline;
                         jit.Regs()[15] =

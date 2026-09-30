@@ -2336,6 +2336,91 @@
     std::unordered_map<std::uint32_t, std::string> jni_method_names;
     std::unordered_map<std::uint32_t, std::string> jni_method_signatures;
     std::unordered_map<std::uint32_t, std::string> jni_strings;
+
+    // Offline store transport: preserve PvZ2's native PurchaseBroker and
+    // entitlement dispatcher while replacing the dead Google Play billing
+    // surface with deterministic local catalog/payment callbacks.
+    struct OfflineStoreCatalogEntry {
+        const char* sku = nullptr;
+        std::uint32_t coin_price = 0u;
+        const char* price_text = nullptr;
+        const char* title = nullptr;
+        const char* description = nullptr;
+    };
+
+    struct OfflineSkuDetails {
+        std::string sku;
+        std::string price;
+        std::string title;
+        std::string description;
+    };
+
+    struct OfflinePurchaseRequest {
+        bool pending = false;
+        std::string sku;
+        std::uint32_t coin_price = 0u;
+        std::int32_t immediate_error = 0;
+        std::uint64_t serial = 0u;
+    };
+
+    static const OfflineStoreCatalogEntry*
+    OfflineStoreFindCatalogEntry(const std::string& sku) {
+        static const std::array<OfflineStoreCatalogEntry, 10> entries{{
+            {"com.popcap.pvz2.android.plant.snowpea.nonconsume", 10000u, "10 000 PvZCoins", "Snow Pea", "Permanent plant unlock"},
+            {"com.popcap.pvz2.android.plant.squash.nonconsume", 15000u, "15 000 PvZCoins", "Squash", "Permanent plant unlock"},
+            {"com.popcap.pvz2.android.plant.imitater.nonconsume", 50000u, "50 000 PvZCoins", "Imitater", "Permanent plant unlock"},
+            {"com.popcap.pvz2.android.plant.jalapeno.nonconsume", 20000u, "20 000 PvZCoins", "Jalapeno", "Permanent plant unlock"},
+            {"com.popcap.pvz2.android.plant.torchwood.nonconsume", 10000u, "10 000 PvZCoins", "Torchwood", "Permanent plant unlock"},
+            {"com.popcap.pvz2.android.plant.powerlily.nonconsume", 50000u, "50 000 PvZCoins", "Power Lily", "Permanent plant unlock"},
+            {"com.popcap.pvz2.android.gameupgrade.sunshovel3.nonconsume", 10000u, "10 000 PvZCoins", "Shovel Bonus", "Permanent game upgrade"},
+            {"com.popcap.pvz2.android.gameupgrade.pfslot2.nonconsume", 15000u, "15 000 PvZCoins", "Plant Food Bonus", "Permanent game upgrade"},
+            {"com.popcap.pvz2.android.gameupgrade.startingsun2.nonconsume", 30000u, "30 000 PvZCoins", "Sun Bonus", "Permanent game upgrade"},
+            {"com.popcap.pvz2.android.gameupgrade.seedslot2.nonconsume", 50000u, "50 000 PvZCoins", "Bonus Seed Slot", "Permanent game upgrade"}
+        }};
+
+        for (const auto& entry : entries) {
+            if (entry.sku != nullptr && sku == entry.sku) {
+                return &entry;
+            }
+        }
+        return nullptr;
+    }
+
+    std::uint32_t JniNewSyntheticObject() {
+        return 0x55000000u +
+            (next_synthetic_object++ * 0x100u);
+    }
+
+    std::uint32_t JniNewSyntheticString(const std::string& value) {
+        const std::uint32_t handle = JniNewSyntheticObject();
+        jni_strings[handle] = value;
+        return handle;
+    }
+
+    std::uint32_t JniNewSyntheticObjectArray(
+        const std::vector<std::uint32_t>& values) {
+        const std::uint32_t handle = JniNewSyntheticObject();
+        jni_array_lengths[handle] =
+            static_cast<std::uint32_t>(values.size());
+        jni_object_arrays[handle] = values;
+        return handle;
+    }
+
+    std::unordered_map<std::uint32_t, OfflineSkuDetails>
+        offline_sku_details;
+    std::vector<std::string> pending_offline_refresh_skus;
+    bool pending_offline_catalog_refresh = false;
+
+    std::uint32_t google_play_purchase_java_object = 0u;
+    std::uint32_t google_play_purchase_native_driver = 0u;
+    std::uint32_t native_purchase_fire_did_refresh_address = 0u;
+    std::uint32_t native_purchase_fire_payment_complete_address = 0u;
+    std::uint32_t native_purchase_fire_payment_incomplete_address = 0u;
+
+    OfflinePurchaseRequest pending_offline_purchase;
+    std::uint64_t offline_purchase_serial = 0u;
+    bool offline_purchase_unconfirmed = false;
+    std::string offline_purchase_unconfirmed_token;
     // v34: AndroidHttpTransaction is asynchronous on Android. Track the
     // native peer passed to its Java constructor so Start() can be completed
     // deterministically through the real registered native error callback
