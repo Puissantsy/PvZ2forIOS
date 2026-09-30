@@ -780,9 +780,15 @@
     }
 
 
+    bool V148Enabled() const {
+        return diagnostic_mode ==
+            PvZ2DiagnosticMode::V148DiagnosticModeRoutingFix;
+    }
+
     bool V147Enabled() const {
         return diagnostic_mode ==
-            PvZ2DiagnosticMode::V147RestoreProfilePersistence;
+                   PvZ2DiagnosticMode::V147RestoreProfilePersistence ||
+               V148Enabled();
     }
 
     bool V145Enabled() const {
@@ -4419,6 +4425,7 @@
     }
 
     const char* RuntimeModeTag() const {
+        if (V148Enabled()) return "V148";
         if (V147Enabled()) return "V147";
         if (V145Enabled()) return "V145";
         if (V144Enabled()) return "V144";

@@ -551,6 +551,10 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // v147: restore normal persistent profile writes while preserving v145's
     // Power Up radial probe. The v141 pp.dat sandbox is exact-mode-only.
     V147RestoreProfilePersistence = 89u,
+
+    // v148: fix launcher routing so the newest selectable diagnostic mode is
+    // actually passed into the probe instead of main.mm hardcoding v144.
+    V148DiagnosticModeRoutingFix = 90u,
 };
 
 enum class PvZ2ProbeCapability : std::uint64_t {

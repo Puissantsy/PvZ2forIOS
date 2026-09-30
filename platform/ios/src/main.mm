@@ -2688,18 +2688,20 @@ void PvZ2HostNotifyDirectFrame(
 
     self.v110SelectedUiModeIndex = 0;
 
-    const PvZ2DiagnosticMode selectedMode =
-        PvZ2DiagnosticMode::V144PowerupSelectionFlightRecorder;
-
     const auto* selectedDescriptor =
-        PvZ2DescribeDiagnosticMode(selectedMode);
+        PvZ2SelectableDiagnosticModeAt(0u);
+
+    const PvZ2DiagnosticMode selectedMode =
+        selectedDescriptor != nullptr
+            ? selectedDescriptor->mode
+            : PvZ2DiagnosticMode::PassiveRegistry;
 
     NSString *selectedModeName =
         selectedDescriptor != nullptr
             ? [NSString
                   stringWithUTF8String:
                       selectedDescriptor->internal_name]
-            : @"V144_POWERUP_SELECTION_FLIGHT_RECORDER";
+            : @"PASSIVE_REGISTRY";
 
     [self
         appendUI:
@@ -2804,11 +2806,13 @@ void PvZ2HostNotifyDirectFrame(
         return;
     }
 
-    const PvZ2DiagnosticMode diagnosticMode =
-        PvZ2DiagnosticMode::V144PowerupSelectionFlightRecorder;
-
     const auto* diagnosticDescriptor =
-        PvZ2DescribeDiagnosticMode(diagnosticMode);
+        PvZ2SelectableDiagnosticModeAt(0u);
+
+    const PvZ2DiagnosticMode diagnosticMode =
+        diagnosticDescriptor != nullptr
+            ? diagnosticDescriptor->mode
+            : PvZ2DiagnosticMode::PassiveRegistry;
 
     NSString *diagnosticModeName =
         diagnosticDescriptor != nullptr
@@ -2824,7 +2828,7 @@ void PvZ2HostNotifyDirectFrame(
         appendUI:
             [NSString
                 stringWithFormat:
-                    @"=== PvZ2 v143 Board Timer Color started mode=%@; PID=%d ===",
+                    @"=== PvZ2 diagnostic started mode=%@; PID=%d ===",
                     diagnosticModeName,
                     getpid()]];
 
