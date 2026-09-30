@@ -313,82 +313,6 @@
         Append(diagnostic.str());
     }
 
-    void V160ApplyUiAndroidCoinBankOverlay(
-        std::uint32_t guest_dst,
-        std::uint64_t absolute_read_start,
-        std::uint64_t byte_count) {
-
-        if (byte_count == 0u ||
-            obb_data == nullptr) {
-            return;
-        }
-
-        // Exact reference OBB main.7.com.ea.game.pvz2_row.obb:
-        // PACKAGES/UI_ANDROID.RTON base=41054208; UICoinBank x encoding is
-        // file+3675 => absolute 41057883. Static metadata and raw OBB bytes
-        // both prove 25 EF 01 == -120 and 25 C7 02 == -164.
-        constexpr std::uint64_t kPatch =
-            41057883ull;
-        constexpr std::uint8_t kExpected[3] = {
-            0x25u, 0xefu, 0x01u};
-        constexpr std::uint8_t kReplacement[3] = {
-            0x25u, 0xc7u, 0x02u};
-
-        if (obb_size < kPatch + 3u ||
-            std::memcmp(
-                obb_data +
-                    static_cast<std::size_t>(
-                        kPatch),
-                kExpected,
-                sizeof(kExpected)) != 0) {
-
-            if (!v160_coinbank_signature_reported) {
-                v160_coinbank_signature_reported = true;
-                AppendCritical(
-                    "V160 UI_ANDROID STREAM PATCH signature mismatch at OBB+41057883; CoinBank left untouched.");
-            }
-            return;
-        }
-
-        const std::uint64_t read_end =
-            absolute_read_start + byte_count;
-        auto* target =
-            mem.Ptr(
-                guest_dst,
-                static_cast<std::size_t>(
-                    byte_count));
-        if (target == nullptr) {
-            return;
-        }
-
-        for (std::uint32_t i = 0u;
-             i < 3u;
-             ++i) {
-            const std::uint64_t absolute =
-                kPatch + i;
-            if (absolute < absolute_read_start ||
-                absolute >= read_end) {
-                continue;
-            }
-
-            target[
-                static_cast<std::size_t>(
-                    absolute -
-                    absolute_read_start)] =
-                kReplacement[i];
-            v160_coinbank_overlay_mask |=
-                static_cast<std::uint8_t>(
-                    1u << i);
-        }
-
-        if (v160_coinbank_overlay_mask == 0x07u &&
-            !v160_coinbank_signature_reported) {
-            v160_coinbank_signature_reported = true;
-            Append(
-                "V160 UI_ANDROID STREAM PATCH: UICoinBank PositionOffset.x -120 -> -164 delivered at OBB+41057883.");
-        }
-    }
-
     void V159ObserveHudPauseDraw(
         GLint first,
         GLsizei count,
@@ -405,8 +329,7 @@
         for (GLuint index = 0u;
              index < gles_attrib_state.size();
              ++index) {
-            const auto& state =
-                gles_attrib_state[index];
+            const auto& state = gles_attrib_state[index];
             if (!state.enabled ||
                 state.type != GL_FLOAT ||
                 state.size < 2 ||
@@ -493,16 +416,11 @@
         float max_x = 0.0f;
         float max_y = 0.0f;
 
-        const std::size_t sample_count =
-            static_cast<std::size_t>(count);
-
         for (std::size_t i = 0u;
-             i < sample_count;
+             i < static_cast<std::size_t>(count);
              ++i) {
             std::uint32_t vertex_index = 0u;
-            if (!vertex_index_at(
-                    i,
-                    vertex_index)) {
+            if (!vertex_index_at(i, vertex_index)) {
                 return;
             }
 
@@ -555,15 +473,11 @@
             return;
         }
 
-        const float width =
-            max_x - min_x;
-        const float height =
-            max_y - min_y;
+        const float width = max_x - min_x;
+        const float height = max_y - min_y;
 
-        // Real v159 iPad log proves the Pause draw repeatedly as:
-        // bbox=(1888,20)-(2027,159), size=139x139, count=12
-        // in the 2048x1536 guest framebuffer. Keep tolerances generous enough
-        // for button animation/rounding but narrow enough to exclude CoinBank.
+        // Exact recurring Pause draw measured in the v159 iPad log:
+        // bbox=(1888,20)-(2027,159), size=139x139, count=12.
         const bool pause_geometry =
             width >= 128.0f &&
             width <= 152.0f &&
@@ -591,18 +505,12 @@
             out
                 << "V160 HUD PAUSE DETECT frame="
                 << current_frame_number
-                << " count="
-                << count
+                << " count=" << count
                 << " bbox=("
                 << min_x << "," << min_y
-                << ")-("
-                << max_x << "," << max_y
-                << ") tex0="
-                << gles_bound_texture_2d[0u]
-                << " tex1="
-                << gles_bound_texture_2d[1u];
-            AppendDiagnostic(
-                out.str());
+                << ")-(" << max_x << "," << max_y
+                << ")";
+            AppendDiagnostic(out.str());
         }
     }
 

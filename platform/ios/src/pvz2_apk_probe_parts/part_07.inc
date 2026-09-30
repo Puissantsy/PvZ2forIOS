@@ -517,11 +517,51 @@
                             static_cast<std::size_t>(
                                 bytes));
 
-                        if (!it->second.owned) {
-                            V160ApplyUiAndroidCoinBankOverlay(
-                                dst,
-                                read_start,
-                                bytes);
+                        // v160: production loads UI_ANDROID through the raw
+                        // expansion-file stream. Overlay only the exact three
+                        // CoinBank x bytes in the bytes delivered to the guest.
+                        constexpr std::uint64_t kV160Patch =
+                            41057883ull;
+                        constexpr std::uint8_t kV160Expected[3] = {
+                            0x25u, 0xefu, 0x01u};
+                        constexpr std::uint8_t kV160Replacement[3] = {
+                            0x25u, 0xc7u, 0x02u};
+
+                        if (!it->second.owned &&
+                            obb_size >= kV160Patch + 3u &&
+                            std::memcmp(
+                                obb_data +
+                                    static_cast<std::size_t>(
+                                        kV160Patch),
+                                kV160Expected,
+                                3u) == 0) {
+                            auto* copied =
+                                mem.Ptr(
+                                    dst,
+                                    static_cast<std::size_t>(
+                                        bytes));
+                            std::uint32_t replaced = 0u;
+                            for (std::uint32_t bi = 0u;
+                                 bi < 3u;
+                                 ++bi) {
+                                const std::uint64_t absolute =
+                                    kV160Patch + bi;
+                                if (absolute >= read_start &&
+                                    absolute < read_start + bytes) {
+                                    copied[
+                                        static_cast<std::size_t>(
+                                            absolute - read_start)] =
+                                        kV160Replacement[bi];
+                                    ++replaced;
+                                }
+                            }
+                            if (replaced != 0u &&
+                                fallback_logged.insert(
+                                    "v160-ui-android-stream-patch")
+                                    .second) {
+                                Append(
+                                    "V160 UI_ANDROID STREAM PATCH: UICoinBank PositionOffset.x -120 -> -164 overlay active at OBB+41057883.");
+                            }
                         }
                     }
                 }
@@ -1100,11 +1140,48 @@
                             static_cast<std::size_t>(
                                 bytes));
 
-                        if (!it->second.owned) {
-                            V160ApplyUiAndroidCoinBankOverlay(
-                                dst,
-                                read_start,
-                                bytes);
+                        constexpr std::uint64_t kV160Patch =
+                            41057883ull;
+                        constexpr std::uint8_t kV160Expected[3] = {
+                            0x25u, 0xefu, 0x01u};
+                        constexpr std::uint8_t kV160Replacement[3] = {
+                            0x25u, 0xc7u, 0x02u};
+
+                        if (!it->second.owned &&
+                            obb_size >= kV160Patch + 3u &&
+                            std::memcmp(
+                                obb_data +
+                                    static_cast<std::size_t>(
+                                        kV160Patch),
+                                kV160Expected,
+                                3u) == 0) {
+                            auto* copied =
+                                mem.Ptr(
+                                    dst,
+                                    static_cast<std::size_t>(
+                                        bytes));
+                            std::uint32_t replaced = 0u;
+                            for (std::uint32_t bi = 0u;
+                                 bi < 3u;
+                                 ++bi) {
+                                const std::uint64_t absolute =
+                                    kV160Patch + bi;
+                                if (absolute >= read_start &&
+                                    absolute < read_start + bytes) {
+                                    copied[
+                                        static_cast<std::size_t>(
+                                            absolute - read_start)] =
+                                        kV160Replacement[bi];
+                                    ++replaced;
+                                }
+                            }
+                            if (replaced != 0u &&
+                                fallback_logged.insert(
+                                    "v160-ui-android-stream-patch")
+                                    .second) {
+                                Append(
+                                    "V160 UI_ANDROID STREAM PATCH: UICoinBank PositionOffset.x -120 -> -164 overlay active at OBB+41057883.");
+                            }
                         }
                     }
                     if(V89HostCostEnabled())V89RecordHostCost("vfs.read.memcpy",v89_vfs_begin_ns,bytes);
