@@ -4304,6 +4304,14 @@ public:
     std::uint64_t gles_framebuffer_bind_changes = 0u;
     std::uint32_t current_frame_number = 0u;
 
+    // v159: exact HUD-presence signal. The real 1.5 Pause sprite lives in
+    // UIImages_768_00 (1024x2048) at (401,1265,70,70), with pressed state at
+    // (76,1268,70,70). A frame is HUD-visible only when one of those UV quads
+    // is actually submitted by the guest renderer.
+    std::uint32_t v159_pause_draw_frame =
+        std::numeric_limits<std::uint32_t>::max();
+    std::uint64_t v159_pause_draw_detections = 0u;
+
     GLuint gles_splash_texture_candidate = 0u;
     std::uint32_t gles_splash_color_baseline = 0u;
     std::uint64_t gles_vertex_color_traces = 0u;

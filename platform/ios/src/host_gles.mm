@@ -905,16 +905,16 @@ PvZ2HostGLESPresent(
             gTurboMode.load(
                 std::memory_order_acquire);
 
-        // v158: PvZ2 1.5's coin HUD occupies more horizontal space than 1.7.
-        // Keep Turbo tight against Pause (Pause starts at x=946) and compact
-        // enough that even ×2 never intrudes into the currency block.
+        // v159: UICoinBank is shifted in the guest RTON, so the Turbo can
+        // use the real PvZ2 1.7 geometry again. Normal is the original 70x70,
+        // selected is the original 75x75; our extra ×2 state remains 82x82.
         const GLfloat size =
             mode == 0u
-                ? 60.0f
+                ? 70.0f
                 : (mode == 1u
-                       ? 64.0f
-                       : 68.0f);
-        const GLfloat center_x = 914.0f;
+                       ? 75.0f
+                       : 82.0f);
+        const GLfloat center_x = 903.0f;
         const GLfloat center_y = 43.0f;
         const GLfloat left =
             center_x - size * 0.5f;

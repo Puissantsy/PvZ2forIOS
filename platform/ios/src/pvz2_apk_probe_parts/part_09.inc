@@ -3137,13 +3137,19 @@
                     result.draw_frames_completed =
                         frame_number;
 
-                    const bool v157_in_level =
+                    const bool v159_in_level =
                         callbacks.V53CurrentGameState() == 5;
+                    const bool v159_hud_visible =
+                        v159_in_level &&
+                        callbacks.V159HudPauseVisibleThisFrame();
+
+                    // Availability now follows the actual Pause-button draw,
+                    // i.e. the real gameplay HUD, not merely GAME_Game.
                     gV153FastForwardAvailable.store(
-                        v157_in_level,
+                        v159_hud_visible,
                         std::memory_order_release);
 
-                    if (!v157_in_level &&
+                    if (!v159_in_level &&
                         gV155SpeedMode.exchange(
                             0u,
                             std::memory_order_acq_rel) != 0u) {
@@ -3207,7 +3213,7 @@
                     if (callbacks.V90Enabled() &&
                         callbacks.host_gles_ready) {
                         PvZ2HostGLESSetTurboOverlay(
-                            v157_in_level,
+                            v159_hud_visible,
                             gV155SpeedMode.load(
                                 std::memory_order_acquire));
 

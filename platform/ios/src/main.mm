@@ -1871,23 +1871,23 @@ void PvZ2HostNotifyDirectFrame(
     const CGFloat fittedY =
         (bounds.height - fittedHeight) * 0.5;
 
-    // v158 adapts the 1.7 Turbo geometry to the denser 1.5 top HUD:
-    // keep it immediately left of Pause but use a compact 60x60 base rect,
-    // ending at x=944 (2 logical px before Pause's x=946).
+    // v159: the RTON shifts UICoinBank left, so restore the authentic
+    // Turbo center from PvZ2 1.7. The transparent hit target covers the
+    // largest (×2) visual state: 82x82 centered at (903,43).
     CGRect turbo =
         CGRectMake(
             fittedX +
                 fittedWidth *
-                    (884.0 / 1024.0),
+                    (862.0 / 1024.0),
             fittedY +
                 fittedHeight *
-                    (13.0 / 768.0),
+                    (2.0 / 768.0),
             fittedWidth *
-                (60.0 / 1024.0),
+                (82.0 / 1024.0),
             fittedHeight *
-                (60.0 / 768.0));
+                (82.0 / 768.0));
 
-    turbo = CGRectInset(turbo, -4.0, -4.0);
+    turbo = CGRectInset(turbo, -2.0, -2.0);
     self.timeScaleButton.frame = turbo;
 }
 

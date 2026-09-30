@@ -3544,6 +3544,12 @@
                         first,
                         count);
 
+                    V159ObserveHudPauseDraw(
+                        first,
+                        count,
+                        nullptr,
+                        0u);
+
                     V144TraceSelectionDraw(
                         "arrays",
                         draw_mode,
@@ -3887,6 +3893,12 @@
                         "elements",
                         draw_mode,
                         count);
+
+                    V159ObserveHudPauseDraw(
+                        0,
+                        count,
+                        indices,
+                        type);
 
                     V144TraceSelectionDraw(
                         "elements",

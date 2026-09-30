@@ -313,6 +313,259 @@
         Append(diagnostic.str());
     }
 
+    void V159ObserveHudPauseDraw(
+        GLint first,
+        GLsizei count,
+        const void* raw_indices,
+        GLenum index_type) {
+
+        if (count <= 0 ||
+            count > 65536 ||
+            first < 0) {
+            return;
+        }
+
+        bool ui_atlas_bound = false;
+        for (const GLuint texture :
+             gles_bound_texture_2d) {
+            if (texture == 0u) {
+                continue;
+            }
+            const auto info =
+                gles_texture_info.find(texture);
+            if (info != gles_texture_info.end() &&
+                info->second.width == 1024 &&
+                info->second.height == 2048) {
+                ui_atlas_bound = true;
+                break;
+            }
+        }
+
+        if (!ui_atlas_bound) {
+            return;
+        }
+
+        std::optional<GLuint> texcoord_index;
+        for (GLuint index = 0u;
+             index < gles_attrib_state.size();
+             ++index) {
+            const auto& state =
+                gles_attrib_state[index];
+            if (!state.enabled ||
+                state.type != GL_FLOAT ||
+                state.size < 2 ||
+                state.guest_pointer == 0u) {
+                continue;
+            }
+
+            const std::uint64_t key =
+                (static_cast<std::uint64_t>(
+                     gles_current_program) << 32u) |
+                index;
+            const auto found =
+                gles_attrib_names.find(key);
+            if (found == gles_attrib_names.end()) {
+                continue;
+            }
+
+            std::string lowered = found->second;
+            std::transform(
+                lowered.begin(),
+                lowered.end(),
+                lowered.begin(),
+                [](unsigned char c) {
+                    return static_cast<char>(
+                        std::tolower(c));
+                });
+
+            if (lowered.find("tex") !=
+                    std::string::npos ||
+                lowered.find("uv") !=
+                    std::string::npos) {
+                texcoord_index = index;
+                break;
+            }
+        }
+
+        if (!texcoord_index.has_value()) {
+            return;
+        }
+
+        const auto& uv =
+            gles_attrib_state[*texcoord_index];
+        const std::size_t packed_stride =
+            static_cast<std::size_t>(uv.size) *
+            sizeof(GLfloat);
+        const std::size_t stride =
+            uv.stride > 0
+                ? static_cast<std::size_t>(uv.stride)
+                : packed_stride;
+
+        auto vertex_index_at =
+            [&](std::size_t i,
+                std::uint32_t& out) -> bool {
+                if (raw_indices == nullptr) {
+                    out =
+                        static_cast<std::uint32_t>(first) +
+                        static_cast<std::uint32_t>(i);
+                    return true;
+                }
+
+                if (index_type == GL_UNSIGNED_BYTE) {
+                    out =
+                        static_cast<const std::uint8_t*>(
+                            raw_indices)[i];
+                    return true;
+                }
+                if (index_type == GL_UNSIGNED_SHORT) {
+                    out =
+                        static_cast<const std::uint16_t*>(
+                            raw_indices)[i];
+                    return true;
+                }
+                if (index_type == GL_UNSIGNED_INT) {
+                    out =
+                        static_cast<const std::uint32_t*>(
+                            raw_indices)[i];
+                    return true;
+                }
+                return false;
+            };
+
+        struct UvRect {
+            float u0;
+            float u1;
+            float v0;
+            float v1;
+        };
+
+        // Accept both top-origin and vertically flipped atlas UV conventions.
+        constexpr UvRect kPauseRects[] = {
+            {401.0f / 1024.0f, 471.0f / 1024.0f,
+             1265.0f / 2048.0f, 1335.0f / 2048.0f},
+            {401.0f / 1024.0f, 471.0f / 1024.0f,
+             1.0f - 1335.0f / 2048.0f,
+             1.0f - 1265.0f / 2048.0f},
+            {76.0f / 1024.0f, 146.0f / 1024.0f,
+             1268.0f / 2048.0f, 1338.0f / 2048.0f},
+            {76.0f / 1024.0f, 146.0f / 1024.0f,
+             1.0f - 1338.0f / 2048.0f,
+             1.0f - 1268.0f / 2048.0f},
+        };
+
+        constexpr float kTolerance = 0.0035f;
+        std::array<std::uint32_t, 4> matches{};
+        std::array<float, 4> min_u{
+            10.0f, 10.0f, 10.0f, 10.0f};
+        std::array<float, 4> max_u{
+            -10.0f, -10.0f, -10.0f, -10.0f};
+        std::array<float, 4> min_v{
+            10.0f, 10.0f, 10.0f, 10.0f};
+        std::array<float, 4> max_v{
+            -10.0f, -10.0f, -10.0f, -10.0f};
+
+        const std::size_t sample_count =
+            std::min<std::size_t>(
+                static_cast<std::size_t>(count),
+                4096u);
+
+        for (std::size_t i = 0u;
+             i < sample_count;
+             ++i) {
+            std::uint32_t vertex_index = 0u;
+            if (!vertex_index_at(
+                    i,
+                    vertex_index)) {
+                break;
+            }
+
+            const std::uint64_t address64 =
+                static_cast<std::uint64_t>(
+                    uv.guest_pointer) +
+                static_cast<std::uint64_t>(
+                    vertex_index) *
+                    stride;
+            if (address64 >
+                std::numeric_limits<std::uint32_t>::max()) {
+                continue;
+            }
+
+            const auto* bytes =
+                mem.Ptr(
+                    static_cast<std::uint32_t>(
+                        address64),
+                    sizeof(GLfloat) * 2u);
+            if (bytes == nullptr) {
+                continue;
+            }
+
+            GLfloat u = 0.0f;
+            GLfloat v = 0.0f;
+            std::memcpy(&u, bytes, sizeof(u));
+            std::memcpy(
+                &v,
+                bytes + sizeof(GLfloat),
+                sizeof(v));
+
+            if (!std::isfinite(u) ||
+                !std::isfinite(v)) {
+                continue;
+            }
+
+            for (std::size_t r = 0u;
+                 r < 4u;
+                 ++r) {
+                const auto& rect =
+                    kPauseRects[r];
+                if (u >= rect.u0 - kTolerance &&
+                    u <= rect.u1 + kTolerance &&
+                    v >= rect.v0 - kTolerance &&
+                    v <= rect.v1 + kTolerance) {
+                    ++matches[r];
+                    min_u[r] =
+                        std::min(min_u[r], u);
+                    max_u[r] =
+                        std::max(max_u[r], u);
+                    min_v[r] =
+                        std::min(min_v[r], v);
+                    max_v[r] =
+                        std::max(max_v[r], v);
+                }
+            }
+        }
+
+        for (std::size_t r = 0u;
+             r < 4u;
+             ++r) {
+            if (matches[r] >= 4u &&
+                max_u[r] - min_u[r] > 0.050f &&
+                max_v[r] - min_v[r] > 0.024f) {
+
+                v159_pause_draw_frame =
+                    current_frame_number;
+
+                ++v159_pause_draw_detections;
+                if (v159_pause_draw_detections <= 8u) {
+                    AppendDiagnostic(
+                        "V159 HUD PAUSE DETECT frame=" +
+                        std::to_string(
+                            current_frame_number) +
+                        " variant=" +
+                        std::to_string(r) +
+                        " matches=" +
+                        std::to_string(
+                            matches[r]));
+                }
+                return;
+            }
+        }
+    }
+
+    bool V159HudPauseVisibleThisFrame() const {
+        return
+            v159_pause_draw_frame ==
+            current_frame_number;
+    }
 
 
 
