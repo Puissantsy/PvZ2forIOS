@@ -29,12 +29,23 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(dynarmic)
 
+set(PVZ2_UI_RESOURCES
+    resources/pvz17_fastforward_normal.png
+    resources/pvz17_fastforward_selected.png
+)
+
+set_source_files_properties(
+    ${PVZ2_UI_RESOURCES}
+    PROPERTIES MACOSX_PACKAGE_LOCATION Resources
+)
+
 add_executable(PvZ2forIOS MACOSX_BUNDLE
     src/main.mm
     src/dynarmic_smoke.cpp
     src/pvz2_apk_probe.cpp
     src/host_gles.mm
     src/host_audio.mm
+    ${PVZ2_UI_RESOURCES}
 )
 
 set_target_properties(PvZ2forIOS PROPERTIES

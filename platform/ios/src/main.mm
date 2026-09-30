@@ -436,6 +436,8 @@ BOOL V130CopyRuntimeFile(NSURL *source, NSURL *destination, NSError **error) {
 @property(nonatomic, strong)
     UIButton *timeScaleButton;
 @property(nonatomic, strong)
+    UILabel *timeScaleValueLabel;
+@property(nonatomic, strong)
     UITextField *keyboardField;
 @property(nonatomic, strong)
     NSMutableDictionary<NSValue *, NSNumber *> *touchIds;
@@ -701,27 +703,31 @@ void PvZ2HostNotifyDirectFrame(
         action:@selector(stopOrClose)
         forControlEvents:UIControlEventTouchUpInside];
 
+    // v156: authentic PvZ2 iPad 1.7 Turbo Button artwork extracted from
+    // UIImages_768. The validated v155 gameplay/audio implementation is
+    // untouched; only its host presentation is replaced.
     self.timeScaleButton =
         [UIButton
-            buttonWithType:UIButtonTypeSystem];
+            buttonWithType:UIButtonTypeCustom];
     self.timeScaleButton.translatesAutoresizingMaskIntoConstraints =
         NO;
+
+    UIImage *fastForwardNormal =
+        [UIImage imageNamed:@"pvz17_fastforward_normal"];
+    UIImage *fastForwardSelected =
+        [UIImage imageNamed:@"pvz17_fastforward_selected"];
+
     [self.timeScaleButton
-        setTitle:@"×1"
+        setImage:fastForwardNormal
         forState:UIControlStateNormal];
     [self.timeScaleButton
-        setTitleColor:
-            UIColor.whiteColor
-        forState:UIControlStateNormal];
-    self.timeScaleButton.backgroundColor =
-        [UIColor
-            colorWithWhite:0.0
-            alpha:0.58];
-    self.timeScaleButton.layer.cornerRadius =
-        7.0;
-    self.timeScaleButton.titleLabel.font =
-        [UIFont
-            boldSystemFontOfSize:17.0];
+        setImage:fastForwardSelected
+        forState:UIControlStateSelected];
+    [self.timeScaleButton
+        setImage:fastForwardSelected
+        forState:UIControlStateHighlighted];
+    self.timeScaleButton.adjustsImageWhenHighlighted = NO;
+    self.timeScaleButton.backgroundColor = UIColor.clearColor;
     self.timeScaleButton.accessibilityLabel =
         @"Gameplay speed";
     self.timeScaleButton.accessibilityHint =
@@ -730,6 +736,24 @@ void PvZ2HostNotifyDirectFrame(
         addTarget:self
         action:@selector(toggleTimeScale)
         forControlEvents:UIControlEventTouchUpInside];
+
+    // PvZ2 1.7 itself only has normal/turbo visual states. v155 deliberately
+    // keeps an extra ×2 mode, so this tiny badge distinguishes ×1.5 from ×2
+    // without altering the original sprite.
+    self.timeScaleValueLabel =
+        [[UILabel alloc] init];
+    self.timeScaleValueLabel.translatesAutoresizingMaskIntoConstraints =
+        NO;
+    self.timeScaleValueLabel.text = @"×1";
+    self.timeScaleValueLabel.textAlignment = NSTextAlignmentCenter;
+    self.timeScaleValueLabel.textColor = UIColor.whiteColor;
+    self.timeScaleValueLabel.font =
+        [UIFont boldSystemFontOfSize:11.0];
+    self.timeScaleValueLabel.backgroundColor =
+        [UIColor colorWithWhite:0.0 alpha:0.62];
+    self.timeScaleValueLabel.layer.cornerRadius = 7.0;
+    self.timeScaleValueLabel.clipsToBounds = YES;
+    self.timeScaleButton.selected = NO;
 
     // The original decrypted PvZ2 iOS 1.5 binary exposes
     // sharedUITextField + UITextFieldDelegate + activate/deactivateTextField.
@@ -777,6 +801,7 @@ void PvZ2HostNotifyDirectFrame(
     [self.view addSubview:self.captionLabel];
     [self.view addSubview:self.stopButton];
     [self.view addSubview:self.timeScaleButton];
+    [self.view addSubview:self.timeScaleValueLabel];
 
     // v130 production-style presentation: keep these controls constructed so
     // old diagnostic/error paths remain safe, but remove them from normal play.
@@ -842,16 +867,30 @@ void PvZ2HostNotifyDirectFrame(
             [self.stopButton.heightAnchor
                 constraintEqualToConstant:36.0],
 
+            // Exact 1.7 UI_IPAD.RTON relationship:
+            // PauseButton is TopRight(-8,+8), 70×70 in UIImages_768.
+            // FastForwardButton is anchored to PauseButton.TopLeft with
+            // TopRight(-8,0), putting its right edge 8 pt left of Pause.
             [self.timeScaleButton.topAnchor
-                constraintEqualToAnchor:guide.topAnchor
-                constant:6.0],
+                constraintEqualToAnchor:self.view.topAnchor
+                constant:8.0],
             [self.timeScaleButton.trailingAnchor
-                constraintEqualToAnchor:guide.trailingAnchor
-                constant:-8.0],
+                constraintEqualToAnchor:self.view.trailingAnchor
+                constant:-86.0],
             [self.timeScaleButton.widthAnchor
-                constraintEqualToConstant:58.0],
+                constraintEqualToConstant:70.0],
             [self.timeScaleButton.heightAnchor
-                constraintEqualToConstant:38.0],
+                constraintEqualToConstant:70.0],
+
+            [self.timeScaleValueLabel.centerXAnchor
+                constraintEqualToAnchor:self.timeScaleButton.centerXAnchor],
+            [self.timeScaleValueLabel.topAnchor
+                constraintEqualToAnchor:self.timeScaleButton.bottomAnchor
+                constant:-10.0],
+            [self.timeScaleValueLabel.widthAnchor
+                constraintEqualToConstant:40.0],
+            [self.timeScaleValueLabel.heightAnchor
+                constraintEqualToConstant:18.0],
         ]];
 
     if (v90Direct) {
@@ -929,9 +968,10 @@ void PvZ2HostNotifyDirectFrame(
                    ? @"×1.5"
                    : @"×2");
 
-    [self.timeScaleButton
-        setTitle:title
-        forState:UIControlStateNormal];
+    self.timeScaleButton.selected =
+        next != 0u;
+    self.timeScaleValueLabel.text =
+        title;
 
     self.timeScaleButton.accessibilityValue =
         title;
@@ -1875,12 +1915,12 @@ void PvZ2HostNotifyDirectFrame(
     const BOOL fastForwardAvailable =
         PvZ2HostFastForwardAvailable() ? YES : NO;
     self.timeScaleButton.hidden = !fastForwardAvailable;
+    self.timeScaleValueLabel.hidden = !fastForwardAvailable;
     self.timeScaleButton.enabled =
         fastForwardAvailable && !self.runFinished;
     if (!fastForwardAvailable) {
-        [self.timeScaleButton
-            setTitle:@"×1"
-            forState:UIControlStateNormal];
+        self.timeScaleButton.selected = NO;
+        self.timeScaleValueLabel.text = @"×1";
         self.timeScaleButton.accessibilityValue = @"Off";
     }
 
@@ -1968,12 +2008,12 @@ void PvZ2HostNotifyDirectFrame(
     const BOOL fastForwardAvailable =
         PvZ2HostFastForwardAvailable() ? YES : NO;
     self.timeScaleButton.hidden = !fastForwardAvailable;
+    self.timeScaleValueLabel.hidden = !fastForwardAvailable;
     self.timeScaleButton.enabled =
         fastForwardAvailable && !self.runFinished;
     if (!fastForwardAvailable) {
-        [self.timeScaleButton
-            setTitle:@"×1"
-            forState:UIControlStateNormal];
+        self.timeScaleButton.selected = NO;
+        self.timeScaleValueLabel.text = @"×1";
         self.timeScaleButton.accessibilityValue = @"Off";
     }
 
