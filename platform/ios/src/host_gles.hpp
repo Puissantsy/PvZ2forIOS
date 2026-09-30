@@ -23,6 +23,12 @@ bool PvZ2HostGLESPresent(
     std::uint32_t* drawable_width,
     std::uint32_t* drawable_height);
 
+// v157: authentic PvZ2 1.7 Turbo Button is composited in 1024x768 guest
+// design coordinates. speed_mode: 0=×1, 1=×1.5, 2=×2.
+void PvZ2HostGLESSetTurboOverlay(
+    bool visible,
+    std::uint32_t speed_mode);
+
 std::uint32_t PvZ2HostGLESDefaultFramebuffer(void);
 const char* PvZ2HostGLESCapturePNG(void);
 const char* PvZ2HostGLESFrameStats(void);

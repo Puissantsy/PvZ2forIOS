@@ -9,6 +9,7 @@
 #include "host_gles.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -46,6 +47,107 @@ GLint gPresentationSampler = -1;
 std::uint32_t gPresentationWidth = 0u;
 std::uint32_t gPresentationHeight = 0u;
 
+GLuint gTurboProgram = 0u;
+GLuint gTurboVbo = 0u;
+GLuint gTurboNormalTexture = 0u;
+GLuint gTurboSelectedTexture = 0u;
+GLint gTurboSampler = -1;
+std::atomic<bool> gTurboVisible{false};
+std::atomic<std::uint32_t> gTurboMode{0u};
+
+GLuint CreateBundleTexture(
+    NSString *name) {
+
+    UIImage *image =
+        [UIImage imageNamed:name];
+    CGImageRef cg = image.CGImage;
+    if (cg == nullptr) {
+        return 0u;
+    }
+
+    const std::size_t width =
+        CGImageGetWidth(cg);
+    const std::size_t height =
+        CGImageGetHeight(cg);
+    if (width == 0u || height == 0u) {
+        return 0u;
+    }
+
+    std::vector<std::uint8_t> pixels(
+        width * height * 4u,
+        0u);
+    CGColorSpaceRef color_space =
+        CGColorSpaceCreateDeviceRGB();
+    CGContextRef context =
+        CGBitmapContextCreate(
+            pixels.data(),
+            width,
+            height,
+            8u,
+            width * 4u,
+            color_space,
+            kCGImageAlphaPremultipliedLast |
+                kCGBitmapByteOrder32Big);
+    CGColorSpaceRelease(color_space);
+    if (context == nullptr) {
+        return 0u;
+    }
+
+    CGContextTranslateCTM(
+        context,
+        0.0,
+        static_cast<CGFloat>(height));
+    CGContextScaleCTM(
+        context,
+        1.0,
+        -1.0);
+    CGContextDrawImage(
+        context,
+        CGRectMake(
+            0.0,
+            0.0,
+            static_cast<CGFloat>(width),
+            static_cast<CGFloat>(height)),
+        cg);
+    CGContextRelease(context);
+
+    GLuint texture = 0u;
+    glGenTextures(1, &texture);
+    if (texture == 0u) {
+        return 0u;
+    }
+
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glTexParameteri(
+        GL_TEXTURE_2D,
+        GL_TEXTURE_MIN_FILTER,
+        GL_LINEAR);
+    glTexParameteri(
+        GL_TEXTURE_2D,
+        GL_TEXTURE_MAG_FILTER,
+        GL_LINEAR);
+    glTexParameteri(
+        GL_TEXTURE_2D,
+        GL_TEXTURE_WRAP_S,
+        GL_CLAMP_TO_EDGE);
+    glTexParameteri(
+        GL_TEXTURE_2D,
+        GL_TEXTURE_WRAP_T,
+        GL_CLAMP_TO_EDGE);
+    glTexImage2D(
+        GL_TEXTURE_2D,
+        0,
+        GL_RGBA,
+        static_cast<GLsizei>(width),
+        static_cast<GLsizei>(height),
+        0,
+        GL_RGBA,
+        GL_UNSIGNED_BYTE,
+        pixels.data());
+
+    return texture;
+}
+
 GLuint CompilePresentationShader(
     GLenum type,
     const char* source) {
@@ -75,6 +177,22 @@ void DestroyPresentationResources() {
     if (gPresentationContext != nil) {
         [EAGLContext setCurrentContext:gPresentationContext];
 
+        if (gTurboVbo != 0u) {
+            glDeleteBuffers(1, &gTurboVbo);
+            gTurboVbo = 0u;
+        }
+        if (gTurboNormalTexture != 0u) {
+            glDeleteTextures(1, &gTurboNormalTexture);
+            gTurboNormalTexture = 0u;
+        }
+        if (gTurboSelectedTexture != 0u) {
+            glDeleteTextures(1, &gTurboSelectedTexture);
+            gTurboSelectedTexture = 0u;
+        }
+        if (gTurboProgram != 0u) {
+            glDeleteProgram(gTurboProgram);
+            gTurboProgram = 0u;
+        }
         if (gPresentationVbo != 0u) {
             glDeleteBuffers(1, &gPresentationVbo);
             gPresentationVbo = 0u;
@@ -98,6 +216,7 @@ void DestroyPresentationResources() {
     }
 
     gPresentationSampler = -1;
+    gTurboSampler = -1;
     gPresentationWidth = 0u;
     gPresentationHeight = 0u;
     gPresentationContext = nil;
@@ -293,7 +412,88 @@ bool EnsurePresentationResources() {
             GL_STATIC_DRAW);
     }
 
-    return true;
+    if (gTurboProgram == 0u) {
+        static const char* turbo_vertex_source =
+            "attribute vec2 aPosition;\n"
+            "attribute vec2 aTexCoord;\n"
+            "varying vec2 vTexCoord;\n"
+            "void main(){\n"
+            "  gl_Position=vec4(aPosition,0.0,1.0);\n"
+            "  vTexCoord=aTexCoord;\n"
+            "}\n";
+        static const char* turbo_fragment_source =
+            "precision mediump float;\n"
+            "uniform sampler2D uTexture;\n"
+            "varying vec2 vTexCoord;\n"
+            "void main(){\n"
+            "  gl_FragColor=texture2D(uTexture,vTexCoord);\n"
+            "}\n";
+
+        const GLuint vertex =
+            CompilePresentationShader(
+                GL_VERTEX_SHADER,
+                turbo_vertex_source);
+        const GLuint fragment =
+            CompilePresentationShader(
+                GL_FRAGMENT_SHADER,
+                turbo_fragment_source);
+
+        if (vertex == 0u || fragment == 0u) {
+            if (vertex != 0u) glDeleteShader(vertex);
+            if (fragment != 0u) glDeleteShader(fragment);
+            return false;
+        }
+
+        gTurboProgram = glCreateProgram();
+        glAttachShader(gTurboProgram, vertex);
+        glAttachShader(gTurboProgram, fragment);
+        glBindAttribLocation(
+            gTurboProgram,
+            0u,
+            "aPosition");
+        glBindAttribLocation(
+            gTurboProgram,
+            1u,
+            "aTexCoord");
+        glLinkProgram(gTurboProgram);
+        glDeleteShader(vertex);
+        glDeleteShader(fragment);
+
+        GLint linked = GL_FALSE;
+        glGetProgramiv(
+            gTurboProgram,
+            GL_LINK_STATUS,
+            &linked);
+        if (linked != GL_TRUE) {
+            glDeleteProgram(gTurboProgram);
+            gTurboProgram = 0u;
+            return false;
+        }
+
+        gTurboSampler =
+            glGetUniformLocation(
+                gTurboProgram,
+                "uTexture");
+    }
+
+    if (gTurboVbo == 0u) {
+        glGenBuffers(1, &gTurboVbo);
+    }
+    if (gTurboNormalTexture == 0u) {
+        gTurboNormalTexture =
+            CreateBundleTexture(
+                @"pvz17_fastforward_normal");
+    }
+    if (gTurboSelectedTexture == 0u) {
+        gTurboSelectedTexture =
+            CreateBundleTexture(
+                @"pvz17_fastforward_selected");
+    }
+
+    return
+        gTurboVbo != 0u &&
+        gTurboNormalTexture != 0u &&
+        gTurboSelectedTexture != 0u;
 }
 
 void DestroySurface() {
@@ -548,6 +748,22 @@ PvZ2HostGLESClearPresentationLayer(void) {
     gPresentationLayer = nil;
 }
 
+extern "C" void
+PvZ2HostGLESSetTurboOverlay(
+    bool visible,
+    std::uint32_t speed_mode) {
+
+    if (speed_mode > 2u) {
+        speed_mode = 0u;
+    }
+    gTurboMode.store(
+        speed_mode,
+        std::memory_order_release);
+    gTurboVisible.store(
+        visible,
+        std::memory_order_release);
+}
+
 extern "C" bool
 PvZ2HostGLESPresent(
     std::uint32_t* drawable_width,
@@ -681,6 +897,102 @@ PvZ2HostGLESPresent(
         GL_TRIANGLE_STRIP,
         0,
         4);
+
+    if (gTurboVisible.load(
+            std::memory_order_acquire)) {
+
+        const std::uint32_t mode =
+            gTurboMode.load(
+                std::memory_order_acquire);
+
+        // Exact 1.7 logical normal rect: (868,8,70,70) in 1024x768.
+        // Selected is 75x75. ×2 is intentionally a little larger so our
+        // third state remains visually distinguishable without a UIKit badge.
+        const GLfloat size =
+            mode == 0u
+                ? 70.0f
+                : (mode == 1u
+                       ? 75.0f
+                       : 82.0f);
+        const GLfloat center_x = 903.0f;
+        const GLfloat center_y = 43.0f;
+        const GLfloat left =
+            center_x - size * 0.5f;
+        const GLfloat right =
+            center_x + size * 0.5f;
+        const GLfloat top =
+            center_y - size * 0.5f;
+        const GLfloat bottom =
+            center_y + size * 0.5f;
+
+        const GLfloat x0 =
+            -1.0f +
+            2.0f * left / 1024.0f;
+        const GLfloat x1 =
+            -1.0f +
+            2.0f * right / 1024.0f;
+        const GLfloat y0 =
+            1.0f -
+            2.0f * bottom / 768.0f;
+        const GLfloat y1 =
+            1.0f -
+            2.0f * top / 768.0f;
+
+        const GLfloat turbo_quad[] = {
+            x0, y0, 0.0f, 0.0f,
+            x1, y0, 1.0f, 0.0f,
+            x0, y1, 0.0f, 1.0f,
+            x1, y1, 1.0f, 1.0f,
+        };
+
+        glEnable(GL_BLEND);
+        glBlendFunc(
+            GL_ONE,
+            GL_ONE_MINUS_SRC_ALPHA);
+        glUseProgram(gTurboProgram);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(
+            GL_TEXTURE_2D,
+            mode == 0u
+                ? gTurboNormalTexture
+                : gTurboSelectedTexture);
+        if (gTurboSampler >= 0) {
+            glUniform1i(
+                gTurboSampler,
+                0);
+        }
+
+        glBindBuffer(
+            GL_ARRAY_BUFFER,
+            gTurboVbo);
+        glBufferData(
+            GL_ARRAY_BUFFER,
+            sizeof(turbo_quad),
+            turbo_quad,
+            GL_DYNAMIC_DRAW);
+        glEnableVertexAttribArray(0u);
+        glEnableVertexAttribArray(1u);
+        glVertexAttribPointer(
+            0u,
+            2,
+            GL_FLOAT,
+            GL_FALSE,
+            4 * sizeof(GLfloat),
+            reinterpret_cast<const void*>(0));
+        glVertexAttribPointer(
+            1u,
+            2,
+            GL_FLOAT,
+            GL_FALSE,
+            4 * sizeof(GLfloat),
+            reinterpret_cast<const void*>(
+                2 * sizeof(GLfloat)));
+        glDrawArrays(
+            GL_TRIANGLE_STRIP,
+            0,
+            4);
+        glDisable(GL_BLEND);
+    }
 
     const BOOL presented =
         [gPresentationContext

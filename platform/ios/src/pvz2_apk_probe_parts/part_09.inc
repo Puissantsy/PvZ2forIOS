@@ -3137,13 +3137,23 @@
                     result.draw_frames_completed =
                         frame_number;
 
-                    // v154 prototype: V53 GameState discovery is disabled in
-                    // the production/performance runtime, so do not gate the
-                    // fast-forward control on V53CurrentGameState(). UIKit may
-                    // request x1/x2 at any frame boundary; intended use is in-level.
+                    const bool v157_in_level =
+                        callbacks.V53CurrentGameState() == 5;
                     gV153FastForwardAvailable.store(
-                        true,
+                        v157_in_level,
                         std::memory_order_release);
+
+                    if (!v157_in_level &&
+                        gV155SpeedMode.exchange(
+                            0u,
+                            std::memory_order_acq_rel) != 0u) {
+                        gV152FastMotionRequested.store(
+                            false,
+                            std::memory_order_release);
+                        gV152PendingTimeScale.store(
+                            1u,
+                            std::memory_order_release);
+                    }
 
                     const std::uint32_t v155_time_scale_request =
                         gV152PendingTimeScale.exchange(
@@ -3196,6 +3206,11 @@
 
                     if (callbacks.V90Enabled() &&
                         callbacks.host_gles_ready) {
+                        PvZ2HostGLESSetTurboOverlay(
+                            v157_in_level,
+                            gV155SpeedMode.load(
+                                std::memory_order_acquire));
+
                         std::uint32_t drawable_width = 0u;
                         std::uint32_t drawable_height = 0u;
                         const std::uint64_t present_begin_ns = V85SteadyNowNs();

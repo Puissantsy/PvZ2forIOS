@@ -1501,16 +1501,23 @@ bool JniProbePrepareRuntime(
         return false;
     }
 
-    if (!callbacks.V85PerformanceEnabled()) {
-        if (
-        !patch_resource_native_miss(
+    // v157: keep only these transition-only GameState hooks in production.
+    // They are cold (screen changes), unlike the disabled startup probes.
+    if (!patch_resource_native_miss(
             0x002747d8u,
             0xe1a04000u,
             kJniProbeSvcGameStateApply) ||
         !patch_resource_native_miss(
             0x00274b4cu,
             0xe1a04000u,
-            kJniProbeSvcGameStateRequest) ||
+            kJniProbeSvcGameStateRequest)) {
+        error =
+            "v157 GameState transition signature mismatch at 0x102747d8/0x10274b4c.";
+        return false;
+    }
+
+    if (!callbacks.V85PerformanceEnabled()) {
+        if (
         !patch_resource_native_miss(
             0x000f66e4u,
             0xe28dd0b0u,
