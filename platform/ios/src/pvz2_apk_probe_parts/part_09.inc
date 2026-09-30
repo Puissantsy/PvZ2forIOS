@@ -2500,6 +2500,232 @@
                         return true;
                     };
 
+                auto drain_offline_store_callbacks =
+                    [&](const char* phase) -> bool {
+                        const auto log_missing_once =
+                            [&](const std::string& key,
+                                const std::string& message) {
+                                if (callbacks.fallback_logged.insert(key).second) {
+                                    callbacks.AppendCritical(message);
+                                }
+                            };
+
+                        const bool driver_ready =
+                            callbacks.google_play_purchase_java_object != 0u &&
+                            callbacks.google_play_purchase_native_driver != 0u;
+
+                        if (callbacks.pending_offline_catalog_refresh) {
+                            if (!driver_ready ||
+                                callbacks.native_purchase_fire_did_refresh_address == 0u) {
+                                log_missing_once(
+                                    "offline-store-refresh-callback-missing",
+                                    "OFFLINE STORE refresh pending but driver/FireDidRefresh is not captured yet.");
+                            } else {
+                                std::vector<std::uint32_t> products;
+                                products.reserve(
+                                    callbacks.pending_offline_refresh_skus.size());
+                                for (const std::string& sku :
+                                     callbacks.pending_offline_refresh_skus) {
+                                    const auto* entry =
+                                        PvZ2JniCallbacks::OfflineStoreFindCatalogEntry(sku);
+                                    if (entry == nullptr) continue;
+
+                                    const std::uint32_t object =
+                                        callbacks.JniNewSyntheticObject();
+                                    callbacks.offline_sku_details[object] =
+                                        PvZ2JniCallbacks::OfflineSkuDetails{
+                                            sku,
+                                            entry->price_text ? entry->price_text : "",
+                                            entry->title ? entry->title : "",
+                                            entry->description ? entry->description : ""};
+                                    products.push_back(object);
+                                }
+
+                                const std::uint32_t array =
+                                    callbacks.JniNewSyntheticObjectArray(products);
+                                callbacks.Append(
+                                    "OFFLINE STORE catalog deliver phase=" +
+                                    std::string{phase ? phase : "n/a"} +
+                                    " requested=" +
+                                    std::to_string(callbacks.pending_offline_refresh_skus.size()) +
+                                    " returned=" +
+                                    std::to_string(products.size()));
+
+                                if (!run_lifecycle(
+                                        "OfflineStore_FireDidRefresh",
+                                        callbacks.native_purchase_fire_did_refresh_address,
+                                        callbacks.google_play_purchase_java_object,
+                                        callbacks.google_play_purchase_native_driver,
+                                        0u,
+                                        false,
+                                        false,
+                                        std::vector<std::uint32_t>{array})) {
+                                    callbacks.AppendCritical(
+                                        "OFFLINE STORE FireDidRefresh failed.");
+                                    return false;
+                                }
+                                callbacks.pending_offline_catalog_refresh = false;
+                                callbacks.pending_offline_refresh_skus.clear();
+                            }
+                        }
+
+                        if (!callbacks.pending_offline_purchase.pending) {
+                            return true;
+                        }
+                        if (!driver_ready ||
+                            callbacks.native_purchase_fire_payment_complete_address == 0u ||
+                            callbacks.native_purchase_fire_payment_incomplete_address == 0u) {
+                            log_missing_once(
+                                "offline-store-payment-callback-missing",
+                                "OFFLINE STORE purchase pending but driver/payment callbacks are not captured yet.");
+                            return true;
+                        }
+
+                        auto request = callbacks.pending_offline_purchase;
+                        auto fire_incomplete =
+                            [&](std::int32_t error_code) -> bool {
+                                const std::uint32_t sku_string =
+                                    callbacks.JniNewSyntheticString(request.sku);
+                                callbacks.Append(
+                                    "OFFLINE STORE payment incomplete sku=" +
+                                    request.sku + " error=" +
+                                    std::to_string(error_code));
+                                return run_lifecycle(
+                                    "OfflineStore_FirePaymentIncomplete",
+                                    callbacks.native_purchase_fire_payment_incomplete_address,
+                                    callbacks.google_play_purchase_java_object,
+                                    callbacks.google_play_purchase_native_driver,
+                                    0u,
+                                    false,
+                                    false,
+                                    std::vector<std::uint32_t>{
+                                        sku_string,
+                                        static_cast<std::uint32_t>(error_code)});
+                            };
+
+                        if (request.immediate_error != 0) {
+                            if (!fire_incomplete(request.immediate_error)) return false;
+                            callbacks.pending_offline_purchase =
+                                PvZ2JniCallbacks::OfflinePurchaseRequest{};
+                            return true;
+                        }
+
+                        constexpr std::uint32_t kGetCurrentProfile =
+                            kGuestBase + 0x0047f8b0u;
+                        constexpr std::uint32_t kGetCoins =
+                            kGuestBase + 0x0042e680u;
+                        constexpr std::uint32_t kSetCoins =
+                            kGuestBase + 0x0042e5acu;
+                        constexpr std::int32_t kInsufficientCoinsError = 6;
+
+                        if (!run_lifecycle(
+                                "OfflineStore_GetCurrentProfile",
+                                kGetCurrentProfile, 0u, 0u, 0u, false, true)) {
+                            return false;
+                        }
+                        const std::uint32_t profile = jit.Regs()[0];
+
+                        if (profile == 0u ||
+                            memory.Ptr(profile, 0x18u) == nullptr) {
+                            callbacks.AppendCritical(
+                                "OFFLINE STORE invalid current profile while processing sku=" +
+                                request.sku);
+                            if (!fire_incomplete(6)) return false;
+                            callbacks.pending_offline_purchase =
+                                PvZ2JniCallbacks::OfflinePurchaseRequest{};
+                            return true;
+                        }
+
+                        if (!run_lifecycle(
+                                "OfflineStore_GetCoins",
+                                kGetCoins, profile, 0u, 0u, false, true)) {
+                            return false;
+                        }
+                        const std::uint32_t coins_before = jit.Regs()[0];
+
+                        if (coins_before < request.coin_price) {
+                            callbacks.Append(
+                                "OFFLINE STORE insufficient coins sku=" +
+                                request.sku + " have=" +
+                                std::to_string(coins_before) + " need=" +
+                                std::to_string(request.coin_price));
+                            if (!fire_incomplete(kInsufficientCoinsError)) return false;
+                            callbacks.pending_offline_purchase =
+                                PvZ2JniCallbacks::OfflinePurchaseRequest{};
+                            return true;
+                        }
+
+                        const std::uint32_t coins_after =
+                            coins_before - request.coin_price;
+                        if (!run_lifecycle(
+                                "OfflineStore_SetCoins",
+                                kSetCoins, profile, coins_after, 0u, false, true)) {
+                            return false;
+                        }
+
+                        const std::string serial =
+                            std::to_string(request.serial);
+                        const std::string token =
+                            "pvz2-offline:" + serial + ":" + request.sku;
+                        const std::string order_id =
+                            "pvz2-offline-order:" + serial;
+                        const std::string original_json =
+                            "{\"orderId\":\"" + order_id +
+                            "\",\"packageName\":\"com.ea.game.pvz2_row\",\"productId\":\"" +
+                            request.sku +
+                            "\",\"purchaseState\":0,\"purchaseToken\":\"" +
+                            token + "\"}";
+                        const std::string receipt =
+                            "pvz2-offline-receipt:" + serial;
+
+                        const std::uint32_t token_string =
+                            callbacks.JniNewSyntheticString(token);
+                        const std::uint32_t receipt_string =
+                            callbacks.JniNewSyntheticString(receipt);
+                        const std::uint32_t sku_string =
+                            callbacks.JniNewSyntheticString(request.sku);
+                        const std::uint32_t original_string =
+                            callbacks.JniNewSyntheticString(original_json);
+                        const std::uint32_t signature_string =
+                            callbacks.JniNewSyntheticString("");
+                        const std::uint32_t order_string =
+                            callbacks.JniNewSyntheticString(order_id);
+
+                        callbacks.offline_purchase_unconfirmed = true;
+                        callbacks.offline_purchase_unconfirmed_token = token;
+                        callbacks.Append(
+                            "OFFLINE STORE purchase commit sku=" + request.sku +
+                            " coinsBefore=" + std::to_string(coins_before) +
+                            " coinsAfter=" + std::to_string(coins_after) +
+                            " serial=" + serial);
+
+                        if (!run_lifecycle(
+                                "OfflineStore_FirePaymentComplete",
+                                callbacks.native_purchase_fire_payment_complete_address,
+                                callbacks.google_play_purchase_java_object,
+                                callbacks.google_play_purchase_native_driver,
+                                0u,
+                                false,
+                                false,
+                                std::vector<std::uint32_t>{
+                                    token_string, receipt_string, sku_string,
+                                    original_string, signature_string, order_string, 1u})) {
+                            callbacks.AppendCritical(
+                                "OFFLINE STORE payment callback failed; attempting coin rollback sku=" +
+                                request.sku);
+                            callbacks.offline_purchase_unconfirmed = false;
+                            callbacks.offline_purchase_unconfirmed_token.clear();
+                            run_lifecycle(
+                                "OfflineStore_RollbackCoins",
+                                kSetCoins, profile, coins_before, 0u, false, true);
+                            return false;
+                        }
+
+                        callbacks.pending_offline_purchase =
+                            PvZ2JniCallbacks::OfflinePurchaseRequest{};
+                        return true;
+                    };
+
                 std::size_t http_delivery_cursor = 0u;
 
                 auto drain_offline_http_callbacks =
@@ -2902,6 +3128,11 @@
                     return result;
                 }
 
+                if (!drain_offline_store_callbacks(
+                        "pre-frame")) {
+                    return result;
+                }
+
                 // Android's Java HTTP layer normally resolves Start()
                 // asynchronously and calls one of the registered native
                 // callbacks. The probe has no Android networking backend, so
@@ -3239,11 +3470,14 @@
                         }
                     }
 
-                    // Start() can be reached while a frame is executing
-                    // (analytics/live-config/telemetry requests do this).
-                    // Deliver any newly queued terminal callbacks only after
-                    // Native_onDrawFrame has returned, never in the middle of
-                    // guest rendering/state mutation.
+                    // Billing/HTTP callbacks queued while a frame executes
+                    // are delivered only after Native_onDrawFrame returns.
+                    // PurchaseBroker is therefore already WaitingForResponse.
+                    if (!drain_offline_store_callbacks(
+                            "frame-boundary")) {
+                        return result;
+                    }
+
                     if (!drain_offline_http_callbacks(
                             "frame-boundary")) {
                         return result;

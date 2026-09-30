@@ -21,6 +21,18 @@
                         JniProbeHex(function_ptr) +
                         " signature=" +
                         native_signature);
+                } else if (native_name == "FireDidRefresh") {
+                    native_purchase_fire_did_refresh_address = function_ptr;
+                    Append("OFFLINE STORE native FireDidRefresh captured at 0x" +
+                           JniProbeHex(function_ptr) + " signature=" + native_signature);
+                } else if (native_name == "FirePaymentComplete") {
+                    native_purchase_fire_payment_complete_address = function_ptr;
+                    Append("OFFLINE STORE native FirePaymentComplete captured at 0x" +
+                           JniProbeHex(function_ptr) + " signature=" + native_signature);
+                } else if (native_name == "FirePaymentIncomplete") {
+                    native_purchase_fire_payment_incomplete_address = function_ptr;
+                    Append("OFFLINE STORE native FirePaymentIncomplete captured at 0x" +
+                           JniProbeHex(function_ptr) + " signature=" + native_signature);
                 }
 
                 Append(
@@ -337,6 +349,32 @@
                                 JniProbeHex(peer));
                         }
                     }
+
+                    if (method_name == "<init>" &&
+                        signature == "(JLjava/lang/String;)V") {
+                        std::uint64_t driver64 = 0u;
+                        if (slot == 29u) {
+                            const std::uint32_t aligned = (regs[3] + 7u) & ~7u;
+                            driver64 = mem.Read64Guest(aligned);
+                        } else if (slot == 30u) {
+                            driver64 = mem.Read64Guest(regs[3]);
+                        } else if (slot == 28u) {
+                            const std::uint32_t aligned = (regs[13] + 7u) & ~7u;
+                            driver64 = mem.Read64Guest(aligned);
+                        }
+
+                        const std::uint32_t driver =
+                            static_cast<std::uint32_t>(driver64);
+                        if (driver != 0u && mem.Ptr(driver, 4u) != nullptr) {
+                            google_play_purchase_java_object = handle;
+                            google_play_purchase_native_driver = driver;
+                            Append(
+                                "OFFLINE STORE driver captured java=0x" +
+                                JniProbeHex(handle) + " native=0x" +
+                                JniProbeHex(driver) + " constructorSlot=" +
+                                std::to_string(slot));
+                        }
+                    }
                 }
 
                 regs[0] = handle;
@@ -473,6 +511,131 @@
                             signature +
                             " slot=" +
                             std::to_string(slot));
+                    }
+
+                    if (family == 0 && !nonvirtual) {
+                        const auto details_it =
+                            offline_sku_details.find(regs[1]);
+                        if (details_it != offline_sku_details.end()) {
+                            const auto& details = details_it->second;
+                            if (method_name == "getSku") {
+                                regs[0] = new_string(details.sku);
+                                return true;
+                            }
+                            if (method_name == "getPrice") {
+                                regs[0] = new_string(details.price);
+                                return true;
+                            }
+                            if (method_name == "getTitle") {
+                                regs[0] = new_string(details.title);
+                                return true;
+                            }
+                            if (method_name == "getDescription") {
+                                regs[0] = new_string(details.description);
+                                return true;
+                            }
+                        }
+                    }
+
+                    const bool offline_purchase_receiver =
+                        google_play_purchase_java_object != 0u &&
+                        regs[1] == google_play_purchase_java_object;
+
+                    if (offline_purchase_receiver && family == 1 &&
+                        (method_name == "CanMakePayments" ||
+                         method_name == "ProductTypeIsSupported")) {
+                        regs[0] = 1u;
+                        return true;
+                    }
+
+                    if (offline_purchase_receiver && family == 1 &&
+                        method_name == "HasUnconfirmedPayments") {
+                        regs[0] =
+                            (pending_offline_purchase.pending ||
+                             offline_purchase_unconfirmed) ? 1u : 0u;
+                        return true;
+                    }
+
+                    if (offline_purchase_receiver && family == 9 &&
+                        method_name == "Refresh") {
+                        pending_offline_refresh_skus.clear();
+                        const std::uint32_t array_handle = java_arg_word(0u);
+                        const auto array_it = jni_object_arrays.find(array_handle);
+                        if (array_it != jni_object_arrays.end()) {
+                            for (const std::uint32_t string_handle :
+                                 array_it->second) {
+                                const std::string sku =
+                                    java_string_value(string_handle);
+                                if (!sku.empty()) {
+                                    pending_offline_refresh_skus.push_back(sku);
+                                }
+                            }
+                        }
+                        pending_offline_catalog_refresh = true;
+                        regs[0] = 0u;
+                        Append("OFFLINE STORE Refresh queued requestedSkus=" +
+                               std::to_string(pending_offline_refresh_skus.size()));
+                        return true;
+                    }
+
+                    if (offline_purchase_receiver && family == 9 &&
+                        method_name == "RequestPayment") {
+                        const std::string sku =
+                            java_string_value(java_arg_word(0u));
+                        if (pending_offline_purchase.pending) {
+                            Append("OFFLINE STORE RequestPayment ignored while another purchase is pending sku=" + sku);
+                            regs[0] = 0u;
+                            return true;
+                        }
+
+                        const auto* entry =
+                            OfflineStoreFindCatalogEntry(sku);
+                        pending_offline_purchase = OfflinePurchaseRequest{};
+                        pending_offline_purchase.pending = true;
+                        pending_offline_purchase.sku = sku;
+                        pending_offline_purchase.serial = ++offline_purchase_serial;
+                        if (entry != nullptr) {
+                            pending_offline_purchase.coin_price = entry->coin_price;
+                        } else {
+                            pending_offline_purchase.immediate_error = 6;
+                        }
+
+                        regs[0] = 0u;
+                        Append(
+                            "OFFLINE STORE RequestPayment queued sku=" + sku +
+                            " priceCoins=" +
+                            std::to_string(pending_offline_purchase.coin_price) +
+                            " serial=" +
+                            std::to_string(pending_offline_purchase.serial) +
+                            (entry != nullptr ? " target=YES" : " target=NO"));
+                        return true;
+                    }
+
+                    if (offline_purchase_receiver && family == 9 &&
+                        method_name == "ConfirmDelivery") {
+                        const std::string token =
+                            java_string_value(java_arg_word(0u));
+                        if (offline_purchase_unconfirmed &&
+                            token == offline_purchase_unconfirmed_token) {
+                            offline_purchase_unconfirmed = false;
+                            offline_purchase_unconfirmed_token.clear();
+                        }
+                        regs[0] = 0u;
+                        Append("OFFLINE STORE ConfirmDelivery token=" + token +
+                               " nonconsume=no-op");
+                        return true;
+                    }
+
+                    if (offline_purchase_receiver && family == 9 &&
+                        method_name == "Close") {
+                        pending_offline_catalog_refresh = false;
+                        pending_offline_refresh_skus.clear();
+                        pending_offline_purchase = OfflinePurchaseRequest{};
+                        offline_purchase_unconfirmed = false;
+                        offline_purchase_unconfirmed_token.clear();
+                        regs[0] = 0u;
+                        Append("OFFLINE STORE Close");
+                        return true;
                     }
 
                     // Method-specific Android surface needed by the real
