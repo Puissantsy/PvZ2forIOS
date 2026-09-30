@@ -782,8 +782,9 @@ void PvZ2HostNotifyDirectFrame(
     // old diagnostic/error paths remain safe, but remove them from normal play.
     self.captionLabel.hidden = YES;
     self.stopButton.hidden = YES;
-    // v153: fast-forward exists only while a real level is active.
-    self.timeScaleButton.hidden = YES;
+    // v154 prototype: keep fast-forward visible once the live view exists.
+    // Production GameState probes are disabled, so V53 cannot gate this safely.
+    self.timeScaleButton.hidden = NO;
 
     UITapGestureRecognizer *diagnosticGesture =
         [[UITapGestureRecognizer alloc]
@@ -914,10 +915,6 @@ void PvZ2HostNotifyDirectFrame(
 }
 
 - (void)toggleTimeScale {
-    if (!PvZ2HostFastForwardAvailable()) {
-        return;
-    }
-
     const BOOL enableFast =
         !PvZ2HostFastMotionRequested();
 

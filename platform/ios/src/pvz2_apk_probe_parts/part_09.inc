@@ -3137,42 +3137,33 @@
                     result.draw_frames_completed =
                         frame_number;
 
-                    // v153: this is the in-level fast-forward control.
-                    // GAME_Game is state 5. Availability is published after each
-                    // completed draw, and leaving gameplay forces normal speed.
-                    const bool v153_in_level =
-                        callbacks.V53CurrentGameState() == 5;
+                    // v154 prototype: V53 GameState discovery is disabled in
+                    // the production/performance runtime, so do not gate the
+                    // fast-forward control on V53CurrentGameState(). UIKit may
+                    // request x1/x2 at any frame boundary; intended use is in-level.
                     gV153FastForwardAvailable.store(
-                        v153_in_level,
+                        true,
                         std::memory_order_release);
 
-                    std::uint32_t v153_time_scale_request =
+                    const std::uint32_t v154_time_scale_request =
                         gV152PendingTimeScale.exchange(
                             0u,
                             std::memory_order_acq_rel);
 
-                    if (!v153_in_level &&
-                        gV152FastMotionRequested.exchange(
-                            false,
-                            std::memory_order_acq_rel)) {
-                        v153_time_scale_request = 1u;
-                    }
-
-                    if (v153_time_scale_request != 0u) {
+                    if (v154_time_scale_request != 0u) {
                         constexpr std::uint32_t kSetTimeScale =
                             kGuestBase + 0x003761dcu;
                         const bool fast =
-                            v153_in_level &&
-                            v153_time_scale_request == 2u;
+                            v154_time_scale_request == 2u;
                         const std::uint32_t scale_bits =
                             fast
-                                ? 0x40000000u  // 2.0f = x2 from real iPad test
+                                ? 0x40000000u  // 2.0f = x2
                                 : 0x3f800000u; // 1.0f = normal
 
                         if (!run_lifecycle(
                                 fast
-                                    ? "V153_SetTimeScale_2.0"
-                                    : "V153_SetTimeScale_1.0",
+                                    ? "V154_SetTimeScale_2.0"
+                                    : "V154_SetTimeScale_1.0",
                                 kSetTimeScale,
                                 0u,
                                 scale_bits,
@@ -3182,19 +3173,10 @@
                             return result;
                         }
 
-                        if (!fast) {
-                            gV152FastMotionRequested.store(
-                                false,
-                                std::memory_order_release);
-                        }
-
                         callbacks.Append(
                             std::string{
-                                "V153 FAST-FORWARD APPLIED frame="} +
+                                "V154 FAST-FORWARD APPLIED frame="} +
                             std::to_string(frame_number) +
-                            " gameState=" +
-                            std::to_string(
-                                callbacks.V53CurrentGameState()) +
                             " mode=" +
                             (fast ? "FAST_X2" : "NORMAL_X1") +
                             " guestValue=" +
