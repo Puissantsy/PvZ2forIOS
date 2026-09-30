@@ -3143,8 +3143,8 @@
                         v159_in_level &&
                         callbacks.V159HudPauseVisibleThisFrame();
 
-                    // Availability now follows the actual Pause-button draw,
-                    // i.e. the real gameplay HUD, not merely GAME_Game.
+                    // v160: availability follows the log-proven Pause geometry
+                    // draw, i.e. the real gameplay HUD, not merely GAME_Game.
                     gV153FastForwardAvailable.store(
                         v159_hud_visible,
                         std::memory_order_release);

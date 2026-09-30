@@ -4312,6 +4312,12 @@ public:
         std::numeric_limits<std::uint32_t>::max();
     std::uint64_t v159_pause_draw_detections = 0u;
 
+    // v160: production uses UI_ANDROID (v110 control inheritance), so patch
+    // the three encoded CoinBank bytes as they cross the expansion-file
+    // read bridge instead of waiting for PACKAGES/UI_IPAD.RTON to be opened.
+    std::uint8_t v160_coinbank_overlay_mask = 0u;
+    bool v160_coinbank_signature_reported = false;
+
     GLuint gles_splash_texture_candidate = 0u;
     std::uint32_t gles_splash_color_baseline = 0u;
     std::uint64_t gles_vertex_color_traces = 0u;

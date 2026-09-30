@@ -516,6 +516,13 @@
                             source,
                             static_cast<std::size_t>(
                                 bytes));
+
+                        if (!it->second.owned) {
+                            V160ApplyUiAndroidCoinBankOverlay(
+                                dst,
+                                read_start,
+                                bytes);
+                        }
                     }
                 }
 
@@ -1092,6 +1099,13 @@
                             source,
                             static_cast<std::size_t>(
                                 bytes));
+
+                        if (!it->second.owned) {
+                            V160ApplyUiAndroidCoinBankOverlay(
+                                dst,
+                                read_start,
+                                bytes);
+                        }
                     }
                     if(V89HostCostEnabled())V89RecordHostCost("vfs.read.memcpy",v89_vfs_begin_ns,bytes);
                 }

@@ -4183,76 +4183,12 @@
                     handle.label =
                         "rsb:" + normalized;
 
-                    // v159: make room for the authentic 1.7 Turbo Button by
-                    // moving the complete in-game UICoinBank 44 logical px
-                    // left. Patch only the exact 1.5 RTON encoding:
-                    // PositionOffset.x -120: 25 EF 01 -> -164: 25 C7 02.
-                    // The file size is unchanged and the OBB remains untouched.
-                    if (normalized ==
-                        "PACKAGES/UI_IPAD.RTON") {
+                    // v160 patches the production UI_ANDROID CoinBank at the
+                    // expansion-file read boundary. No per-member copy is
+                    // needed here; ResourceManager normally reads it through
+                    // the whole-OBB handle rather than this flat-file fallback.
 
-                        auto patched =
-                            std::make_shared<
-                                std::vector<std::uint8_t>>(
-                                    obb_data +
-                                        static_cast<std::size_t>(
-                                            base),
-                                    obb_data +
-                                        static_cast<std::size_t>(
-                                            base + file_size));
-
-                        constexpr char kCoinAlias[] =
-                            "UICoinBank";
-                        const auto alias =
-                            std::search(
-                                patched->begin(),
-                                patched->end(),
-                                kCoinAlias,
-                                kCoinAlias +
-                                    sizeof(kCoinAlias) - 1u);
-
-                        std::size_t patch_count = 0u;
-                        std::size_t patch_offset = 0u;
-
-                        if (alias != patched->end()) {
-                            const std::size_t alias_offset =
-                                static_cast<std::size_t>(
-                                    std::distance(
-                                        patched->begin(),
-                                        alias));
-                            const std::size_t scan_end =
-                                std::min<std::size_t>(
-                                    patched->size(),
-                                    alias_offset + 128u);
-
-                            for (std::size_t i =
-                                     alias_offset;
-                                 i + 3u <= scan_end;
-                                 ++i) {
-                                if ((*patched)[i + 0u] ==
-                                        0x25u &&
-                                    (*patched)[i + 1u] ==
-                                        0xefu &&
-                                    (*patched)[i + 2u] ==
-                                        0x01u) {
-                                    ++patch_count;
-                                    patch_offset = i;
-                                }
-                            }
-                        }
-
-                        if (patch_count == 1u) {
-                            (*patched)[patch_offset + 0u] =
-                                0x25u;
-                            (*patched)[patch_offset + 1u] =
-                                0xc7u;
-                            (*patched)[patch_offset + 2u] =
-                                0x02u;
-
-                            handle.base = 0u;
-                            handle.owned = patched;
-
-                            if (fallback_logged.insert(
+                    if (fallback_logged.insert(
                                     "v159-ui-ipad-coinbank-shift")
                                     .second) {
                                 Append(

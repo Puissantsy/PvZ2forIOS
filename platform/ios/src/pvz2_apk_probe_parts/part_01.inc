@@ -313,6 +313,82 @@
         Append(diagnostic.str());
     }
 
+    void V160ApplyUiAndroidCoinBankOverlay(
+        std::uint32_t guest_dst,
+        std::uint64_t absolute_read_start,
+        std::uint64_t byte_count) {
+
+        if (byte_count == 0u ||
+            obb_data == nullptr) {
+            return;
+        }
+
+        // Exact reference OBB main.7.com.ea.game.pvz2_row.obb:
+        // PACKAGES/UI_ANDROID.RTON base=41054208; UICoinBank x encoding is
+        // file+3675 => absolute 41057883. Static metadata and raw OBB bytes
+        // both prove 25 EF 01 == -120 and 25 C7 02 == -164.
+        constexpr std::uint64_t kPatch =
+            41057883ull;
+        constexpr std::uint8_t kExpected[3] = {
+            0x25u, 0xefu, 0x01u};
+        constexpr std::uint8_t kReplacement[3] = {
+            0x25u, 0xc7u, 0x02u};
+
+        if (obb_size < kPatch + 3u ||
+            std::memcmp(
+                obb_data +
+                    static_cast<std::size_t>(
+                        kPatch),
+                kExpected,
+                sizeof(kExpected)) != 0) {
+
+            if (!v160_coinbank_signature_reported) {
+                v160_coinbank_signature_reported = true;
+                AppendCritical(
+                    "V160 UI_ANDROID STREAM PATCH signature mismatch at OBB+41057883; CoinBank left untouched.");
+            }
+            return;
+        }
+
+        const std::uint64_t read_end =
+            absolute_read_start + byte_count;
+        auto* target =
+            mem.Ptr(
+                guest_dst,
+                static_cast<std::size_t>(
+                    byte_count));
+        if (target == nullptr) {
+            return;
+        }
+
+        for (std::uint32_t i = 0u;
+             i < 3u;
+             ++i) {
+            const std::uint64_t absolute =
+                kPatch + i;
+            if (absolute < absolute_read_start ||
+                absolute >= read_end) {
+                continue;
+            }
+
+            target[
+                static_cast<std::size_t>(
+                    absolute -
+                    absolute_read_start)] =
+                kReplacement[i];
+            v160_coinbank_overlay_mask |=
+                static_cast<std::uint8_t>(
+                    1u << i);
+        }
+
+        if (v160_coinbank_overlay_mask == 0x07u &&
+            !v160_coinbank_signature_reported) {
+            v160_coinbank_signature_reported = true;
+            Append(
+                "V160 UI_ANDROID STREAM PATCH: UICoinBank PositionOffset.x -120 -> -164 delivered at OBB+41057883.");
+        }
+    }
+
     void V159ObserveHudPauseDraw(
         GLint first,
         GLsizei count,
@@ -320,32 +396,12 @@
         GLenum index_type) {
 
         if (count <= 0 ||
-            count > 65536 ||
+            count > 64 ||
             first < 0) {
             return;
         }
 
-        bool ui_atlas_bound = false;
-        for (const GLuint texture :
-             gles_bound_texture_2d) {
-            if (texture == 0u) {
-                continue;
-            }
-            const auto info =
-                gles_texture_info.find(texture);
-            if (info != gles_texture_info.end() &&
-                info->second.width == 1024 &&
-                info->second.height == 2048) {
-                ui_atlas_bound = true;
-                break;
-            }
-        }
-
-        if (!ui_atlas_bound) {
-            return;
-        }
-
-        std::optional<GLuint> texcoord_index;
+        std::optional<GLuint> position_index;
         for (GLuint index = 0u;
              index < gles_attrib_state.size();
              ++index) {
@@ -378,27 +434,27 @@
                         std::tolower(c));
                 });
 
-            if (lowered.find("tex") !=
-                    std::string::npos ||
-                lowered.find("uv") !=
-                    std::string::npos) {
-                texcoord_index = index;
+            if (lowered.find("position") !=
+                std::string::npos) {
+                position_index = index;
                 break;
             }
         }
 
-        if (!texcoord_index.has_value()) {
+        if (!position_index.has_value()) {
             return;
         }
 
-        const auto& uv =
-            gles_attrib_state[*texcoord_index];
+        const auto& position =
+            gles_attrib_state[*position_index];
         const std::size_t packed_stride =
-            static_cast<std::size_t>(uv.size) *
+            static_cast<std::size_t>(
+                position.size) *
             sizeof(GLfloat);
         const std::size_t stride =
-            uv.stride > 0
-                ? static_cast<std::size_t>(uv.stride)
+            position.stride > 0
+                ? static_cast<std::size_t>(
+                      position.stride)
                 : packed_stride;
 
         auto vertex_index_at =
@@ -410,7 +466,6 @@
                         static_cast<std::uint32_t>(i);
                     return true;
                 }
-
                 if (index_type == GL_UNSIGNED_BYTE) {
                     out =
                         static_cast<const std::uint8_t*>(
@@ -432,42 +487,14 @@
                 return false;
             };
 
-        struct UvRect {
-            float u0;
-            float u1;
-            float v0;
-            float v1;
-        };
-
-        // Accept both top-origin and vertically flipped atlas UV conventions.
-        constexpr UvRect kPauseRects[] = {
-            {401.0f / 1024.0f, 471.0f / 1024.0f,
-             1265.0f / 2048.0f, 1335.0f / 2048.0f},
-            {401.0f / 1024.0f, 471.0f / 1024.0f,
-             1.0f - 1335.0f / 2048.0f,
-             1.0f - 1265.0f / 2048.0f},
-            {76.0f / 1024.0f, 146.0f / 1024.0f,
-             1268.0f / 2048.0f, 1338.0f / 2048.0f},
-            {76.0f / 1024.0f, 146.0f / 1024.0f,
-             1.0f - 1338.0f / 2048.0f,
-             1.0f - 1268.0f / 2048.0f},
-        };
-
-        constexpr float kTolerance = 0.0035f;
-        std::array<std::uint32_t, 4> matches{};
-        std::array<float, 4> min_u{
-            10.0f, 10.0f, 10.0f, 10.0f};
-        std::array<float, 4> max_u{
-            -10.0f, -10.0f, -10.0f, -10.0f};
-        std::array<float, 4> min_v{
-            10.0f, 10.0f, 10.0f, 10.0f};
-        std::array<float, 4> max_v{
-            -10.0f, -10.0f, -10.0f, -10.0f};
+        bool have_bounds = false;
+        float min_x = 0.0f;
+        float min_y = 0.0f;
+        float max_x = 0.0f;
+        float max_y = 0.0f;
 
         const std::size_t sample_count =
-            std::min<std::size_t>(
-                static_cast<std::size_t>(count),
-                4096u);
+            static_cast<std::size_t>(count);
 
         for (std::size_t i = 0u;
              i < sample_count;
@@ -476,18 +503,18 @@
             if (!vertex_index_at(
                     i,
                     vertex_index)) {
-                break;
+                return;
             }
 
             const std::uint64_t address64 =
                 static_cast<std::uint64_t>(
-                    uv.guest_pointer) +
+                    position.guest_pointer) +
                 static_cast<std::uint64_t>(
                     vertex_index) *
                     stride;
             if (address64 >
                 std::numeric_limits<std::uint32_t>::max()) {
-                continue;
+                return;
             }
 
             const auto* bytes =
@@ -496,68 +523,86 @@
                         address64),
                     sizeof(GLfloat) * 2u);
             if (bytes == nullptr) {
-                continue;
+                return;
             }
 
-            GLfloat u = 0.0f;
-            GLfloat v = 0.0f;
-            std::memcpy(&u, bytes, sizeof(u));
+            GLfloat x = 0.0f;
+            GLfloat y = 0.0f;
+            std::memcpy(&x, bytes, sizeof(x));
             std::memcpy(
-                &v,
+                &y,
                 bytes + sizeof(GLfloat),
-                sizeof(v));
+                sizeof(y));
 
-            if (!std::isfinite(u) ||
-                !std::isfinite(v)) {
+            if (!std::isfinite(x) ||
+                !std::isfinite(y)) {
                 continue;
             }
 
-            for (std::size_t r = 0u;
-                 r < 4u;
-                 ++r) {
-                const auto& rect =
-                    kPauseRects[r];
-                if (u >= rect.u0 - kTolerance &&
-                    u <= rect.u1 + kTolerance &&
-                    v >= rect.v0 - kTolerance &&
-                    v <= rect.v1 + kTolerance) {
-                    ++matches[r];
-                    min_u[r] =
-                        std::min(min_u[r], u);
-                    max_u[r] =
-                        std::max(max_u[r], u);
-                    min_v[r] =
-                        std::min(min_v[r], v);
-                    max_v[r] =
-                        std::max(max_v[r], v);
-                }
+            if (!have_bounds) {
+                min_x = max_x = x;
+                min_y = max_y = y;
+                have_bounds = true;
+            } else {
+                min_x = std::min(min_x, x);
+                min_y = std::min(min_y, y);
+                max_x = std::max(max_x, x);
+                max_y = std::max(max_y, y);
             }
         }
 
-        for (std::size_t r = 0u;
-             r < 4u;
-             ++r) {
-            if (matches[r] >= 4u &&
-                max_u[r] - min_u[r] > 0.050f &&
-                max_v[r] - min_v[r] > 0.024f) {
+        if (!have_bounds) {
+            return;
+        }
 
-                v159_pause_draw_frame =
-                    current_frame_number;
+        const float width =
+            max_x - min_x;
+        const float height =
+            max_y - min_y;
 
-                ++v159_pause_draw_detections;
-                if (v159_pause_draw_detections <= 8u) {
-                    AppendDiagnostic(
-                        "V159 HUD PAUSE DETECT frame=" +
-                        std::to_string(
-                            current_frame_number) +
-                        " variant=" +
-                        std::to_string(r) +
-                        " matches=" +
-                        std::to_string(
-                            matches[r]));
-                }
-                return;
-            }
+        // Real v159 iPad log proves the Pause draw repeatedly as:
+        // bbox=(1888,20)-(2027,159), size=139x139, count=12
+        // in the 2048x1536 guest framebuffer. Keep tolerances generous enough
+        // for button animation/rounding but narrow enough to exclude CoinBank.
+        const bool pause_geometry =
+            width >= 128.0f &&
+            width <= 152.0f &&
+            height >= 128.0f &&
+            height <= 152.0f &&
+            min_x >= 1870.0f &&
+            min_x <= 1905.0f &&
+            max_x >= 2010.0f &&
+            max_x <= 2040.0f &&
+            min_y >= 0.0f &&
+            min_y <= 40.0f &&
+            max_y >= 140.0f &&
+            max_y <= 180.0f;
+
+        if (!pause_geometry) {
+            return;
+        }
+
+        v159_pause_draw_frame =
+            current_frame_number;
+        ++v159_pause_draw_detections;
+
+        if (v159_pause_draw_detections <= 8u) {
+            std::ostringstream out;
+            out
+                << "V160 HUD PAUSE DETECT frame="
+                << current_frame_number
+                << " count="
+                << count
+                << " bbox=("
+                << min_x << "," << min_y
+                << ")-("
+                << max_x << "," << max_y
+                << ") tex0="
+                << gles_bound_texture_2d[0u]
+                << " tex1="
+                << gles_bound_texture_2d[1u];
+            AppendDiagnostic(
+                out.str());
         }
     }
 
