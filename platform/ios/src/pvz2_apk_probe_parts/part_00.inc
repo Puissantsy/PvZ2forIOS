@@ -1077,6 +1077,7 @@ constexpr std::uint64_t kCapsV147 = kCapsV145;
 constexpr std::uint64_t kCapsV148 = kCapsV147;
 constexpr std::uint64_t kCapsV149 = kCapsV148;
 constexpr std::uint64_t kCapsV150 = kCapsV149;
+constexpr std::uint64_t kCapsV151 = kCapsV150;
 
 constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::PassiveRegistry, "PASSIVE_REGISTRY", nullptr, 0u, false},
@@ -1172,10 +1173,11 @@ constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::V148DiagnosticModeRoutingFix, "V148_DIAGNOSTIC_MODE_ROUTING_FIX", "V148 Diagnostic Mode Routing Fix", kCapsV148, true},
     {PvZ2DiagnosticMode::V149PowerupRadialSourcePolygon, "V149_POWERUP_RADIAL_SOURCE_POLYGON", "V149 Powerup Radial Source Polygon", kCapsV149, true},
     {PvZ2DiagnosticMode::V150GuestQsortCompat, "V150_GUEST_QSORT_COMPAT", "V150 Guest qsort Compat", kCapsV150, true},
+    {PvZ2DiagnosticMode::V151ProductionQsortCompat, "V151_PRODUCTION_QSORT_COMPAT", "V151 Production qsort Compat", kCapsV151, true},
 };
 
 constexpr PvZ2DiagnosticMode kSelectableDiagnosticModes[] = {
-    PvZ2DiagnosticMode::V150GuestQsortCompat,
+    PvZ2DiagnosticMode::V151ProductionQsortCompat,
 };
 
 } // namespace

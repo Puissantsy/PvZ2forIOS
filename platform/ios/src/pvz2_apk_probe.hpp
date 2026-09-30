@@ -563,6 +563,10 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // v150: restore POSIX qsort with a guest-native ARM shim so PopCap guest
     // comparators execute normally; also bypass Power Up cost only for testing.
     V150GuestQsortCompat = 92u,
+
+    // v151: production version of the qsort fix. Normal Power Up economy is
+    // restored and the temporary radial diagnostic hooks are not installed.
+    V151ProductionQsortCompat = 93u,
 };
 
 enum class PvZ2ProbeCapability : std::uint64_t {

@@ -780,6 +780,11 @@
     }
 
 
+    bool V151Enabled() const {
+        return diagnostic_mode ==
+            PvZ2DiagnosticMode::V151ProductionQsortCompat;
+    }
+
     bool V150Enabled() const {
         return diagnostic_mode ==
             PvZ2DiagnosticMode::V150GuestQsortCompat;
@@ -794,7 +799,8 @@
     bool V148Enabled() const {
         return diagnostic_mode ==
                    PvZ2DiagnosticMode::V148DiagnosticModeRoutingFix ||
-               V149Enabled();
+               V149Enabled() ||
+               V151Enabled();
     }
 
     bool V147Enabled() const {
@@ -4437,6 +4443,7 @@
     }
 
     const char* RuntimeModeTag() const {
+        if (V151Enabled()) return "V151";
         if (V150Enabled()) return "V150";
         if (V149Enabled()) return "V149";
         if (V148Enabled()) return "V148";

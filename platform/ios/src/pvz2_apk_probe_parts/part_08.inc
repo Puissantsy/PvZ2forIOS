@@ -1246,7 +1246,8 @@ bool JniProbePrepareRuntime(
             }
 
             if (name == "qsort" &&
-                callbacks.V150Enabled()) {
+                (callbacks.V150Enabled() ||
+                 callbacks.V151Enabled())) {
                 const std::uint32_t shim =
                     JniProbeMakeQsortShim(
                         memory);
@@ -1269,7 +1270,11 @@ bool JniProbePrepareRuntime(
                     type);
 
                 callbacks.Append(
-                    "V150 installed guest-native qsort shim at 0x" +
+                    std::string(
+                        callbacks.V151Enabled()
+                            ? "V151"
+                            : "V150") +
+                    " installed guest-native qsort shim at 0x" +
                     JniProbeHex(shim));
 
                 ++result.imports_patched;
@@ -1872,6 +1877,7 @@ bool JniProbePrepareRuntime(
     }
 
     if (callbacks.V145Enabled() &&
+        !callbacks.V151Enabled() &&
         !patch_resource_native_miss(
             0x004620bcu,
             0xe1a00004u,
