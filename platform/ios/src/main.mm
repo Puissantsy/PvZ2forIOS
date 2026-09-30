@@ -1871,18 +1871,21 @@ void PvZ2HostNotifyDirectFrame(
     const CGFloat fittedY =
         (bounds.height - fittedHeight) * 0.5;
 
+    // v158 adapts the 1.7 Turbo geometry to the denser 1.5 top HUD:
+    // keep it immediately left of Pause but use a compact 60x60 base rect,
+    // ending at x=944 (2 logical px before Pause's x=946).
     CGRect turbo =
         CGRectMake(
             fittedX +
                 fittedWidth *
-                    (868.0 / 1024.0),
+                    (884.0 / 1024.0),
             fittedY +
                 fittedHeight *
-                    (8.0 / 768.0),
+                    (13.0 / 768.0),
             fittedWidth *
-                (70.0 / 1024.0),
+                (60.0 / 1024.0),
             fittedHeight *
-                (70.0 / 768.0));
+                (60.0 / 768.0));
 
     turbo = CGRectInset(turbo, -4.0, -4.0);
     self.timeScaleButton.frame = turbo;

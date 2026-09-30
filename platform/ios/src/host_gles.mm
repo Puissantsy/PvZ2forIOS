@@ -905,16 +905,16 @@ PvZ2HostGLESPresent(
             gTurboMode.load(
                 std::memory_order_acquire);
 
-        // Exact 1.7 logical normal rect: (868,8,70,70) in 1024x768.
-        // Selected is 75x75. ×2 is intentionally a little larger so our
-        // third state remains visually distinguishable without a UIKit badge.
+        // v158: PvZ2 1.5's coin HUD occupies more horizontal space than 1.7.
+        // Keep Turbo tight against Pause (Pause starts at x=946) and compact
+        // enough that even ×2 never intrudes into the currency block.
         const GLfloat size =
             mode == 0u
-                ? 70.0f
+                ? 60.0f
                 : (mode == 1u
-                       ? 75.0f
-                       : 82.0f);
-        const GLfloat center_x = 903.0f;
+                       ? 64.0f
+                       : 68.0f);
+        const GLfloat center_x = 914.0f;
         const GLfloat center_y = 43.0f;
         const GLfloat left =
             center_x - size * 0.5f;
