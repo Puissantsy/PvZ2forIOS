@@ -476,9 +476,19 @@
         const float width = max_x - min_x;
         const float height = max_y - min_y;
 
-        // Exact recurring Pause draw measured in the v159 iPad log:
-        // bbox=(1888,20)-(2027,159), size=139x139, count=12.
-        const bool pause_geometry =
+        // v161: the normal in-level top HUD is usually batched, so Pause
+        // is not submitted as an isolated 70x70 widget every frame. The v160
+        // iPad log proves two valid signatures:
+        //
+        // 1) normal top-bar batch:
+        //    count=36, bbox=(1258,5)-(2027,159), tex0=15, tex1=16
+        // 2) isolated Pause redraw during pause/menu transitions:
+        //    count=6/12, bbox=(1888,20)-(2027,159)
+        //
+        // Treat either as authoritative evidence that the gameplay HUD is
+        // present in this frame. This makes Turbo appear with the actual HUD,
+        // not only when the pause overlay forces a standalone redraw.
+        const bool isolated_pause =
             width >= 128.0f &&
             width <= 152.0f &&
             height >= 128.0f &&
@@ -492,7 +502,26 @@
             max_y >= 140.0f &&
             max_y <= 180.0f;
 
-        if (!pause_geometry) {
+        const bool top_hud_batch =
+            count >= 30 &&
+            count <= 42 &&
+            width >= 740.0f &&
+            width <= 800.0f &&
+            height >= 140.0f &&
+            height <= 170.0f &&
+            min_x >= 1230.0f &&
+            min_x <= 1285.0f &&
+            max_x >= 2005.0f &&
+            max_x <= 2040.0f &&
+            min_y >= 0.0f &&
+            min_y <= 20.0f &&
+            max_y >= 145.0f &&
+            max_y <= 170.0f &&
+            gles_bound_texture_2d[0u] == 15u &&
+            gles_bound_texture_2d[1u] == 16u;
+
+        if (!isolated_pause &&
+            !top_hud_batch) {
             return;
         }
 
@@ -500,16 +529,21 @@
             current_frame_number;
         ++v159_pause_draw_detections;
 
-        if (v159_pause_draw_detections <= 8u) {
+        if (v159_pause_draw_detections <= 12u) {
             std::ostringstream out;
             out
-                << "V160 HUD PAUSE DETECT frame="
+                << "V161 HUD DETECT frame="
                 << current_frame_number
+                << " kind="
+                << (top_hud_batch ? "TOPBAR_BATCH" : "PAUSE_ISOLATED")
                 << " count=" << count
                 << " bbox=("
                 << min_x << "," << min_y
                 << ")-(" << max_x << "," << max_y
-                << ")";
+                << ") tex0="
+                << gles_bound_texture_2d[0u]
+                << " tex1="
+                << gles_bound_texture_2d[1u];
             AppendDiagnostic(out.str());
         }
     }
