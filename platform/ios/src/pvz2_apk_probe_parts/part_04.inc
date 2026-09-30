@@ -1416,6 +1416,82 @@
             return;
         }
 
+        if (swi == kJniProbeSvcV155SfxPitch) {
+            // Original @lib+0x00c143f8: VMOV s17,r1.
+            // CAkResampler+0x8c -> CAkPBI*. CAkMusicPBI uses vtable
+            // _ZTV11CAkMusicPBI+8 = guest 0x10cfc010, so leave music untouched.
+            const std::uint32_t resampler = regs[0];
+            const std::uint32_t pbi =
+                resampler != 0u
+                    ? mem.Read32Guest(resampler + 0x8cu)
+                    : 0u;
+            const std::uint32_t pbi_vtable =
+                pbi != 0u
+                    ? mem.Read32Guest(pbi)
+                    : 0u;
+            constexpr std::uint32_t kMusicPbiVtable =
+                kGuestBase + 0x00cfc010u;
+
+            float pitch_cents = 0.0f;
+            std::memcpy(
+                &pitch_cents,
+                &regs[1],
+                sizeof(pitch_cents));
+
+            const std::uint32_t speed_mode =
+                gV155SpeedMode.load(
+                    std::memory_order_acquire);
+            const bool is_music =
+                pbi_vtable == kMusicPbiVtable;
+
+            if (is_music) {
+                const std::uint64_t count =
+                    gV155MusicPitchSkips.fetch_add(
+                        1u,
+                        std::memory_order_relaxed) + 1u;
+                if (count <= 8u) {
+                    AppendDiagnostic(
+                        "V155 SFX PITCH music-skip #" +
+                        std::to_string(count) +
+                        " pbi=" +
+                        V46DescribeGuestAddress(pbi) +
+                        " vtable=" +
+                        V46DescribeGuestAddress(pbi_vtable));
+                }
+            } else if (speed_mode != 0u) {
+                pitch_cents +=
+                    speed_mode == 1u
+                        ? 701.955f
+                        : 1200.0f;
+
+                const std::uint64_t count =
+                    gV155SfxPitchAdjustments.fetch_add(
+                        1u,
+                        std::memory_order_relaxed) + 1u;
+                if (count <= 8u) {
+                    AppendDiagnostic(
+                        "V155 SFX PITCH adjusted #" +
+                        std::to_string(count) +
+                        " mode=" +
+                        std::to_string(speed_mode) +
+                        " cents=" +
+                        std::to_string(pitch_cents) +
+                        " pbi=" +
+                        V46DescribeGuestAddress(pbi) +
+                        " vtable=" +
+                        V46DescribeGuestAddress(pbi_vtable));
+                }
+            }
+
+            std::uint32_t pitch_bits = 0u;
+            std::memcpy(
+                &pitch_bits,
+                &pitch_cents,
+                sizeof(pitch_bits));
+            jit->ExtRegs()[17] = pitch_bits;
+            return;
+        }
+
         if (V105Enabled() &&
             (swi == kJniProbeSvcV105ResamplerInitState ||
              swi == kJniProbeSvcV105SetPitchState ||

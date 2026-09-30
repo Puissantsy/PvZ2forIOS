@@ -3145,25 +3145,32 @@
                         true,
                         std::memory_order_release);
 
-                    const std::uint32_t v154_time_scale_request =
+                    const std::uint32_t v155_time_scale_request =
                         gV152PendingTimeScale.exchange(
                             0u,
                             std::memory_order_acq_rel);
 
-                    if (v154_time_scale_request != 0u) {
+                    if (v155_time_scale_request != 0u) {
                         constexpr std::uint32_t kSetTimeScale =
                             kGuestBase + 0x003761dcu;
-                        const bool fast =
-                            v154_time_scale_request == 2u;
+                        const std::uint32_t speed_mode =
+                            v155_time_scale_request - 1u;
                         const std::uint32_t scale_bits =
-                            fast
-                                ? 0x40000000u  // 2.0f = x2
-                                : 0x3f800000u; // 1.0f = normal
+                            speed_mode == 0u
+                                ? 0x3f800000u
+                                : (speed_mode == 1u
+                                       ? 0x3fc00000u
+                                       : 0x40000000u);
+
+                        const char* phase =
+                            speed_mode == 0u
+                                ? "V155_SetTimeScale_1.0"
+                                : (speed_mode == 1u
+                                       ? "V155_SetTimeScale_1.5"
+                                       : "V155_SetTimeScale_2.0");
 
                         if (!run_lifecycle(
-                                fast
-                                    ? "V154_SetTimeScale_2.0"
-                                    : "V154_SetTimeScale_1.0",
+                                phase,
                                 kSetTimeScale,
                                 0u,
                                 scale_bits,
@@ -3175,12 +3182,16 @@
 
                         callbacks.Append(
                             std::string{
-                                "V154 FAST-FORWARD APPLIED frame="} +
+                                "V155 SPEED APPLIED frame="} +
                             std::to_string(frame_number) +
                             " mode=" +
-                            (fast ? "FAST_X2" : "NORMAL_X1") +
-                            " guestValue=" +
-                            (fast ? "2.0" : "1.0"));
+                            std::to_string(speed_mode) +
+                            " gameplayScale=" +
+                            (speed_mode == 0u
+                                 ? "1.0"
+                                 : (speed_mode == 1u
+                                        ? "1.5"
+                                        : "2.0")));
                     }
 
                     if (callbacks.V90Enabled() &&

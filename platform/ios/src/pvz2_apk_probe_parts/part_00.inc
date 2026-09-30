@@ -1333,6 +1333,10 @@ std::atomic<bool> gV72StopRequested{false};
 std::atomic<std::uint32_t> gV152PendingTimeScale{0u};
 std::atomic<bool> gV152FastMotionRequested{false};
 std::atomic<bool> gV153FastForwardAvailable{false};
+// v155 speed mode: 0=×1, 1=×1.5, 2=×2.
+std::atomic<std::uint32_t> gV155SpeedMode{0u};
+std::atomic<std::uint64_t> gV155SfxPitchAdjustments{0u};
+std::atomic<std::uint64_t> gV155MusicPitchSkips{0u};
 std::atomic<std::uint64_t> gV72TouchGeneration{0u};
 std::atomic<std::uint64_t> gV72QueuedTouches{0u};
 std::atomic<std::uint64_t> gV72DroppedTouches{0u};
@@ -1640,6 +1644,10 @@ constexpr std::uint32_t kJniProbeSvcV149PowerupRadialSource = 0x00f0d4u;
 // v150: original @0x1045e0ec = STRB r8,[r4,#0x30], where r8=0 in the
 // PowerupManager ctor. The handler writes 1 instead, preserving all registers.
 constexpr std::uint32_t kJniProbeSvcV150PowerupIgnoreCost = 0x00f0d5u;
+
+// v155: original @0x10c143f8 = VMOV s17,r1 at CAkResampler::SetPitch entry.
+// Handler emulates the VMOV and may add speed-dependent pitch to non-music PBI.
+constexpr std::uint32_t kJniProbeSvcV155SfxPitch = 0x00f0d6u;
 
 constexpr std::uint32_t kJniProbeSvcUnsupportedJniBase = 0x00e000u;
 constexpr std::uint32_t kJniProbeJniSlotCount = 256u;

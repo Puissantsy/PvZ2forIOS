@@ -114,6 +114,11 @@ void PvZ2RequestHostFastMotion(bool enabled);
 bool PvZ2HostFastMotionRequested();
 bool PvZ2HostFastForwardAvailable();
 
+// v155: 0=×1, 1=×1.5, 2=×2. UIKit only queues the mode; guest work
+// is applied at a completed frame boundary.
+void PvZ2RequestHostSpeedMode(std::uint32_t mode);
+std::uint32_t PvZ2HostSpeedMode();
+
 enum class PvZ2DiagnosticMode : std::uint32_t {
     PassiveRegistry = 0u,
     GateAScout = 1u,

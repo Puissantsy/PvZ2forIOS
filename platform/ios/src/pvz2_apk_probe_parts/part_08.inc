@@ -1854,6 +1854,15 @@ bool JniProbePrepareRuntime(
         return false;
     }
 
+    if (!patch_resource_native_miss(
+            0x00c143f8u,
+            0xee081a90u,
+            kJniProbeSvcV155SfxPitch)) {
+        error =
+            "v155 CAkResampler::SetPitch entry signature mismatch at 0x10c143f8; refusing to patch an unverified PvZ2 1.5.252752 image.";
+        return false;
+    }
+
     if (callbacks.V150Enabled() &&
         !patch_resource_native_miss(
             0x0045e0ecu,
@@ -2488,6 +2497,15 @@ void PvZ2ResetInteractiveInput() {
     gV153FastForwardAvailable.store(
         false,
         std::memory_order_release);
+    gV155SpeedMode.store(
+        0u,
+        std::memory_order_release);
+    gV155SfxPitchAdjustments.store(
+        0u,
+        std::memory_order_release);
+    gV155MusicPitchSkips.store(
+        0u,
+        std::memory_order_release);
     gV72TouchGeneration.store(
         0u,
         std::memory_order_release);
@@ -2701,24 +2719,38 @@ void PvZ2RequestInteractiveStop() {
         std::memory_order_release);
 }
 
-void PvZ2RequestHostFastMotion(bool enabled) {
+void PvZ2RequestHostSpeedMode(std::uint32_t mode) {
+    if (mode > 2u) {
+        mode = 0u;
+    }
+
+    gV155SpeedMode.store(
+        mode,
+        std::memory_order_release);
     gV152FastMotionRequested.store(
-        enabled,
+        mode != 0u,
         std::memory_order_release);
     gV152PendingTimeScale.store(
-        enabled ? 2u : 1u,
+        mode + 1u,
         std::memory_order_release);
 
-    // Reuse the existing input generation wakeup so presentation code does not
-    // defer visible feedback after the next guest frame boundary.
     gV72TouchGeneration.fetch_add(
         1u,
         std::memory_order_release);
 }
 
-bool PvZ2HostFastMotionRequested() {
-    return gV152FastMotionRequested.load(
+std::uint32_t PvZ2HostSpeedMode() {
+    return gV155SpeedMode.load(
         std::memory_order_acquire);
+}
+
+void PvZ2RequestHostFastMotion(bool enabled) {
+    PvZ2RequestHostSpeedMode(
+        enabled ? 2u : 0u);
+}
+
+bool PvZ2HostFastMotionRequested() {
+    return PvZ2HostSpeedMode() != 0u;
 }
 
 bool PvZ2HostFastForwardAvailable() {

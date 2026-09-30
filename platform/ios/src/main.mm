@@ -707,7 +707,7 @@ void PvZ2HostNotifyDirectFrame(
     self.timeScaleButton.translatesAutoresizingMaskIntoConstraints =
         NO;
     [self.timeScaleButton
-        setTitle:@"×2"
+        setTitle:@"×1"
         forState:UIControlStateNormal];
     [self.timeScaleButton
         setTitleColor:
@@ -723,9 +723,9 @@ void PvZ2HostNotifyDirectFrame(
         [UIFont
             boldSystemFontOfSize:17.0];
     self.timeScaleButton.accessibilityLabel =
-        @"Toggle double speed";
+        @"Gameplay speed";
     self.timeScaleButton.accessibilityHint =
-        @"Switches PvZ2 gameplay between normal speed and double speed.";
+        @"Cycles PvZ2 gameplay speed between one, one point five, and two times.";
     [self.timeScaleButton
         addTarget:self
         action:@selector(toggleTimeScale)
@@ -915,26 +915,35 @@ void PvZ2HostNotifyDirectFrame(
 }
 
 - (void)toggleTimeScale {
-    const BOOL enableFast =
-        !PvZ2HostFastMotionRequested();
+    const std::uint32_t current =
+        PvZ2HostSpeedMode();
+    const std::uint32_t next =
+        (current + 1u) % 3u;
 
-    PvZ2RequestHostFastMotion(
-        enableFast == YES);
+    PvZ2RequestHostSpeedMode(next);
+
+    NSString *title =
+        next == 0u
+            ? @"×1"
+            : (next == 1u
+                   ? @"×1.5"
+                   : @"×2");
 
     [self.timeScaleButton
-        setTitle:
-            enableFast ? @"×2 ✓" : @"×2"
+        setTitle:title
         forState:UIControlStateNormal];
 
     self.timeScaleButton.accessibilityValue =
-        enableFast ? @"On" : @"Off";
+        title;
 
     AppendPersistentLog(
         [NSString
             stringWithFormat:
-                @"[V153 HOST FAST-FORWARD] requested=%@ guestValue=%@",
-                enableFast ? @"FAST_X2" : @"NORMAL_X1",
-                enableFast ? @"2.0" : @"1.0"]);
+                @"[V155 HOST SPEED] mode=%u title=%@ gameplayScale=%@ sfxPitch=%@",
+                (unsigned int)next,
+                title,
+                next == 0u ? @"1.0" : (next == 1u ? @"1.5" : @"2.0"),
+                next == 0u ? @"+0c" : (next == 1u ? @"+702c" : @"+1200c")]);
 }
 
 - (void)stopOrClose {
@@ -1870,7 +1879,7 @@ void PvZ2HostNotifyDirectFrame(
         fastForwardAvailable && !self.runFinished;
     if (!fastForwardAvailable) {
         [self.timeScaleButton
-            setTitle:@"×2"
+            setTitle:@"×1"
             forState:UIControlStateNormal];
         self.timeScaleButton.accessibilityValue = @"Off";
     }
@@ -1963,7 +1972,7 @@ void PvZ2HostNotifyDirectFrame(
         fastForwardAvailable && !self.runFinished;
     if (!fastForwardAvailable) {
         [self.timeScaleButton
-            setTitle:@"×2"
+            setTitle:@"×1"
             forState:UIControlStateNormal];
         self.timeScaleButton.accessibilityValue = @"Off";
     }
