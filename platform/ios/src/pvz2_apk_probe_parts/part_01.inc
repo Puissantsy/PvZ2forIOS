@@ -2421,6 +2421,11 @@
     std::uint64_t offline_purchase_serial = 0u;
     bool offline_purchase_unconfirmed = false;
     std::string offline_purchase_unconfirmed_token;
+
+    // One-time QA bankroll for the first offline-store iPad test. The
+    // persistent V128 config marker prevents this from refilling the wallet
+    // after a purchase/restart, so coin debit persistence remains testable.
+    bool offline_store_test_coin_grant_checked = false;
     // v34: AndroidHttpTransaction is asynchronous on Android. Track the
     // native peer passed to its Java constructor so Start() can be completed
     // deterministically through the real registered native error callback
