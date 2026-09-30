@@ -434,6 +434,8 @@ BOOL V130CopyRuntimeFile(NSURL *source, NSURL *destination, NSError **error) {
 @property(nonatomic, strong)
     UIButton *stopButton;
 @property(nonatomic, strong)
+    UIButton *timeScaleButton;
+@property(nonatomic, strong)
     UITextField *keyboardField;
 @property(nonatomic, strong)
     NSMutableDictionary<NSValue *, NSNumber *> *touchIds;
@@ -699,6 +701,36 @@ void PvZ2HostNotifyDirectFrame(
         action:@selector(stopOrClose)
         forControlEvents:UIControlEventTouchUpInside];
 
+    self.timeScaleButton =
+        [UIButton
+            buttonWithType:UIButtonTypeSystem];
+    self.timeScaleButton.translatesAutoresizingMaskIntoConstraints =
+        NO;
+    [self.timeScaleButton
+        setTitle:@"×2"
+        forState:UIControlStateNormal];
+    [self.timeScaleButton
+        setTitleColor:
+            UIColor.whiteColor
+        forState:UIControlStateNormal];
+    self.timeScaleButton.backgroundColor =
+        [UIColor
+            colorWithWhite:0.0
+            alpha:0.58];
+    self.timeScaleButton.layer.cornerRadius =
+        7.0;
+    self.timeScaleButton.titleLabel.font =
+        [UIFont
+            boldSystemFontOfSize:17.0];
+    self.timeScaleButton.accessibilityLabel =
+        @"Toggle double speed";
+    self.timeScaleButton.accessibilityHint =
+        @"Switches PvZ2 gameplay between normal speed and double speed.";
+    [self.timeScaleButton
+        addTarget:self
+        action:@selector(toggleTimeScale)
+        forControlEvents:UIControlEventTouchUpInside];
+
     // The original decrypted PvZ2 iOS 1.5 binary exposes
     // sharedUITextField + UITextFieldDelegate + activate/deactivateTextField.
     // Keep the host field effectively invisible while using the same UIKit
@@ -744,11 +776,13 @@ void PvZ2HostNotifyDirectFrame(
     [self.view addSubview:self.keyboardField];
     [self.view addSubview:self.captionLabel];
     [self.view addSubview:self.stopButton];
+    [self.view addSubview:self.timeScaleButton];
 
     // v130 production-style presentation: keep these controls constructed so
     // old diagnostic/error paths remain safe, but remove them from normal play.
     self.captionLabel.hidden = YES;
     self.stopButton.hidden = YES;
+    self.timeScaleButton.hidden = NO;
 
     UITapGestureRecognizer *diagnosticGesture =
         [[UITapGestureRecognizer alloc]
@@ -805,6 +839,17 @@ void PvZ2HostNotifyDirectFrame(
                 constraintEqualToConstant:68.0],
             [self.stopButton.heightAnchor
                 constraintEqualToConstant:36.0],
+
+            [self.timeScaleButton.topAnchor
+                constraintEqualToAnchor:guide.topAnchor
+                constant:6.0],
+            [self.timeScaleButton.trailingAnchor
+                constraintEqualToAnchor:guide.trailingAnchor
+                constant:-8.0],
+            [self.timeScaleButton.widthAnchor
+                constraintEqualToConstant:58.0],
+            [self.timeScaleButton.heightAnchor
+                constraintEqualToConstant:38.0],
         ]];
 
     if (v90Direct) {
@@ -865,6 +910,29 @@ void PvZ2HostNotifyDirectFrame(
     UIPasteboard.generalPasteboard.string = fullLog ?: @"";
     AppendPersistentLog(
         @"[V130] hidden diagnostics gesture: full log copied to clipboard");
+}
+
+- (void)toggleTimeScale {
+    const BOOL enableFast =
+        !PvZ2HostFastMotionRequested();
+
+    PvZ2RequestHostFastMotion(
+        enableFast == YES);
+
+    [self.timeScaleButton
+        setTitle:
+            enableFast ? @"×2 ✓" : @"×2"
+        forState:UIControlStateNormal];
+
+    self.timeScaleButton.accessibilityValue =
+        enableFast ? @"On" : @"Off";
+
+    AppendPersistentLog(
+        [NSString
+            stringWithFormat:
+                @"[V152 HOST TIMESCALE] requested=%@ guestValue=%@",
+                enableFast ? @"FAST" : @"NORMAL",
+                enableFast ? @"0.5" : @"1.0"]);
 }
 
 - (void)stopOrClose {

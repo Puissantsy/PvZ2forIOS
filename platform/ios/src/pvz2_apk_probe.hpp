@@ -108,6 +108,11 @@ void PvZ2HostNotifyDirectFrame(
 
 void PvZ2RequestInteractiveStop();
 
+// v152: host-only prototype control. UIKit queues the request; the guest
+// scheduler applies SetTimeScale only at a completed frame boundary.
+void PvZ2RequestHostFastMotion(bool enabled);
+bool PvZ2HostFastMotionRequested();
+
 enum class PvZ2DiagnosticMode : std::uint32_t {
     PassiveRegistry = 0u,
     GateAScout = 1u,

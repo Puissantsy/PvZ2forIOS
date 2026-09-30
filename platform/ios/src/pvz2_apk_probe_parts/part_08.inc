@@ -2479,6 +2479,12 @@ void PvZ2ResetInteractiveInput() {
     gV72StopRequested.store(
         false,
         std::memory_order_release);
+    gV152PendingTimeScale.store(
+        0u,
+        std::memory_order_release);
+    gV152FastMotionRequested.store(
+        false,
+        std::memory_order_release);
     gV72TouchGeneration.store(
         0u,
         std::memory_order_release);
@@ -2690,6 +2696,26 @@ void PvZ2RequestInteractiveStop() {
     gV72StopRequested.store(
         true,
         std::memory_order_release);
+}
+
+void PvZ2RequestHostFastMotion(bool enabled) {
+    gV152FastMotionRequested.store(
+        enabled,
+        std::memory_order_release);
+    gV152PendingTimeScale.store(
+        enabled ? 2u : 1u,
+        std::memory_order_release);
+
+    // Reuse the existing input generation wakeup so presentation code does not
+    // defer visible feedback after the next guest frame boundary.
+    gV72TouchGeneration.fetch_add(
+        1u,
+        std::memory_order_release);
+}
+
+bool PvZ2HostFastMotionRequested() {
+    return gV152FastMotionRequested.load(
+        std::memory_order_acquire);
 }
 
 PvZ2JniProbeResult RunPvZ2JniOnLoadProbe(

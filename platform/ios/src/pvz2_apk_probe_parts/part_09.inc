@@ -3137,6 +3137,49 @@
                     result.draw_frames_completed =
                         frame_number;
 
+                    // v152: consume UIKit's x1/x2 request only after
+                    // Native_onDrawFrame has fully returned. This keeps all
+                    // guest execution on the scheduler thread and avoids
+                    // racing Dynarmic from UIKit. Static analysis of the exact
+                    // 1.5.252752 libPVZ2.so identifies SetTimeScale at
+                    // +0x003761DC; FastMotion uses 0.5f and normal speed 1.0f.
+                    const std::uint32_t v152_time_scale_request =
+                        gV152PendingTimeScale.exchange(
+                            0u,
+                            std::memory_order_acq_rel);
+                    if (v152_time_scale_request != 0u) {
+                        constexpr std::uint32_t kSetTimeScale =
+                            kGuestBase + 0x003761dcu;
+                        const bool fast =
+                            v152_time_scale_request == 2u;
+                        const std::uint32_t scale_bits =
+                            fast
+                                ? 0x3f000000u  // 0.5f = FastMotion / x2
+                                : 0x3f800000u; // 1.0f = normal
+
+                        if (!run_lifecycle(
+                                fast
+                                    ? "V152_SetTimeScale_0.5"
+                                    : "V152_SetTimeScale_1.0",
+                                kSetTimeScale,
+                                0u,
+                                scale_bits,
+                                0u,
+                                false,
+                                true)) {
+                            return result;
+                        }
+
+                        callbacks.Append(
+                            std::string{
+                                "V152 TIMESCALE APPLIED frame="} +
+                            std::to_string(frame_number) +
+                            " mode=" +
+                            (fast ? "FAST_X2" : "NORMAL_X1") +
+                            " guestValue=" +
+                            (fast ? "0.5" : "1.0"));
+                    }
+
                     if (callbacks.V90Enabled() &&
                         callbacks.host_gles_ready) {
                         std::uint32_t drawable_width = 0u;
