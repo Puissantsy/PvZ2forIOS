@@ -26,6 +26,7 @@ enum class NativeV2Observation {
     OriginalOrUnknownReceipt,  // do not change original restore behavior
     MalformedCustomToken,      // synthetic namespace, but not a valid v2 token
     CustomOwnerIsSelected,     // still NOT proof of paid/committed ownership
+    CustomSelectedProfileUnavailable,  // don't misclassify absent UI account
     CustomOwnerIsOtherProfile
 };
 
@@ -50,6 +51,9 @@ NativeV2Observation InspectPendingNativeReceipt(
         return NativeV2Observation::MalformedCustomToken;
     }
     if (decoded != nullptr) *decoded = result;
+    if (selected_profile_id == 0xffffffffu) {
+        return NativeV2Observation::CustomSelectedProfileUnavailable;
+    }
     return result.initiating_profile_id == selected_profile_id
         ? NativeV2Observation::CustomOwnerIsSelected
         : NativeV2Observation::CustomOwnerIsOtherProfile;
