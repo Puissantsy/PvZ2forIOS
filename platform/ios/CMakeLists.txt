@@ -6,6 +6,22 @@ if(NOT IOS)
     message(FATAL_ERROR "This target is intended for iOS/iPadOS. Configure with -DCMAKE_SYSTEM_NAME=iOS.")
 endif()
 
+# Apply the QA keyboard and isolated-profile corrections before compiling.
+# Exact source anchors are validated by the script, so a stale patch fails
+# during configuration instead of silently producing a misleading IPA.
+execute_process(
+    COMMAND /usr/bin/env python3
+        "${CMAKE_CURRENT_SOURCE_DIR}/qa_keyboard_profile_patch.py"
+    RESULT_VARIABLE PVZ2_QA_PATCH_STATUS
+    OUTPUT_VARIABLE PVZ2_QA_PATCH_OUTPUT
+    ERROR_VARIABLE PVZ2_QA_PATCH_ERROR
+)
+if(NOT PVZ2_QA_PATCH_STATUS EQUAL 0)
+    message(FATAL_ERROR
+        "PvZ2 QA keyboard/profile patch failed: ${PVZ2_QA_PATCH_ERROR}")
+endif()
+message(STATUS "${PVZ2_QA_PATCH_OUTPUT}")
+
 include(FetchContent)
 
 set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
