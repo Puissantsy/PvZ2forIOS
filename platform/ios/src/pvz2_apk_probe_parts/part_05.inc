@@ -631,6 +631,19 @@
                             token == offline_purchase_unconfirmed_token) {
                             offline_purchase_unconfirmed = false;
                             offline_purchase_unconfirmed_token.clear();
+                            // This is the *original native broker's* own
+                            // deferred delivery acknowledgement, not B's
+                            // free native CLAIM. Preserve only the matching
+                            // synthetic transaction's observation.
+                            if (v170_global_txn.active &&
+                                v170_global_txn.token == token) {
+                                v170_global_txn.receipt_confirmed = true;
+                                Append(
+                                    "V170 GLOBAL TXN native delivery "
+                                    "confirmed owner=" +
+                                    std::to_string(
+                                        v170_global_txn.owner_profile_id));
+                            }
                         }
                         regs[0] = 0u;
                         Append("OFFLINE STORE ConfirmDelivery token=" + token +
@@ -645,6 +658,7 @@
                         pending_offline_purchase = OfflinePurchaseRequest{};
                         offline_purchase_unconfirmed = false;
                         offline_purchase_unconfirmed_token.clear();
+                        v170_global_txn = V170GlobalTxnObservation{};
                         regs[0] = 0u;
                         Append("OFFLINE STORE Close");
                         return true;
