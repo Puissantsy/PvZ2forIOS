@@ -9,6 +9,8 @@ Pass one or two full snapshot folders or direct global_save_data files.
 from __future__ import annotations
 import argparse
 import hashlib
+import struct
+import zipfile
 from pathlib import Path
 
 FIELDS = {
@@ -20,6 +22,10 @@ FIELDS = {
         15: "Shovel Bonus", 19: "Plant Food Bonus",
         21: "Sun Bonus", 12: "Bonus Seed Slot",
     },
+    "m_unlockedMapGates": {},
+    # In available REAL saves m_unknownSkus is empty. Its nonempty
+    # element type has not been established: deliberately reject it.
+    "m_unknownSkus": {},
 }
 
 def _uvar(raw: bytes, pos: int) -> tuple[int, int]:
@@ -55,6 +61,8 @@ def decode_known_global_arrays(data: bytes) -> dict[str, list[int]]:
         count, pos = _uvar(data, pos)
         if count > 128:
             raise ValueError(f"Unexpectedly large global field {field}")
+        if field == "m_unknownSkus" and count != 0:
+            raise ValueError("Nonempty unknown SKUs field: element encoding not verified")
         values: list[int] = []
         for _ in range(count):
             if pos >= len(data) or data[pos] != 0x24:
@@ -74,11 +82,39 @@ def source_file(source: Path) -> Path:
         raise ValueError("Refusing oversized GlobalSaveData file")
     return path
 
+# GlobalSaveData serialized schema registration uses four consecutive
+# 12-byte std::vector storage slots in the known exact ARM ELF. These are
+# schema-member OFFSETS, not a proven live singleton/object address.
+ARM_SCHEMA = {
+    0x43C3C8: 0xE59F13A4,  # m_unlockedPlants literal
+    0x43C418: 0xE3A03004,  # plants object member +4
+    0x43C464: 0xE59F131C,  # m_unlockedGameFeatures literal
+    0x43C4B4: 0xE3A03010,  # features member +16
+    0x43C4D4: 0xE59F22B0,  # m_unlockedMapGates literal
+    0x43C550: 0xE3A0301C,  # map gates member +28
+    0x43C59C: 0xE59F1200,  # m_unknownSkus literal
+    0x43C5EC: 0xE3A03028,  # unknown SKU member +40
+}
+
+def verify_exact_elf(reference_apk: Path) -> None:
+    with zipfile.ZipFile(reference_apk) as archive:
+        lib = archive.read("lib/armeabi-v7a/libPVZ2.so")
+    if not lib.startswith(b"\x7fELF") or len(lib) < max(ARM_SCHEMA) + 4:
+        raise ValueError("Not the expected reference Android ARMv7 ELF")
+    for offset, expected in ARM_SCHEMA.items():
+        observed = struct.unpack_from("<I", lib, offset)[0]
+        if observed != expected:
+            raise ValueError(f"Unexpected ELF global schema at 0x{offset:x}")
+    print("PASS 8 exact reference ARM GlobalSaveData schema anchors")
+    
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("sources", nargs="+", type=Path,
                         help="One/two snapshot folders or global_save_data files")
+    parser.add_argument("--apk", type=Path, help="Optional exact reference APK schema verification")
     args = parser.parse_args()
+    if args.apk is not None:
+        verify_exact_elf(args.apk)
     if len(args.sources) > 2:
         parser.error("Compare at most two snapshots")
     seen: list[bytes] = []
