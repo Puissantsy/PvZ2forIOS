@@ -41,6 +41,7 @@ set_source_files_properties(
 
 add_executable(PvZ2forIOS MACOSX_BUNDLE
     src/main.mm
+    src/save_backups.mm
     src/dynarmic_smoke.cpp
     src/pvz2_apk_probe.cpp
     src/host_gles.mm
