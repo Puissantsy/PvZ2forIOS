@@ -78,3 +78,33 @@ Staged source now exposes `OfflineStoreLocalOwnershipForSku(profileId,sku)` with
 Explicit next research gate: confirm which original native saved purchase records retain receipt/token origin after cold restart and how to recognize existing authentic global purchases. For new v2-only custom transactions, keep an independent profile-scoped host ledger and avoid adding reusable original global entitlement; project per-profile purchase visibility and grant authority for custom origin only. If the original purchase database discards provenance, resolve conflicting original+custom same-SKU cases with a migration/preservation policy backed by actual save tests, not an unconditional SKU filter.
 
 The helper and v2 receipt marker are deliberately unbuilt preparations for that adaptation, not a speculative guest patch. A single future IPA must test BOTH clean fresh v166 profiles and restoration of existing legacy/global-paid saves without altering campaign progression.
+
+## Offline proof without another iPad IPA: two manifest-verified save diffs
+
+New read-only helper `tools/compare_store_snapshots.py` takes TWO complete, intact `save-...` directories from v165/v166 (not individual `pp.dat` or `config-v1.txt`). It validates `snapshot-info.plist` and SHA-256 of every listed file and refuses unexpected paths, symlinks and altered files before reporting which file path/hash changed. It never modifies or extracts user data. This can distinguish the set of files written by PAID A purchase versus FREE B CLAIM without claiming that a changed binary file alone identifies a particular field.
+
+Suggested controlled setup (after protecting the complete 60k baseline OUTSIDE the app):
+
+1. Use an A/B test state with at least one target SKU still unclaimed on B. The fact that B has already redeemed A's first test plant means comparing that SAME already-claimed item after cold restart is no longer a clean unclaimed control.
+2. For A purchase: copy the `prelaunch` snapshot from the session into a private analysis folder, buy one new plant ONLY on A, `⋯ > Sauvegarder et arrêter`, copy its `poststop` snapshot and full log. Compare:
+
+```sh
+python3 tools/compare_store_snapshots.py 'A-prelaunch-save-folder' 'A-poststop-save-folder'
+```
+
+3. For B claim: cold-relaunch without restoring, allow the automatic `prelaunch` snapshot, switch to B and record existing `CLAIM`, then claim that SAME plant ONCE (after capturing the UI evidence). Save+stop and copy `poststop` and full log. Compare:
+
+```sh
+python3 tools/compare_store_snapshots.py 'B-prelaunch-save-folder' 'B-poststop-save-folder'
+```
+
+4. Compare affected resource sets, prioritizing `config-v1.txt` (host per-profile masks/one-shot marker), `UserData/No_Backup/global_save_data` (original shared), `local_profiles`, `pp.dat`, `snapshot2.dat`. For minimal privacy, transfer only the generated changed-path/size summary; for true field decoding we may later need the specific changed binary save files from BOTH before and after, with the user's approval.
+5. Finally restore the untouched reference via `PvZ2RestoreInbox`, as already validated on iPad.
+
+Independent reproducible contract verifier (works with original project APK + metadata, optionally part_01 catalog) is `tools/verify_original_claim_contract.py`:
+
+```sh
+python3 tools/verify_original_claim_contract.py --metadata 'PvZ2_METADATA(1).zip' --apk 'original-android-reference.apk' --catalog platform/ios/src/pvz2_apk_probe_parts/part_01.inc
+```
+
+No user data should be sent to public GitHub. The test logs and snapshots may contain account/progression info; keep any shared analysis private. No new IPA is necessary to produce these existing v166 snapshots.
