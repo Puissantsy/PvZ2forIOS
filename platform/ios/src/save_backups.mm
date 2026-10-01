@@ -126,15 +126,27 @@ NSArray<NSDictionary *> *Inventory(NSURL *snapshot,
             return nil;
         }
         for (NSURL *entry in candidates) {
-            // Explicitly separate unsafe path data from high but legitimate
-            // file counts. The old combined message prevented diagnosis.
-            NSString *prefix = [snapshot.path stringByAppendingString:@"/"];
-            if (![entry.path hasPrefix:prefix]) {
+            // Derive paths RELATIVE TO THE CURRENT ROOT, not by blindly
+            // slicing snapshot.path. Canonicalize both paths so iOS's
+            // /var -> /private/var alias cannot corrupt the relative
+            // filename. A resolved external symlink must never pass.
+            NSString *rootPath = [url.path stringByResolvingSymlinksInPath];
+            NSString *entryPath = [entry.path stringByResolvingSymlinksInPath];
+            NSString *prefix = [rootPath stringByAppendingString:@"/"];
+            NSString *relative = nil;
+            if ([entryPath isEqualToString:rootPath] &&
+                [root isEqualToString:@"config-v1.txt"]) {
+                relative = root;
+            } else if ([entryPath hasPrefix:prefix]) {
+                relative = [root stringByAppendingString:
+                    [entryPath substringFromIndex:rootPath.length]];
+            }
+            if (relative == nil) {
                 if (error) *error = MakeError([NSString stringWithFormat:
-                    @"Inventory path escaped save root: %@", entry.lastPathComponent]);
+                    @"Inventory path escaped save root %@: %@", root,
+                    entry.lastPathComponent]);
                 return nil;
             }
-            NSString *relative = [entry.path substringFromIndex:prefix.length];
             if (!IsSafeRelativePath(relative)) {
                 if (error) *error = MakeError([NSString stringWithFormat:
                     @"Invalid save relative path in root %@: %@", root, relative]);
