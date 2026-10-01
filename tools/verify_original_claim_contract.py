@@ -42,7 +42,7 @@ def extract_locale(archive: zipfile.ZipFile, lang: str) -> dict[str, str]:
     path = "PvZ2_METADATA/LOCALES/" + lang + "/PROPERTIES/LAWNSTRINGS.TXT"
     text = archive.read(path).decode("utf-16")
     result: dict[str, str] = {}
-    for match in re.finditer(r"(?m)^\\[([^]\\r\\n]+)\\]\\s*\\r?\\n([^\\r\\n]*)", text):
+    for match in re.finditer(r"(?m)^\[([^]\r\n]+)\]\s*\r?\n([^\r\n]*)", text):
         result[match.group(1)] = match.group(2).strip()
     return result
 
@@ -65,7 +65,7 @@ def main() -> int:
 
     with zipfile.ZipFile(args.apk) as z:
         elf = z.read("lib/armeabi-v7a/libPVZ2.so")
-    if not elf.startswith(b"\\x7fELF") or elf[4] != 1 or elf[5] != 1:
+    if not elf.startswith(b"\x7fELF") or elf[4] != 1 or elf[5] != 1:
         raise ValueError("Expected little-endian 32-bit reference ARM ELF")
     for address, word in ARM_WORDS.items():
         actual = struct.unpack_from("<I", elf, address)[0]
@@ -74,8 +74,8 @@ def main() -> int:
                 f"Wrong ELF or changed native anchor 0x{address:x}: "
                 f"expected 0x{word:08x}, got 0x{actual:08x}")
     print("PASS six reference ELF ARM anchors: per-item state 6 -> CURRENT local profile")
-    for token in (b"global_save_data\\0", b"local_profiles\\0",
-                  b"RetrieveGlobalPurchase\\0"):
+    for token in (b"global_save_data\0", b"local_profiles\0",
+                  b"RetrieveGlobalPurchase\0"):
         if token not in elf:
             raise ValueError(f"Original ELF lacks {token!r}")
     print("PASS original ELF has global/local saves and RetrieveGlobalPurchase state")
@@ -83,7 +83,7 @@ def main() -> int:
     if args.catalog:
         source = args.catalog.read_text(encoding="utf-8")
         entries = re.findall(
-            r'\\{"(com\\.popcap\\.pvz2\\.android\\.[^"]+\\.nonconsume)",'
+            r'\{"(com\.popcap\.pvz2\.android\.[^"]+\.nonconsume)",'
             r'.*?OfflineStoreEntitlementKind::(Plant|GameFeature),',
             source)
         if len(entries) != 10 or len(set(k for k, _ in entries)) != 10:
