@@ -2578,6 +2578,20 @@
                                     memory.Ptr(
                                         candidate,
                                         0x40u) == nullptr) {
+                                    // In production the ordinary profile logs
+                                    // were filtered. Emit just the first few
+                                    // invalid resolutions, not one per frame.
+                                    static std::uint32_t invalid_samples = 0u;
+                                    if (invalid_samples++ < 6u) {
+                                        callbacks.Append(
+                                            "OFFLINE STORE PROFILE RESOLVE unavailable reason=" +
+                                            std::string{reason != nullptr ? reason : "n/a"} +
+                                            " mgr=0x" + JniProbeHex(profile_mgr) +
+                                            " selector=" +
+                                            std::to_string(memory.Read32Guest(
+                                                profile_mgr + 0x14u)) +
+                                            " candidate=0x" + JniProbeHex(candidate));
+                                    }
                                     return true;
                                 }
 
@@ -2785,6 +2799,79 @@
                             }
                         }
 
+                        // An event-only snapshot. Comparing the native
+                        // profile vectors with V128 masks before/after
+                        // FireDidRefresh separates a guest-global CLAIM
+                        // status from a stale profile-vector overlay.
+                        auto audit_offline_catalog =
+                            [&](const char* event) -> bool {
+                                std::uint32_t profile = 0u;
+                                std::uint32_t profile_id = 0xffffffffu;
+                                if (!resolve_current_profile(
+                                        "OfflineStore_Catalog_GetCurrentProfile",
+                                        profile,
+                                        profile_id)) {
+                                    return false;
+                                }
+                                if (profile == 0u) {
+                                    callbacks.Append(
+                                        "OFFLINE STORE CATALOG AUDIT event=" +
+                                        std::string{event} +
+                                        " profile=unavailable");
+                                    return true;
+                                }
+
+                                std::uint32_t raw_plants = 0u;
+                                std::uint32_t raw_features = 0u;
+                                if (!callbacks.OfflineStoreReadTargetMask(
+                                        profile, 0x18u, true, raw_plants) ||
+                                    !callbacks.OfflineStoreReadTargetMask(
+                                        profile, 0x34u, false, raw_features)) {
+                                    return false;
+                                }
+
+                                const std::uint32_t sidecar_plants =
+                                    callbacks.OfflineStoreLoadProfileMask(
+                                        profile_id, true);
+                                const std::uint32_t sidecar_features =
+                                    callbacks.OfflineStoreLoadProfileMask(
+                                        profile_id, false);
+
+                                callbacks.Append(
+                                    "OFFLINE STORE CATALOG AUDIT event=" +
+                                    std::string{event} +
+                                    " profileId=" + std::to_string(profile_id) +
+                                    " rawPlants=0x" + JniProbeHex(raw_plants) +
+                                    " rawFeatures=0x" + JniProbeHex(raw_features) +
+                                    " sidecarPlants=0x" + JniProbeHex(sidecar_plants) +
+                                    " sidecarFeatures=0x" + JniProbeHex(sidecar_features));
+
+                                // A save reload may restore native vectors
+                                // after our account-switch overlay. Repair
+                                // only known premium IDs and only for an
+                                // already-migrated, tracked local account.
+                                if (std::string{event} == "before-refresh" &&
+                                    (raw_plants != sidecar_plants ||
+                                     raw_features != sidecar_features) &&
+                                    callbacks.v51_config_keys.count(
+                                        "offline_store_profile_scope_migrated_v1") != 0u &&
+                                    callbacks.v51_config_keys.count(
+                                        PvZ2JniCallbacks::OfflineStoreProfileMaskKey(
+                                            profile_id, true)) != 0u &&
+                                    callbacks.v51_config_keys.count(
+                                        PvZ2JniCallbacks::OfflineStoreProfileMaskKey(
+                                            profile_id, false)) != 0u) {
+                                    callbacks.Append(
+                                        "OFFLINE STORE CATALOG restoring native premium vectors "
+                                        "from this profile sidecar before FireDidRefresh");
+                                    if (!callbacks.OfflineStoreApplyProfileEntitlements(
+                                            profile, profile_id)) {
+                                        return false;
+                                    }
+                                }
+                                return true;
+                            };
+
                         if (callbacks.pending_offline_catalog_refresh) {
                             if (!driver_ready ||
                                 callbacks.native_purchase_fire_did_refresh_address == 0u) {
@@ -2792,6 +2879,10 @@
                                     "offline-store-refresh-callback-missing",
                                     "OFFLINE STORE refresh pending but driver/FireDidRefresh is not captured yet.");
                             } else {
+                                if (!audit_offline_catalog(
+                                        "before-refresh")) {
+                                    return false;
+                                }
                                 std::vector<std::uint32_t> products;
                                 products.reserve(
                                     callbacks.pending_offline_refresh_skus.size());
@@ -2833,6 +2924,10 @@
                                         std::vector<std::uint32_t>{array})) {
                                     callbacks.AppendCritical(
                                         "OFFLINE STORE FireDidRefresh failed.");
+                                    return false;
+                                }
+                                if (!audit_offline_catalog(
+                                        "after-refresh")) {
                                     return false;
                                 }
                                 callbacks.pending_offline_catalog_refresh = false;
