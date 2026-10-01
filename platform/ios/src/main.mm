@@ -3,6 +3,7 @@
 #import <QuartzCore/CAEAGLLayer.h>
 #import <OpenGLES/EAGLDrawable.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
+#import "save_backups.hpp"
 
 #include <dlfcn.h>
 #include <sys/types.h>
@@ -2089,6 +2090,14 @@ void PvZ2HostNotifyDirectFrame(
         setHostKeyboardVisible:
             NO];
 
+    // v163: never snapshot during active gameplay; guard duplicate finish calls.
+    if (!self.runFinished) {
+        NSError *backupError = nil;
+        NSURL *backup = PVZSaveCreateSnapshot(@"poststop", &backupError);
+        AppendPersistentLog(backup
+            ? [NSString stringWithFormat:@"[V163 SAVE] poststop snapshot: %@", backup.lastPathComponent]
+            : [NSString stringWithFormat:@"[V163 SAVE] poststop skipped/failed: %@", backupError.localizedDescription ?: @"unknown"]);
+    }
     self.runFinished = YES;
     self.inputEnabled = NO;
     self.captionLabel.text =
@@ -2146,6 +2155,13 @@ void PvZ2HostNotifyDirectFrame(
     BOOL v130JitRequestSent;
 @property(nonatomic, strong)
     UILabel *v130LauncherLabel;
+@property(nonatomic, assign)
+    BOOL v163RestorePromptShown;
+@property(nonatomic, assign)
+    BOOL v163RestorePromptActive;
+@property(nonatomic, assign)
+    BOOL v163PrelaunchSnapshotTaken;
+- (void)v163OfferPendingRestore;
 
 @end
 
@@ -2259,6 +2275,49 @@ void PvZ2HostNotifyDirectFrame(
     [self v130ContinueLaunch];
 }
 
+
+- (void)v163OfferPendingRestore {
+    if (self.v163RestorePromptShown) return;
+    self.v163RestorePromptShown = YES;
+    NSArray<NSURL *> *pending = PVZSavePendingRestores();
+    if (pending.count == 0) return;
+    NSURL *candidate = pending.firstObject;
+    self.v163RestorePromptActive = YES;
+    AppendPersistentLog([NSString stringWithFormat:
+        @"[V163 SAVE] pending restore: %@", candidate.lastPathComponent]);
+    UIAlertController *alert = [UIAlertController
+        alertControllerWithTitle:@"Restaurer une sauvegarde ?"
+        message:[NSString stringWithFormat:
+            @"Copie détectée dans PvZ2RestoreInbox : %@. Avant toute modification, la sauvegarde actuelle sera protégée.",
+            candidate.lastPathComponent]
+        preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Conserver la partie actuelle"
+        style:UIAlertActionStyleCancel handler:^(__unused UIAlertAction *action) {
+            self.v163RestorePromptActive = NO;
+            AppendPersistentLog(@"[V163 SAVE] restore declined; live files unchanged");
+            [self v130ContinueLaunch];
+        }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Restaurer cette copie"
+        style:UIAlertActionStyleDestructive handler:^(__unused UIAlertAction *action) {
+            NSError *error = nil;
+            BOOL ok = PVZSaveRestoreSnapshot(candidate, &error);
+            AppendPersistentLog(ok
+                ? @"[V163 SAVE] verified restore completed"
+                : [NSString stringWithFormat:@"[V163 SAVE] restore failed: %@",
+                     error.localizedDescription ?: @"unknown"]);
+            if (!ok) {
+                [self v130SetStatus:[NSString stringWithFormat:
+                    @"Restore failed; launch paused.\n%@",
+                    error.localizedDescription ?: @"Check backup folder."]];
+                return;
+            }
+            self.v163RestorePromptActive = NO;
+            [self v130SetStatus:@"Sauvegarde restaurée."];
+            [self v130ContinueLaunch];
+        }]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
 - (void)v130PresentRuntimeImporter {
     if (self.presentedViewController != nil) {
         return;
@@ -2335,6 +2394,14 @@ void PvZ2HostNotifyDirectFrame(
         return;
     }
 
+    if (!self.v163PrelaunchSnapshotTaken) {
+        self.v163PrelaunchSnapshotTaken = YES;
+        NSError *backupError = nil;
+        NSURL *backup = PVZSaveCreateSnapshot(@"prelaunch", &backupError);
+        AppendPersistentLog(backup
+            ? [NSString stringWithFormat:@"[V163 SAVE] prelaunch snapshot: %@", backup.lastPathComponent]
+            : [NSString stringWithFormat:@"[V163 SAVE] prelaunch skipped/failed: %@", backupError.localizedDescription ?: @"unknown"]);
+    }
     NSURL *apk = V130StoredApkURL();
     NSURL *obb = V130StoredObbURL();
     if (apk == nil || obb == nil || !V130RuntimeInstalled()) {
@@ -2358,6 +2425,8 @@ void PvZ2HostNotifyDirectFrame(
         return;
     }
 
+    if (!self.v163RestorePromptShown) [self v163OfferPendingRestore];
+    if (self.v163RestorePromptActive) return;
     if (!V130RuntimeInstalled()) {
         [self v130PresentRuntimeImporter];
         return;
