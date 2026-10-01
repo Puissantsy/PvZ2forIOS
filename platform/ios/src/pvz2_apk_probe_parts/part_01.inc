@@ -2719,10 +2719,49 @@
                 OfflineStoreLoadProfileMask(profile_id, false);
         }
 
+        // A profile vector can be rehydrated from the original game's
+        // global save independently of our V128 profile-specific sidecar.
+        // Record both values before overlaying only the ten premium IDs.
+        std::uint32_t raw_plants_before = 0u;
+        std::uint32_t raw_features_before = 0u;
+        if (!OfflineStoreReadTargetMask(
+                profile, 0x18u, true, raw_plants_before) ||
+            !OfflineStoreReadTargetMask(
+                profile, 0x34u, false, raw_features_before)) {
+            return false;
+        }
+        Append(
+            "OFFLINE STORE PROFILE BEFORE id=" +
+            std::to_string(profile_id) +
+            " migration=" +
+            (first_global_migration ? std::string{"YES"} : std::string{"NO"}) +
+            " rawPlants=0x" + JniProbeHex(raw_plants_before) +
+            " rawFeatures=0x" + JniProbeHex(raw_features_before) +
+            " targetPlants=0x" + JniProbeHex(plant_mask) +
+            " targetFeatures=0x" + JniProbeHex(feature_mask));
+
         if (!OfflineStoreRewriteTargetVector(
                 profile, 0x18u, true, plant_mask) ||
             !OfflineStoreRewriteTargetVector(
                 profile, 0x34u, false, feature_mask)) {
+            return false;
+        }
+
+        std::uint32_t plants_after = 0u;
+        std::uint32_t features_after = 0u;
+        if (!OfflineStoreReadTargetMask(
+                profile, 0x18u, true, plants_after) ||
+            !OfflineStoreReadTargetMask(
+                profile, 0x34u, false, features_after)) {
+            return false;
+        }
+        if (plants_after != plant_mask ||
+            features_after != feature_mask) {
+            AppendCritical(
+                "OFFLINE STORE PROFILE vector verification FAILED id=" +
+                std::to_string(profile_id) +
+                " plantsAfter=0x" + JniProbeHex(plants_after) +
+                " featuresAfter=0x" + JniProbeHex(features_after));
             return false;
         }
 
