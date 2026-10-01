@@ -91,3 +91,32 @@ User explicitly confirmed that B pressing CLAIM actually grants the premium plan
 - Preserve existing V166 reset, V165 verified backup/restoration, V164 diagnostics UI, V162 bounded transaction/entitlement probes, and all guest scheduler/audio/render/memory improvements. Instrument only changed event boundaries, not per-frame. Implement the full identified class of fixes before ONE new IPA build.
 
 Current decision: no speculative native patch and no additional IPA on this static-analysis branch. The next meaningful input is the already-planned v166 A→B real-iPad observation and the two complete logs.
+
+## 7. Instruction-level and cross-platform verification after user confirmed real CLAIM grant
+
+Re-extracted and disassembled the actual project APK `lib/armeabi-v7a/libPVZ2.so` with LLVM ARM tooling. These are genuine ARM `LDR` literal references resolved through the position-independent C++ base, not mere neighboring ASCII strings:
+
+| Purpose | Android string address | ARM instruction loading relative reference |
+|---|---:|---:|
+| `PurchasingSkus` | `0x00c78ce5` | `0x0043c058` (literal `0x0043c2b8`) |
+| `m_unlockedPlants` | `0x00c78c65` | `0x0043c3c8` (literal `0x0043c774`) |
+| `m_unlockedGameFeatures` | `0x00c78c76` | `0x0043c464` (literal `0x0043c788`) |
+| `m_unknownSkus` | `0x00c78ca0` | `0x0043c59c` (literal `0x0043c7a4`) |
+| `local_profiles` | `0x00c78c46` | `0x0043e988` (literal `0x0043ea94`) |
+| `global_save_data` | `0x00c78c35` | `0x0043faf8` (literal `0x0043fc04`) |
+| `PurchaseBrokerState` | `0x00c7a0a3` | `0x0049aa80` (literal `0x0049ab44`) |
+| `RetrieveGlobalPurchase` | `0x00c7a14e` | `0x0049ac3c` (literal `0x0049ac5c`) |
+
+Note: ARM `LDR` to metadata strings is proof of a real serialized/enum reference, **not proof the loader itself implements the claim decision**. The unrelated weak `std::*` symbol labels displayed by disassemblers often span much larger ranges and must NOT be treated as precise user-function names.
+
+Real v164 iPad USERFS loader evidence: `UserData/No_Backup/global_save_data` loaded **196 bytes** and `local_profiles` **1061 bytes**; `pp.dat` and `snapshot2.dat` both **7241 bytes**. These are actual distinct on-disk resources. Their formats and premium purchase contents have NOT been decoded from a real A/B save here.
+
+Independent check against the project-supplied original 2013 iOS 1.5.252123 `PvZ2` ARMv7 Mach-O confirms ALL nine exact metadata/enum names above (including `global_save_data`, `local_profiles`, `m_unlockedPlants`, `PurchasingSkus`, `RetrieveGlobalPurchase`). This means the global-purchase architecture predates our Android-on-iOS bridge and is shared across original platforms. It remains inference, not a verified EA design statement, that global store purchases were intentionally claimable on multiple local profiles.
+
+Native `Sexy::IPurchaseDriver::Product` lookup: Android ARM `0x00a006c0` calls `std::map<std::string, Product>::find` at `0x00a006f8`, then copies four values from offsets 0, +4, +8, +12 in the retrieved record. Adjacent product update code near `0x00a00c3c` inserts or replaces through `map::operator[]`. This supports that **catalog/product-details lookup differs from native entitlement/redemption handling**; it does not disclose the separate purchase-ownership structure. No justified `SkuDetails` field alteration can be inferred as a direct fix for CLAIM.
+
+The Android `classes.dex` also includes Google Play billing names `getAllOwnedSkus`, `getAllPurchases`, `getPurchases`, `queryPurchases`. Presence of these library API names does not show which ones the original game actually calls for CLAIM; no unobserved JNI call should be invented.
+
+Consequence of actual B CLAIM→plant grant: global/native entitlement read and the resulting per-profile unlock writer must BOTH obey our custom coin-backed profile scope for only ten offline SKUs. Cache invalidation or masking a label alone is insufficient. Existing v166 cannot answer whether the global flag is deserialized at cold startup or maintained only in broker RAM because the available full probe log has no A→B claim event.
+
+Companion unbuilt implementation work: branch `v168-claim-redemption-fix-staging` pins `RequestPayment` to its **initiating** profile and aborts on later selection mismatch before debit/native transaction completion. This proactively fixes a distinct confirmed race but does NOT claim to fix free cross-profile CLAIM; do not ship an owner-only IPA as if it did.
