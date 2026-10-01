@@ -4573,6 +4573,13 @@
     bool KeepLegacyPerformanceLogLine(
         const std::string& line) const {
 
+        // Offline store is event-driven (requests, account transitions and
+        // purchase callbacks), not a per-frame trace. Keep these bounded
+        // events visible in production so CLAIM leaks can be diagnosed.
+        if (line.rfind("OFFLINE STORE ", 0u) == 0u) {
+            return true;
+        }
+
         if (V86Enabled()) {
             if (line.rfind("V85 PERF", 0u) == 0u ||
                 line.rfind("V86 PERF", 0u) == 0u ||
