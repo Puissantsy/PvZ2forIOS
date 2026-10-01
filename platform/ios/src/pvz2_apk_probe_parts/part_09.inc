@@ -2903,7 +2903,13 @@
 
                                 if (!audit_offline_original_global(
                                         event, profile_id)) {
-                                    return false;
+                                    // Observation is passive: an uncertain
+                                    // native global read must not prevent
+                                    // existing shop refresh or original
+                                    // v166 per-profile vector projection.
+                                    callbacks.AppendCritical(
+                                        "V169 original global catalog probe "
+                                        "unavailable; preserving v166 flow");
                                 }
 
                                 callbacks.Append(
@@ -3118,7 +3124,9 @@
                         // synchronous entitlement change.
                         if (!audit_offline_original_global(
                                 "pre-paid-enqueue", profile_id)) {
-                            return false;
+                            callbacks.AppendCritical(
+                                "V169 original global pre-paid probe "
+                                "unavailable; no mutation attempted");
                         }
 
                         if (!run_lifecycle(
@@ -3238,7 +3246,9 @@
 
                         if (!audit_offline_original_global(
                                 "post-payment-event-enqueue", profile_id)) {
-                            return false;
+                            callbacks.AppendCritical(
+                                "V169 original global post-enqueue probe "
+                                "unavailable; preserving sidecar commit");
                         }
 
                         const auto* purchased_entry =
