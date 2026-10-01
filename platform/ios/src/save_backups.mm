@@ -410,6 +410,16 @@ BOOL PVZSaveRestoreSnapshot(NSURL *snapshot, NSError **error) {
     return YES;
 }
 
+BOOL PVZSaveHasLocalSave(void) {
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSArray<NSURL *> *entries = [fm contentsOfDirectoryAtURL:LiveRoot()
+        includingPropertiesForKeys:nil options:0 error:nil];
+    for (NSURL *entry in entries) {
+        if (IsSaveRoot(entry.lastPathComponent)) return YES;
+    }
+    return NO;
+}
+
 // v166 QA-only explicit reset. The original Android game save, the old QA
 // UserData-* trees AND the host-side premium/one-time coin marker must be
 // reset as one unit; the imported APK/OBB in PvZ2Runtime are not touched.
@@ -445,7 +455,10 @@ NSURL *PVZSaveResetForTest(NSError **error) {
        withIntermediateDirectories:YES attributes:nil error:error]) return nil;
     NSURL *protectedBackup = [protectedRoot
         URLByAppendingPathComponent:snapshot.lastPathComponent isDirectory:YES];
-    if (![fm copyItemAtURL:snapshot toURL:protectedBackup error:error]) return nil;
+    if (![fm copyItemAtURL:snapshot toURL:protectedBackup error:error]) {
+        [fm removeItemAtURL:protectedBackup error:nil];
+        return nil;
+    }
     if (!ValidateSnapshot(protectedBackup, nil, error)) {
         // Never leave a partial backup with an apparently valid directory name.
         [fm removeItemAtURL:protectedBackup error:nil];
