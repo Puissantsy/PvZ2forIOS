@@ -27,3 +27,14 @@ To restore, copy a complete external snapshot folder into Files > On My iPad > P
 
 Source docs: https://github.com/Puissantsy/PvZ2forIOS/blob/v163-external-save-backups/docs/V163_EXTERNAL_SAVE_BACKUPS.md
 v162 CLAIM investigation: https://github.com/Puissantsy/PvZ2forIOS/pull/7
+
+
+## v165 correction after first real v164 iPad run
+
+At 10:12:15 UTC in the user's 2026-10-01 v164 log, the ellipsis menu requested a safe stop, guest Hard Stop completed at frame 5683, and only the backup exporter failed: `Unsafe path or too many save files`. The old error combined invalid path with an arbitrary 512-file inventory ceiling. The exact triggering condition cannot be recovered from v164's ambiguous log.
+
+v165 supports up to 16,384 files while retaining the 64 MiB per-file and 128 MiB total snapshot limits. It computes each relative path using canonical paths under its own UserData root (handling iOS /var and /private/var aliases), refuses any escape/symlink, and emits distinct, actionable path/count errors. The prelaunch snapshot outcome is now retained after the diagnostic logger reset. A successful snapshot logs its root and file counts; the poststop ellipsis menu displays success or the exact failure instead of a generic possibly-successful description.
+
+**Update the app in place.** Tap ⋯ → Sauvegarder et arrêter, then open the same menu to read the outcome. If it says SUCCESS, confirm a complete `save-...` folder under Files → On My iPad → PvZ2forIOS Probe → PvZ2Backups. Copy the entire folder externally to iCloud Drive or PC and verify the external copy before trying a restore on a disposable profile. If it fails, supply the full v165 log: its new message should pinpoint which path or limit caused the failure. Never uninstall before export AND restore were verified on the real iPad.
+
+Detailed diagnosis: https://github.com/Puissantsy/PvZ2forIOS/blob/v165-save-inventory-recovery/docs/V165_SAVE_INVENTORY_RECOVERY.md
