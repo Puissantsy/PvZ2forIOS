@@ -2696,13 +2696,7 @@
     // This does NOT decide whether an unrelated ORIGINAL nonconsumable
     // receipt is globally restorable: authentic original receipts and
     // our v2 synthetic offline receipts may share canonical SKU strings.
-    enum class OfflineStoreLocalOwnership {
-        NotOfflineSku,
-        NoProfile,
-        SidecarNotReady,
-        Owned,
-        Unowned
-    };
+    using OfflineStoreLocalOwnership = pvz2offline::LocalOwnerStatus;
 
     OfflineStoreLocalOwnership OfflineStoreLocalOwnershipForSku(
         std::uint32_t profile_id,
