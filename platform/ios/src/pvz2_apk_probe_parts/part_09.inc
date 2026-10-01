@@ -2991,10 +2991,51 @@
                         }
 
                         if (profile == 0u ||
-                            memory.Ptr(profile, 0x18u) == nullptr) {
+                            memory.Ptr(profile, 0x18u) == nullptr ||
+                            request.initiating_profile_id == 0xffffffffu ||
+                            profile_id != request.initiating_profile_id) {
                             callbacks.AppendCritical(
-                                "OFFLINE STORE invalid current profile while processing sku=" +
-                                request.sku);
+                                "OFFLINE STORE purchase owner mismatch/rejected "
+                                "sku=" + request.sku +
+                                " initiatedProfile=" +
+                                std::to_string(request.initiating_profile_id) +
+                                " deliveryProfile=" +
+                                std::to_string(profile_id) +
+                                " profileResolved=" +
+                                (profile != 0u ? std::string{"YES"} :
+                                                 std::string{"NO"}));
+                            // The user switched accounts while billing was
+                            // queued. Reject BEFORE coin debit or native
+                            // FirePaymentComplete; the next account must
+                            // never inherit this purchase.
+                            if (!fire_incomplete(6)) return false;
+                            callbacks.pending_offline_purchase =
+                                PvZ2JniCallbacks::OfflinePurchaseRequest{};
+                            return true;
+                        }
+
+                        // A stale native BUY button must not charge a
+                        // customer for the SAME locally-owned plant again.
+                        // This gate applies only to a NEW custom offline
+                        // RequestPayment; authentic historical app-store
+                        // receipts never pass through this decision.
+                        const auto owner_status =
+                            callbacks.OfflineStoreLocalOwnershipForSku(
+                                profile_id, request.sku);
+                        const auto buy_gate =
+                            pvz2offline::OfflineNewBuyGate(owner_status);
+                        if (buy_gate !=
+                            pvz2offline::OfflineBuyGate::AllowPaidPurchase) {
+                            callbacks.AppendCritical(
+                                "OFFLINE STORE paid attempt rejected before "
+                                "debit sku=" + request.sku +
+                                " profileId=" + std::to_string(profile_id) +
+                                " gate=" +
+                                std::to_string(
+                                    static_cast<unsigned>(buy_gate)));
+                            // Unsupported/no-sidecar/duplicate are failures:
+                            // never re-emit FirePaymentComplete or add a
+                            // second globally reclaimable native receipt.
                             if (!fire_incomplete(6)) return false;
                             callbacks.pending_offline_purchase =
                                 PvZ2JniCallbacks::OfflinePurchaseRequest{};
@@ -3030,10 +3071,38 @@
 
                         const std::string serial =
                             std::to_string(request.serial);
+                        // Include the initiating profile in the opaque
+                        // synthetic receipt fields. The original native
+                        // FirePaymentComplete enqueues an async event, so
+                        // later listener-side ownership checks must not
+                        // infer owner from the CURRENT UI profile. This
+                        // marker is metadata, not yet a native claim fix.
+                        const std::string owner_serial =
+                            "v2:" +
+                            std::to_string(request.initiating_profile_id) +
+                            ":" + serial;
                         const std::string token =
-                            "pvz2-offline:" + serial + ":" + request.sku;
+                            pvz2offline::MakeReceiptTokenV2(
+                                request.initiating_profile_id,
+                                request.serial,
+                                request.sku);
+                        if (token.empty()) {
+                            callbacks.AppendCritical(
+                                "OFFLINE STORE invalid canonical v2 token "
+                                "before native enqueue; rolling back debit");
+                            if (!run_lifecycle(
+                                    "OfflineStore_RollbackInvalidToken",
+                                    kSetCoins, profile, coins_before,
+                                    0u, false, true)) {
+                                return false;
+                            }
+                            if (!fire_incomplete(6)) return false;
+                            callbacks.pending_offline_purchase =
+                                PvZ2JniCallbacks::OfflinePurchaseRequest{};
+                            return true;
+                        }
                         const std::string order_id =
-                            "pvz2-offline-order:" + serial;
+                            "pvz2-offline-order:" + owner_serial;
                         const std::string original_json =
                             "{\"orderId\":\"" + order_id +
                             "\",\"packageName\":\"com.ea.game.pvz2_row\",\"productId\":\"" +
@@ -3041,7 +3110,7 @@
                             "\",\"purchaseState\":0,\"purchaseToken\":\"" +
                             token + "\"}";
                         const std::string receipt =
-                            "pvz2-offline-receipt:" + serial;
+                            "pvz2-offline-receipt:" + owner_serial;
 
                         const std::uint32_t token_string =
                             callbacks.JniNewSyntheticString(token);

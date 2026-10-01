@@ -2370,7 +2370,25 @@
         std::uint32_t coin_price = 0u;
         std::int32_t immediate_error = 0;
         std::uint64_t serial = 0u;
+        // Bind the asynchronous transaction to the actual local profile
+        // selected when RequestPayment was received. Never charge/fulfill
+        // a different profile at the later frame-boundary callback.
+        std::uint32_t initiating_profile_id = 0xffffffffu;
     };
+
+    std::uint32_t OfflineStoreCurrentSelectionId() {
+        constexpr std::uint32_t kProfileMgrSingletonStorage =
+            kGuestBase + 0x00d4e960u;
+        if (mem.Ptr(kProfileMgrSingletonStorage, 4u) == nullptr) {
+            return 0xffffffffu;
+        }
+        const std::uint32_t manager =
+            mem.Read32Guest(kProfileMgrSingletonStorage);
+        if (manager == 0u || mem.Ptr(manager, 0x18u) == nullptr) {
+            return 0xffffffffu;
+        }
+        return mem.Read32Guest(manager + 0x14u);
+    }
 
     static const OfflineStoreCatalogEntry*
     OfflineStoreFindCatalogEntry(const std::string& sku) {
@@ -2672,6 +2690,42 @@
         return it == v51_config_integers.end()
             ? 0u
             : static_cast<std::uint32_t>(it->second);
+    }
+
+    // Pure policy INPUT for a future narrow native purchase adapter.
+    // This does NOT decide whether an unrelated ORIGINAL nonconsumable
+    // receipt is globally restorable: authentic original receipts and
+    // our v2 synthetic offline receipts may share canonical SKU strings.
+    using OfflineStoreLocalOwnership = pvz2offline::LocalOwnerStatus;
+
+    OfflineStoreLocalOwnership OfflineStoreLocalOwnershipForSku(
+        std::uint32_t profile_id,
+        const std::string& sku) {
+
+        const auto* entry = OfflineStoreFindCatalogEntry(sku);
+        if (entry == nullptr) {
+            return OfflineStoreLocalOwnership::NotOfflineSku;
+        }
+        if (profile_id == 0xffffffffu) {
+            return OfflineStoreLocalOwnership::NoProfile;
+        }
+
+        V128LoadConfigOnce();
+        const bool plants =
+            entry->entitlement_kind == OfflineStoreEntitlementKind::Plant;
+        const std::string key =
+            OfflineStoreProfileMaskKey(profile_id, plants);
+        if (v51_config_keys.count(
+                "offline_store_profile_scope_migrated_v1") == 0u ||
+            v51_config_keys.count(key) == 0u) {
+            return OfflineStoreLocalOwnership::SidecarNotReady;
+        }
+
+        const std::uint32_t mask =
+            OfflineStoreLoadProfileMask(profile_id, plants);
+        return (mask & (1u << entry->entitlement_bit)) != 0u
+            ? OfflineStoreLocalOwnership::Owned
+            : OfflineStoreLocalOwnership::Unowned;
     }
 
     void OfflineStoreWriteProfileMask(
