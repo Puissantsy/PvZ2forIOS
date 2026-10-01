@@ -108,3 +108,18 @@ python3 tools/verify_original_claim_contract.py --metadata 'PvZ2_METADATA(1).zip
 ```
 
 No user data should be sent to public GitHub. The test logs and snapshots may contain account/progression info; keep any shared analysis private. No new IPA is necessary to produce these existing v166 snapshots.
+
+## Strict v2 receipt contract now isolated and unit-testable (still staging)
+
+The parser/serializer lives in pure, dependency-free C++20 header `platform/ios/src/offline_receipt_v2.hpp`, included once from `pvz2_apk_probe.cpp`. `part_09.inc` now calls `MakeReceiptTokenV2` rather than hand-assembling the token; token remains byte-for-byte `pvz2-offline:v2:<initiatingProfileId>:<serial>:<sku>`, with the same v2 owner/serial retained in order and receipt strings. An invalid serializer result causes rollback before JNI native event enqueue. **No deployed native listener calls the parser yet; this is a safe future prerequisite, not CLAIM enforcement.**
+
+`ParseReceiptTokenV2` accepts a known-SKU predicate to reuse the existing 10-entry catalog instead of maintaining a second independent SKU allowlist. It rejects original `pvz2-offline:<serial>:<sku>` legacy tokens, unrelated/noncatalog strings, `v3` or malformed version, leading-zero aliases, signed/negative IDs, invalid `0xffffffff` owner, empty/zero serial, 32/64-bit numeric overflows, oversized tokens and appended garbage. On rejection it leaves its output entirely unchanged. The namespace `pvz2offline` is side-effect-free; an authentic original receipt without v2 provenance must follow original shared-purchase handling rather than this custom path.
+
+A standalone host-side regression test is committed at `tests/test_offline_receipt_v2.cpp` (without iOS dependencies); equivalent source run locally with Clang 17 / `-std=c++20 -Wall -Wextra -Werror -pedantic` passed two valid/boundary cases and 13 invalid/legacy cases. To rerun the committed test on a development machine:
+
+```sh
+clang++ -std=c++20 -Wall -Wextra -Werror -pedantic -Iplatform/ios/src tests/test_offline_receipt_v2.cpp -o /tmp/receipt-v2-test
+/tmp/receipt-v2-test
+```
+
+Read-only project source validation also confirmed eight bilingual localization keys (four each EN-US and FR-FR), all ten custom SKUs byte-for-byte in the ORIGINAL binary `MAGENTO.RTON` resource and all six version-locked ARM state/purchase opcodes in the reference `libPVZ2.so`. These tests establish provenance-collision risk and trace integrity, NOT safe authorization semantics for real legacy receipts. Keep PR as draft and do not build/release an owner-only IPA.
