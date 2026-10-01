@@ -2340,12 +2340,21 @@
     // Offline store transport: preserve PvZ2's native PurchaseBroker and
     // entitlement dispatcher while replacing the dead Google Play billing
     // surface with deterministic local catalog/payment callbacks.
+    enum class OfflineStoreEntitlementKind : std::uint8_t {
+        Plant,
+        GameFeature
+    };
+
     struct OfflineStoreCatalogEntry {
         const char* sku = nullptr;
         std::uint32_t coin_price = 0u;
         const char* price_text = nullptr;
         const char* title = nullptr;
         const char* description = nullptr;
+        OfflineStoreEntitlementKind entitlement_kind =
+            OfflineStoreEntitlementKind::Plant;
+        std::uint32_t entitlement_id = 0u;
+        std::uint32_t entitlement_bit = 0u;
     };
 
     struct OfflineSkuDetails {
@@ -2366,16 +2375,16 @@
     static const OfflineStoreCatalogEntry*
     OfflineStoreFindCatalogEntry(const std::string& sku) {
         static const std::array<OfflineStoreCatalogEntry, 10> entries{{
-            {"com.popcap.pvz2.android.plant.snowpea.nonconsume", 10000u, "10 000 PvZCoins", "Snow Pea", "Permanent plant unlock"},
-            {"com.popcap.pvz2.android.plant.squash.nonconsume", 15000u, "15 000 PvZCoins", "Squash", "Permanent plant unlock"},
-            {"com.popcap.pvz2.android.plant.imitater.nonconsume", 50000u, "50 000 PvZCoins", "Imitater", "Permanent plant unlock"},
-            {"com.popcap.pvz2.android.plant.jalapeno.nonconsume", 20000u, "20 000 PvZCoins", "Jalapeno", "Permanent plant unlock"},
-            {"com.popcap.pvz2.android.plant.torchwood.nonconsume", 10000u, "10 000 PvZCoins", "Torchwood", "Permanent plant unlock"},
-            {"com.popcap.pvz2.android.plant.powerlily.nonconsume", 50000u, "50 000 PvZCoins", "Power Lily", "Permanent plant unlock"},
-            {"com.popcap.pvz2.android.gameupgrade.sunshovel3.nonconsume", 10000u, "10 000 PvZCoins", "Shovel Bonus", "Permanent game upgrade"},
-            {"com.popcap.pvz2.android.gameupgrade.pfslot2.nonconsume", 15000u, "15 000 PvZCoins", "Plant Food Bonus", "Permanent game upgrade"},
-            {"com.popcap.pvz2.android.gameupgrade.startingsun2.nonconsume", 30000u, "30 000 PvZCoins", "Sun Bonus", "Permanent game upgrade"},
-            {"com.popcap.pvz2.android.gameupgrade.seedslot2.nonconsume", 50000u, "50 000 PvZCoins", "Bonus Seed Slot", "Permanent game upgrade"}
+            {"com.popcap.pvz2.android.plant.snowpea.nonconsume", 10000u, "10 000 PvZCoins", "Snow Pea", "Permanent plant unlock", OfflineStoreEntitlementKind::Plant, 21u, 0u},
+            {"com.popcap.pvz2.android.plant.squash.nonconsume", 15000u, "15 000 PvZCoins", "Squash", "Permanent plant unlock", OfflineStoreEntitlementKind::Plant, 39u, 1u},
+            {"com.popcap.pvz2.android.plant.imitater.nonconsume", 50000u, "50 000 PvZCoins", "Imitater", "Permanent plant unlock", OfflineStoreEntitlementKind::Plant, 32u, 2u},
+            {"com.popcap.pvz2.android.plant.jalapeno.nonconsume", 20000u, "20 000 PvZCoins", "Jalapeno", "Permanent plant unlock", OfflineStoreEntitlementKind::Plant, 33u, 3u},
+            {"com.popcap.pvz2.android.plant.torchwood.nonconsume", 10000u, "10 000 PvZCoins", "Torchwood", "Permanent plant unlock", OfflineStoreEntitlementKind::Plant, 18u, 4u},
+            {"com.popcap.pvz2.android.plant.powerlily.nonconsume", 50000u, "50 000 PvZCoins", "Power Lily", "Permanent plant unlock", OfflineStoreEntitlementKind::Plant, 38u, 5u},
+            {"com.popcap.pvz2.android.gameupgrade.sunshovel3.nonconsume", 10000u, "10 000 PvZCoins", "Shovel Bonus", "Permanent game upgrade", OfflineStoreEntitlementKind::GameFeature, 15u, 0u},
+            {"com.popcap.pvz2.android.gameupgrade.pfslot2.nonconsume", 15000u, "15 000 PvZCoins", "Plant Food Bonus", "Permanent game upgrade", OfflineStoreEntitlementKind::GameFeature, 19u, 1u},
+            {"com.popcap.pvz2.android.gameupgrade.startingsun2.nonconsume", 30000u, "30 000 PvZCoins", "Sun Bonus", "Permanent game upgrade", OfflineStoreEntitlementKind::GameFeature, 21u, 2u},
+            {"com.popcap.pvz2.android.gameupgrade.seedslot2.nonconsume", 50000u, "50 000 PvZCoins", "Bonus Seed Slot", "Permanent game upgrade", OfflineStoreEntitlementKind::GameFeature, 12u, 3u}
         }};
 
         for (const auto& entry : entries) {
@@ -2384,6 +2393,42 @@
             }
         }
         return nullptr;
+    }
+
+    static int OfflineStorePlantBitForId(std::uint32_t id) {
+        switch (id) {
+        case 21u: return 0;
+        case 39u: return 1;
+        case 32u: return 2;
+        case 33u: return 3;
+        case 18u: return 4;
+        case 38u: return 5;
+        default: return -1;
+        }
+    }
+
+    static int OfflineStoreFeatureBitForId(std::uint32_t id) {
+        switch (id) {
+        case 15u: return 0;
+        case 19u: return 1;
+        case 21u: return 2;
+        case 12u: return 3;
+        default: return -1;
+        }
+    }
+
+    static const std::array<std::uint32_t, 6>& OfflineStorePlantIds() {
+        static const std::array<std::uint32_t, 6> ids{{
+            21u, 39u, 32u, 33u, 18u, 38u
+        }};
+        return ids;
+    }
+
+    static const std::array<std::uint32_t, 4>& OfflineStoreFeatureIds() {
+        static const std::array<std::uint32_t, 4> ids{{
+            15u, 19u, 21u, 12u
+        }};
+        return ids;
     }
 
     std::uint32_t JniNewSyntheticObject() {
@@ -2406,6 +2451,385 @@
         return handle;
     }
 
+    static std::string OfflineStoreProfileMaskKey(
+        std::uint32_t profile_id,
+        bool plants) {
+        return "offline_store_profile_v1_" +
+            std::to_string(profile_id) +
+            (plants ? "_plants" : "_features");
+    }
+
+    bool OfflineStoreReadTargetMask(
+        std::uint32_t profile,
+        std::uint32_t vector_offset,
+        bool plants,
+        std::uint32_t& mask) {
+
+        mask = 0u;
+
+        if (profile == 0u ||
+            mem.Ptr(profile + vector_offset, 12u) == nullptr) {
+            return false;
+        }
+
+        const std::uint32_t begin =
+            mem.Read32Guest(profile + vector_offset);
+        const std::uint32_t end =
+            mem.Read32Guest(profile + vector_offset + 4u);
+        const std::uint32_t capacity =
+            mem.Read32Guest(profile + vector_offset + 8u);
+
+        if (begin == 0u && end == 0u && capacity == 0u) {
+            return true;
+        }
+
+        if (begin == 0u ||
+            end < begin ||
+            capacity < end ||
+            ((end - begin) & 3u) != 0u ||
+            ((capacity - begin) & 3u) != 0u ||
+            end - begin > 4096u ||
+            capacity - begin > 8192u ||
+            mem.Ptr(begin, end - begin) == nullptr) {
+            AppendCritical(
+                "OFFLINE STORE PROFILE invalid entitlement vector while reading profile=0x" +
+                JniProbeHex(profile) +
+                " offset=0x" +
+                JniProbeHex(vector_offset));
+            return false;
+        }
+
+        for (std::uint32_t cursor = begin;
+             cursor < end;
+             cursor += 4u) {
+            const std::uint32_t id =
+                mem.Read32Guest(cursor);
+            const int bit =
+                plants
+                    ? OfflineStorePlantBitForId(id)
+                    : OfflineStoreFeatureBitForId(id);
+            if (bit >= 0) {
+                mask |= 1u << static_cast<std::uint32_t>(bit);
+            }
+        }
+
+        return true;
+    }
+
+    bool OfflineStoreRewriteTargetVector(
+        std::uint32_t profile,
+        std::uint32_t vector_offset,
+        bool plants,
+        std::uint32_t desired_mask) {
+
+        if (profile == 0u ||
+            mem.Ptr(profile + vector_offset, 12u) == nullptr) {
+            return false;
+        }
+
+        std::uint32_t begin =
+            mem.Read32Guest(profile + vector_offset);
+        std::uint32_t end =
+            mem.Read32Guest(profile + vector_offset + 4u);
+        std::uint32_t capacity =
+            mem.Read32Guest(profile + vector_offset + 8u);
+
+        if (begin == 0u && end == 0u && capacity == 0u) {
+        } else if (
+            begin == 0u ||
+            end < begin ||
+            capacity < end ||
+            ((end - begin) & 3u) != 0u ||
+            ((capacity - begin) & 3u) != 0u ||
+            end - begin > 4096u ||
+            capacity - begin > 8192u ||
+            mem.Ptr(begin, end - begin) == nullptr) {
+
+            AppendCritical(
+                "OFFLINE STORE PROFILE invalid entitlement vector profile=0x" +
+                JniProbeHex(profile) +
+                " offset=0x" +
+                JniProbeHex(vector_offset) +
+                " begin=0x" +
+                JniProbeHex(begin) +
+                " end=0x" +
+                JniProbeHex(end) +
+                " cap=0x" +
+                JniProbeHex(capacity));
+            return false;
+        }
+
+        std::vector<std::uint32_t> values;
+        if (begin != 0u) {
+            values.reserve(
+                static_cast<std::size_t>((end - begin) / 4u) +
+                8u);
+
+            for (std::uint32_t cursor = begin;
+                 cursor < end;
+                 cursor += 4u) {
+                const std::uint32_t id =
+                    mem.Read32Guest(cursor);
+                const int bit =
+                    plants
+                        ? OfflineStorePlantBitForId(id)
+                        : OfflineStoreFeatureBitForId(id);
+                if (bit < 0) {
+                    values.push_back(id);
+                }
+            }
+        }
+
+        if (plants) {
+            const auto& ids = OfflineStorePlantIds();
+            for (std::size_t i = 0u; i < ids.size(); ++i) {
+                if ((desired_mask &
+                     (1u << static_cast<std::uint32_t>(i))) != 0u) {
+                    values.push_back(ids[i]);
+                }
+            }
+        } else {
+            const auto& ids = OfflineStoreFeatureIds();
+            for (std::size_t i = 0u; i < ids.size(); ++i) {
+                if ((desired_mask &
+                     (1u << static_cast<std::uint32_t>(i))) != 0u) {
+                    values.push_back(ids[i]);
+                }
+            }
+        }
+
+        const std::uint32_t required_bytes =
+            static_cast<std::uint32_t>(
+                values.size() * sizeof(std::uint32_t));
+
+        const std::uint32_t capacity_bytes =
+            begin != 0u ? capacity - begin : 0u;
+
+        std::uint32_t destination = begin;
+        std::uint32_t destination_capacity =
+            capacity_bytes;
+
+        if (required_bytes != 0u &&
+            (destination == 0u ||
+             destination_capacity < required_bytes ||
+             mem.Ptr(destination, destination_capacity) == nullptr)) {
+
+            destination_capacity =
+                std::max<std::uint32_t>(
+                    required_bytes,
+                    32u);
+            destination =
+                mem.AllocateHeap(
+                    destination_capacity,
+                    4u);
+
+            if (destination == 0u ||
+                mem.Ptr(destination, destination_capacity) == nullptr) {
+                AppendCritical(
+                    "OFFLINE STORE PROFILE unable to grow entitlement vector profile=0x" +
+                    JniProbeHex(profile));
+                return false;
+            }
+
+            begin = destination;
+            capacity =
+                destination + destination_capacity;
+
+            mem.Write32Guest(
+                profile + vector_offset,
+                begin);
+            mem.Write32Guest(
+                profile + vector_offset + 8u,
+                capacity);
+        }
+
+        for (std::size_t i = 0u;
+             i < values.size();
+             ++i) {
+            mem.Write32Guest(
+                destination +
+                    static_cast<std::uint32_t>(i * 4u),
+                values[i]);
+        }
+
+        mem.Write32Guest(
+            profile + vector_offset + 4u,
+            destination != 0u
+                ? destination + required_bytes
+                : 0u);
+
+        return true;
+    }
+
+    std::uint32_t OfflineStoreLoadProfileMask(
+        std::uint32_t profile_id,
+        bool plants) {
+        V128LoadConfigOnce();
+        const std::string key =
+            OfflineStoreProfileMaskKey(profile_id, plants);
+        const auto it =
+            v51_config_integers.find(key);
+        return it == v51_config_integers.end()
+            ? 0u
+            : static_cast<std::uint32_t>(it->second);
+    }
+
+    void OfflineStoreWriteProfileMask(
+        std::uint32_t profile_id,
+        bool plants,
+        std::uint32_t mask) {
+        const std::string key =
+            OfflineStoreProfileMaskKey(profile_id, plants);
+        v51_config_keys.insert(key);
+        v51_config_integers[key] =
+            static_cast<std::int32_t>(mask);
+    }
+
+    bool OfflineStoreApplyProfileEntitlements(
+        std::uint32_t profile,
+        std::uint32_t profile_id) {
+
+        static constexpr char kMigrationKey[] =
+            "offline_store_profile_scope_migrated_v1";
+
+        V128LoadConfigOnce();
+
+        const std::string plant_key =
+            OfflineStoreProfileMaskKey(profile_id, true);
+        const std::string feature_key =
+            OfflineStoreProfileMaskKey(profile_id, false);
+
+        const bool first_global_migration =
+            v51_config_keys.count(kMigrationKey) == 0u;
+
+        std::uint32_t plant_mask = 0u;
+        std::uint32_t feature_mask = 0u;
+
+        if (first_global_migration) {
+            if (!OfflineStoreReadTargetMask(
+                    profile, 0x18u, true, plant_mask) ||
+                !OfflineStoreReadTargetMask(
+                    profile, 0x34u, false, feature_mask)) {
+                return false;
+            }
+        } else {
+            plant_mask =
+                OfflineStoreLoadProfileMask(profile_id, true);
+            feature_mask =
+                OfflineStoreLoadProfileMask(profile_id, false);
+        }
+
+        if (!OfflineStoreRewriteTargetVector(
+                profile, 0x18u, true, plant_mask) ||
+            !OfflineStoreRewriteTargetVector(
+                profile, 0x34u, false, feature_mask)) {
+            return false;
+        }
+
+        bool config_changed = false;
+
+        if (first_global_migration) {
+            OfflineStoreWriteProfileMask(
+                profile_id, true, plant_mask);
+            OfflineStoreWriteProfileMask(
+                profile_id, false, feature_mask);
+            v51_config_keys.insert(kMigrationKey);
+            v51_config_booleans[kMigrationKey] = true;
+            config_changed = true;
+
+            Append(
+                "OFFLINE STORE PROFILE MIGRATE owner=" +
+                std::to_string(profile_id) +
+                " plantsMask=0x" +
+                JniProbeHex(plant_mask) +
+                " featuresMask=0x" +
+                JniProbeHex(feature_mask));
+        } else {
+            if (v51_config_keys.count(plant_key) == 0u) {
+                OfflineStoreWriteProfileMask(
+                    profile_id, true, 0u);
+                config_changed = true;
+            }
+            if (v51_config_keys.count(feature_key) == 0u) {
+                OfflineStoreWriteProfileMask(
+                    profile_id, false, 0u);
+                config_changed = true;
+            }
+        }
+
+        if (config_changed && !V128FlushConfig()) {
+            AppendCritical(
+                "OFFLINE STORE PROFILE failed to persist profile entitlement state.");
+            return false;
+        }
+
+        offline_store_last_profile_id = profile_id;
+        offline_store_last_profile_ptr = profile;
+
+        Append(
+            "OFFLINE STORE PROFILE APPLY id=" +
+            std::to_string(profile_id) +
+            " profile=0x" +
+            JniProbeHex(profile) +
+            " plantsMask=0x" +
+            JniProbeHex(plant_mask) +
+            " featuresMask=0x" +
+            JniProbeHex(feature_mask));
+        return true;
+    }
+
+    bool OfflineStoreRecordPurchasedEntitlement(
+        std::uint32_t profile,
+        std::uint32_t profile_id,
+        const OfflineStoreCatalogEntry& entry) {
+
+        V128LoadConfigOnce();
+
+        const bool plants =
+            entry.entitlement_kind ==
+            OfflineStoreEntitlementKind::Plant;
+
+        std::uint32_t mask =
+            OfflineStoreLoadProfileMask(profile_id, plants);
+
+        mask |= 1u << entry.entitlement_bit;
+
+        if (!OfflineStoreRewriteTargetVector(
+                profile,
+                plants ? 0x18u : 0x34u,
+                plants,
+                mask)) {
+            return false;
+        }
+
+        OfflineStoreWriteProfileMask(
+            profile_id,
+            plants,
+            mask);
+
+        if (!V128FlushConfig()) {
+            AppendCritical(
+                "OFFLINE STORE PROFILE failed to persist purchase sku=" +
+                std::string{entry.sku != nullptr ? entry.sku : ""});
+            return false;
+        }
+
+        Append(
+            "OFFLINE STORE PROFILE PURCHASE id=" +
+            std::to_string(profile_id) +
+            " sku=" +
+            std::string{entry.sku != nullptr ? entry.sku : ""} +
+            " kind=" +
+            (plants
+                ? std::string{"plant"}
+                : std::string{"gamefeature"}) +
+            " entitlementId=" +
+            std::to_string(entry.entitlement_id) +
+            " mask=0x" +
+            JniProbeHex(mask));
+        return true;
+    }
+
     std::unordered_map<std::uint32_t, OfflineSkuDetails>
         offline_sku_details;
     std::vector<std::string> pending_offline_refresh_skus;
@@ -2426,6 +2850,18 @@
     // persistent V128 config marker prevents this from refilling the wallet
     // after a purchase/restart, so coin debit persistence remains testable.
     bool offline_store_test_coin_grant_checked = false;
+
+    // The original 1.5 GlobalSaveData shares purchased plants/upgrades across
+    // every local profile. Keep only the ten offline-store premium IDs in a
+    // host-backed per-profile sidecar and overlay those IDs on profile switch.
+    std::uint32_t offline_store_last_profile_id =
+        0xffffffffu;
+    std::uint32_t offline_store_last_profile_ptr = 0u;
+
+    // UICoinBank can cache the pre-grant value before the first frame. A
+    // same-value SetCoins after UI creation replays the native listener path
+    // without changing the actual balance.
+    bool offline_store_coin_ui_refresh_pending = true;
     // v34: AndroidHttpTransaction is asynchronous on Android. Track the
     // native peer passed to its Java constructor so Start() can be completed
     // deterministically through the real registered native error callback

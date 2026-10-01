@@ -2514,6 +2514,124 @@
                             callbacks.google_play_purchase_java_object != 0u &&
                             callbacks.google_play_purchase_native_driver != 0u;
 
+                        constexpr std::uint32_t
+                            kProfileMgrSingletonStorage =
+                                kGuestBase + 0x00d4e960u;
+                        constexpr std::uint32_t
+                            kGetCurrentProfile =
+                                kGuestBase + 0x0047f8b0u;
+                        constexpr std::uint32_t
+                            kGetCoins =
+                                kGuestBase + 0x0042e680u;
+                        constexpr std::uint32_t
+                            kSetCoins =
+                                kGuestBase + 0x0042e5acu;
+
+                        auto resolve_current_profile =
+                            [&](const char* reason,
+                                std::uint32_t& profile,
+                                std::uint32_t& profile_id)
+                                -> bool {
+
+                                profile = 0u;
+                                profile_id = 0xffffffffu;
+
+                                if (memory.Ptr(
+                                        kProfileMgrSingletonStorage,
+                                        4u) == nullptr) {
+                                    return true;
+                                }
+
+                                const std::uint32_t profile_mgr =
+                                    memory.Read32Guest(
+                                        kProfileMgrSingletonStorage);
+
+                                if (profile_mgr == 0u ||
+                                    memory.Ptr(
+                                        profile_mgr,
+                                        0x18u) == nullptr) {
+                                    return true;
+                                }
+
+                                if (!run_lifecycle(
+                                        reason,
+                                        kGetCurrentProfile,
+                                        profile_mgr,
+                                        0u,
+                                        0u,
+                                        false,
+                                        true)) {
+                                    return false;
+                                }
+
+                                const std::uint32_t candidate =
+                                    jit.Regs()[0];
+
+                                const bool heap_profile =
+                                    candidate >= kJniProbeHeapBase &&
+                                    static_cast<std::uint64_t>(
+                                        candidate - kJniProbeHeapBase) <
+                                        static_cast<std::uint64_t>(
+                                            memory.HeapCapacity());
+
+                                if (!heap_profile ||
+                                    memory.Ptr(
+                                        candidate,
+                                        0x40u) == nullptr) {
+                                    return true;
+                                }
+
+                                profile = candidate;
+                                profile_id =
+                                    memory.Read32Guest(
+                                        profile_mgr + 0x14u);
+                                return true;
+                            };
+
+                        if (memory.Ptr(
+                                kProfileMgrSingletonStorage,
+                                4u) != nullptr) {
+                            const std::uint32_t profile_mgr =
+                                memory.Read32Guest(
+                                    kProfileMgrSingletonStorage);
+
+                            if (profile_mgr != 0u &&
+                                memory.Ptr(
+                                    profile_mgr,
+                                    0x18u) != nullptr) {
+                                const std::uint32_t observed_profile_id =
+                                    memory.Read32Guest(
+                                        profile_mgr + 0x14u);
+
+                                if (callbacks.offline_store_last_profile_ptr ==
+                                        0u ||
+                                    callbacks.offline_store_last_profile_id !=
+                                        observed_profile_id) {
+
+                                    std::uint32_t active_profile = 0u;
+                                    std::uint32_t active_profile_id =
+                                        0xffffffffu;
+
+                                    if (!resolve_current_profile(
+                                            "OfflineStore_ProfileSwitch_GetCurrentProfile",
+                                            active_profile,
+                                            active_profile_id)) {
+                                        return false;
+                                    }
+
+                                    if (active_profile != 0u &&
+                                        !callbacks
+                                            .OfflineStoreApplyProfileEntitlements(
+                                                active_profile,
+                                                active_profile_id)) {
+                                        callbacks.AppendCritical(
+                                            "OFFLINE STORE PROFILE apply failed during account switch.");
+                                        return false;
+                                    }
+                                }
+                            }
+                        }
+
                         // QA-only bootstrap for the first offline store test.
                         // Make the wallet at least 60k exactly once, then store
                         // a host-backed V128 marker. This is deliberately a
@@ -2524,13 +2642,6 @@
                                 "offline_store_test_coin_grant_60000_v1";
                             static constexpr std::uint32_t
                                 kTestCoinFloor = 60000u;
-                            constexpr std::uint32_t kGetCurrentProfile =
-                                kGuestBase + 0x0047f8b0u;
-                            constexpr std::uint32_t kGetCoins =
-                                kGuestBase + 0x0042e680u;
-                            constexpr std::uint32_t kSetCoins =
-                                kGuestBase + 0x0042e5acu;
-
                             callbacks.V128LoadConfigOnce();
 
                             if (callbacks.v51_config_keys.count(
@@ -2540,19 +2651,16 @@
                                 callbacks.Append(
                                     "OFFLINE STORE TEST COINS already granted; persistent marker present.");
                             } else {
-                                if (!run_lifecycle(
+                                std::uint32_t grant_profile = 0u;
+                                std::uint32_t grant_profile_id =
+                                    0xffffffffu;
+
+                                if (!resolve_current_profile(
                                         "OfflineStore_TestCoins_GetCurrentProfile",
-                                        kGetCurrentProfile,
-                                        0u,
-                                        0u,
-                                        0u,
-                                        false,
-                                        true)) {
+                                        grant_profile,
+                                        grant_profile_id)) {
                                     return false;
                                 }
-
-                                const std::uint32_t grant_profile =
-                                    jit.Regs()[0];
 
                                 if (grant_profile != 0u &&
                                     memory.Ptr(grant_profile, 0x18u) != nullptr) {
@@ -2599,9 +2707,13 @@
 
                                     callbacks.offline_store_test_coin_grant_checked =
                                         true;
+                                    callbacks.offline_store_coin_ui_refresh_pending =
+                                        true;
 
                                     callbacks.Append(
-                                        "OFFLINE STORE TEST COINS before=" +
+                                        "OFFLINE STORE TEST COINS profileId=" +
+                                        std::to_string(grant_profile_id) +
+                                        " before=" +
                                         std::to_string(coins_before_grant) +
                                         " after=" +
                                         std::to_string(coins_after_grant) +
@@ -2617,6 +2729,59 @@
                                             "OFFLINE STORE TEST COINS: V128 marker flush failed; wallet floor remains idempotent for this launch.");
                                     }
                                 }
+                            }
+                        }
+
+                        if (callbacks
+                                .offline_store_coin_ui_refresh_pending &&
+                            phase != nullptr &&
+                            std::string{phase} == "frame-boundary") {
+
+                            std::uint32_t ui_profile = 0u;
+                            std::uint32_t ui_profile_id =
+                                0xffffffffu;
+
+                            if (!resolve_current_profile(
+                                    "OfflineStore_CoinUiRefresh_GetCurrentProfile",
+                                    ui_profile,
+                                    ui_profile_id)) {
+                                return false;
+                            }
+
+                            if (ui_profile != 0u) {
+                                if (!run_lifecycle(
+                                        "OfflineStore_CoinUiRefresh_GetCoins",
+                                        kGetCoins,
+                                        ui_profile,
+                                        0u,
+                                        0u,
+                                        false,
+                                        true)) {
+                                    return false;
+                                }
+
+                                const std::uint32_t current_coins =
+                                    jit.Regs()[0];
+
+                                if (!run_lifecycle(
+                                        "OfflineStore_CoinUiRefresh_SetCoins",
+                                        kSetCoins,
+                                        ui_profile,
+                                        current_coins,
+                                        0u,
+                                        false,
+                                        true)) {
+                                    return false;
+                                }
+
+                                callbacks.offline_store_coin_ui_refresh_pending =
+                                    false;
+
+                                callbacks.Append(
+                                    "OFFLINE STORE COIN UI REFRESH profileId=" +
+                                    std::to_string(ui_profile_id) +
+                                    " coins=" +
+                                    std::to_string(current_coins));
                             }
                         }
 
@@ -2716,20 +2881,19 @@
                             return true;
                         }
 
-                        constexpr std::uint32_t kGetCurrentProfile =
-                            kGuestBase + 0x0047f8b0u;
-                        constexpr std::uint32_t kGetCoins =
-                            kGuestBase + 0x0042e680u;
-                        constexpr std::uint32_t kSetCoins =
-                            kGuestBase + 0x0042e5acu;
-                        constexpr std::int32_t kInsufficientCoinsError = 6;
+                        constexpr std::int32_t
+                            kInsufficientCoinsError = 6;
 
-                        if (!run_lifecycle(
+                        std::uint32_t profile = 0u;
+                        std::uint32_t profile_id =
+                            0xffffffffu;
+
+                        if (!resolve_current_profile(
                                 "OfflineStore_GetCurrentProfile",
-                                kGetCurrentProfile, 0u, 0u, 0u, false, true)) {
+                                profile,
+                                profile_id)) {
                             return false;
                         }
-                        const std::uint32_t profile = jit.Regs()[0];
 
                         if (profile == 0u ||
                             memory.Ptr(profile, 0x18u) == nullptr) {
@@ -2800,7 +2964,9 @@
                         callbacks.offline_purchase_unconfirmed = true;
                         callbacks.offline_purchase_unconfirmed_token = token;
                         callbacks.Append(
-                            "OFFLINE STORE purchase commit sku=" + request.sku +
+                            "OFFLINE STORE purchase commit profileId=" +
+                            std::to_string(profile_id) +
+                            " sku=" + request.sku +
                             " coinsBefore=" + std::to_string(coins_before) +
                             " coinsAfter=" + std::to_string(coins_after) +
                             " serial=" + serial);
@@ -2826,6 +2992,24 @@
                                 kSetCoins, profile, coins_before, 0u, false, true);
                             return false;
                         }
+
+                        const auto* purchased_entry =
+                            callbacks.OfflineStoreFindCatalogEntry(
+                                request.sku);
+
+                        if (purchased_entry != nullptr &&
+                            !callbacks
+                                .OfflineStoreRecordPurchasedEntitlement(
+                                    profile,
+                                    profile_id,
+                                    *purchased_entry)) {
+                            callbacks.AppendCritical(
+                                "OFFLINE STORE PROFILE purchase was accepted by native broker but profile sidecar update failed sku=" +
+                                request.sku);
+                        }
+
+                        callbacks.offline_store_coin_ui_refresh_pending =
+                            true;
 
                         callbacks.pending_offline_purchase =
                             PvZ2JniCallbacks::OfflinePurchaseRequest{};
