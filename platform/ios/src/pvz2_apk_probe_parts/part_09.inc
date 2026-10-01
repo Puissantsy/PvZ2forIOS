@@ -3043,10 +3043,21 @@
 
                         const std::string serial =
                             std::to_string(request.serial);
+                        // Include the initiating profile in the opaque
+                        // synthetic receipt fields. The original native
+                        // FirePaymentComplete enqueues an async event, so
+                        // later listener-side ownership checks must not
+                        // infer owner from the CURRENT UI profile. This
+                        // marker is metadata, not yet a native claim fix.
+                        const std::string owner_serial =
+                            "v2:" +
+                            std::to_string(request.initiating_profile_id) +
+                            ":" + serial;
                         const std::string token =
-                            "pvz2-offline:" + serial + ":" + request.sku;
+                            "pvz2-offline:" + owner_serial +
+                            ":" + request.sku;
                         const std::string order_id =
-                            "pvz2-offline-order:" + serial;
+                            "pvz2-offline-order:" + owner_serial;
                         const std::string original_json =
                             "{\"orderId\":\"" + order_id +
                             "\",\"packageName\":\"com.ea.game.pvz2_row\",\"productId\":\"" +
@@ -3054,7 +3065,7 @@
                             "\",\"purchaseState\":0,\"purchaseToken\":\"" +
                             token + "\"}";
                         const std::string receipt =
-                            "pvz2-offline-receipt:" + serial;
+                            "pvz2-offline-receipt:" + owner_serial;
 
                         const std::uint32_t token_string =
                             callbacks.JniNewSyntheticString(token);
