@@ -56,6 +56,17 @@ def load_checked(snapshot: Path) -> dict[str, dict]:
         if path in verified:
             raise ValueError(f"Duplicate snapshot inventory entry: {path}")
         verified[path] = entry
+    # Detect extra or injected files that the signed manifest never listed.
+    extra = set()
+    for candidate in snapshot.rglob("*"):
+        if candidate.is_symlink():
+            raise ValueError(f"Symbolic link in snapshot: {candidate.name}")
+        if candidate.is_file():
+            rel = candidate.relative_to(snapshot).as_posix()
+            if rel != "snapshot-info.plist":
+                extra.add(rel)
+    if extra != set(verified):
+        raise ValueError("Snapshot contains unexpected or unlisted files")
     print(f"PASS verified {snapshot.name}: {len(verified)} hashed files")
     return verified
 
@@ -101,6 +112,6 @@ def main() -> int:
 if __name__ == "__main__":
     try:
         sys.exit(main())
-    except (OSError, ValueError, KeyError, TypeError, plistlib.InvalidFile) as exc:
+    except (OSError, ValueError, KeyError, TypeError, plistlib.InvalidFileException) as exc:
         print(f"FAIL without modifying either snapshot: {exc}", file=sys.stderr)
         sys.exit(1)
