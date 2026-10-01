@@ -120,3 +120,13 @@ The Android `classes.dex` also includes Google Play billing names `getAllOwnedSk
 Consequence of actual B CLAIM→plant grant: global/native entitlement read and the resulting per-profile unlock writer must BOTH obey our custom coin-backed profile scope for only ten offline SKUs. Cache invalidation or masking a label alone is insufficient. Existing v166 cannot answer whether the global flag is deserialized at cold startup or maintained only in broker RAM because the available full probe log has no A→B claim event.
 
 Companion unbuilt implementation work: branch `v168-claim-redemption-fix-staging` pins `RequestPayment` to its **initiating** profile and aborts on later selection mismatch before debit/native transaction completion. This proactively fixes a distinct confirmed race but does NOT claim to fix free cross-profile CLAIM; do not ship an owner-only IPA as if it did.
+
+### Native `RetrieveGlobalPurchase` state dispatch: narrowed instruction path
+
+Further analysis of ARM control flow (not just strings): the enum-label function at `0x0049ab50` has a 7-case jump table indexed by `r2` values 0..6; index **6** resolves the literal string `RetrieveGlobalPurchase` through its `0x0049ac38` case. The broker processing function at `0x0049ba40` reads its state from `[r4 + 0x1c]`, tests for state **6** at `0x0049ba50`, and enters the `0x0049bb20` branch.
+
+That branch invokes the known `GetCurrentProfile` function at `0x0049bb54` → `0x0047f8b0` (the same address the host's v166 `kGetCurrentProfile` already calls), takes the resulting native profile pointer into `r5`, and at `0x0049bb8c` calls `0x0042feec` with `r0 = active profile`, `r1 = broker+0x20`, `r2 = 1` and another argument. On the main return path it calls `0x0049aa70` to return the broker to state 0. Thus the original **global purchase retrieval state processes data in the context of whichever local profile is active**.
+
+Caveat essential to safe patching: `0x0042feec` has **another caller at `0x004a0e28`** and appears to be a more general native profile/DB helper, not a dedicated "CLAIM" permission function. Do not patch this callee globally or force state 6 to bypass the routine; both could corrupt unrelated profile/campaign behavior. Further inspection of its return values, source data, and caller-dependent parameters is needed before introducing a narrow interception.
+
+This is an exact state-machine path and practical candidate for an EVENT-ONLY dynamic ownership probe at the call boundary, but it is not yet independent proof that this specific call makes B's store item claimable, or that the plant grant uses the same branch.
