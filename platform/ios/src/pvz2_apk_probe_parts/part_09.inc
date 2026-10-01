@@ -3054,8 +3054,25 @@
                             std::to_string(request.initiating_profile_id) +
                             ":" + serial;
                         const std::string token =
-                            "pvz2-offline:" + owner_serial +
-                            ":" + request.sku;
+                            pvz2offline::MakeReceiptTokenV2(
+                                request.initiating_profile_id,
+                                request.serial,
+                                request.sku);
+                        if (token.empty()) {
+                            callbacks.AppendCritical(
+                                "OFFLINE STORE invalid canonical v2 token "
+                                "before native enqueue; rolling back debit");
+                            if (!run_lifecycle(
+                                    "OfflineStore_RollbackInvalidToken",
+                                    kSetCoins, profile, coins_before,
+                                    0u, false, true)) {
+                                return false;
+                            }
+                            if (!fire_incomplete(6)) return false;
+                            callbacks.pending_offline_purchase =
+                                PvZ2JniCallbacks::OfflinePurchaseRequest{};
+                            return true;
+                        }
                         const std::string order_id =
                             "pvz2-offline-order:" + owner_serial;
                         const std::string original_json =
