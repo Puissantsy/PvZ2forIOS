@@ -1,0 +1,38 @@
+# v170 — narrow, provenance-aware original-global isolation (STAGED, NO IPA)
+
+## Based on the actual iPad evidence
+
+Real A-buy/B-free-CLAIM snapshot ZIPs and three full logs, privately supplied October 1, 2026, establish the precise bug: A's new 10,000-PvZCoin Snow Pea synthetic purchase leaves original `global_save_data.m_unlockedPlants=[21]`; original v1.5 engine therefore advertises its INTENTIONAL cross-profile free CLAIM on B. B's guest native premium plant vector becomes 1 on CLAIM but B's host-owned local mask remains 0 and the existing per-profile overlay resets the guest vector to 0. B cannot actually use Snow Pea and can re-CLAIM after restart. The A/B global RTON files are byte-identical, and only the A payment session emits native flushes for global data+hash. **Do not repeat the earlier, disproved statement that B genuinely gained a playable Snow Pea.**
+
+Complete sanitized evidence: `docs/V169_REAL_SNOWPEA_CLAIM_DIAGNOSIS.md`. Neither the user's raw saves nor their logs are committed to public GitHub.
+
+## Verified original runtime API — NOT guessed offsets
+
+Existing v169 research, reproduced on the EXACT Android 1.5.252752 ELF, establishes original live `GetGlobalSaveData(create)` at `0x0043ebd0`, global HasPlant/HasFeature at `0x0043efec/0x0043f220`, global AddPlant/AddFeature at `0x0043eaa4/0x0043f0f4` and ORIGINAL global saver `0x0043ee24`, which owns serialization of both the native RTON and its proprietary hash. GlobalSaveData fields are 12-byte ARM DWORD vectors at object offsets +4 (plants) and +16 (game upgrades); the native class also has map gates at +28 and unknown SKU data at +40. Never substitute profile vector offsets +0x18/+0x34 for original global offsets. Do not globally patch the Has/Add functions: they also serve real authentic historic receipts and other game activities.
+
+Read-only v169 probes already fetch the original live object via the original getter and inspect its masked plant/upgrade IDs at before-refresh/after-refresh/pre-paid-enqueue/post-event-enqueue boundaries. Reference exact-byte verifier: `tools/verify_global_native_primitives.py`.
+
+## New v170 source: bounded, transaction-specific, READ ONLY until safe commit design is complete
+
+This branch derives from v169 and adds:
+
+- `platform/ios/src/offline_global_compaction.hpp`: pure C++20 preview of EXACT original catalog DWORD IDs to remove. An unknown original purchase/reward ID, an unrelated authentic plant, and other categories are preserved in original vector order. Fail closed on invalid category masks, absent target IDs, duplicated target ID, or an unexpectedly large vector; never touch memory or disk in the preview.
+- `tests/test_offline_global_compaction.cpp`: independent regression for nine legitimate/invalid/unchanged-input situations. The exact committed header's Git blob SHA matches the independently compiled local header `2ed8fce79c155dbace7d2c43c653b76d7bd81d6b`. Clang++ C++20, `-Wall -Wextra -Werror -pedantic`: nine checks PASSED. These tests prove policy only, not runtime original-vector mutation.
+- `platform/ios/src/pvz2_apk_probe.cpp`: includes the existing v169 `PlanGlobalIsolation` policy and the new v170 bounded compaction preview.
+- `part_01.inc`: adds a single in-memory observation record for the exact synthetic payment owner/SKU/token, before-payment original global catalog masks, actual per-category bit, native-confirmed status, sidecar-committed status and a one-shot preview flag. Adds a STRICT pointer/capacity-bounded read of the original guest global DWORD vector at +4/+16. It uses `PreviewGlobalCatalogRemoval` without writing guest bytes.
+- `part_05.inc`: original `ConfirmDelivery` marks this record confirmed ONLY when the returned token byte-for-byte matches the pending new synthetic v2 receipt; B's free original CLAIM has no matching host `RequestPayment`/receipt and cannot trigger it. On an actual billing driver close, the in-memory record is cleared (the eventual corrective transaction journal will be separate and durable).
+- `part_09.inc`: captures the original-global baseline BEFORE charging a new synthetic purchase; binds it to the paid synthetic SKU/token and subsequently to the locally committed profile sidecar. After the real deferred native `ConfirmDelivery`, at an existing safe frame-boundary callback, it compares live original global rights against the baseline using `PlanGlobalIsolation`. It additionally requires no unexpected mutation in the OTHER catalog category and runs the bounded original-vector compaction **PREVIEW** only if the exact newly published bit can be attributed to the current paid transaction. It produces ONE bounded `V170 GLOBAL TARGET PREVIEW SAFE` log or a PRESERVE/rejected log and never directly edits `global_save_data`, the live vector, broker status or the hash.
+
+A nine-point source-structure check against the actual committed v170 branch PASSED, including that the snapshot precedes `GetCoins`, original confirmation matches the receipt, the preview requires BOTH confirmation and successful sidecar commit, and no native saver call or write was introduced.
+
+## Why this is deliberately NOT YET an IPA or a finished entitlement patch
+
+Even though the original getter and native saver are known, actually suppressing a synthetic global right involves a destructive edit of a live native `std::vector<int>` and a paired, original-proprietary RTON/hash save. At least the following conditions must be satisfied **together**, not one patch/version per failure:
+
+1. Verify the live original native vector has not changed since the trusted purchase snapshot, plan removal ONLY for the known matching newly published synthetic bit, compact in place without host allocation/freeing an original C++ vector, validate the resulting native vector, and call the original saver. Roll back guest edits if an intermediate validation fails; never edit original RTON/hash files directly.
+2. Preserve existing genuinely purchased original same-SKU rights. Original historical `global_save_data` stores only plain IDs and cannot prove whether an old Snow Pea bit came from EA or an already-contaminated earlier v166 synthetic test. An unknown pre-existing bit MUST be preserved; an already contaminated A/B test needs a protected fresh disposable baseline rather than an automatic destructive migration.
+3. Add a crash-safe, persistent **transaction-scoped** suppression journal BEFORE publishing a new native synthetic v2 purchase. The current v170 in-memory observation alone cannot safely repair a crash between original native global serialization and later host cleanup. Do not treat its first nonpersisted observation as a verified legacy baseline on a later process launch.
+4. Check actual UI state in process (B must see 10k BUY immediately instead of stale original CLAIM) and after cold relaunch; prove real independent B coin debit/grant (B had only 270 coins in the supplied third log and will need explicitly gated QA credit). Genuine original pre-existing purchases must still have their native original cross-profile behavior.
+5. Preserve v165 full external backup/restore, v166 guarded reset, the actual original-native first-frame and gameplay probes, and the local-sidecar isolation already validated on the iPad.
+
+**No new IPA has been built.** This new work is a strictly bounded, reproducibly tested prerequisite for an eventual ONE-BUILD grouped native correction, not a cosmetic CLAIM label patch and not a promise that the bug is already solved.
