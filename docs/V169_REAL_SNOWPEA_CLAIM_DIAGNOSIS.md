@@ -61,4 +61,6 @@ There are TWO conflicting ownership models:
 | Cold restart | synthetic globally absent | 1 | 1 | Independent ownership preserved |
 | Restored LEGACY authentic global purchase | genuine original bit preserved | any | any | Original genuine cross-profile restore remains available by original design |
 
+**QA wallet pitfall already visible in the THIRD log:** B had only **270 PvZCoins**, versus the 10,000 PvZCoins price of Snow Pea. Therefore a successful next probe must distinguish "B correctly sees BUY" from "B can afford a fresh independent BUY". To test BOTH without modifying the protected A save or automatically granting everyone coins in release builds, use an explicitly QA-gated and profile-targeted temporary ≥10k credit on a disposable B profile, then assert exactly one 10k deduction and B host mask 0→1. This is a planned optional QA facility, NOT yet implemented. Never interpret B's insufficient 270 coins as evidence that the CLAIM patch failed.
+
 **No new iPad test is needed to re-prove the existing failure**: the supplied three real logs and two ZIPs conclusively show the state split and locate the actual global RTON marker. The next request, if any, should concern a SINGLE grouped instrumented/fixed build and preserve external backups.
