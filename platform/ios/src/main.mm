@@ -299,6 +299,24 @@ NSURL *V130StoredObbURL() {
         : [directory URLByAppendingPathComponent:@"main.7.com.ea.game.pvz2_row.obb"];
 }
 
+// One consistent diagnostic record for automatic prelaunch and poststop
+// snapshots. Include the manifest's verified inventory when successful.
+NSString *V165SnapshotLogLine(NSString *phase, NSURL *backup, NSError *error) {
+    if (backup == nil) {
+        return [NSString stringWithFormat:
+            @"[V163 SAVE] %@ skipped/failed: %@", phase,
+            error.localizedDescription ?: @"unknown backup error"];
+    }
+    NSDictionary *manifest = [NSDictionary dictionaryWithContentsOfURL:
+        [backup URLByAppendingPathComponent:@"snapshot-info.plist"]];
+    NSArray *roots = manifest[@"roots"];
+    NSArray *files = manifest[@"files"];
+    return [NSString stringWithFormat:
+        @"[V163 SAVE] %@ SUCCESS snapshot=%@ roots=%lu files=%lu",
+        phase, backup.lastPathComponent,
+        (unsigned long)roots.count, (unsigned long)files.count];
+}
+
 BOOL V130RuntimeInstalled() {
     NSURL *apk = V130StoredApkURL();
     NSURL *obb = V130StoredObbURL();
@@ -450,6 +468,8 @@ BOOL V130CopyRuntimeFile(NSURL *source, NSURL *destination, NSError **error) {
     BOOL inputEnabled;
 @property(nonatomic, assign)
     BOOL runFinished;
+@property(nonatomic, copy)
+    NSString *v165BackupResult;
 
 - (void)updateFrameData:
         (NSData *)data
@@ -934,7 +954,7 @@ void PvZ2HostNotifyDirectFrame(
     UIAlertController *menu = [UIAlertController
         alertControllerWithTitle:@"PvZ2 — sauvegarde"
         message:self.runFinished
-            ? @"La partie est arrêtée. La dernière sauvegarde a été copiée dans Fichiers > PvZ2Backups si les fichiers étaient disponibles."
+            ? (self.v165BackupResult ?: @"Jeu arrêté. Vérifie le journal pour connaître le résultat de la copie.")
             : @"Un arrêt propre permet de créer une sauvegarde exportable. Le jeu doit être arrêté avant la copie."
         preferredStyle:UIAlertControllerStyleAlert];
 
@@ -2143,9 +2163,16 @@ void PvZ2HostNotifyDirectFrame(
     if (!self.runFinished) {
         NSError *backupError = nil;
         NSURL *backup = PVZSaveCreateSnapshot(@"poststop", &backupError);
-        AppendPersistentLog(backup
-            ? [NSString stringWithFormat:@"[V163 SAVE] poststop snapshot: %@", backup.lastPathComponent]
-            : [NSString stringWithFormat:@"[V163 SAVE] poststop skipped/failed: %@", backupError.localizedDescription ?: @"unknown"]);
+        AppendPersistentLog(V165SnapshotLogLine(@"poststop", backup, backupError));
+        if (backup != nil) {
+            self.v165BackupResult = [NSString stringWithFormat:
+                @"Sauvegarde créée : %@. Dans Fichiers > PvZ2Backups, copie ce dossier complet vers iCloud Drive ou ton PC.",
+                backup.lastPathComponent];
+        } else {
+            self.v165BackupResult = [NSString stringWithFormat:
+                @"ÉCHEC de la sauvegarde : %@. La partie est arrêtée, mais aucune copie exportable n’a été créée. Ne supprime pas l’app.",
+                backupError.localizedDescription ?: @"erreur inconnue"];
+        }
     }
     self.runFinished = YES;
     self.inputEnabled = NO;
@@ -2211,6 +2238,8 @@ void PvZ2HostNotifyDirectFrame(
     BOOL v163RestorePromptActive;
 @property(nonatomic, assign)
     BOOL v163PrelaunchSnapshotTaken;
+@property(nonatomic, copy)
+    NSString *v165PrelaunchSnapshotStatus;
 - (void)v163OfferPendingRestore;
 
 @end
@@ -2448,9 +2477,9 @@ void PvZ2HostNotifyDirectFrame(
         self.v163PrelaunchSnapshotTaken = YES;
         NSError *backupError = nil;
         NSURL *backup = PVZSaveCreateSnapshot(@"prelaunch", &backupError);
-        AppendPersistentLog(backup
-            ? [NSString stringWithFormat:@"[V163 SAVE] prelaunch snapshot: %@", backup.lastPathComponent]
-            : [NSString stringWithFormat:@"[V163 SAVE] prelaunch skipped/failed: %@", backupError.localizedDescription ?: @"unknown"]);
+        self.v165PrelaunchSnapshotStatus =
+            V165SnapshotLogLine(@"prelaunch", backup, backupError);
+        AppendPersistentLog(self.v165PrelaunchSnapshotStatus);
     }
     NSURL *apk = V130StoredApkURL();
     NSURL *obb = V130StoredObbURL();
@@ -3079,6 +3108,12 @@ void PvZ2HostNotifyDirectFrame(
 
     ResetPersistentLog();
     self.logView.text = @"";
+    // The prelaunch snapshot runs before the legacy diagnostic logger reset.
+    // Carry its result forward so the exported log can diagnose both phases.
+    if (self.v165PrelaunchSnapshotStatus.length != 0u) {
+        AppendPersistentLog(self.v165PrelaunchSnapshotStatus);
+        self.v165PrelaunchSnapshotStatus = nil;
+    }
 
     [self
         appendUI:
