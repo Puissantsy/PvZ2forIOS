@@ -2692,6 +2692,48 @@
             : static_cast<std::uint32_t>(it->second);
     }
 
+    // Pure policy INPUT for a future narrow native purchase adapter.
+    // This does NOT decide whether an unrelated ORIGINAL nonconsumable
+    // receipt is globally restorable: authentic original receipts and
+    // our v2 synthetic offline receipts may share canonical SKU strings.
+    enum class OfflineStoreLocalOwnership {
+        NotOfflineSku,
+        NoProfile,
+        SidecarNotReady,
+        Owned,
+        Unowned
+    };
+
+    OfflineStoreLocalOwnership OfflineStoreLocalOwnershipForSku(
+        std::uint32_t profile_id,
+        const std::string& sku) {
+
+        const auto* entry = OfflineStoreFindCatalogEntry(sku);
+        if (entry == nullptr) {
+            return OfflineStoreLocalOwnership::NotOfflineSku;
+        }
+        if (profile_id == 0xffffffffu) {
+            return OfflineStoreLocalOwnership::NoProfile;
+        }
+
+        V128LoadConfigOnce();
+        const bool plants =
+            entry->entitlement_kind == OfflineStoreEntitlementKind::Plant;
+        const std::string key =
+            OfflineStoreProfileMaskKey(profile_id, plants);
+        if (v51_config_keys.count(
+                "offline_store_profile_scope_migrated_v1") == 0u ||
+            v51_config_keys.count(key) == 0u) {
+            return OfflineStoreLocalOwnership::SidecarNotReady;
+        }
+
+        const std::uint32_t mask =
+            OfflineStoreLoadProfileMask(profile_id, plants);
+        return (mask & (1u << entry->entitlement_bit)) != 0u
+            ? OfflineStoreLocalOwnership::Owned
+            : OfflineStoreLocalOwnership::Unowned;
+    }
+
     void OfflineStoreWriteProfileMask(
         std::uint32_t profile_id,
         bool plants,
