@@ -256,7 +256,8 @@ NSURL *PVZSaveCreateSnapshot(NSString *reason, NSError **error) {
     fmt.dateFormat = @"yyyyMMdd-HHmmss-SSS";
     NSString *stamp = [fmt stringFromDate:[NSDate date]];
     NSString *safeReason = [reason isEqualToString:@"poststop"] ? @"poststop" :
-                           ([reason isEqualToString:@"prerestore"] ? @"prerestore" : @"prelaunch");
+                           ([reason isEqualToString:@"prerestore"] ? @"prerestore" :
+                            ([reason isEqualToString:@"prereset"] ? @"prereset" : @"prelaunch"));
     NSString *filename = [NSString stringWithFormat:@"save-%@-%@-%@", stamp,
                           safeReason, [NSUUID UUID].UUIDString];
     NSURL *temporary = [backups URLByAppendingPathComponent:
@@ -407,4 +408,100 @@ BOOL PVZSaveRestoreSnapshot(NSURL *snapshot, NSError **error) {
                     [@"Restored-" stringByAppendingString:snapshot.lastPathComponent]];
     [fm moveItemAtURL:snapshot toURL:done error:nil];
     return YES;
+}
+
+BOOL PVZSaveHasLocalSave(void) {
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSArray<NSURL *> *entries = [fm contentsOfDirectoryAtURL:LiveRoot()
+        includingPropertiesForKeys:nil options:0 error:nil];
+    for (NSURL *entry in entries) {
+        if (IsSaveRoot(entry.lastPathComponent)) return YES;
+    }
+    return NO;
+}
+
+// v166 QA-only explicit reset. The original Android game save, the old QA
+// UserData-* trees AND the host-side premium/one-time coin marker must be
+// reset as one unit; the imported APK/OBB in PvZ2Runtime are not touched.
+//
+// Before moving even one live file, make an ordinary verified snapshot AND
+// a separately verified non-rotating protected copy visible through Files.
+// On any move failure restore the previously moved roots. Nothing is reset
+// when the backup or its SHA-256 verification fails.
+NSURL *PVZSaveResetForTest(NSError **error) {
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSURL *live = LiveRoot();
+    NSArray<NSURL *> *items = [fm contentsOfDirectoryAtURL:live
+                                  includingPropertiesForKeys:nil options:0 error:error];
+    if (!items && error && *error) return nil;
+    NSMutableArray<NSString *> *roots = [NSMutableArray array];
+    for (NSURL *item in items) {
+        if (IsSaveRoot(item.lastPathComponent)) {
+            [roots addObject:item.lastPathComponent];
+        }
+    }
+    if (roots.count == 0) {
+        if (error) *error = MakeError(
+            @"Aucune sauvegarde locale à réinitialiser. Le prochain lancement part déjà de zéro.");
+        return nil;
+    }
+    [roots sortUsingSelector:@selector(compare:)];
+
+    NSURL *snapshot = PVZSaveCreateSnapshot(@"prereset", error);
+    if (snapshot == nil) return nil;
+
+    NSURL *protectedRoot = DocumentsChild(@"PvZ2ProtectedResets");
+    if (![fm createDirectoryAtURL:protectedRoot
+       withIntermediateDirectories:YES attributes:nil error:error]) return nil;
+    NSURL *protectedBackup = [protectedRoot
+        URLByAppendingPathComponent:snapshot.lastPathComponent isDirectory:YES];
+    if (![fm copyItemAtURL:snapshot toURL:protectedBackup error:error]) {
+        [fm removeItemAtURL:protectedBackup error:nil];
+        return nil;
+    }
+    if (!ValidateSnapshot(protectedBackup, nil, error)) {
+        // Never leave a partial backup with an apparently valid directory name.
+        [fm removeItemAtURL:protectedBackup error:nil];
+        return nil;
+    }
+    // Validate again before mutation: a file may have changed between source
+    // inventory and snapshot publication. The caller only invokes this while
+    // the guest is not running (startup or after successful Hard Stop).
+    NSArray *liveInventory = Inventory(live, roots, error);
+    NSDictionary *manifest = [NSDictionary dictionaryWithContentsOfURL:
+         [protectedBackup URLByAppendingPathComponent:kManifest]];
+    if (!liveInventory || ![liveInventory isEqualToArray:manifest[@"files"]] ||
+        ![roots isEqualToArray:manifest[@"roots"]]) {
+        if (error && !*error) *error = MakeError(
+            @"La sauvegarde a changé depuis la copie vérifiée ; aucun fichier local supprimé.");
+        return nil;
+    }
+
+    // Atomic renames into an out-of-tree rollback directory avoid destructive
+    // deletions until every recognized save root has been moved. This keeps
+    // unknown user files and the PvZ2Runtime (APK/OBB) completely untouched.
+    NSURL *rollback = [SupportParent() URLByAppendingPathComponent:
+        [@"PvZ2TestReset-rollback-" stringByAppendingString:[NSUUID UUID].UUIDString]
+        isDirectory:YES];
+    if (![fm createDirectoryAtURL:rollback
+       withIntermediateDirectories:YES attributes:nil error:error]) return nil;
+    NSMutableArray<NSString *> *moved = [NSMutableArray array];
+    for (NSString *root in roots) {
+        if (![fm moveItemAtURL:[live URLByAppendingPathComponent:root]
+                        toURL:[rollback URLByAppendingPathComponent:root]
+                        error:error]) {
+            for (NSString *prior in [moved reverseObjectEnumerator]) {
+                [fm moveItemAtURL:[rollback URLByAppendingPathComponent:prior]
+                            toURL:[live URLByAppendingPathComponent:prior]
+                            error:nil];
+            }
+            // Leave any unmoved rollback files for forensic recovery.
+            return nil;
+        }
+        [moved addObject:root];
+    }
+    // Clearing the retired roots can fail e.g. on low disk space; the live
+    // guest still sees a fresh save and both verified snapshots remain safe.
+    [fm removeItemAtURL:rollback error:nil];
+    return protectedBackup;
 }
