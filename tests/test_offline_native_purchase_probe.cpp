@@ -49,7 +49,9 @@ int main() {
     assert(decoded.sku == known_sku);
     assert(InspectPendingNativeReceipt(token, 11u, known)
            == NativeV2Observation::CustomOwnerIsOtherProfile);
+    assert(InspectPendingNativeReceipt(token, 0xffffffffu, known)
+           == NativeV2Observation::CustomSelectedProfileUnavailable);
 
-    std::cout << "PASS five receipt-provenance cases and "
+    std::cout << "PASS six receipt-provenance cases and "
                  "native transaction offsets 12/16/20/24/28/32\n";
 }
