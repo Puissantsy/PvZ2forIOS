@@ -2799,6 +2799,70 @@
                             }
                         }
 
+                        // v169 EVENT-ONLY: read the ORIGINAL live
+                        // GlobalSaveData using exactly the same native
+                        // getter used by original HasGlobalPlant. Its
+                        // r0=0 means lookup, NOT construct. This observes
+                        // the source of global CLAIM eligibility and
+                        // never writes guest memory or save files.
+                        auto audit_offline_original_global =
+                            [&](const char* event,
+                                std::uint32_t profile_id) -> bool {
+                                constexpr std::uint32_t
+                                    kGetGlobalSaveData =
+                                        kGuestBase + 0x0043ebd0u;
+                                if (!run_lifecycle(
+                                        "V169_OriginalGlobal_ReadOnlyGetter",
+                                        kGetGlobalSaveData,
+                                        0u, 0u, 0u,
+                                        false, true)) {
+                                    return false;
+                                }
+
+                                const std::uint32_t original =
+                                    jit.Regs()[0];
+                                if (original == 0u) {
+                                    callbacks.Append(
+                                        "V169 ORIGINAL GLOBAL event=" +
+                                        std::string{event} +
+                                        " profileId=" +
+                                        std::to_string(profile_id) +
+                                        " state=not-loaded");
+                                    return true;
+                                }
+                                // Original schema has four successive
+                                // 12-byte std::vector<int> fields. Its
+                                // unrolled search uses four DWORD items
+                                // per 16-byte iteration, NOT 16-byte IDs.
+                                if (memory.Ptr(original, 0x28u) == nullptr) {
+                                    callbacks.AppendCritical(
+                                        "V169 ORIGINAL GLOBAL invalid object");
+                                    return false;
+                                }
+                                std::uint32_t plants = 0u;
+                                std::uint32_t features = 0u;
+                                if (!callbacks.OfflineStoreReadTargetMask(
+                                        original, 0x04u, true, plants) ||
+                                    !callbacks.OfflineStoreReadTargetMask(
+                                        original, 0x10u, false, features)) {
+                                    callbacks.AppendCritical(
+                                        "V169 ORIGINAL GLOBAL invalid native "
+                                        "plant/feature vectors");
+                                    return false;
+                                }
+                                callbacks.Append(
+                                    "V169 ORIGINAL GLOBAL event=" +
+                                    std::string{event} +
+                                    " profileId=" +
+                                    std::to_string(profile_id) +
+                                    " plantMask=0x" +
+                                    JniProbeHex(plants) +
+                                    " featureMask=0x" +
+                                    JniProbeHex(features) +
+                                    " mode=READ_ONLY");
+                                return true;
+                            };
+
                         // An event-only snapshot. Comparing the native
                         // profile vectors with V128 masks before/after
                         // FireDidRefresh separates a guest-global CLAIM
@@ -2836,6 +2900,17 @@
                                 const std::uint32_t sidecar_features =
                                     callbacks.OfflineStoreLoadProfileMask(
                                         profile_id, false);
+
+                                if (!audit_offline_original_global(
+                                        event, profile_id)) {
+                                    // Observation is passive: an uncertain
+                                    // native global read must not prevent
+                                    // existing shop refresh or original
+                                    // v166 per-profile vector projection.
+                                    callbacks.AppendCritical(
+                                        "V169 original global catalog probe "
+                                        "unavailable; preserving v166 flow");
+                                }
 
                                 callbacks.Append(
                                     "OFFLINE STORE CATALOG AUDIT event=" +
@@ -3042,6 +3117,18 @@
                             return true;
                         }
 
+                        // Snapshot BEFORE a new synthetic transaction.
+                        // Native FirePaymentComplete itself only QUEUES
+                        // the original deferred event; a later refresh
+                        // also captures AFTER processing, not a fake
+                        // synchronous entitlement change.
+                        if (!audit_offline_original_global(
+                                "pre-paid-enqueue", profile_id)) {
+                            callbacks.AppendCritical(
+                                "V169 original global pre-paid probe "
+                                "unavailable; no mutation attempted");
+                        }
+
                         if (!run_lifecycle(
                                 "OfflineStore_GetCoins",
                                 kGetCoins, profile, 0u, 0u, false, true)) {
@@ -3155,6 +3242,13 @@
                                 "OfflineStore_RollbackCoins",
                                 kSetCoins, profile, coins_before, 0u, false, true);
                             return false;
+                        }
+
+                        if (!audit_offline_original_global(
+                                "post-payment-event-enqueue", profile_id)) {
+                            callbacks.AppendCritical(
+                                "V169 original global post-enqueue probe "
+                                "unavailable; preserving sidecar commit");
                         }
 
                         const auto* purchased_entry =
