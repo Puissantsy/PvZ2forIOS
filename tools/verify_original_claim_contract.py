@@ -26,6 +26,18 @@ LOCALES = {
         "INGAME_RESTORE_PURCHASE_ITEM_BUTTON": "RÉCUPÉRER",
     },
 }
+# Exactly the ten custom offline coin entries, also present in the original
+# MAGENTO.RTON with identical canonical SKU names. A legacy genuine receipt
+# may therefore collide with a synthetic v2 coin receipt: preserve provenance.
+OFFLINE_SKUS = tuple(
+    "com.popcap.pvz2.android." + name + ".nonconsume"
+    for name in (
+        "plant.snowpea", "plant.squash", "plant.imitater",
+        "plant.jalapeno", "plant.torchwood", "plant.powerlily",
+        "gameupgrade.sunshovel3", "gameupgrade.pfslot2",
+        "gameupgrade.startingsun2", "gameupgrade.seedslot2",
+    )
+)
 # ARM opcode anchors validated against EXACT Android 1.5.252752 libPVZ2.so.
 # An offset mismatch means a different ELF or another build: STOP analysis.
 ARM_WORDS = {
@@ -62,6 +74,11 @@ def main() -> int:
                 if actual is None or needle not in actual:
                     raise ValueError(f"{lang}: {key} missing or changed: {actual!r}")
             print(f"PASS original {lang}: shared nonconsumable plant/upgrade CLAIM is documented")
+        original_catalog = z.read("PvZ2_METADATA/PACKAGES/MAGENTO.RTON")
+        for sku in OFFLINE_SKUS:
+            if sku.encode("ascii") not in original_catalog:
+                raise ValueError(f"Custom SKU not in original MAGENTO.RTON: {sku}")
+        print("PASS original MAGENTO.RTON contains all ten SAME canonical SKU IDs")
 
     with zipfile.ZipFile(args.apk) as z:
         elf = z.read("lib/armeabi-v7a/libPVZ2.so")
@@ -86,8 +103,10 @@ def main() -> int:
             r'\{"(com\.popcap\.pvz2\.android\.[^"]+\.nonconsume)",'
             r'.*?OfflineStoreEntitlementKind::(Plant|GameFeature),',
             source)
-        if len(entries) != 10 or len(set(k for k, _ in entries)) != 10:
-            raise ValueError(f"Expected 10 unique offline SKUs; got {entries!r}")
+        if len(entries) != 10 or set(sku for sku, _ in entries) != set(OFFLINE_SKUS):
+            raise ValueError(
+                "Host offline SKUs no longer match the ten verified ORIGINAL "
+                f"Magento entries: {entries!r}")
         plants = sum(kind == "Plant" for _, kind in entries)
         features = sum(kind == "GameFeature" for _, kind in entries)
         if (plants, features) != (6, 4):
