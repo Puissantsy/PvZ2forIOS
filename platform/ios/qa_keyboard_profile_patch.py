@@ -13,10 +13,10 @@ PARTS = BASE / "pvz2_apk_probe_parts"
 def patch(file, old, new):
     file = Path(file)
     source = file.read_text(encoding="utf-8")
-    if source.count(old) == 1:
-        file.write_text(source.replace(old, new, 1), encoding="utf-8")
-    elif source.count(new) == 1 and source.count(old) == 0:
+    if source.count(new) == 1:
         return
+    elif source.count(old) == 1:
+        file.write_text(source.replace(old, new, 1), encoding="utf-8")
     else:
         raise RuntimeError(f"unsafe QA patch in {file.name}: original={source.count(old)}, patched={source.count(new)}")
 
@@ -389,8 +389,8 @@ patch(PARTS / "part_09.inc",
 """,
 """                                // Avoid hammering the save path if the
                                 // sandbox refuses a write; never stop gameplay.
-                                if ((current_frame_number < 3u ||
-                                     current_frame_number % 120u == 0u) &&
+                                if ((callbacks.current_frame_number < 3u ||
+                                     callbacks.current_frame_number % 120u == 0u) &&
                                     (callbacks
                                         .offline_store_last_profile_ptr == 0u ||
                                      callbacks
