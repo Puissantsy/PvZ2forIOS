@@ -28,3 +28,11 @@ Original v166 offline JNI `RequestPayment` stored `{sku, price, serial}` but NOT
 ## Future grouped patch gate
 
 After identifying the native purchase-status/claim path, complete source-of-truth isolation for the ten supported SKUs, stop unauthorized claim redemption, and audit failure rollback. Add minimal event-driven probes for ownership checks. Preserve v165 verified backup/restore, v166 intentional reset + one-time QA grant, v162 per-profile mask logs and all validated guest runtime changes. Make ONE new iOS build only when the entire identified class is covered. Do not merge uncompiled staged runtime changes into the validated v166 baseline.
+
+## Verified second asynchronous boundary — remains UNSOLVED by owner pin
+
+Further native disassembly verifies `FirePaymentComplete 0x009ffa84` only queues a 56-byte native event. Its deferred callback `0x00a01614` calls driver dispatcher `0x00a00e24`, which consults driver listener `+0x0c` and dispatches the registered purchase-broker slot0 `0x0049ccf0`. The actual broker listener appends a 40-byte pending `PurchaseTransaction` to vector at broker+0x2c, then delegates further processing.
+
+Consequently, this branch's initiating-profile guard protects **only the host RequestPayment -> FirePaymentComplete enqueue boundary**. It does not pin the owner through native event consumption or later `RetrieveGlobalPurchase` and is NOT a complete solution for free cross-profile CLAIM. A follow-on grouped patch must (i) bind native event/transaction to initiating profile throughout its lifetime, and (ii) restrict the genuine claimability and grant of only ten offline SKU entitlements to that owner; B must still be able to pay for a new legitimate purchase.
+
+The real native item-specific submission `0x0049ac98` receives broker + requested product, stores product at broker+0x20 then sets state6 `RetrieveGlobalPurchase` via `0x49afc8 -> 0x49b160`. State6 later retrieves current profile and passes it with pending item data into a GENERIC helper `0x42feec`. This is a narrow observation point, NOT permission to patch the state or generic helper until BUY and CLAIM cases are distinguished. See accompanying v167 analysis.
