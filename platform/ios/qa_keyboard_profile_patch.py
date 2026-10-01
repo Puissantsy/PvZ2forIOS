@@ -112,7 +112,7 @@ patch(main,
 """)
 
 patch(main,
-"""- (BOOL)textFieldShouldReturn:
+r"""- (BOOL)textFieldShouldReturn:
         (UITextField *)textField {
 
     static const std::uint8_t newline =
