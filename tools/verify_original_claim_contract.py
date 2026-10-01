@@ -47,6 +47,20 @@ ARM_WORDS = {
     0x0049BB54: 0xEBFF8F55,  # call GetCurrentProfile
     0x0049BB8C: 0xEBFE50D6,  # call shared profile/item update helper
     0x0049CE84: 0xEB000C1F,  # process deferred purchase transaction
+    # Listener 0x49ccf0: reconstruct the 40-byte native pending transaction.
+    # The event contributes six RtString* fields through driver dispatch.
+    # This proves tx+0x18 is token and tx+0x0c is canonical product SKU.
+    0x0049CD94: 0xE5AB100C,  # initialize tx+0x0c (SKU)
+    0x0049CD98: 0xE5A01010,  # initialize tx+0x10 (receipt)
+    0x0049CD9C: 0xE5A41014,  # initialize tx+0x14 (order)
+    0x0049CDA0: 0xE5A71018,  # initialize tx+0x18 (token)
+    0x0049CDA4: 0xE5A6101C,  # initialize tx+0x1c (JSON)
+    0x0049CDA8: 0xE5AA1020,  # initialize tx+0x20 (signature)
+    0x0049CDB8: 0xE5C51008,  # initialize tx+0x08 (processing flag)
+    0x0049CDD4: 0xE1A00007,  # destination tx+0x18 for first event string
+    0x0049CDD8: 0xE1A01009,  # source eventString[0] (token)
+    0x0049CDE0: 0xE2891008,  # source eventString[2] (SKU)
+    0x0049CDE8: 0xEB1B5F7E,  # assign SKU into tx+0x0c
 }
 
 
@@ -90,7 +104,7 @@ def main() -> int:
             raise ValueError(
                 f"Wrong ELF or changed native anchor 0x{address:x}: "
                 f"expected 0x{word:08x}, got 0x{actual:08x}")
-    print("PASS six reference ELF ARM anchors: per-item state 6 -> CURRENT local profile")
+    print(f"PASS {len(ARM_WORDS)} reference ELF ARM anchors: state 6 and precise pending native receipt fields")
     for token in (b"global_save_data\0", b"local_profiles\0",
                   b"RetrieveGlobalPurchase\0"):
         if token not in elf:
