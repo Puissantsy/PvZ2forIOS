@@ -2375,6 +2375,24 @@
         // a different profile at the later frame-boundary callback.
         std::uint32_t initiating_profile_id = 0xffffffffu;
     };
+    // v170 bounded per-transaction observation. No serialized v170 journal
+    // or actual global mutation is allowed yet: replay after an interrupted
+    // original payment needs separate crash-safe provenance verification.
+    struct V170GlobalTxnObservation {
+        bool active = false;
+        bool receipt_confirmed = false;
+        bool sidecar_committed = false;
+        bool preview_logged = false;
+        std::uint32_t owner_profile_id = 0xffffffffu;
+        std::uint32_t baseline_plants = 0u;
+        std::uint32_t baseline_features = 0u;
+        bool target_plants = false;
+        std::uint32_t target_bit = 0u;
+        std::string sku;
+        std::string token;
+    };
+    V170GlobalTxnObservation v170_global_txn{};
+
 
     std::uint32_t OfflineStoreCurrentSelectionId() {
         constexpr std::uint32_t kProfileMgrSingletonStorage =
@@ -2531,6 +2549,61 @@
             }
         }
 
+        return true;
+    }
+
+    // Returns a READ-ONLY, bounded preview. In particular, never pass a
+    // guest vector to a generic host std::vector erase or use the profile
+    // offsets 0x18/0x34 on original GLOBAL data. Original schema uses
+    // global +0x04 (plants) / +0x10 (features) for DWORD vectors.
+    struct V170OriginalGlobalPreview {
+        std::uint32_t begin = 0u;
+        std::uint32_t old_end = 0u;
+        pvz2offline::GlobalCompactPreview compaction;
+    };
+
+    bool V170PreviewOriginalGlobalRemoval(
+        std::uint32_t original_global,
+        bool plants,
+        std::uint32_t remove_mask,
+        V170OriginalGlobalPreview& result) {
+
+        result = V170OriginalGlobalPreview{};
+        const std::uint32_t vector_offset =
+            plants ? 0x04u : 0x10u;
+        if (original_global == 0u ||
+            mem.Ptr(original_global, 0x28u) == nullptr ||
+            mem.Ptr(original_global + vector_offset, 12u) == nullptr) {
+            return false;
+        }
+        const std::uint32_t begin =
+            mem.Read32Guest(original_global + vector_offset);
+        const std::uint32_t end =
+            mem.Read32Guest(original_global + vector_offset + 4u);
+        const std::uint32_t cap =
+            mem.Read32Guest(original_global + vector_offset + 8u);
+        if (begin == 0u || end < begin || cap < end ||
+            ((end - begin) & 3u) != 0u ||
+            ((cap - begin) & 3u) != 0u ||
+            end - begin > 512u ||
+            cap - begin > 8192u ||
+            mem.Ptr(begin, end - begin) == nullptr) {
+            return false;
+        }
+        std::vector<std::uint32_t> values;
+        values.reserve((end - begin) / 4u);
+        for (std::uint32_t cursor = begin; cursor < end; cursor += 4u) {
+            values.push_back(mem.Read32Guest(cursor));
+        }
+        const auto preview =
+            pvz2offline::PreviewGlobalCatalogRemoval(
+                values, plants, remove_mask);
+        if (!preview.safe()) {
+            return false;
+        }
+        result.begin = begin;
+        result.old_end = end;
+        result.compaction = preview;
         return true;
     }
 
