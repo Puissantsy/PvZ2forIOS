@@ -380,12 +380,10 @@ patch(PARTS / "part_01.inc",
 """)
 
 patch(PARTS / "part_09.inc",
-"""                                if (callbacks
-                                        .offline_store_last_profile_ptr ==
-                                            0u ||
-                                    callbacks
-                                        .offline_store_last_profile_id !=
-                                            observed_profile_id) {
+"""                                if (callbacks.offline_store_last_profile_ptr ==
+                                        0u ||
+                                    callbacks.offline_store_last_profile_id !=
+                                        observed_profile_id) {
 """,
 """                                // Avoid hammering the save path if the
                                 // sandbox refuses a write; never stop gameplay.
