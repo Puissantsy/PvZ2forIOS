@@ -35,10 +35,23 @@ def load_checked(snapshot: Path) -> dict[str, dict]:
     if not all(isinstance(root, str) and safe_root(root) for root in roots):
         raise ValueError("Unknown or dangerous snapshot root")
 
+    # Match the existing app's snapshot format before even reading payload
+    # bytes. A verified manifest contains one regular config file and only
+    # directory-based UserData roots, never symlinks.
+    for root in roots:
+        candidate = snapshot / root
+        if candidate.is_symlink() or (
+            (root == "config-v1.txt" and not candidate.is_file()) or
+            (root != "config-v1.txt" and not candidate.is_dir())
+        ):
+            raise ValueError(f"Missing, invalid or symlinked snapshot root: {root}")
+
     verified: dict[str, dict] = {}
     if len(entries) > 16384:
         raise ValueError("Too many snapshot files")
     for entry in entries:
+        if not isinstance(entry, dict):
+            raise ValueError("Malformed file inventory item")
         path = entry.get("path")
         if not isinstance(path, str) or path.startswith("/") or "\\" in path:
             raise ValueError("Invalid inventory path")
@@ -52,7 +65,7 @@ def load_checked(snapshot: Path) -> dict[str, dict]:
             raise ValueError(f"Missing or escaped inventory file {path}")
         data = file.read_bytes()
         if len(data) != entry["size"] or hashlib.sha256(data).hexdigest() != entry["sha256"]:
-            raise ValueError(f"File does not match signed snapshot manifest: {path}")
+            raise ValueError(f"File does not match hashed snapshot manifest: {path}")
         if path in verified:
             raise ValueError(f"Duplicate snapshot inventory entry: {path}")
         verified[path] = entry
