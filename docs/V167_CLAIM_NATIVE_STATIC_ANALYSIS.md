@@ -2,6 +2,15 @@
 
 Status: STATIC ANALYSIS ONLY. The v166 opt-in reset IPA was compiled (GitHub Actions run #430) and the user has saved a reference snapshot. **This branch does not change gameplay, store state, save files, or build an IPA**. The native code is the 2013 Android armeabi-v7a `libPVZ2.so` extracted from the project-supplied APK v1.5.252752. ARM offsets below are offsets within this exact ELF, not stripped-symbol names inferred from nearby unrelated weak symbols.
 
+## New decisive physical-iPad observation (reported by user)
+
+**CONFIRMED visual/interaction behavior**: after account A buys a premium plant, another account B can press `CLAIM`, obtains the plant for real, and that item disappears from B's shop. This falsifies the narrow hypothesis that the problem is only a stale button label. The second account is genuinely able to redeem a shared original purchase. The report does NOT yet show whether the availability of CLAIM persists in B after a cold restart *before B redeems it*, or identify the exact native function/state granting it.
+
+**Design context, hypothesis not independently proven as historical product contract**: Google Play purchase entitlements are naturally global to the store purchaser even when a game has multiple local player profiles. The old PvZ2 purchase broker's `RetrieveGlobalPurchase` state and this observed behavior are consistent with intentionally sharing one permanent IAP across profiles, with a per-profile `CLAIM` to materialize each local unlock. Our newer desired behavior (spend separate PvZCoins and own a plant independently on each local profile) diverges from that possible original purchase model. Merely clearing B's `m_unlockedPlants` vector still allows the native global purchase/CLAIM restoration path to append the plant on B.
+
+**Revised implementation priority**: scope the *right to claim/redeem the original purchase* and the subsequent *grant* to the purchasing local profile for the TEN custom coin-backed offline SKUs, preserving all other original/free progression and native assets. An account-switch cache reset alone cannot be considered sufficient even if it removes a transient CLAIM: unauthorized redemptions must be blocked at the logical entitlement decision, not just UI. Verify no cross-profile deducible/global transaction history leaks through `RetrieveGlobalPurchase`; audit the actual claim callback/restore transaction path with the ELF and logs. Prevent the initiating-profile race before sending FirePaymentComplete.
+
+**Critical test sequencing refinement**: B has now clicked CLAIM and genuinely unlocked the item, so simply restarting B NOW cannot distinguish the original global claimability leak from B's legitimate newly saved unlock. For a restart comparison, restore the pre-purchase/fresh-reset test state or pick ANOTHER premium plant not yet claimed on B: buy it only on A, first inspect B's unexpected CLAIM without redeeming, cold restart on B STILL BEFORE REDEMPTION, then inspect again. Preserve both full logs; only after these controls test claim redemption separately.
 ## 1. Important difference: actual rights vs shop's CLAIM vs cached items
 
 Define three independently observable conditions for A purchases plant X then B opens the shop:
@@ -52,7 +61,7 @@ Metadata cross-check: project `PvZ2_METADATA(1).zip` `PACKAGES/PLANTTYPES.RTON` 
 
 **H1: global native purchase state (primary)**. v166's sidecar makes profile A/B ownership appear separate only in explicitly rewritten profile vectors; the real broker also records native transaction/global-purchase state. Changing the active profile does not change the original global owner, and even a catalog refresh reuses the same synthetic broker driver, so B may see CLAIM or gain the unlock from global/native state. This fits both the original `RetrieveGlobalPurchase` state and the host's real native purchase callback sequence. Distinguish whether B actually has the plant, not just the label.
 
-**H2: in-memory cached catalog/CLAIM state**. Even if the native rights vectors are correctly cleared on switch, the same Java/native broker may reuse product-state objects or cached claimability from A. The host replays `SkuDetails`, but does not explicitly invalidate the native purchased-item cache on profile switch. If the issue vanishes when relaunching directly into B, prioritize this rather than rewriting global save data.
+**H2: in-memory cached catalog/CLAIM state (can coexist with H1, insufficient alone after confirmed B redemption)**. Even if the native rights vectors are correctly cleared on switch, the same Java/native broker may reuse product-state objects or cached claimability from A. The host replays `SkuDetails`, but does not explicitly invalidate the native purchased-item cache on profile switch. If the issue vanishes when relaunching directly into B, prioritize this rather than rewriting global save data.
 
 **H3: wrong account credited during async purchase**. `OfflinePurchaseRequest` lacks the initiating profile ID. The delivery callback resolves `GetCurrentProfile` again and charges/grants to that then-active account. To prevent this entire class, bind pending request to initiating stable profile ID AND verify it before debit and delivery. If profiles differ, fail safely rather than charging another profile. This is a definite code design weakness, not an established occurrence.
 
@@ -72,7 +81,7 @@ Interpretation:
 | B vectors nonzero, B sidecar zero | CLAIM | Either | Either | Rehydration or missed profile switch; current vector overlay timing is incomplete. |
 | B sidecar incorrectly nonzero | CLAIM | Either | Either | Investigate migration or asynchronous purchase owner mismatch; do NOT patch UI. |
 
-The v164 uploaded log only covered one profile ID 1790838014 with raw premium vectors AND sidecar masks at zero before and after catalog refresh. It did NOT contain the controlled A-purchase → B-switch sequence, so it cannot single out H1 vs H2 today. User's report of cross-profile access motivates the investigation but does not substitute for those two logs.
+User explicitly confirmed that B pressing CLAIM actually grants the premium plant and removes the item from the shop. Therefore a purely cosmetic stale-label fix is ruled out. The v164 uploaded log only covered one profile ID 1790838014 with raw premium vectors AND sidecar masks at zero before and after catalog refresh. It did NOT contain the controlled A-purchase → B-switch sequence, so it cannot single out H1 vs H2 today. User's report of cross-profile access motivates the investigation but does not substitute for those two logs.
 
 ## 6. Scope of ONE subsequent functional patch (after disambiguation)
 
