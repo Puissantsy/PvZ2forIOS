@@ -594,9 +594,16 @@
                         pending_offline_purchase.pending = true;
                         pending_offline_purchase.sku = sku;
                         pending_offline_purchase.serial = ++offline_purchase_serial;
-                        if (entry != nullptr) {
+                        pending_offline_purchase.initiating_profile_id =
+                            OfflineStoreCurrentSelectionId();
+                        if (entry != nullptr &&
+                            pending_offline_purchase.initiating_profile_id !=
+                                0xffffffffu) {
                             pending_offline_purchase.coin_price = entry->coin_price;
                         } else {
+                            // Never queue a payable purchase without a
+                            // resolved initiating account, nor silently
+                            // attribute it to the next selected account.
                             pending_offline_purchase.immediate_error = 6;
                         }
 
@@ -607,6 +614,11 @@
                             std::to_string(pending_offline_purchase.coin_price) +
                             " serial=" +
                             std::to_string(pending_offline_purchase.serial) +
+                            " ownerProfileId=" +
+                            std::to_string(
+                                pending_offline_purchase.initiating_profile_id) +
+                            " immediateError=" +
+                            std::to_string(pending_offline_purchase.immediate_error) +
                             (entry != nullptr ? " target=YES" : " target=NO"));
                         return true;
                     }
