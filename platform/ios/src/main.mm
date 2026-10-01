@@ -682,8 +682,10 @@ void PvZ2HostNotifyDirectFrame(
     self.stopButton.translatesAutoresizingMaskIntoConstraints =
         NO;
     [self.stopButton
-        setTitle:@"Stop"
+        setTitle:@"⋯"
         forState:UIControlStateNormal];
+    self.stopButton.accessibilityLabel = @"Options de sauvegarde";
+    self.stopButton.accessibilityHint = @"Sauvegarder et arrêter le jeu, copier les diagnostics, ou fermer après arrêt.";
     [self.stopButton
         setTitleColor:
             UIColor.whiteColor
@@ -699,7 +701,7 @@ void PvZ2HostNotifyDirectFrame(
             boldSystemFontOfSize:15.0];
     [self.stopButton
         addTarget:self
-        action:@selector(stopOrClose)
+        action:@selector(v164PresentBackupMenu)
         forControlEvents:UIControlEventTouchUpInside];
 
     // v157: Turbo artwork is composited by host_gles inside the 4:3 PvZ2
@@ -770,7 +772,9 @@ void PvZ2HostNotifyDirectFrame(
     // v130 production-style presentation: keep these controls constructed so
     // old diagnostic/error paths remain safe, but remove them from normal play.
     self.captionLabel.hidden = YES;
-    self.stopButton.hidden = YES;
+    // v164: retain a small native host menu. The underlying guest stop
+    // action already exists, but v130 hid its only accessible UIKit button.
+    self.stopButton.hidden = NO;
     // v157: hidden until the restored low-frequency GameState hooks prove
     // GAME_Game. The visual is rendered in GLES, not by UIKit.
     self.timeScaleButton.hidden = YES;
@@ -823,11 +827,11 @@ void PvZ2HostNotifyDirectFrame(
             [self.stopButton.topAnchor
                 constraintEqualToAnchor:guide.topAnchor
                 constant:6.0],
-            [self.stopButton.trailingAnchor
-                constraintEqualToAnchor:guide.trailingAnchor
-                constant:-8.0],
+            [self.stopButton.leadingAnchor
+                constraintEqualToAnchor:guide.leadingAnchor
+                constant:8.0],
             [self.stopButton.widthAnchor
-                constraintEqualToConstant:68.0],
+                constraintEqualToConstant:44.0],
             [self.stopButton.heightAnchor
                 constraintEqualToConstant:36.0],
 
@@ -920,6 +924,51 @@ void PvZ2HostNotifyDirectFrame(
                 title,
                 next == 0u ? @"1.0" : (next == 1u ? @"1.5" : @"2.0"),
                 next == 0u ? @"+0c" : (next == 1u ? @"+702c" : @"+1200c")]);
+}
+
+// No guest patch and no mid-frame filesystem copy: request the validated
+// interactive stop first. finishRunWithMessage snapshots only after the
+// guest worker has returned, so it cannot copy actively written save files.
+- (void)v164PresentBackupMenu {
+    if (self.presentedViewController != nil) return;
+    UIAlertController *menu = [UIAlertController
+        alertControllerWithTitle:@"PvZ2 — sauvegarde"
+        message:self.runFinished
+            ? @"La partie est arrêtée. La dernière sauvegarde a été copiée dans Fichiers > PvZ2Backups si les fichiers étaient disponibles."
+            : @"Un arrêt propre permet de créer une sauvegarde exportable. Le jeu doit être arrêté avant la copie."
+        preferredStyle:UIAlertControllerStyleAlert];
+
+    if (!self.runFinished && self.stopButton.enabled) {
+        [menu addAction:[UIAlertAction
+            actionWithTitle:@"Sauvegarder et arrêter"
+            style:UIAlertActionStyleDestructive
+            handler:^(__unused UIAlertAction *action) {
+                AppendPersistentLog(@"[V164 SAVE MENU] user confirmed safe stop");
+                [self stopOrClose];
+            }]];
+    }
+
+    [menu addAction:[UIAlertAction
+        actionWithTitle:@"Copier le journal"
+        style:UIAlertActionStyleDefault
+        handler:^(__unused UIAlertAction *action) {
+            [self v130CopyDiagnostics];
+        }]];
+
+    if (self.runFinished) {
+        [menu addAction:[UIAlertAction
+            actionWithTitle:@"Fermer"
+            style:UIAlertActionStyleDefault
+            handler:^(__unused UIAlertAction *action) {
+                [self stopOrClose];
+            }]];
+    } else {
+        [menu addAction:[UIAlertAction
+            actionWithTitle:@"Continuer à jouer"
+            style:UIAlertActionStyleCancel
+            handler:nil]];
+    }
+    [self presentViewController:menu animated:YES completion:nil];
 }
 
 - (void)stopOrClose {
@@ -2104,8 +2153,9 @@ void PvZ2HostNotifyDirectFrame(
         message ?: @"PvZ2 LIVE — run finished.";
     self.stopButton.enabled = YES;
 
+    // v164 keeps the menu button usable for copying logs and closing.
     [self.stopButton
-        setTitle:@"Close"
+        setTitle:@"⋯"
         forState:UIControlStateNormal];
 }
 
