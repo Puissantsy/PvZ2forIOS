@@ -2955,6 +2955,125 @@
                                 return true;
                             };
 
+                        // v170 preflight only: do NOT mutate a real original
+                        // global purchase. We require the exact native v2
+                        // receipt's ConfirmDelivery AND durable host sidecar
+                        // before even planning removal of its new global bit.
+                        // Executed once at a lifecycle-safe frame boundary,
+                        // never as an arbitrary guest-memory/frame scan.
+                        auto& v170 = callbacks.v170_global_txn;
+                        if (v170.active &&
+                            v170.receipt_confirmed &&
+                            v170.sidecar_committed &&
+                            !v170.preview_logged) {
+                            v170.preview_logged = true;
+                            constexpr std::uint32_t kGetOriginalGlobal =
+                                kGuestBase + 0x0043ebd0u;
+                            if (!run_lifecycle(
+                                    "V170_Global_PreflightGetter",
+                                    kGetOriginalGlobal, 0u, 0u, 0u,
+                                    false, true)) {
+                                callbacks.AppendCritical(
+                                    "V170 GLOBAL PREVIEW failed: original "
+                                    "getter returned error; NEVER MUTATE");
+                            } else {
+                                const std::uint32_t original = jit.Regs()[0];
+                                std::uint32_t current_plants = 0u;
+                                std::uint32_t current_features = 0u;
+                                if (original == 0u ||
+                                    memory.Ptr(original, 0x28u) == nullptr ||
+                                    !callbacks.OfflineStoreReadTargetMask(
+                                        original, 0x04u, true, current_plants) ||
+                                    !callbacks.OfflineStoreReadTargetMask(
+                                        original, 0x10u, false,
+                                        current_features)) {
+                                    callbacks.AppendCritical(
+                                        "V170 GLOBAL PREVIEW failed: original "
+                                        "vector is absent/invalid; NEVER MUTATE");
+                                } else {
+                                    const bool non_target_unchanged =
+                                        v170.target_plants
+                                        ? current_features ==
+                                            v170.baseline_features
+                                        : current_plants ==
+                                            v170.baseline_plants;
+                                    const auto plan =
+                                        pvz2offline::PlanGlobalIsolation(
+                                            true,
+                                            v170.target_plants
+                                                ? v170.baseline_plants
+                                                : v170.baseline_features,
+                                            v170.target_plants
+                                                ? current_plants
+                                                : current_features,
+                                            v170.target_bit,
+                                            v170.target_plants
+                                                ? 0x3fu : 0x0fu);
+                                    callbacks.Append(
+                                        "V170 GLOBAL PREVIEW ownerProfile=" +
+                                        std::to_string(
+                                            v170.owner_profile_id) +
+                                        " sku=" + v170.sku +
+                                        " beforePlants=0x" +
+                                        JniProbeHex(v170.baseline_plants) +
+                                        " nowPlants=0x" +
+                                        JniProbeHex(current_plants) +
+                                        " beforeFeatures=0x" +
+                                        JniProbeHex(v170.baseline_features) +
+                                        " nowFeatures=0x" +
+                                        JniProbeHex(current_features) +
+                                        " plan=" +
+                                        std::to_string(
+                                            static_cast<unsigned>(
+                                                plan.decision)) +
+                                        " concurrentOtherCategory=" +
+                                        (non_target_unchanged ? "NO" : "YES"));
+                                    if (non_target_unchanged &&
+                                        plan.decision ==
+                                            pvz2offline::
+                                                GlobalIsolationDecision::
+                                                    SyntheticChangeCanBeRemoved &&
+                                        plan.eligible_synthetic_delta ==
+                                            v170.target_bit) {
+                                        PvZ2JniCallbacks::
+                                            V170OriginalGlobalPreview preview;
+                                        if (callbacks.
+                                                V170PreviewOriginalGlobalRemoval(
+                                                    original,
+                                                    v170.target_plants,
+                                                    plan.eligible_synthetic_delta,
+                                                    preview)) {
+                                            callbacks.Append(
+                                                "V170 GLOBAL TARGET PREVIEW "
+                                                "SAFE owner=" +
+                                                std::to_string(
+                                                    v170.owner_profile_id) +
+                                                " removedMask=0x" +
+                                                JniProbeHex(
+                                                    preview.compaction.
+                                                        removed_catalog_mask) +
+                                                " keptDWORDs=" +
+                                                std::to_string(
+                                                    preview.compaction.
+                                                        kept.size()) +
+                                                " mode=READ_ONLY; no original "
+                                                "or paired hash rewrite");
+                                        } else {
+                                            callbacks.AppendCritical(
+                                                "V170 GLOBAL TARGET PREVIEW "
+                                                "rejected malformed/duplicate "
+                                                "original vector");
+                                        }
+                                    } else {
+                                        callbacks.Append(
+                                            "V170 GLOBAL TARGET PREVIEW "
+                                            "PRESERVE: legacy or unrelated "
+                                            "changes cannot be removed safely");
+                                    }
+                                }
+                            }
+                        }
+
                         if (callbacks.pending_offline_catalog_refresh) {
                             if (!driver_ready ||
                                 callbacks.native_purchase_fire_did_refresh_address == 0u) {
