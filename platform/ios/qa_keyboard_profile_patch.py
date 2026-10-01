@@ -411,6 +411,33 @@ patch(PARTS / "part_09.inc",
                                         }
 """)
 
+# Never debit a profile while its entitlement ownership has not been
+# safely persisted; otherwise a failed save might unlock globally.
+patch(PARTS / "part_09.inc",
+"""                        if (!run_lifecycle(
+                                "OfflineStore_GetCoins",
+                                kGetCoins, profile, 0u, 0u, false, true)) {
+""",
+"""                        if (callbacks.offline_store_last_profile_ptr !=
+                                profile ||
+                            callbacks.offline_store_last_profile_id !=
+                                profile_id) {
+                            if (callbacks.fallback_logged.insert(
+                                    "qa-profile-payment-gated").second) {
+                                callbacks.AppendCritical(
+                                    "QA PROFILE purchase blocked: ownership save not ready");
+                            }
+                            if (!fire_incomplete(6)) return false;
+                            callbacks.pending_offline_purchase =
+                                PvZ2JniCallbacks::OfflinePurchaseRequest{};
+                            return true;
+                        }
+
+                        if (!run_lifecycle(
+                                "OfflineStore_GetCoins",
+                                kGetCoins, profile, 0u, 0u, false, true)) {
+""")
+
 print(
     "QA keyboard/profile patches applied: Android Enter down/up, "
     "manual dismissal, isolated v2 saves, detailed config errors, "
