@@ -1,5 +1,14 @@
 # v168 staging — offline purchase owner pin (NO IPA YET)
 
+## Critical scope correction: REAL iPad user save/log proof (2026-10-01)
+
+**The originally pursued symptom was misinterpreted.** Real gameplay confirms B cannot use the Snow Pea obtained through the visual CLAIM, and the shop offers the free CLAIM again after restart. Our per-profile V128 overlay correctly denies B host ownership but conflicts with original game's shared global purchase status. Both actual A-postbuy and B-postclaim 190-byte original global RTON files decode `m_unlockedPlants=[21]` (Snow Pea) and are IDENTICAL; B's host sidecar remains zero, B native vector changes 0→1 from free CLAIM with **NO** synthetic RequestPayment or FirePaymentComplete, and our existing overlay resets it to zero. Third cold-relaunch log proves B's original native raw vector starts 1 again before host projection, then flips 1 again at next CLAIM.
+
+**Source-level main problem:** NEW synthetic A coin-backed purchase becomes visible as an ORIGINAL shared global plant purchase, enabling original free cross-profile CLAIM and preventing B's separate BUY price. The owner pin, receipt-v2 transport, native transaction classifier, stale-BUY gate and snapshot tools staged here are still useful ancillary protections, but **NONE is the CLAIM fix**: B CLAIM never executes their payment callbacks. The necessary correction is provenance-aware suppression of NEW synthetic-only global publication in both live original broker/object and persisted global data, while preserving genuine original same-SKU purchases and the correct profile-local sidecar.
+
+Full sanitized file-grounded report and single-build acceptance matrix: `docs/V169_REAL_SNOWPEA_CLAIM_DIAGNOSIS.md`. Do not ship or merge this draft as a CLAIM fix. No further user files are necessary to re-prove the root cause.
+
+
 ## Why this code exists
 
 Original v166 offline JNI `RequestPayment` stored `{sku, price, serial}` but NOT the account where the user clicked BUY. The later async frame-boundary callback called `GetCurrentProfile` again, then debited coins and delivered the real native `FirePaymentComplete`. If A requested an item and switched to B before delivery, B could be charged/credited. This was a source-level race, independent of the already-reported B→CLAIM→real free grant.
