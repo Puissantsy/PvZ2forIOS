@@ -1,6 +1,8 @@
 #include "pvz2_apk_probe.hpp"
 #include "offline_receipt_v2.hpp"
 #include "offline_purchase_policy.hpp"
+#include "offline_global_entitlement_policy.hpp"
+#include "offline_global_compaction.hpp"
 #include "host_gles.hpp"
 #include "host_audio.hpp"
 
