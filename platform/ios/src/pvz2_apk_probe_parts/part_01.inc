@@ -2370,7 +2370,25 @@
         std::uint32_t coin_price = 0u;
         std::int32_t immediate_error = 0;
         std::uint64_t serial = 0u;
+        // Bind the asynchronous transaction to the actual local profile
+        // selected when RequestPayment was received. Never charge/fulfill
+        // a different profile at the later frame-boundary callback.
+        std::uint32_t initiating_profile_id = 0xffffffffu;
     };
+
+    std::uint32_t OfflineStoreCurrentSelectionId() {
+        constexpr std::uint32_t kProfileMgrSingletonStorage =
+            kGuestBase + 0x00d4e960u;
+        if (mem.Ptr(kProfileMgrSingletonStorage, 4u) == nullptr) {
+            return 0xffffffffu;
+        }
+        const std::uint32_t manager =
+            mem.Read32Guest(kProfileMgrSingletonStorage);
+        if (manager == 0u || mem.Ptr(manager, 0x18u) == nullptr) {
+            return 0xffffffffu;
+        }
+        return mem.Read32Guest(manager + 0x14u);
+    }
 
     static const OfflineStoreCatalogEntry*
     OfflineStoreFindCatalogEntry(const std::string& sku) {
