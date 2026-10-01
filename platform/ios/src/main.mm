@@ -2293,6 +2293,10 @@ void PvZ2HostNotifyDirectFrame(
     BOOL v166ResetIntroShown;
 @property(nonatomic, assign)
     BOOL v166ResetIntroActive;
+@property(nonatomic, assign)
+    BOOL v166ResetFailurePaused;
+@property(nonatomic, copy)
+    NSString *v166ResetLogStatus;
 - (void)v163OfferPendingRestore;
 - (void)v166OfferResetIntro;
 
@@ -2493,11 +2497,12 @@ void PvZ2HostNotifyDirectFrame(
         handler:^(__unused UIAlertAction *action) {
             NSError *resetError = nil;
             NSURL *protectedCopy = PVZSaveResetForTest(&resetError);
-            AppendPersistentLog([NSString stringWithFormat:
+            self.v166ResetLogStatus = [NSString stringWithFormat:
                 @"[V166 TEST RESET] startup result=%@ protected=%@ error=%@",
                 protectedCopy ? @"SUCCESS" : @"FAIL",
                 protectedCopy.lastPathComponent ?: @"none",
-                resetError.localizedDescription ?: @"none"]);
+                resetError.localizedDescription ?: @"none"];
+            AppendPersistentLog(self.v166ResetLogStatus);
             self.v166ResetIntroActive = NO;
             if (protectedCopy != nil) {
                 [[NSUserDefaults standardUserDefaults]
@@ -2507,6 +2512,7 @@ void PvZ2HostNotifyDirectFrame(
                     protectedCopy.lastPathComponent]];
                 [self v130ContinueLaunch];
             } else {
+                self.v166ResetFailurePaused = YES;
                 [self v130SetStatus:[NSString stringWithFormat:
                     @"Réinitialisation NON effectuée. Données locales préservées. %@. Ferme l’app et relance-la pour réessayer.",
                     resetError.localizedDescription ?: @"Erreur inconnue"]];
@@ -2625,7 +2631,7 @@ void PvZ2HostNotifyDirectFrame(
     if (!self.v163RestorePromptShown) [self v163OfferPendingRestore];
     if (self.v163RestorePromptActive) return;
     if (!self.v166ResetIntroShown) [self v166OfferResetIntro];
-    if (self.v166ResetIntroActive) return;
+    if (self.v166ResetIntroActive || self.v166ResetFailurePaused) return;
     if (!V130RuntimeInstalled()) {
         [self v130PresentRuntimeImporter];
         return;
@@ -3228,6 +3234,12 @@ void PvZ2HostNotifyDirectFrame(
 
     ResetPersistentLog();
     self.logView.text = @"";
+    // Retain the explicit first-run test-reset result across the existing
+    // production diagnostic reset. A failed reset cannot reach this point.
+    if (self.v166ResetLogStatus.length != 0u) {
+        AppendPersistentLog(self.v166ResetLogStatus);
+        self.v166ResetLogStatus = nil;
+    }
     // The prelaunch snapshot runs before the legacy diagnostic logger reset.
     // Carry its result forward so the exported log can diagnose both phases.
     if (self.v165PrelaunchSnapshotStatus.length != 0u) {
