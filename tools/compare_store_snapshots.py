@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import plistlib
+import re
 import sys
 from pathlib import Path
 
@@ -95,11 +96,87 @@ def focus(path: str) -> bool:
     )
 
 
+# The v128 host bridge writes human-readable rows:
+#   I<TAB>hex(UTF-8 key)<TAB>signed32
+#   B<TAB>hex(UTF-8 key)<TAB>0-or-1
+# Never print unrelated config keys or any USERFS binary data.
+PROFILE_KEY = re.compile(r"^offline_store_profile_v1_([0-9]+)_(plants|features)$")
+MIGRATION_KEY = "offline_store_profile_scope_migrated_v1"
+PLANT_NAMES = ("Snow Pea", "Squash", "Imitater", "Jalapeno", "Torchwood", "Power Lily")
+UPGRADE_NAMES = ("Shovel Bonus", "Plant Food Bonus", "Sun Bonus", "Bonus Seed Slot")
+
+
+def extract_offline_profile_rights(snapshot: Path) -> dict[str, str]:
+    config = snapshot / "config-v1.txt"
+    if not config.exists():
+        return {}
+    result: dict[str, str] = {}
+    # The manifest was already validated by load_checked(). No mutation.
+    for line in config.read_text(encoding="utf-8", errors="replace").splitlines():
+        parts = line.split("\t", 2)
+        if len(parts) != 3 or parts[0] not in ("I", "B"):
+            continue
+        kind, key_hex, raw = parts
+        try:
+            key = bytes.fromhex(key_hex).decode("utf-8")
+        except (ValueError, UnicodeDecodeError):
+            continue
+        match = PROFILE_KEY.fullmatch(key)
+        if match is None and key != MIGRATION_KEY:
+            continue
+        if key in result:
+            raise ValueError("Duplicate premium key; ambiguous backup: " + key)
+        if match is not None:
+            if kind != "I":
+                raise ValueError("Unexpected premium right type: " + key)
+            try:
+                value = int(raw, 10)
+            except ValueError as exc:
+                raise ValueError("Invalid premium mask: " + key) from exc
+            if not -2147483648 <= value <= 2147483647:
+                raise ValueError("Out-of-range premium mask: " + key)
+            result[key] = f"0x{value & 0xffffffff:08x}"
+        else:
+            if kind != "B" or raw not in ("0", "1"):
+                raise ValueError("Invalid migration flag")
+            result[key] = raw
+    return result
+
+
+def describe_mask(label: str, value: str | None) -> str:
+    if value is None:
+        return "ABSENT"
+    if label == MIGRATION_KEY:
+        return "YES" if value == "1" else "NO"
+    names = PLANT_NAMES if label.endswith("_plants") else UPGRADE_NAMES
+    mask = int(value, 16)
+    owned = [name for bit, name in enumerate(names) if mask & (1 << bit)]
+    other = mask & ~((1 << len(names)) - 1)
+    if other:
+        owned.append(f"UNKNOWN_BITS=0x{other:x}")
+    return value + (" [" + ", ".join(owned) + "]" if owned else " [none]")
+
+
+def print_premium_diff(before_dir: Path, after_dir: Path) -> None:
+    a = extract_offline_profile_rights(before_dir)
+    b = extract_offline_profile_rights(after_dir)
+    for key in sorted(set(a) | set(b)):
+        old, new = a.get(key), b.get(key)
+        status = "CHANGED" if old != new else "SAME"
+        print(f"PREMIUM {status}: {key}: "
+              f"{describe_mask(key, old)} -> {describe_mask(key, new)}")
+    if not a and not b:
+        print("PREMIUM: no v128 profile mask or migration key in either snapshot")
+    print("PREMIUM comparison is HOST SIDECAR ONLY; native global CLAIM remains separate.")
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("before", type=Path, help="Unmodified save-...-prelaunch-... directory")
     p.add_argument("after", type=Path, help="Unmodified save-...-poststop-... directory")
     p.add_argument("--all", action="store_true", help="List changed non-store resources too")
+    p.add_argument("--premium-diff", action="store_true",
+                   help="Show only decoded host premium rights changes (no private config)")
     args = p.parse_args()
     before = load_checked(args.before)
     after = load_checked(args.after)
@@ -119,6 +196,8 @@ def main() -> int:
     print(f"TOTAL: {modified} changed files across the entire verified snapshots.")
     print("The changed file set identifies WHERE to inspect next, not proof of")
     print("which specific field granted cross-profile CLAIM or who owned a receipt.")
+    if args.premium_diff:
+        print_premium_diff(args.before, args.after)
     return 0
 
 
