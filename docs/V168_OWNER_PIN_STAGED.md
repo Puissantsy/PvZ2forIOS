@@ -36,3 +36,27 @@ Further native disassembly verifies `FirePaymentComplete 0x009ffa84` only queues
 Consequently, this branch's initiating-profile guard protects **only the host RequestPayment -> FirePaymentComplete enqueue boundary**. It does not pin the owner through native event consumption or later `RetrieveGlobalPurchase` and is NOT a complete solution for free cross-profile CLAIM. A follow-on grouped patch must (i) bind native event/transaction to initiating profile throughout its lifetime, and (ii) restrict the genuine claimability and grant of only ten offline SKU entitlements to that owner; B must still be able to pay for a new legitimate purchase.
 
 The real native item-specific submission `0x0049ac98` receives broker + requested product, stores product at broker+0x20 then sets state6 `RetrieveGlobalPurchase` via `0x49afc8 -> 0x49b160`. State6 later retrieves current profile and passes it with pending item data into a GENERIC helper `0x42feec`. This is a narrow observation point, NOT permission to patch the state or generic helper until BUY and CLAIM cases are distinguished. See accompanying v167 analysis.
+
+## Confirmed historical product contract: shared non-consumable purchases
+
+Source: project `PvZ2_METADATA(1).zip` -> UTF-16 `PvZ2_METADATA/LOCALES/{EN-US,FR-FR}/PROPERTIES/LAWNSTRINGS.TXT`. Relevant exact keys:
+
+- `PURCHASE_CROSS_PROFILE_PLANT`: *Purchased Plants can be claimed by any of your additional profiles!*
+- `PURCHASE_CROSS_PROFILE_UPGRADE`: *Purchased Upgrades can be claimed by any of your additional profiles!*
+- `PURCHASE_RECLAIM_ITEM_BODY`: *Item has already been purchased on another profile. Claim for current profile at no cost!*
+- `FORCE_RESTORE_PURCHASES_BODY`: *Restore Purchases will allow you to claim all of your past purchases in any profile.*
+- `INGAME_RESTORE_PURCHASE_ITEM_BUTTON`: `CLAIM`.
+
+The original game's cross-profile CLAIM is **confirmed intentional**, not a bug in native `global_save_data` deserialization, not necessarily our JNI implementation defect, and not merely a stale label. The iPad user confirmed pressing CLAIM on B actually grants the A-purchased plant for free and removes it from B's shop.
+
+**New desired semantics apply ONLY to the 10 custom coin-backed offline entries defined in part_01:** original global nonconsumable entitlements must remain untouched for unrelated items, but a custom plant bought with profile A's own PvZCoins must NOT be redeemable for free on B. B must get its own ordinary BUY option and may purchase X using B's coins. This is a deliberate change of original game's ownership policy for the custom offline store, not a general corruption fix.
+
+Acceptance invariants before releasing ANY runtime IPA:
+
+1. Fresh A/B after v166 reset. A BUY X decreases ONLY A coins once, grants usable X to A, persists after restart.
+2. Before B buys, B store offers BUY (not free CLAIM) for X. Any stale native CLAIM attempt on B must be denied at the real entitlement grant, not just hidden in UI.
+3. B BUY X decreases ONLY B coins once, grants X to B without modifying A's wallet, plants or sidecar. After process restart both retain independent ownership.
+4. Rapid account switch before host payment delivery AND between native queue and listener consumption must not charge/grant wrong profile or create global claimability for the other account.
+5. Reinstall is NEVER necessary: v165 full snapshots/restore and v166 explicit reset remain byte-for-byte compatible. Existing other item categories are not swept or globally cleared.
+
+**Static design decision:** do not make the original native global broker itself fully per-profile for everything. Instead introduce an authoritative narrow per-profile ownership/claimability adapter that recognizes the ten synthetic offline SKUs, injects correct purchasing eligibility into the store and guards the native state-6 grant path plus deferred purchase listener. When reconstructing the native broker/product layout, distinguish product-request UI event from paid receipt and unsolicited global restore; `0x49ac98` is called from at least seven callsites and cannot be unconditionally blocked. The existing `part_01` V128 masks provide one candidate persistent authority; inspect its migration interactions before using as a final canonical record.
