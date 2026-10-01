@@ -2807,7 +2807,9 @@
                         // never writes guest memory or save files.
                         auto audit_offline_original_global =
                             [&](const char* event,
-                                std::uint32_t profile_id) -> bool {
+                                std::uint32_t profile_id,
+                                std::uint32_t* plants_out = nullptr,
+                                std::uint32_t* features_out = nullptr) -> bool {
                                 constexpr std::uint32_t
                                     kGetGlobalSaveData =
                                         kGuestBase + 0x0043ebd0u;
@@ -2849,6 +2851,12 @@
                                         "V169 ORIGINAL GLOBAL invalid native "
                                         "plant/feature vectors");
                                     return false;
+                                }
+                                if (plants_out != nullptr) {
+                                    *plants_out = plants;
+                                }
+                                if (features_out != nullptr) {
+                                    *features_out = features;
                                 }
                                 callbacks.Append(
                                     "V169 ORIGINAL GLOBAL event=" +
@@ -3122,11 +3130,17 @@
                         // the original deferred event; a later refresh
                         // also captures AFTER processing, not a fake
                         // synchronous entitlement change.
+                        std::uint32_t v170_pre_global_plants =
+                            0xffffffffu;
+                        std::uint32_t v170_pre_global_features =
+                            0xffffffffu;
                         if (!audit_offline_original_global(
-                                "pre-paid-enqueue", profile_id)) {
+                                "pre-paid-enqueue", profile_id,
+                                &v170_pre_global_plants,
+                                &v170_pre_global_features)) {
                             callbacks.AppendCritical(
-                                "V169 original global pre-paid probe "
-                                "unavailable; no mutation attempted");
+                                "V170 original global pre-paid snapshot "
+                                "unavailable; cannot attribute native delta");
                         }
 
                         if (!run_lifecycle(
@@ -3212,6 +3226,38 @@
                         const std::uint32_t order_string =
                             callbacks.JniNewSyntheticString(order_id);
 
+                        callbacks.v170_global_txn =
+                            PvZ2JniCallbacks::V170GlobalTxnObservation{};
+                        const auto* v170_entry =
+                            callbacks.OfflineStoreFindCatalogEntry(request.sku);
+                        if (v170_entry != nullptr &&
+                            v170_pre_global_plants != 0xffffffffu &&
+                            v170_pre_global_features != 0xffffffffu) {
+                            auto& observation = callbacks.v170_global_txn;
+                            observation.active = true;
+                            observation.owner_profile_id = profile_id;
+                            observation.baseline_plants = v170_pre_global_plants;
+                            observation.baseline_features = v170_pre_global_features;
+                            observation.target_plants =
+                                v170_entry->entitlement_kind ==
+                                PvZ2JniCallbacks::OfflineStoreEntitlementKind::Plant;
+                            observation.target_bit =
+                                1u << v170_entry->entitlement_bit;
+                            observation.sku = request.sku;
+                            observation.token = token;
+                            callbacks.Append(
+                                "V170 GLOBAL TXN BASELINE profileId=" +
+                                std::to_string(profile_id) +
+                                " sku=" + request.sku +
+                                " plantMask=0x" +
+                                JniProbeHex(observation.baseline_plants) +
+                                " featureMask=0x" +
+                                JniProbeHex(observation.baseline_features));
+                        } else {
+                            callbacks.Append(
+                                "V170 GLOBAL TXN cannot attribute purchase "
+                                "without original native pre-state");
+                        }
                         callbacks.offline_purchase_unconfirmed = true;
                         callbacks.offline_purchase_unconfirmed_token = token;
                         callbacks.Append(
@@ -3238,6 +3284,8 @@
                                 request.sku);
                             callbacks.offline_purchase_unconfirmed = false;
                             callbacks.offline_purchase_unconfirmed_token.clear();
+                            callbacks.v170_global_txn =
+                                PvZ2JniCallbacks::V170GlobalTxnObservation{};
                             run_lifecycle(
                                 "OfflineStore_RollbackCoins",
                                 kSetCoins, profile, coins_before, 0u, false, true);
@@ -3255,15 +3303,22 @@
                             callbacks.OfflineStoreFindCatalogEntry(
                                 request.sku);
 
-                        if (purchased_entry != nullptr &&
-                            !callbacks
-                                .OfflineStoreRecordPurchasedEntitlement(
-                                    profile,
-                                    profile_id,
-                                    *purchased_entry)) {
+                        const bool v170_sidecar_committed =
+                            purchased_entry != nullptr &&
+                            callbacks.OfflineStoreRecordPurchasedEntitlement(
+                                profile,
+                                profile_id,
+                                *purchased_entry);
+                        if (!v170_sidecar_committed) {
                             callbacks.AppendCritical(
-                                "OFFLINE STORE PROFILE purchase was accepted by native broker but profile sidecar update failed sku=" +
-                                request.sku);
+                                "OFFLINE STORE PROFILE purchase was accepted "
+                                "by native broker but profile sidecar "
+                                "update failed sku=" + request.sku);
+                            callbacks.v170_global_txn =
+                                PvZ2JniCallbacks::V170GlobalTxnObservation{};
+                        } else if (callbacks.v170_global_txn.active &&
+                                   callbacks.v170_global_txn.token == token) {
+                            callbacks.v170_global_txn.sidecar_committed = true;
                         }
 
                         // Also snapshot the live vectors after the native
