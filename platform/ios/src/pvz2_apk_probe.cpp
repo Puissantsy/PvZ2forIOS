@@ -1,4 +1,5 @@
 #include "pvz2_apk_probe.hpp"
+#include "offline_receipt_v2.hpp"
 #include "host_gles.hpp"
 #include "host_audio.hpp"
 
