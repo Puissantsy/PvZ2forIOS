@@ -22,6 +22,20 @@ if(NOT PVZ2_QA_PATCH_STATUS EQUAL 0)
 endif()
 message(STATUS "${PVZ2_QA_PATCH_OUTPUT}")
 
+# QA v3 applies after the validated keyboard/sandbox patch. Every source
+# anchor is checked; refuse to compile if a reverse-engineered layout changes.
+execute_process(
+    COMMAND /usr/bin/env python3
+        "${CMAKE_CURRENT_SOURCE_DIR}/qa_premium_scope_v3.py"
+    RESULT_VARIABLE PVZ2_QA_SCOPE_STATUS
+    OUTPUT_VARIABLE PVZ2_QA_SCOPE_OUTPUT
+    ERROR_VARIABLE PVZ2_QA_SCOPE_ERROR
+)
+if(NOT PVZ2_QA_SCOPE_STATUS EQUAL 0)
+    message(FATAL_ERROR "PvZ2 QA premium scope failed: ${PVZ2_QA_SCOPE_ERROR}")
+endif()
+message(STATUS "${PVZ2_QA_SCOPE_OUTPUT}")
+
 include(FetchContent)
 
 set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
