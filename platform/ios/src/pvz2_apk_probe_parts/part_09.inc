@@ -3014,6 +3014,34 @@
                             return true;
                         }
 
+                        // A stale native BUY button must not charge a
+                        // customer for the SAME locally-owned plant again.
+                        // This gate applies only to a NEW custom offline
+                        // RequestPayment; authentic historical app-store
+                        // receipts never pass through this decision.
+                        const auto owner_status =
+                            callbacks.OfflineStoreLocalOwnershipForSku(
+                                profile_id, request.sku);
+                        const auto buy_gate =
+                            pvz2offline::OfflineNewBuyGate(owner_status);
+                        if (buy_gate !=
+                            pvz2offline::OfflineBuyGate::AllowPaidPurchase) {
+                            callbacks.AppendCritical(
+                                "OFFLINE STORE paid attempt rejected before "
+                                "debit sku=" + request.sku +
+                                " profileId=" + std::to_string(profile_id) +
+                                " gate=" +
+                                std::to_string(
+                                    static_cast<unsigned>(buy_gate)));
+                            // Unsupported/no-sidecar/duplicate are failures:
+                            // never re-emit FirePaymentComplete or add a
+                            // second globally reclaimable native receipt.
+                            if (!fire_incomplete(6)) return false;
+                            callbacks.pending_offline_purchase =
+                                PvZ2JniCallbacks::OfflinePurchaseRequest{};
+                            return true;
+                        }
+
                         if (!run_lifecycle(
                                 "OfflineStore_GetCoins",
                                 kGetCoins, profile, 0u, 0u, false, true)) {
