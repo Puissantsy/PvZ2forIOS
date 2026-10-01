@@ -7,6 +7,10 @@ static NSString *const kDomain = @"PvZ2forIOS.Backups";
 static NSString *const kManifest = @"snapshot-info.plist";
 static const unsigned long long kFileLimit = 64ull * 1024ull * 1024ull;
 static const unsigned long long kSnapshotLimit = 128ull * 1024ull * 1024ull;
+// v165: 512 was an arbitrary per-tree limit and rejected existing QA +
+// production saves. Keep the independent per-file and total-byte bounds,
+// but support real multi-profile user directories with many small files.
+static const NSUInteger kMaxSaveFiles = 16384u;
 
 NSError *MakeError(NSString *description) {
     return [NSError errorWithDomain:kDomain code:1 userInfo:@{
@@ -79,7 +83,10 @@ NSArray<NSDictionary *> *Inventory(NSURL *snapshot,
     NSMutableArray<NSDictionary *> *files = [NSMutableArray array];
     unsigned long long total = 0;
     for (NSString *root in roots) {
-        if (!IsSaveRoot(root) || [root containsString:@"/"]) {
+        if (![root isKindOfClass:[NSString class]] ||
+            !IsSaveRoot(root) || [root containsString:@"/"] ||
+            [root containsString:@"\\"] || [root isEqualToString:@"."] ||
+            [root isEqualToString:@".."]) {
             if (error) *error = MakeError(@"Unrecognized save root");
             return nil;
         }
@@ -119,9 +126,25 @@ NSArray<NSDictionary *> *Inventory(NSURL *snapshot,
             return nil;
         }
         for (NSURL *entry in candidates) {
-            NSString *relative = [entry.path substringFromIndex:snapshot.path.length + 1];
-            if (!IsSafeRelativePath(relative) || files.count >= 512) {
-                if (error) *error = MakeError(@"Unsafe path or too many save files");
+            // Explicitly separate unsafe path data from high but legitimate
+            // file counts. The old combined message prevented diagnosis.
+            NSString *prefix = [snapshot.path stringByAppendingString:@"/"];
+            if (![entry.path hasPrefix:prefix]) {
+                if (error) *error = MakeError([NSString stringWithFormat:
+                    @"Inventory path escaped save root: %@", entry.lastPathComponent]);
+                return nil;
+            }
+            NSString *relative = [entry.path substringFromIndex:prefix.length];
+            if (!IsSafeRelativePath(relative)) {
+                if (error) *error = MakeError([NSString stringWithFormat:
+                    @"Invalid save relative path in root %@: %@", root, relative]);
+                return nil;
+            }
+            if (files.count >= kMaxSaveFiles) {
+                if (error) *error = MakeError([NSString stringWithFormat:
+                    @"Save inventory file count exceeded: %lu (limit %lu; root %@)",
+                    (unsigned long)files.count,
+                    (unsigned long)kMaxSaveFiles, root]);
                 return nil;
             }
             unsigned long long size = 0;
@@ -152,7 +175,16 @@ BOOL ValidateSnapshot(NSURL *snapshot, NSDictionary **outManifest, NSError **err
         return NO;
     }
     NSArray *roots = manifest[@"roots"];
-    if (roots.count == 0 || roots.count > 32 ||
+    // Never allow a copied manifest to smuggle non-string roots. Existing
+    // users may legitimately have multiple former QA save directories.
+    for (id root in roots) {
+        if (![root isKindOfClass:[NSString class]] || !IsSaveRoot(root) ||
+            [root containsString:@"/"] || [root containsString:@"\\"]) {
+            if (error) *error = MakeError(@"Invalid root name in snapshot manifest");
+            return NO;
+        }
+    }
+    if (roots.count == 0 || roots.count > 128 ||
         [[NSSet setWithArray:roots] count] != roots.count) {
         if (error) *error = MakeError(@"Invalid snapshot root inventory");
         return NO;
