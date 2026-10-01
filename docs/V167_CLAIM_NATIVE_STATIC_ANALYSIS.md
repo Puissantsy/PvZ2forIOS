@@ -199,3 +199,28 @@ Original UTF-16 `LAWNSTRINGS.TXT` proves cross-profile CLAIM was an INTENDED gam
 `0x49d628` is an event-notification helper checking broker flags `+0x18/+0x1a` and dispatching callbacks; this is not a proven generic BUY entry or a proven CLAIM-only entry. `0x49d2e0` is called from two store-display/UI areas (`0x50117c`, `0x503030`) and may be part of another transaction/UI event flow; do not equate it with one button by proximity.
 
 **Migration caution after reset:** `offline_store_profile_scope_migrated_v1` is single global host config marker. Because v166 fresh reset removes `config-v1.txt` and `UserData*`, it makes a sound controlled A/B setup, but future restoration of pre-v166 snapshots can legitimately preserve global original purchases. The profile-specific migration must remain limited to ten offline SKU masks and not silently rewrite original shared IAP receipts.
+
+### 2026-10-01 additional breakthrough: exact native pending receipt memory layout
+
+Using original 1.5.252752 Android ELF, traced the JNI queued event to the intermediate driver `0x00a01614` and bridge `0x00a00e24`, not merely the broker listener name. The original JNI `FirePaymentComplete 0x009ffa84` enqueues a 56-byte event; its payload contains six guest reference-counted `std::string` fields and a flag. The deferred callback at `0x00a01614` extracts the six fields from event offsets +0x04/+0x0c/+0x14/+0x1c/+0x24/+0x2c and the flag from +0x34, then driver `0x00a00e24` packs the six strings into a 24-byte stack array and invokes the registered listener at `0x00a00ed8`. This yields a fully defined, not guessed, mapping from JNI argument ordering to broker input array.
+
+The native broker listener `0x0049ccf0` allocates **40 bytes** for `PurchaseTransaction`. The instruction sequence below proves where each queued string ends up (using assignment `0x00b74be8`, a ref-counted native string copy):
+
+| Native `PurchaseTransaction` offset | Source listener event string | ARM evidence |
+|---:|---|---|
+| `+0x0c` | canonical **SKU** (third string) | `0x49cde0..0x49cde8` (`event+8 → tx+0x0c`) |
+| `+0x10` | **receipt** (second string) | `0x49cdbc..0x49cdc4` (`event+4 → tx+0x10`) |
+| `+0x14` | **order ID** (sixth string) | `0x49cdc8..0x49cdd0` (`event+20 → tx+0x14`) |
+| `+0x18` | **purchase token** (FIRST string) | `0x49cdd4..0x49cddc` (`event+0 → tx+0x18`) |
+| `+0x1c` | original purchase JSON (fourth) | `0x49cdec..0x49cdf4` (`event+12 → tx+0x1c`) |
+| `+0x20` | signature (fifth) | `0x49cdf8..0x49ce00` (`event+16 → tx+0x20`) |
+| `+0x04` | broker-derived transaction state/status | `0x49ce04..0x49ce40` |
+| `+0x08` | processing flag | initialization `0x49cdb8` then helper `0x49ff08` |
+
+Each six string field is a **4-byte pointer to guest reference-counted char storage**, not a 64-bit host `std::string`. The `std::string` assignment helper at `0xb74be8` reads `[source]` as guest char pointer and manages metadata via pointer-12. Do NOT reinterpret guest bytes as host std::string and do NOT scan beyond a strict bounded `memory.Ptr` validated maximum.
+
+The broker appends the transaction to its vector at `broker+0x2c..+0x30`, then calls `0x49ff08` from **`0x49ce84`**. This is a concrete candidate event-only read boundary for ownership metadata: `tx+0x18` is guaranteed to carry the canonical host v2 token when a *new synthetic purchase* enters this listener, and `tx+0x0c` names its SKU. An authentic legacy receipt with the SAME SKU lacks the v2 namespace and must be passed through unaffected. This boundary is NOT demonstrated to be entered when B simply clicks free CLAIM, so blocking here alone cannot prove free CLAIM prevention; isolate actual global purchase publishing and/or separately guard global restoration.
+
+Added reference `tools/verify_original_claim_contract.py` asserts **17/17 exact ARM instruction words** including listener offsets and deferred handler, plus 4 EN-US + 4 FR-FR original restore keys and 10/10 original Magento canonical SKUs. Independent execution against supplied reference APK+metadata passed every asserted check. Version-locked ARM constants are valid only for the known ELF; relocations and base addresses must be accounted for separately in the JIT.
+
+v168 also stages a pure five-state host paid BUY preflight gate (`offline_purchase_policy.hpp`) invoked before GetCoins/SetCoins, preventing accidental second charges on stale native BUY buttons and failing closed while a profile sidecar is uninitialized. That does NOT rewrite historical original shared-claim behavior. Local host-only compile/static assertions for all five states passed.
