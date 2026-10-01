@@ -2991,10 +2991,23 @@
                         }
 
                         if (profile == 0u ||
-                            memory.Ptr(profile, 0x18u) == nullptr) {
+                            memory.Ptr(profile, 0x18u) == nullptr ||
+                            request.initiating_profile_id == 0xffffffffu ||
+                            profile_id != request.initiating_profile_id) {
                             callbacks.AppendCritical(
-                                "OFFLINE STORE invalid current profile while processing sku=" +
-                                request.sku);
+                                "OFFLINE STORE purchase owner mismatch/rejected "
+                                "sku=" + request.sku +
+                                " initiatedProfile=" +
+                                std::to_string(request.initiating_profile_id) +
+                                " deliveryProfile=" +
+                                std::to_string(profile_id) +
+                                " profileResolved=" +
+                                (profile != 0u ? std::string{"YES"} :
+                                                 std::string{"NO"}));
+                            // The user switched accounts while billing was
+                            // queued. Reject BEFORE coin debit or native
+                            // FirePaymentComplete; the next account must
+                            // never inherit this purchase.
                             if (!fire_incomplete(6)) return false;
                             callbacks.pending_offline_purchase =
                                 PvZ2JniCallbacks::OfflinePurchaseRequest{};
