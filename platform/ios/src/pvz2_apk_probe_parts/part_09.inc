@@ -3103,6 +3103,15 @@
                                 request.sku);
                         }
 
+                        // Also snapshot the live vectors after the native
+                        // payment callback and V128 entitlement sidecar commit.
+                        // This is once per accepted purchase, not per frame.
+                        if (!audit_offline_catalog("after-purchase")) {
+                            callbacks.AppendCritical(
+                                "OFFLINE STORE post-purchase entitlement audit failed");
+                            return false;
+                        }
+
                         callbacks.offline_store_coin_ui_refresh_pending =
                             true;
 
