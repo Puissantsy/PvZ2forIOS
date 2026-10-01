@@ -6,3 +6,5 @@
 FOUNDATION_EXPORT NSURL * _Nullable PVZSaveCreateSnapshot(NSString *reason, NSError **error);
 FOUNDATION_EXPORT NSArray<NSURL *> *PVZSavePendingRestores(void);
 FOUNDATION_EXPORT BOOL PVZSaveRestoreSnapshot(NSURL *snapshot, NSError **error);
+FOUNDATION_EXPORT BOOL PVZSaveHasLocalSave(void);
+FOUNDATION_EXPORT NSURL * _Nullable PVZSaveResetForTest(NSError **error);
