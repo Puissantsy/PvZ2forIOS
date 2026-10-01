@@ -490,6 +490,8 @@ BOOL V130CopyRuntimeFile(NSURL *source, NSURL *destination, NSError **error) {
 - (void)finishRunWithMessage:
         (NSString *)message;
 
+- (void)v166OfferResetAfterStop;
+
 - (void)setHostKeyboardVisible:
         (BOOL)visible;
 
@@ -977,6 +979,12 @@ void PvZ2HostNotifyDirectFrame(
 
     if (self.runFinished) {
         [menu addAction:[UIAlertAction
+            actionWithTitle:@"Réinitialiser pour tests…"
+            style:UIAlertActionStyleDestructive
+            handler:^(__unused UIAlertAction *action) {
+                [self v166OfferResetAfterStop];
+            }]];
+        [menu addAction:[UIAlertAction
             actionWithTitle:@"Fermer"
             style:UIAlertActionStyleDefault
             handler:^(__unused UIAlertAction *action) {
@@ -989,6 +997,47 @@ void PvZ2HostNotifyDirectFrame(
             handler:nil]];
     }
     [self presentViewController:menu animated:YES completion:nil];
+}
+
+// Repeatable QA reset, available ONLY after the guest has exited. The
+// primary save/stop action remains unchanged, and every reset itself makes
+// a second verified backup outside the 12 rotating snapshot slots.
+- (void)v166OfferResetAfterStop {
+    if (!self.runFinished || self.presentedViewController != nil) return;
+    UIAlertController *confirm = [UIAlertController
+        alertControllerWithTitle:@"Réinitialiser les données de test ?"
+        message:@"Tous les profils locaux et leurs achats seront remis à zéro. L’APK et l’OBB restent installés. Une copie vérifiée de l’état actuel sera conservée dans PvZ2ProtectedResets. Vérifie que ta sauvegarde de référence est bien dans iCloud Drive."
+        preferredStyle:UIAlertControllerStyleAlert];
+    [confirm addAction:[UIAlertAction actionWithTitle:@"Annuler"
+        style:UIAlertActionStyleCancel handler:nil]];
+    [confirm addAction:[UIAlertAction actionWithTitle:@"Réinitialiser"
+        style:UIAlertActionStyleDestructive handler:^(__unused UIAlertAction *action) {
+            NSError *resetError = nil;
+            NSURL *protectedCopy = PVZSaveResetForTest(&resetError);
+            NSString *result = protectedCopy
+                ? [NSString stringWithFormat:
+                    @"Réinitialisation terminée. Ancienne sauvegarde protégée : %@. Ferme entièrement l’app, puis relance-la. Le premier nouveau profil devrait recevoir la dotation de test de 60 000 PvZCoins.",
+                    protectedCopy.lastPathComponent]
+                : [NSString stringWithFormat:
+                    @"Réinitialisation refusée/échouée : %@. Aucun effacement sans sauvegarde vérifiée.",
+                    resetError.localizedDescription ?: @"erreur inconnue"];
+            AppendPersistentLog([NSString stringWithFormat:
+                @"[V166 TEST RESET] stopped-menu result=%@ backup=%@ error=%@",
+                protectedCopy ? @"SUCCESS" : @"FAIL",
+                protectedCopy.lastPathComponent ?: @"none",
+                resetError.localizedDescription ?: @"none"]);
+            self.v165BackupResult = result;
+            UIAlertController *done = [UIAlertController
+                alertControllerWithTitle:protectedCopy
+                    ? @"Sauvegarde protégée ; données réinitialisées"
+                    : @"Réinitialisation non effectuée"
+                message:result
+                preferredStyle:UIAlertControllerStyleAlert];
+            [done addAction:[UIAlertAction actionWithTitle:@"OK"
+                style:UIAlertActionStyleDefault handler:nil]];
+            [self presentViewController:done animated:YES completion:nil];
+        }]];
+    [self presentViewController:confirm animated:YES completion:nil];
 }
 
 - (void)stopOrClose {
@@ -2240,7 +2289,12 @@ void PvZ2HostNotifyDirectFrame(
     BOOL v163PrelaunchSnapshotTaken;
 @property(nonatomic, copy)
     NSString *v165PrelaunchSnapshotStatus;
+@property(nonatomic, assign)
+    BOOL v166ResetIntroShown;
+@property(nonatomic, assign)
+    BOOL v166ResetIntroActive;
 - (void)v163OfferPendingRestore;
+- (void)v166OfferResetIntro;
 
 @end
 
@@ -2391,8 +2445,72 @@ void PvZ2HostNotifyDirectFrame(
                 return;
             }
             self.v163RestorePromptActive = NO;
+            // If the user explicitly restores a snapshot from the inbox,
+            // do not immediately offer to destroy that restored state.
+            [[NSUserDefaults standardUserDefaults]
+                setBool:YES forKey:@"pvz2_v166_reset_intro_seen"];
             [self v130SetStatus:@"Sauvegarde restaurée."];
             [self v130ContinueLaunch];
+        }]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
+// Optional one-time introduction when updating an existing installation.
+// Never erase on installation or before an explicit destructive confirmation.
+// A declined prompt is remembered; repeatable reset remains on the stopped
+// game's ellipsis menu. Pending inbox restoration is offered FIRST.
+- (void)v166OfferResetIntro {
+    if (self.v166ResetIntroShown ||
+        [[NSUserDefaults standardUserDefaults]
+            boolForKey:@"pvz2_v166_reset_intro_seen"]) return;
+    self.v166ResetIntroShown = YES;
+    if (!PVZSaveHasLocalSave()) {
+        [[NSUserDefaults standardUserDefaults]
+            setBool:YES forKey:@"pvz2_v166_reset_intro_seen"];
+        return;
+    }
+
+    self.v166ResetIntroActive = YES;
+    UIAlertController *alert = [UIAlertController
+        alertControllerWithTitle:@"Nouvelle partie de test ?"
+        message:@"Tu peux repartir de zéro pour récupérer la dotation de test de 60 000 PvZCoins sur un nouveau profil. Tous les profils locaux seront réinitialisés, après création d’une copie vérifiée dans PvZ2ProtectedResets. Ta sauvegarde dans iCloud Drive ne sera pas touchée. Ne confirme que si tu as bien conservé cette copie externe."
+        preferredStyle:UIAlertControllerStyleAlert];
+
+    [alert addAction:[UIAlertAction
+        actionWithTitle:@"Garder mes profils actuels"
+        style:UIAlertActionStyleCancel
+        handler:^(__unused UIAlertAction *action) {
+            [[NSUserDefaults standardUserDefaults]
+                setBool:YES forKey:@"pvz2_v166_reset_intro_seen"];
+            self.v166ResetIntroActive = NO;
+            AppendPersistentLog(@"[V166 TEST RESET] startup declined");
+            [self v130ContinueLaunch];
+        }]];
+
+    [alert addAction:[UIAlertAction
+        actionWithTitle:@"Réinitialiser mes données locales"
+        style:UIAlertActionStyleDestructive
+        handler:^(__unused UIAlertAction *action) {
+            NSError *resetError = nil;
+            NSURL *protectedCopy = PVZSaveResetForTest(&resetError);
+            AppendPersistentLog([NSString stringWithFormat:
+                @"[V166 TEST RESET] startup result=%@ protected=%@ error=%@",
+                protectedCopy ? @"SUCCESS" : @"FAIL",
+                protectedCopy.lastPathComponent ?: @"none",
+                resetError.localizedDescription ?: @"none"]);
+            self.v166ResetIntroActive = NO;
+            if (protectedCopy != nil) {
+                [[NSUserDefaults standardUserDefaults]
+                    setBool:YES forKey:@"pvz2_v166_reset_intro_seen"];
+                [self v130SetStatus:[NSString stringWithFormat:
+                    @"Réinitialisation terminée ; ancienne partie protégée dans %@.",
+                    protectedCopy.lastPathComponent]];
+                [self v130ContinueLaunch];
+            } else {
+                [self v130SetStatus:[NSString stringWithFormat:
+                    @"Réinitialisation NON effectuée. Données locales préservées. %@. Ferme l’app et relance-la pour réessayer.",
+                    resetError.localizedDescription ?: @"Erreur inconnue"]];
+            }
         }]];
     [self presentViewController:alert animated:YES completion:nil];
 }
@@ -2506,6 +2624,8 @@ void PvZ2HostNotifyDirectFrame(
 
     if (!self.v163RestorePromptShown) [self v163OfferPendingRestore];
     if (self.v163RestorePromptActive) return;
+    if (!self.v166ResetIntroShown) [self v166OfferResetIntro];
+    if (self.v166ResetIntroActive) return;
     if (!V130RuntimeInstalled()) {
         [self v130PresentRuntimeImporter];
         return;
