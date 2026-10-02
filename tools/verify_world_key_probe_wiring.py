@@ -53,6 +53,27 @@ require("regs[10] = regs[0];" in svc, "incorrect AddWorldKeys original MOV")
 require("regs[3]=3u;" in svc, "incorrect gate original MOV")
 require("regs[0]=mem.Read32Guest(kGuestBase+0x005b8504u);" in svc,
         "incorrect post-gate LDR emulation")
+# Regression: the v85/v118 production-performance filter discards Legacy
+# lines that don't start with allowed Vxx prefixes. The first physical KEYOBS
+# log had no GRANT/GATE events for precisely this reason; every opt-in marker
+# MUST use Diagnostic, whose ShouldKeepLogLine path bypasses that filter.
+for marker in (
+    "KEYOBS GRANT_PRE sourceLR", "KEYOBS GRANT_PRE capped",
+    "KEYOBS GATE_BEFORE", "KEYOBS GATE_AFTER ",
+    "KEYOBS GATE_AFTER no matching", "KEYOBS GATE logs capped",
+):
+    require('AppendDiagnostic("'+marker in svc,
+            "KEYOBS event not on unfiltered diagnostic channel: "+marker)
+require('callbacks.AppendDiagnostic("KEYOBS READ ONLY installed' in install,
+        "missing installation signature in visible diagnostic channel")
+require('Append("KEYOBS' not in svc and 'callbacks.Append("KEYOBS' not in install,
+        "KEYOBS incorrectly passed to legacy performance filter")
+require("log_class == ProbeLogClass::Diagnostic" in
+        (ROOT / "platform/ios/src/pvz2_apk_probe_parts/part_02.inc").read_text(),
+        "diagnostic channel no longer guaranteed to bypass legacy filters")
+require('line.rfind("V144 SELECTION DRAW ", 0u) == 0u' in
+        (ROOT / "platform/ios/src/pvz2_apk_probe_parts/part_08.inc").read_text(),
+        "research graphics log noise guard missing")
 require("keyobs_grants_logged < 64u" in svc, "missing grant log cap")
 require("keyobs_gate_pairs_logged < 16u" in svc, "missing gate log cap")
 # The research branch must use a distinct sandbox from the real user install.
