@@ -4241,6 +4241,74 @@
             return;
         }
 
+        if (WorldKeyResearchEnabled() &&
+            swi == kJniProbeSvcWorldKeyAddObserve) {
+            // Reproduce original @0x1042ccd0: MOV r10,r0.
+            // The original prologue already executed, so LR still carries
+            // the real callsite (including indirect dispatch).
+            regs[10] = regs[0];
+            if (keyobs_grants_logged < 64u) {
+                const std::uint32_t profile=regs[0];
+                const bool readable=mem.Ptr(profile+0x14u, 4u)!=nullptr &&
+                    profile>=kJniProbeHeapBase &&
+                    static_cast<std::uint64_t>(profile-kJniProbeHeapBase) <
+                        mem.HeapCapacity();
+                Append("KEYOBS GRANT_PRE sourceLR=0x"+
+                    JniProbeHex(regs[14])+
+                    " tid="+std::to_string(current_probe_thread_id)+
+                    " world="+WorldKeyReadOnlyWorldName(regs[1])+
+                    " amount="+std::to_string(regs[2])+
+                    " coinsBefore="+
+                        (readable ? std::to_string(
+                            mem.Read32Guest(profile+0x14u)) :
+                            std::string{"UNKNOWN"})+
+                    " "+WorldKeyReadOnlyGateSnapshot(profile));
+            } else if (keyobs_grants_logged == 64u) {
+                Append("KEYOBS GRANT_PRE capped at 64 events");
+            }
+            ++keyobs_grants_logged;
+            return;
+        }
+
+        if (WorldKeyResearchEnabled() &&
+            swi == kJniProbeSvcWorldKeyGateBefore) {
+            // Reproduce original @0x105b846c: MOV r3,#3.
+            regs[3]=3u;
+            keyobs_pending_gate_profile=regs[0];
+            keyobs_pending_gate_thread=current_probe_thread_id;
+            if (keyobs_gate_pairs_logged < 16u) {
+                Append("KEYOBS GATE_BEFORE eventPtr=0x"+
+                    JniProbeHex(regs[2])+
+                    " desiredState=3 "+WorldKeyReadOnlyGateSnapshot(
+                        keyobs_pending_gate_profile));
+            }
+            return;
+        }
+
+        if (WorldKeyResearchEnabled() &&
+            swi == kJniProbeSvcWorldKeyGateAfter) {
+            // The native state update @0x105b8470 has returned.
+            // Reproduce original @0x105b8474 LDR r0,[pc,#0x88].
+            // Architectural ARM PC at this instruction is 0x105b847c.
+            regs[0]=mem.Read32Guest(kGuestBase+0x005b8504u);
+            if (keyobs_gate_pairs_logged < 16u) {
+                if (keyobs_pending_gate_profile!=0u &&
+                    keyobs_pending_gate_thread==current_probe_thread_id) {
+                    Append("KEYOBS GATE_AFTER "+
+                        WorldKeyReadOnlyGateSnapshot(
+                            keyobs_pending_gate_profile));
+                } else {
+                    Append("KEYOBS GATE_AFTER no matching pre-state (UNKNOWN)");
+                }
+            } else if (keyobs_gate_pairs_logged == 16u) {
+                Append("KEYOBS GATE logs capped at 16 pairs");
+            }
+            ++keyobs_gate_pairs_logged;
+            keyobs_pending_gate_profile=0u;
+            keyobs_pending_gate_thread=0xffffffffu;
+            return;
+        }
+
         if (swi == kJniProbeSvcGetEnv) {
             const std::uint32_t output_address = regs[1];
             const std::uint32_t version = regs[2];
