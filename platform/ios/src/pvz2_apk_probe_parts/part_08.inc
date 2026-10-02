@@ -1482,6 +1482,27 @@ bool JniProbePrepareRuntime(
             return true;
         };
 
+    // Optional, group-installed, read-only 2013 world-key research traps.
+    // They replace three EXACT instructions with SVC; CallSVC reproduces each
+    // instruction verbatim in register/memory effect (no flags changed).
+    // AddWorldKeys entry captures every direct + indirect caller with ONE trap.
+    // Gate before/after snapshots bracket the game's original state update.
+    if (callbacks.WorldKeyResearchEnabled()) {
+        if (!patch_resource_native_miss(
+                0x0042ccd0u, 0xe1a0a000u,
+                kJniProbeSvcWorldKeyAddObserve) ||
+            !patch_resource_native_miss(
+                0x005b846cu, 0xe3a03003u,
+                kJniProbeSvcWorldKeyGateBefore) ||
+            !patch_resource_native_miss(
+                0x005b8474u, 0xe59f0088u,
+                kJniProbeSvcWorldKeyGateAfter)) {
+            error="KEYOBS exact native AddWorldKeys/gate signature mismatch; refusing research instrumentation.";
+            return false;
+        }
+        callbacks.Append("KEYOBS READ ONLY installed AddWorldKeys+0x8 and gate-before/after; preserves real instruction and all reward/save behavior.");
+    }
+
     // v85 keeps only the functional resource-registry/wrapper traps from
     // this old combined block. Startup/GameState/registry probes are skipped.
     if (!patch_resource_native_miss(
