@@ -3195,9 +3195,15 @@
                                                             // retry on launch.
                                                             return false;
                                                         }
+                                                        const auto saved_owner =
+                                                            v170.owner_profile_id;
+                                                        const auto saved_target =
+                                                            v170.journal.sku.target_id;
+                                                        const std::string saved_token =
+                                                            v170.token;
                                                         if (!callbacks.
                                                                 V170ClearFinishedGlobalJournal(
-                                                                    v170.token)) {
+                                                                    saved_token)) {
                                                             callbacks.AppendCritical(
                                                                 "V170 GLOBAL "
                                                                 "native save "
@@ -3212,14 +3218,10 @@
                                                                 "CLEANUP SAVED "
                                                                 "owner=" +
                                                                 std::to_string(
-                                                                    v170.
-                                                                        owner_profile_id) +
+                                                                    saved_owner) +
                                                                 " id=" +
                                                                 std::to_string(
-                                                                    v170.
-                                                                        journal.
-                                                                        sku.
-                                                                        target_id) +
+                                                                    saved_target) +
                                                                 " nativeRTON"
                                                                 "+hash=CHANGED"
                                                                 " original "
