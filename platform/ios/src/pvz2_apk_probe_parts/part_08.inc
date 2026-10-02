@@ -597,6 +597,13 @@
 
     void AppendDiagnostic(
         const std::string& line) {
+        // KEYOBS needs award/gate evidence; old V144 graphics flight-recorder
+        // lines are multi-kilobyte noise in this isolated gameplay experiment.
+        // Restrict suppression to this explicit research mode only.
+        if (WorldKeyResearchEnabled() &&
+            line.rfind("V144 SELECTION DRAW ", 0u) == 0u) {
+            return;
+        }
         if (V118Enabled()) {
             const bool hot_runtime_diagnostic =
                 line.rfind("V96 MAIN BLOCK ", 0u) == 0u ||
@@ -1500,7 +1507,7 @@ bool JniProbePrepareRuntime(
             error="KEYOBS exact native AddWorldKeys/gate signature mismatch; refusing research instrumentation.";
             return false;
         }
-        callbacks.Append("KEYOBS READ ONLY installed AddWorldKeys+0x8 and gate-before/after; preserves real instruction and all reward/save behavior.");
+        callbacks.AppendDiagnostic("KEYOBS READ ONLY installed AddWorldKeys+0x8 and gate-before/after; preserves real instruction and all reward/save behavior.");
     }
 
     // v85 keeps only the functional resource-registry/wrapper traps from
