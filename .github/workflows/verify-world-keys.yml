@@ -1,4 +1,4 @@
-name: Research world-key policy checks (no IPA)
+name: Research world-key policy and probe wiring (no IPA)
 on:
   push:
     branches: [research/world-key-conversion]
