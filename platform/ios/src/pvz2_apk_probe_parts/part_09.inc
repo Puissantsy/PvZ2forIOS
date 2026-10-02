@@ -2646,6 +2646,78 @@
                             }
                         }
 
+
+                        // Strictly user-invoked from the iOS ellipsis menu,
+                        // confirmed for a DISPOSABLE QA profile. The separate
+                        // persistent per-profile marker is written BEFORE
+                        // raising the original native wallet and refuses any
+                        // second grant. No automatic refill after relaunch.
+                        if (gV170QaGrantRequested.exchange(
+                                false, std::memory_order_acq_rel)) {
+                            std::uint32_t qa_profile = 0u;
+                            std::uint32_t qa_profile_id = 0xffffffffu;
+                            if (!resolve_current_profile(
+                                    "V170_QA_Credit_GetCurrentProfile",
+                                    qa_profile, qa_profile_id)) return false;
+                            if (qa_profile == 0u ||
+                                qa_profile_id == 0xffffffffu ||
+                                callbacks.V170UnresolvedGlobalJournal()) {
+                                callbacks.AppendCritical(
+                                    "V170 QA CREDIT refused: no stable "
+                                    "profile or unresolved global journal");
+                            } else {
+                                callbacks.V128LoadConfigOnce();
+                                const std::string qa_key =
+                                    "offline_store_v170_qa_credit_60000_profile_" +
+                                    std::to_string(qa_profile_id);
+                                if (callbacks.v51_config_keys.count(qa_key)) {
+                                    callbacks.Append(
+                                        "V170 QA CREDIT already used by "
+                                        "this profile; no second grant");
+                                } else if (!run_lifecycle(
+                                        "V170_QA_Credit_GetCoins",
+                                        kGetCoins, qa_profile,
+                                        0u, 0u, false, true)) {
+                                    return false;
+                                } else {
+                                    const std::uint32_t before =
+                                        jit.Regs()[0];
+                                    const std::uint32_t floor =
+                                        std::max<std::uint32_t>(
+                                            before, 60000u);
+                                    callbacks.v51_config_keys.insert(qa_key);
+                                    callbacks.v51_config_booleans[qa_key] =
+                                        true;
+                                    if (!callbacks.V128FlushConfig()) {
+                                        callbacks.AppendCritical(
+                                            "V170 QA CREDIT marker persistence "
+                                            "failed; NO wallet mutation");
+                                    } else if (floor != before &&
+                                               !run_lifecycle(
+                                                   "V170_QA_Credit_SetCoins",
+                                                   kSetCoins, qa_profile,
+                                                   floor, 0u, false, true)) {
+                                        callbacks.AppendCritical(
+                                            "V170 QA CREDIT native SetCoins "
+                                            "failed; marker NOT reset");
+                                        return false;
+                                    } else {
+                                        callbacks.
+                                            offline_store_coin_ui_refresh_pending =
+                                                true;
+                                        callbacks.Append(
+                                            "V170 QA CREDIT explicit "
+                                            "one-time profileId=" +
+                                            std::to_string(qa_profile_id) +
+                                            " before=" +
+                                            std::to_string(before) +
+                                            " after=" +
+                                            std::to_string(floor));
+                                    }
+                                }
+                            }
+                        }
+
                         // QA-only bootstrap for the first offline store test.
                         // Make the wallet at least 60k exactly once, then store
                         // a host-backed V128 marker. This is deliberately a

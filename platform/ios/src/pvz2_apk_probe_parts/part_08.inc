@@ -2720,6 +2720,10 @@ void PvZ2QueueTextInputEvent(
         std::memory_order_release);
 }
 
+void PvZ2RequestV170QaCredit() {
+    gV170QaGrantRequested.store(true, std::memory_order_release);
+}
+
 void PvZ2RequestInteractiveStop() {
     gV72StopRequested.store(
         true,

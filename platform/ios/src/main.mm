@@ -970,6 +970,15 @@ void PvZ2HostNotifyDirectFrame(
             }]];
     }
 
+    if (!self.runFinished && self.stopButton.enabled) {
+        [menu addAction:[UIAlertAction
+            actionWithTitle:@"Crédit PvZCoins de test (profil actif)…"
+            style:UIAlertActionStyleDefault
+            handler:^(__unused UIAlertAction *action) {
+                [self v170OfferQaCredit];
+            }]];
+    }
+
     [menu addAction:[UIAlertAction
         actionWithTitle:@"Copier le journal"
         style:UIAlertActionStyleDefault
@@ -997,6 +1006,28 @@ void PvZ2HostNotifyDirectFrame(
             handler:nil]];
     }
     [self presentViewController:menu animated:YES completion:nil];
+}
+
+// Explicit credit is never automatic and only applies ONCE to the native
+// account selected at the frame-safe callback. The warning avoids a hidden
+// credit on the user's retained original cloud reference profiles.
+- (void)v170OfferQaCredit {
+    if (self.runFinished || self.presentedViewController != nil) return;
+    UIAlertController *confirm = [UIAlertController
+        alertControllerWithTitle:@"Crédit QA pour ce profil ?"
+        message:@"Réservé aux profils jetables créés après une sauvegarde externe vérifiée et une réinitialisation de test. Ce bouton augmente UNE FOIS le profil actuellement sélectionné jusqu'à 60 000 PvZCoins, sans toucher aux autres profils. Ne l'utilise PAS sur tes sauvegardes originales."
+        preferredStyle:UIAlertControllerStyleAlert];
+    [confirm addAction:[UIAlertAction actionWithTitle:@"Annuler"
+        style:UIAlertActionStyleCancel handler:nil]];
+    [confirm addAction:[UIAlertAction
+        actionWithTitle:@"Je confirme : profil jetable"
+        style:UIAlertActionStyleDestructive
+        handler:^(__unused UIAlertAction *action) {
+            PvZ2RequestV170QaCredit();
+            AppendPersistentLog(
+                @"[V170 QA CREDIT] explicitly requested for current disposable profile; pending guest boundary");
+        }]];
+    [self presentViewController:confirm animated:YES completion:nil];
 }
 
 // Repeatable QA reset, available ONLY after the guest has exited. The
