@@ -1,0 +1,26 @@
+name: Research world-key policy checks (no IPA)
+on:
+  push:
+    branches: [research/world-key-conversion]
+    paths:
+      - ".github/workflows/verify-world-keys.yml"
+      - "tests/staging/world_key_*"
+      - "tools/verify_world_key_*"
+  workflow_dispatch:
+
+jobs:
+  policy-only:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile and test isolated world-key eligibility policy
+        run: |
+          clang++ -std=c++20 -O2 -Wall -Wextra -Werror -pedantic -Itests/staging tests/staging/test_world_key_conversion_policy.cpp -o /tmp/world_key_policy_test
+          /tmp/world_key_policy_test
+      - name: Compile and test isolated read-only native event decoder
+        run: |
+          clang++ -std=c++20 -O2 -Wall -Wextra -Werror -pedantic -Itests/staging tests/staging/test_world_key_event_view.cpp -o /tmp/world_key_event_test
+          /tmp/world_key_event_test
+      - name: Python syntax check (exact ELF stays private)
+        run: |
+          python3 -m py_compile tools/verify_world_key_arm.py tools/verify_world_key_award_coverage.py
