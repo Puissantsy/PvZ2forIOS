@@ -1,4 +1,5 @@
 // Compile the ACTUAL iOS policy header (not the historical staging copy).
+// Trigger policy-only CI after correcting source check section scopes.
 #include "../../platform/ios/src/offline_global_transaction.hpp"
 #include <array>
 #include <cassert>
