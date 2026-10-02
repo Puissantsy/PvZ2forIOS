@@ -1,86 +1,113 @@
-#include "offline_global_transaction.hpp"
+// Compile the ACTUAL iOS policy header (not the historical staging copy).
+#include "../../platform/ios/src/offline_global_transaction.hpp"
+#include <array>
 #include <cassert>
 #include <iostream>
 #include <optional>
-#include <string>
 #include <string_view>
 using namespace pvz2offline;
-
+struct Case { std::string_view sku; GlobalJournalSku owner; };
+static constexpr std::array<Case, 10> cases{{
+    {"com.popcap.pvz2.android.plant.snowpea.nonconsume", {true,21u,1u}},
+    {"com.popcap.pvz2.android.plant.squash.nonconsume", {true,39u,2u}},
+    {"com.popcap.pvz2.android.plant.imitater.nonconsume", {true,32u,4u}},
+    {"com.popcap.pvz2.android.plant.jalapeno.nonconsume", {true,33u,8u}},
+    {"com.popcap.pvz2.android.plant.torchwood.nonconsume", {true,18u,16u}},
+    {"com.popcap.pvz2.android.plant.powerlily.nonconsume", {true,38u,32u}},
+    {"com.popcap.pvz2.android.gameupgrade.sunshovel3.nonconsume", {false,15u,1u}},
+    {"com.popcap.pvz2.android.gameupgrade.pfslot2.nonconsume", {false,19u,2u}},
+    {"com.popcap.pvz2.android.gameupgrade.startingsun2.nonconsume", {false,21u,4u}},
+    {"com.popcap.pvz2.android.gameupgrade.seedslot2.nonconsume", {false,12u,8u}}
+}};
 static std::optional<GlobalJournalSku> Lookup(std::string_view sku) {
-    if (sku == "com.popcap.pvz2.android.plant.snowpea.nonconsume")
-        return GlobalJournalSku{true, 21u, 1u};
-    if (sku == "com.popcap.pvz2.android.gameupgrade.seedslot2.nonconsume")
-        return GlobalJournalSku{false, 12u, 8u};
+    for (const auto& c : cases) if (sku == c.sku) return c.owner;
     return std::nullopt;
 }
-static GlobalJournal SnowPea() {
+static GlobalJournal NewCase(const Case& c, std::uint64_t serial) {
     GlobalJournal j;
-    j.token = MakeReceiptTokenV2(
-        7u, 23u, "com.popcap.pvz2.android.plant.snowpea.nonconsume");
     j.owner = 7u;
-    j.sku = *Lookup("com.popcap.pvz2.android.plant.snowpea.nonconsume");
-    j.before_plants = {99u, 43u};
-    j.before_features = {12u, 61u};
+    j.token = MakeReceiptTokenV2(7u, serial, c.sku);
+    j.sku = c.owner;
+    j.before_plants = {99u,43u};
+    j.before_features = {61u,72u};
     return j;
 }
 int main() {
-    auto j = SnowPea();
-    const auto encoded = EncodeGlobalJournal(j, Lookup);
-    assert(encoded);
-    const auto decoded = DecodeGlobalJournal(*encoded, Lookup);
-    assert(decoded && decoded->owner == 7u &&
-           decoded->before_plants == j.before_plants);
-    assert(PlanExactGlobalTransaction(j,{99u,43u,21u},{12u,61u},true) ==
-           GlobalJournalDecision::AwaitingConfirmation);
-    j.native_confirmed = true;
-    j.local_committed = true;
-    assert(PlanExactGlobalTransaction(j,{99u,43u,21u},{12u,61u},true) ==
-           GlobalJournalDecision::ExactSyntheticOnlyDelta);
-    assert(PlanExactGlobalTransaction(j,{99u,43u,21u},{12u,61u},false) ==
-           GlobalJournalDecision::RecoveryMustPreserve);
-    assert(PlanExactGlobalTransaction(j,{99u,43u,21u},{12u,62u},true) ==
-           GlobalJournalDecision::ConcurrentOrUnexpectedChange);
-    assert(PlanExactGlobalTransaction(j,{99u,43u,21u,21u},{12u,61u},true) ==
-           GlobalJournalDecision::ConcurrentOrUnexpectedChange);
-    assert(PlanExactGlobalTransaction(j,{99u,21u,43u,55u},{12u,61u},true) ==
-           GlobalJournalDecision::ConcurrentOrUnexpectedChange);
-    assert(PlanExactGlobalTransaction(j,{99u,43u},{12u,61u},true) ==
-           GlobalJournalDecision::NoNewGlobalRight);
-    j.before_plants.push_back(21u);
-    assert(PlanExactGlobalTransaction(j,{99u,43u,21u},{12u,61u},true) ==
-           GlobalJournalDecision::OriginalRightPreexisting);
-    assert(!DecodeGlobalJournal(*encoded + "x", Lookup));
-    auto corrupted = *encoded;
-    corrupted[5] = 'X';
-    assert(!DecodeGlobalJournal(corrupted, Lookup));
-    auto invalid = SnowPea();
-    invalid.owner = 8u;
-    assert(!EncodeGlobalJournal(invalid, Lookup));
-    invalid = SnowPea();
-    invalid.sku.target_bit = 2u;
-    assert(!EncodeGlobalJournal(invalid, Lookup));
-    invalid = SnowPea();
-    invalid.cleanup_intent = true;
-    assert(!EncodeGlobalJournal(invalid, Lookup));
-    invalid = SnowPea();
-    invalid.native_confirmed = true;
-    invalid.local_committed = true;
-    invalid.cleanup_intent = true;
-    assert(DecodeGlobalJournal(
-        *EncodeGlobalJournal(invalid, Lookup), Lookup)->cleanup_intent);
-
-    auto upgrade = SnowPea();
-    upgrade.token = MakeReceiptTokenV2(
-        7u, 24u, "com.popcap.pvz2.android.gameupgrade.seedslot2.nonconsume");
-    upgrade.sku = *Lookup(
-        "com.popcap.pvz2.android.gameupgrade.seedslot2.nonconsume");
-    upgrade.before_features = {19u, 71u};
-    upgrade.native_confirmed = true;
-    upgrade.local_committed = true;
-    assert(PlanExactGlobalTransaction(
-        upgrade,{99u,43u},{19u,12u,71u},true) ==
-        GlobalJournalDecision::ExactSyntheticOnlyDelta);
-    assert(DecodeGlobalJournal(
-        *EncodeGlobalJournal(upgrade, Lookup), Lookup).has_value());
-    std::cout << "PASS: journal codec and fail-closed exact-vector plant + upgrade policies\n";
+    std::uint64_t serial = 1u;
+    for (const auto& c : cases) {
+        auto j = NewCase(c, serial++);
+        auto encoded = EncodeGlobalJournal(j, Lookup);
+        assert(encoded);
+        auto decoded = DecodeGlobalJournal(*encoded, Lookup);
+        assert(decoded && decoded->token == j.token &&
+               decoded->owner == j.owner &&
+               decoded->sku.target_bit == j.sku.target_bit &&
+               decoded->before_plants == j.before_plants &&
+               decoded->before_features == j.before_features);
+        auto nowPlants = j.before_plants;
+        auto nowFeatures = j.before_features;
+        auto& target = c.owner.plants ? nowPlants : nowFeatures;
+        target.insert(target.begin()+1, c.owner.target_id);
+        assert(PlanExactGlobalTransaction(
+            j, nowPlants, nowFeatures, true) ==
+            GlobalJournalDecision::AwaitingConfirmation);
+        j.native_confirmed = true;
+        assert(PlanExactGlobalTransaction(
+            j, nowPlants, nowFeatures, true) ==
+            GlobalJournalDecision::AwaitingConfirmation);
+        j.local_committed = true;
+        assert(PlanExactGlobalTransaction(
+            j, nowPlants, nowFeatures, true) ==
+            GlobalJournalDecision::ExactSyntheticOnlyDelta);
+        assert(PlanExactGlobalTransaction(
+            j, nowPlants, nowFeatures, false) ==
+            GlobalJournalDecision::RecoveryMustPreserve);
+        auto duplicate = target;
+        target.push_back(c.owner.target_id);
+        assert(PlanExactGlobalTransaction(
+            j, nowPlants, nowFeatures, true) ==
+            GlobalJournalDecision::ConcurrentOrUnexpectedChange);
+        target = duplicate;
+        auto& other = c.owner.plants ? nowFeatures : nowPlants;
+        other.push_back(4777u);
+        assert(PlanExactGlobalTransaction(
+            j, nowPlants, nowFeatures, true) ==
+            GlobalJournalDecision::ConcurrentOrUnexpectedChange);
+        other.pop_back();
+        target.push_back(4777u);
+        assert(PlanExactGlobalTransaction(
+            j, nowPlants, nowFeatures, true) ==
+            GlobalJournalDecision::ConcurrentOrUnexpectedChange);
+        target.pop_back();
+        assert(PlanExactGlobalTransaction(
+            j, nowPlants, nowFeatures, true) ==
+            GlobalJournalDecision::ExactSyntheticOnlyDelta);
+        auto legacy = j;
+        auto& preexisting = c.owner.plants ?
+            legacy.before_plants : legacy.before_features;
+        preexisting.push_back(c.owner.target_id);
+        assert(PlanExactGlobalTransaction(
+            legacy, nowPlants, nowFeatures, true) ==
+            GlobalJournalDecision::OriginalRightPreexisting);
+        j.cleanup_intent = true;
+        encoded = EncodeGlobalJournal(j, Lookup);
+        assert(encoded && DecodeGlobalJournal(
+            *encoded, Lookup)->cleanup_intent);
+        assert(!DecodeGlobalJournal(*encoded + "x", Lookup));
+        auto corrupted = *encoded;
+        corrupted[1] = 'X';
+        assert(!DecodeGlobalJournal(corrupted, Lookup));
+        auto invalid = j;
+        invalid.owner = 8u;
+        assert(!EncodeGlobalJournal(invalid, Lookup));
+        invalid = j;
+        invalid.before_plants.assign(129u, 91u);
+        assert(!EncodeGlobalJournal(invalid, Lookup));
+        invalid = j;
+        invalid.sku.target_bit <<= 1;
+        assert(!EncodeGlobalJournal(invalid, Lookup));
+    }
+    std::cout << "PASS: all 10 original SKUs, exact original vector order, "
+                 "legacy preservation, native+sidecar+intent stages, "
+                 "cold-launch preservation and checksum guards\n";
 }
