@@ -62,15 +62,15 @@ jobs:
           cp -R "$APP" package/Payload/PvZ2forIOS.app
           (
             cd package
-            zip -qry ../PvZ2forIOS-v166-FreshReset-unsigned.ipa Payload
+            zip -qry ../PvZ2forIOS-v170-OfflineGlobal-unsigned.ipa Payload
           )
-          shasum -a 256 PvZ2forIOS-v166-FreshReset-unsigned.ipa | tee PvZ2forIOS-v166-FreshReset-unsigned.ipa.sha256
+          shasum -a 256 PvZ2forIOS-v170-OfflineGlobal-unsigned.ipa | tee PvZ2forIOS-v170-OfflineGlobal-unsigned.ipa.sha256
 
       - name: Upload unsigned IPA
         uses: actions/upload-artifact@v4
         with:
-          name: PvZ2forIOS-v166-FreshReset-unsigned
+          name: PvZ2forIOS-v170-OfflineGlobal-unsigned
           path: |
-            PvZ2forIOS-v166-FreshReset-unsigned.ipa
-            PvZ2forIOS-v166-FreshReset-unsigned.ipa.sha256
+            PvZ2forIOS-v170-OfflineGlobal-unsigned.ipa
+            PvZ2forIOS-v170-OfflineGlobal-unsigned.ipa.sha256
           if-no-files-found: error
