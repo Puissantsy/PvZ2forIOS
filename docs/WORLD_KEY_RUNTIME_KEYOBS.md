@@ -127,3 +127,18 @@ The corrected KEYOBS research app now creates a **local v165 verified prelaunch 
 The next fixed IPA must show `KEYOBS READ ONLY installed` at startup and then the relevant `KEYOBS GRANT_PRE` / `KEYOBS GATE_*` events. The client preserves the existing 64-grant/16-gate log caps; unrelated verbose `V144 SELECTION DRAW` strings are suppressed only in research mode.
 
 **Visibility note:** the original launcher resets its persistent session logger before entering the full-load probe. Therefore `[KEYOBS SAVE] prelaunch VERIFIED` (emitted before JIT) may **not** appear in the subsequently exported full-load log. For the current research IPA, the concrete `PvZ2Backups/save-...-prelaunch-...` directory and its `snapshot-info.plist` are authoritative evidence of the snapshot. The `[FULLLOAD] KEYOBS READ ONLY installed` marker is emitted after the reset and must appear in the exported log. Absence of the save marker alone is NOT a failed snapshot; absence of the Files directory or a verified manifest is.
+
+## Corrected KEYOBS v2 — successful native iOS build after first live Egypt test
+
+After diagnosing the first iPad run's **silent Legacy log filtering**, this grouped research build passed native Xcode iOS arm64 compilation, plist inspection, IPA package generation and artifact upload. The earlier first attempt failed only because the v165 engine lacked the v166 `PVZSaveHasLocalSave` declaration/definition; that exact ABI was added and the regression tests now enforce it.
+
+- Successful source SHA: `2b2ceb6f8541f1016490806b0a7f2b483969ed40`
+- Build: https://github.com/Puissantsy/PvZ2forIOS/actions/runs/37065364170
+- Artifact ZIP containing unsigned IPA: https://github.com/Puissantsy/PvZ2forIOS/actions/runs/37065364170/artifacts/11252820990
+- CI-reported IPA SHA256: `ff9636bca311bd96a4694617037928809d54e072eb900de8c374ce340987d458`
+- Compiled app name `PvZ2 Keys Research`, separate bundle ID `com.puissantsy.pvz2forios.keyobs`, verified by GitHub workflow.
+- Separate pre-build source/policy/decoder tests: https://github.com/Puissantsy/PvZ2forIOS/actions/runs/37065319048, ALL PASSED.
+
+**Protected test after updating in place over existing KEYOBS** (do not uninstall, do not import old backup over current progress): launch once, verify `[FULLLOAD] KEYOBS READ ONLY installed...` appears in exported log, and find `Files → On My iPad → PvZ2 Keys Research → PvZ2Backups → save-...-prelaunch-...` with `snapshot-info.plist`. Copy the entire latest prelaunch snapshot folder externally before additional activities; this holds the original Day 3-earned-key and gate-open state for offline saved-event verification without repeating that one-time reward. A fresh Egyptian reward later is required for new `GRANT_PRE` native caller provenance; optionally opening another gate produces an independent `GATE_BEFORE/GATE_AFTER` trace. `[KEYOBS SAVE] prelaunch VERIFIED` may be absent from the exported log because the launcher resets the logger afterward; verify the Files snapshot instead.
+
+**No conversion or coin crediting** is included yet. Original production/v170 app, install ID and saves remain untouched.
