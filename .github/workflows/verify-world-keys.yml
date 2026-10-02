@@ -6,6 +6,7 @@ on:
       - ".github/workflows/verify-world-keys.yml"
       - "tests/staging/world_key_*"
       - "tools/verify_world_key_*"
+      - "tools/verify_keyobs_restore_wiring.py"
       - "platform/ios/src/pvz2_apk_probe.hpp"
       - "platform/ios/src/pvz2_apk_probe.cpp"
       - "platform/ios/src/pvz2_apk_probe_parts/part_0*.inc"
@@ -29,3 +30,5 @@ jobs:
           python3 -m py_compile tools/verify_world_key_arm.py tools/verify_world_key_award_coverage.py tools/verify_world_key_probe_wiring.py
       - name: Check opt-in native probe integration (no IPA)
         run: python3 tools/verify_world_key_probe_wiring.py
+      - name: Check isolated KEYOBS save-transfer integration (no IPA)
+        run: python3 tools/verify_keyobs_restore_wiring.py
