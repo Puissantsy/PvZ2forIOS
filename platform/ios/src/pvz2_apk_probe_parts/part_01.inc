@@ -2328,6 +2328,12 @@
     std::unordered_set<std::string> sweep_recovery_keys;
     std::vector<std::string> sweep_issues;
 
+    // Read-only world-key research counters. No currency/keys/save mutation.
+    std::uint32_t keyobs_grants_logged = 0u;
+    std::uint32_t keyobs_gate_pairs_logged = 0u;
+    std::uint32_t keyobs_pending_gate_profile = 0u;
+    std::uint32_t keyobs_pending_gate_thread = 0xffffffffu;
+
     std::unordered_map<std::string, SyntheticAsset> synthetic_assets;
     std::unordered_map<std::uint32_t, ProbeObbHandle> obb_fds;
     std::unordered_map<std::uint32_t, ProbeObbHandle> obb_files;
@@ -2449,6 +2455,81 @@
             static_cast<std::uint32_t>(values.size());
         jni_object_arrays[handle] = values;
         return handle;
+    }
+
+    // Snapshot native profile+0x24 world-map events; never parse unbounded
+    // guest pointers. Unknown/missing/duplicate gates stay NON-ELIGIBLE.
+    std::string WorldKeyReadOnlyGateSnapshot(std::uint32_t profile) {
+        if (profile < kJniProbeHeapBase ||
+            static_cast<std::uint64_t>(profile-kJniProbeHeapBase) >=
+                mem.HeapCapacity() ||
+            mem.Ptr(profile+0x24u, 12u) == nullptr) {
+            return "profile=UNMAPPED gates=UNKNOWN";
+        }
+
+        const std::uint32_t begin = mem.Read32Guest(profile+0x24u);
+        const std::uint32_t end = mem.Read32Guest(profile+0x28u);
+        const std::uint32_t cap = mem.Read32Guest(profile+0x2cu);
+        if (begin == 0u && end == 0u && cap == 0u) {
+            return "events=EMPTY gates=UNKNOWN";
+        }
+        if (!begin || end<begin || cap<end ||
+            ((end-begin)%pvz2_key_study::kNativeEventStride)!=0u ||
+            ((cap-begin)%pvz2_key_study::kNativeEventStride)!=0u ||
+            (end-begin)/pvz2_key_study::kNativeEventStride >
+                pvz2_key_study::kMaxNativeEvents ||
+            mem.Ptr(begin, end-begin) == nullptr) {
+            return "eventVector=INVALID gates=UNKNOWN";
+        }
+
+        const std::size_t bytes=static_cast<std::size_t>(end-begin);
+        if (bytes == 0u) return "events=EMPTY gates=UNKNOWN";
+        const auto* ptr=mem.Ptr(begin, static_cast<std::uint32_t>(bytes));
+        const auto view=pvz2_key_study::DecodeNativeEventSnapshot(
+            std::span<const std::byte>(
+                reinterpret_cast<const std::byte*>(ptr), bytes));
+        if (!view) return "eventDecoder=REJECTED gates=UNKNOWN";
+        std::ostringstream out;
+        out << "eventCount=" << view->size();
+        for (const auto& def : pvz2_key_study::worlds) {
+            out << " W" << def.id << "={";
+            bool first=true;
+            for (const auto gate : def.gates) {
+                if (!first) out << ",";
+                first=false;
+                unsigned matches=0u;
+                std::uint32_t state=0u;
+                for (const auto& e : *view) {
+                    if (e.world_id==def.id && e.event_id==gate) {
+                        ++matches;
+                        state=e.state;
+                    }
+                }
+                out << gate << ":";
+                if (matches==0u) out << "MISSING";
+                else if (matches>1u) out << "DUP";
+                else out << state;
+            }
+            out << "}";
+            const auto decision=pvz2_key_study::Evaluate(
+                def.id,1u,*view,false);
+            out << " eligible="
+                << (decision.convert() ? "YES" : "NO");
+        }
+        return out.str();
+    }
+
+    std::string WorldKeyReadOnlyWorldName(std::uint32_t string_object) {
+        // Original AddWorldKeys dereferences r1 as a pointer to
+        // the 32-bit libstdc++ std::string char pointer.
+        if (mem.Ptr(string_object, 4u) == nullptr)
+            return "UNKNOWN";
+        const std::uint32_t chars=mem.Read32Guest(string_object);
+        if (mem.Ptr(chars, 1u)==nullptr) return "UNKNOWN";
+        const std::string world=mem.ReadCStringGuest(chars, 16u);
+        if (world=="egypt" || world=="pirate" || world=="cowboy" ||
+            world=="future" || world=="dark") return world;
+        return "OTHER";
     }
 
     static std::string OfflineStoreProfileMaskKey(
