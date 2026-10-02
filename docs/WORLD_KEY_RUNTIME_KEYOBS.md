@@ -105,3 +105,17 @@ The single grouped **save-import** native iOS arm64 build passed. This is source
 - Private archive manifests were independently inspected in the user's project: `Save test1 achat snowpea.zip` (9 manifest entries) and `Test2 claim snowpea.zip` (10 entries) had matching SHA-256 contents. They were NOT bundled or uploaded to GitHub.
 
 The game does **not** automatically convert keys to coins yet. After installing the new IPA over the SEPARATE KEYOBS app and importing a snapshot in its Files-visible `PvZ2RestoreInbox`, the next real-iPad test should confirm the restored profile/world-map states and capture one real key-award trace.
+
+## October 2 iPad follow-up — key award + gate-open performed, but evidence filtered
+
+The user ran KEYOBS using a copied test profile, completed Egypt Day 3 and obtained a key, then opened an Egyptian gate. The private full device log `pvz2forios-probe(20261002-205820).log` proves the app selected `RESEARCH_WORLD_KEYS_READ_ONLY` and loaded/rewrote its own `No_Backup/pp.dat` repeatedly, including save-size changes. **It has zero emitted `KEYOBS GRANT_PRE` / `GATE_BEFORE` / `GATE_AFTER` / installation lines.** Therefore this log does *not* prove the actual native award caller or the gate's saved transition; do not invent those fields from the file-size changes.
+
+Root cause established in our own source: `part_04.inc` and `part_08.inc` used the ordinary `Append("KEYOBS ...")` API, which maps to `ProbeLogClass::Legacy`; the inherited v151 performance capabilities include v85, whose `KeepLegacyPerformanceLogLine()` allowlist suppresses any non-Vxx / non-error strings. Every KEYOBS line was silently discarded, including the initial install marker. This is an **observability-only** bug, not evidence that the original reward/gate gameplay failed.
+
+Grouped fix on this isolated research branch:
+- Route ALL native KEYOBS award, gate-before, gate-after, caps and initial installation markers through `AppendDiagnostic`. In this codebase that class bypasses the old v85 Legacy filter and the v118 hot-line prefix filter does not match KEYOBS.
+- Suppress only the unrelated several-kilobyte `V144 SELECTION DRAW` debug strings *in KEYOBS diagnostic mode*, retaining their original behavior everywhere else. That makes the next diagnostic much smaller and easier to analyze.
+- Add strict source regressions in `tools/verify_world_key_probe_wiring.py` that refuse all future `Append("KEYOBS` calls and verify every marker uses the unfiltered diagnostic channel.
+- Preserve the independently stored test progression under the same `com.puissantsy.pvz2forios.keyobs` app ID; **update in place, never delete KEYOBS** and do not restore the older test1 ZIP over the newly earned key/gate state.
+
+Next iPad acceptance once grouped CI passes: first read the `KEYOBS READ ONLY installed` signature near startup. A new legitimate Egyptian key reward OR opening another Egyptian gate should then produce its matching `KEYOBS` evidence; replaying Day 3 is not necessary if its one-time key has already been claimed. The earlier door state should remain in the separate KEYOBS profile; a private current save snapshot can also independently establish which event is open without replaying the first test. This release still does **not** award 1,000 coins per key.
