@@ -6,6 +6,9 @@ on:
       - ".github/workflows/verify-world-keys.yml"
       - "tests/staging/world_key_*"
       - "tools/verify_world_key_*"
+      - "platform/ios/src/pvz2_apk_probe.hpp"
+      - "platform/ios/src/pvz2_apk_probe.cpp"
+      - "platform/ios/src/pvz2_apk_probe_parts/part_0*.inc"
   workflow_dispatch:
 
 jobs:
@@ -23,4 +26,6 @@ jobs:
           /tmp/world_key_event_test
       - name: Python syntax check (exact ELF stays private)
         run: |
-          python3 -m py_compile tools/verify_world_key_arm.py tools/verify_world_key_award_coverage.py
+          python3 -m py_compile tools/verify_world_key_arm.py tools/verify_world_key_award_coverage.py tools/verify_world_key_probe_wiring.py
+      - name: Check opt-in native probe integration (no IPA)
+        run: python3 tools/verify_world_key_probe_wiring.py
