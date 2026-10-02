@@ -233,6 +233,19 @@ void PruneLocalSnapshots(void) {
 
 } // namespace
 
+// v166-compatible helper. This preserves the original v165 hash-verified
+// snapshot logic and merely detects whether an existing USERFS/config root
+// warrants a prelaunch evidence backup.
+BOOL PVZSaveHasLocalSave(void) {
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSArray<NSURL *> *entries = [fm contentsOfDirectoryAtURL:LiveRoot()
+        includingPropertiesForKeys:nil options:0 error:nil];
+    for (NSURL *entry in entries) {
+        if (IsSaveRoot(entry.lastPathComponent)) return YES;
+    }
+    return NO;
+}
+
 NSURL *PVZSaveCreateSnapshot(NSString *reason, NSError **error) {
     NSFileManager *fm = [NSFileManager defaultManager];
     NSURL *source = LiveRoot();
