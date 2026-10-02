@@ -4253,7 +4253,7 @@
                     profile>=kJniProbeHeapBase &&
                     static_cast<std::uint64_t>(profile-kJniProbeHeapBase) <
                         mem.HeapCapacity();
-                Append("KEYOBS GRANT_PRE sourceLR=0x"+
+                AppendDiagnostic("KEYOBS GRANT_PRE sourceLR=0x"+
                     JniProbeHex(regs[14])+
                     " tid="+std::to_string(current_probe_thread_id)+
                     " world="+WorldKeyReadOnlyWorldName(regs[1])+
@@ -4264,7 +4264,7 @@
                             std::string{"UNKNOWN"})+
                     " "+WorldKeyReadOnlyGateSnapshot(profile));
             } else if (keyobs_grants_logged == 64u) {
-                Append("KEYOBS GRANT_PRE capped at 64 events");
+                AppendDiagnostic("KEYOBS GRANT_PRE capped at 64 events");
             }
             ++keyobs_grants_logged;
             return;
@@ -4277,7 +4277,7 @@
             keyobs_pending_gate_profile=regs[0];
             keyobs_pending_gate_thread=current_probe_thread_id;
             if (keyobs_gate_pairs_logged < 16u) {
-                Append("KEYOBS GATE_BEFORE eventPtr=0x"+
+                AppendDiagnostic("KEYOBS GATE_BEFORE eventPtr=0x"+
                     JniProbeHex(regs[2])+
                     " desiredState=3 "+WorldKeyReadOnlyGateSnapshot(
                         keyobs_pending_gate_profile));
@@ -4294,14 +4294,14 @@
             if (keyobs_gate_pairs_logged < 16u) {
                 if (keyobs_pending_gate_profile!=0u &&
                     keyobs_pending_gate_thread==current_probe_thread_id) {
-                    Append("KEYOBS GATE_AFTER "+
+                    AppendDiagnostic("KEYOBS GATE_AFTER "+
                         WorldKeyReadOnlyGateSnapshot(
                             keyobs_pending_gate_profile));
                 } else {
-                    Append("KEYOBS GATE_AFTER no matching pre-state (UNKNOWN)");
+                    AppendDiagnostic("KEYOBS GATE_AFTER no matching pre-state (UNKNOWN)");
                 }
             } else if (keyobs_gate_pairs_logged == 16u) {
-                Append("KEYOBS GATE logs capped at 16 pairs");
+                AppendDiagnostic("KEYOBS GATE logs capped at 16 pairs");
             }
             ++keyobs_gate_pairs_logged;
             keyobs_pending_gate_profile=0u;
