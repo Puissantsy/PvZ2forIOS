@@ -1177,9 +1177,13 @@ constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::ResearchWorldKeyReadOnly, "RESEARCH_WORLD_KEYS_READ_ONLY", "Research: keys (read-only)", kCapsV151, true},
 };
 
+// This research branch deliberately selects KEYOBS as the first launch
+// mode because the v130 launcher unconditionally reads entry zero.
+// DO NOT merge this ordering into main/v170 production; only a purposely
+// built disposable research IPA may run the observational mode.
 constexpr PvZ2DiagnosticMode kSelectableDiagnosticModes[] = {
-    PvZ2DiagnosticMode::V151ProductionQsortCompat,
     PvZ2DiagnosticMode::ResearchWorldKeyReadOnly,
+    PvZ2DiagnosticMode::V151ProductionQsortCompat,
 };
 
 } // namespace
