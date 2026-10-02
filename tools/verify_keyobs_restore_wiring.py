@@ -21,6 +21,10 @@ check("<key>UIFileSharingEnabled</key>" in plist and
       "restore inbox not exposed via Files")
 check("PVZSavePendingRestores" in header and "PVZSaveRestoreSnapshot" in header,
       "missing existing v165 safe API")
+check("FOUNDATION_EXPORT BOOL PVZSaveHasLocalSave(void);" in header and
+      "BOOL PVZSaveHasLocalSave(void) {" in engine and
+      "IsSaveRoot(entry.lastPathComponent)" in engine,
+      "KEYOBS prelaunch uses v166 save-presence helper missing from v165 engine")
 check('static NSString *const kManifest = @"snapshot-info.plist"' in engine,
       "missing versioned snapshot manifest")
 check('@"pvz2forios-save-v1"' in engine and "ValidateSnapshot(snapshot, &manifest, error)" in engine,
