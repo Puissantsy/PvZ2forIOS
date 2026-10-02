@@ -637,12 +637,21 @@
                             // synthetic transaction's observation.
                             if (v170_global_txn.active &&
                                 v170_global_txn.token == token) {
-                                v170_global_txn.receipt_confirmed = true;
-                                Append(
-                                    "V170 GLOBAL TXN native delivery "
-                                    "confirmed owner=" +
-                                    std::to_string(
-                                        v170_global_txn.owner_profile_id));
+                                if (V170CheckpointGlobalJournal(
+                                        token, true, false)) {
+                                    Append(
+                                        "V170 GLOBAL TXN native delivery "
+                                        "checkpoint persisted owner=" +
+                                        std::to_string(
+                                            v170_global_txn.owner_profile_id));
+                                } else {
+                                    v170_global_txn.active = false;
+                                    AppendCritical(
+                                        "V170 GLOBAL TXN native confirmation "
+                                        "journal checkpoint FAILED; preserve "
+                                        "original global rights and block "
+                                        "future synthetic purchase");
+                                }
                             }
                         }
                         regs[0] = 0u;

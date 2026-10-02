@@ -2375,9 +2375,8 @@
         // a different profile at the later frame-boundary callback.
         std::uint32_t initiating_profile_id = 0xffffffffu;
     };
-    // v170 bounded per-transaction observation. No serialized v170 journal
-    // or actual global mutation is allowed yet: replay after an interrupted
-    // original payment needs separate crash-safe provenance verification.
+    // Runtime-local owner/token plus host-persisted BEFORE image. An
+    // interrupted process is never authorized to replay a deletion.
     struct V170GlobalTxnObservation {
         bool active = false;
         bool receipt_confirmed = false;
@@ -2390,6 +2389,7 @@
         std::uint32_t target_bit = 0u;
         std::string sku;
         std::string token;
+        pvz2offline::GlobalJournal journal;
     };
     V170GlobalTxnObservation v170_global_txn{};
 
@@ -2604,6 +2604,130 @@
         result.begin = begin;
         result.old_end = end;
         result.compaction = preview;
+        return true;
+    }
+
+
+    // The exact GlobalSaveData vectors are distinct from per-profile
+    // premium vectors. Preserve unknown IDs and original element ordering.
+    bool V170ReadOriginalGlobalVector(
+        std::uint32_t original, bool plants,
+        std::vector<std::uint32_t>& out) {
+        out.clear();
+        const std::uint32_t off = plants ? 0x04u : 0x10u;
+        if (original == 0u ||
+            mem.Ptr(original, 0x28u) == nullptr ||
+            mem.Ptr(original + off, 12u) == nullptr) return false;
+        const std::uint32_t begin = mem.Read32Guest(original + off);
+        const std::uint32_t end = mem.Read32Guest(original + off + 4u);
+        const std::uint32_t cap = mem.Read32Guest(original + off + 8u);
+        if (begin == 0u && end == 0u && cap == 0u) return true;
+        if (begin == 0u || (begin & 3u) != 0u ||
+            end < begin || cap < end ||
+            ((end - begin) & 3u) != 0u ||
+            ((cap - begin) & 3u) != 0u ||
+            end - begin > 512u || cap - begin > 8192u ||
+            mem.Ptr(begin, cap - begin) == nullptr) return false;
+        out.reserve((end - begin) / 4u);
+        for (std::uint32_t at = begin; at < end; at += 4u)
+            out.push_back(mem.Read32Guest(at));
+        return true;
+    }
+
+    bool V170ReadOriginalGlobalVectors(
+        std::uint32_t original,
+        std::vector<std::uint32_t>& plants,
+        std::vector<std::uint32_t>& features) {
+        return V170ReadOriginalGlobalVector(original, true, plants) &&
+               V170ReadOriginalGlobalVector(original, false, features);
+    }
+
+    static std::optional<pvz2offline::GlobalJournalSku> V170LookupJournalSku(
+        std::string_view sku) {
+        const auto* entry = OfflineStoreFindCatalogEntry(std::string(sku));
+        if (!entry) return std::nullopt;
+        return pvz2offline::GlobalJournalSku{
+            entry->entitlement_kind == OfflineStoreEntitlementKind::Plant,
+            entry->entitlement_id, 1u << entry->entitlement_bit};
+    }
+
+    static constexpr const char* kV170GlobalJournalKey =
+        "offline_store_global_txn_v1";
+
+    // An invalid/unfinished journal is an interlock, not an instruction
+    // to guess historical entitlement provenance on the next launch.
+    bool V170UnresolvedGlobalJournal() {
+        V128LoadConfigOnce();
+        return v170_global_txn.active ||
+               v51_config_keys.count(kV170GlobalJournalKey) != 0u ||
+               v51_config_strings.count(kV170GlobalJournalKey) != 0u;
+    }
+
+    bool V170PersistNewGlobalJournal(
+        const pvz2offline::GlobalJournal& journal) {
+        if (V170UnresolvedGlobalJournal()) return false;
+        const auto encoded =
+            pvz2offline::EncodeGlobalJournal(journal, V170LookupJournalSku);
+        if (!encoded) return false;
+        v51_config_keys.insert(kV170GlobalJournalKey);
+        v51_config_strings[kV170GlobalJournalKey] = *encoded;
+        // Fail closed even if fsync/rename fails ambiguously.
+        return V128FlushConfig();
+    }
+
+    // Each stage is a separate fsync/rename checkpoint for the same token.
+    bool V170CheckpointGlobalJournal(
+        const std::string& token,
+        bool native_confirmed,
+        bool local_committed,
+        bool cleanup_intent = false) {
+        if (!v170_global_txn.active || v170_global_txn.token != token)
+            return false;
+        V128LoadConfigOnce();
+        const auto it = v51_config_strings.find(kV170GlobalJournalKey);
+        if (it == v51_config_strings.end()) return false;
+        auto parsed = pvz2offline::DecodeGlobalJournal(
+            it->second, V170LookupJournalSku);
+        if (!parsed || parsed->token != token ||
+            parsed->owner != v170_global_txn.owner_profile_id ||
+            parsed->before_plants != v170_global_txn.journal.before_plants ||
+            parsed->before_features != v170_global_txn.journal.before_features)
+            return false;
+        parsed->native_confirmed |= native_confirmed;
+        parsed->local_committed |= local_committed;
+        if (cleanup_intent) {
+            if (!parsed->native_confirmed || !parsed->local_committed)
+                return false;
+            parsed->cleanup_intent = true;
+        }
+        const auto encoded =
+            pvz2offline::EncodeGlobalJournal(*parsed, V170LookupJournalSku);
+        if (!encoded) return false;
+        v51_config_strings[kV170GlobalJournalKey] = *encoded;
+        if (!V128FlushConfig()) return false;
+        v170_global_txn.journal = *parsed;
+        if (native_confirmed) v170_global_txn.receipt_confirmed = true;
+        if (local_committed) v170_global_txn.sidecar_committed = true;
+        return true;
+    }
+
+    bool V170ClearFinishedGlobalJournal(const std::string& token) {
+        V128LoadConfigOnce();
+        const auto it = v51_config_strings.find(kV170GlobalJournalKey);
+        if (it == v51_config_strings.end()) return false;
+        const auto decoded = pvz2offline::DecodeGlobalJournal(
+            it->second, V170LookupJournalSku);
+        if (!decoded || decoded->token != token ||
+            !decoded->cleanup_intent) return false;
+        const std::string old = it->second;
+        v51_config_strings.erase(kV170GlobalJournalKey);
+        v51_config_keys.erase(kV170GlobalJournalKey);
+        if (!V128FlushConfig()) {
+            v51_config_strings[kV170GlobalJournalKey] = old;
+            v51_config_keys.insert(kV170GlobalJournalKey);
+            return false;
+        }
+        v170_global_txn = V170GlobalTxnObservation{};
         return true;
     }
 

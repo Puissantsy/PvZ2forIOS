@@ -3,6 +3,7 @@
 #include "offline_purchase_policy.hpp"
 #include "offline_global_entitlement_policy.hpp"
 #include "offline_global_compaction.hpp"
+#include "offline_global_transaction.hpp"
 #include "host_gles.hpp"
 #include "host_audio.hpp"
 
@@ -28,6 +29,8 @@
 #include <limits>
 #include <iomanip>
 #include <iterator>
+#include <optional>
+#include <string_view>
 #include <sstream>
 #include <string>
 #include <thread>
