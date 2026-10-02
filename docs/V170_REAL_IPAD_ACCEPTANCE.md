@@ -1,6 +1,6 @@
 # v170 — disposable iPad A/B acceptance (do not use original baseline)
 
-**State:** grouped source integrated, iOS native build requested. No real iPad fix verified. Real previous bug was: A buys Snow Pea for 10,000 PvZCoins, guest writes original global ID 21; B sees free CLAIM but local V128 sidecar=0 and cannot play Snow Pea. Preserve unknown original historic same-SKU bits.
+**State:** grouped source integrated and ONE unsigned iOS native build PASSED. Real-iPad functional fix NOT YET verified. Build: https://github.com/Puissantsy/PvZ2forIOS/actions/runs/36965347040 ; unsigned IPA artifact: https://github.com/Puissantsy/PvZ2forIOS/actions/runs/36965347040/artifacts/11208744671 ; CI SHA-256: `6d0251a4280cbd0353deff712ce4c18c0cac84b766ef6371c9292ec594ac629b`. Real previous bug was: A buys Snow Pea for 10,000 PvZCoins, guest writes original global ID 21; B sees free CLAIM but local V128 sidecar=0 and cannot play Snow Pea. Preserve unknown original historic same-SKU bits.
 
 ## 0. Safety / installation
 

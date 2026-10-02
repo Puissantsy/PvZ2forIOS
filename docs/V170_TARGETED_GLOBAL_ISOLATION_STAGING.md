@@ -77,3 +77,10 @@ An explicit `⋯ → Crédit PvZCoins de test (profil actif)…` menu now asks f
 ### v2 token cold-restart uniqueness
 
 The original v168 synthetic serial was only an in-memory counter and could restart from one after a cold launch. v170 now allocates the canonical receipt serial with a V128 fsync/rename-backed monotonically increasing `offline_store_receipt_serial_v2` config string at `RequestPayment`, before token creation or native delivery. A malformed marker, overflow or failed persistence rejects the purchase without charging. This avoids accidental same-profile/same-SKU token collisions across normal cold launches while retaining the exact owner/SKU/transaction journal binding. Reset/restore still follow the original safeguarded v166 lifecycle.
+
+
+## October 2 compiled artifact (NOT YET VERIFIED ON IPAD)
+
+The single grouped native macOS/iOS CI run **passed**: https://github.com/Puissantsy/PvZ2forIOS/actions/runs/36965347040 . Build SHA: `2c3b18ec1433bb38deefd547bc05f79f9dd03c55`; the later branch HEAD only adds documentation, not runtime code. GitHub artifact `PvZ2forIOS-v170-OfflineGlobal-unsigned` is available at https://github.com/Puissantsy/PvZ2forIOS/actions/runs/36965347040/artifacts/11208744671 . Workflow-reported unsigned IPA SHA256: `6d0251a4280cbd0353deff712ce4c18c0cac84b766ef6371c9292ec594ac629b`. Native compile, Info.plist inspection, IPA packaging and artifact upload all passed. This is **compiler/package success only**, not evidence that the new global cleanup actually survives iPad runtime.
+
+**Only install on protected/disposable A/B QA.** Full user-specific acceptance: `docs/V170_REAL_IPAD_ACCEPTANCE.md`. v165/v166 externally protected backup, original legacy same-SKU preservation and the A-buy/B-buy/cold-launch/playable tests remain mandatory. The PR remains draft.
