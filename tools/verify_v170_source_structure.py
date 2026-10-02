@@ -31,4 +31,21 @@ assert 'V170ClearFinishedGlobalJournal(' in part09
 assert 'V170RollbackGlobalVector(' in part09
 assert 'if (!same_live_transaction)' in actual
 assert 'RecoveryMustPreserve' in actual
-print("PASS v170 integration structural safety gate; source-only, NOT an iOS compile")
+
+header=Path("platform/ios/src/pvz2_apk_probe.hpp").read_text()
+parts00=(p/"part_00.inc").read_text()
+parts08=(p/"part_08.inc").read_text()
+ui=Path("platform/ios/src/main.mm").read_text()
+assert 'void PvZ2RequestV170QaCredit();' in header
+assert 'gV170QaGrantRequested{false}' in parts00
+assert 'void PvZ2RequestV170QaCredit()' in parts08
+assert 'Crédit PvZCoins de test (profil actif)' in ui
+assert 'Je confirme : profil jetable' in ui
+qa_start=part09.index('gV170QaGrantRequested.exchange(')
+qa_end=part09.index('// QA-only bootstrap for the first offline store test',qa_start)
+qa=part09[qa_start:qa_end]
+assert 'V170UnresolvedGlobalJournal()' in qa
+assert qa.index('V128FlushConfig()') < qa.index('"V170_QA_Credit_SetCoins"')
+assert 'offline_store_v170_qa_credit_60000_profile_' in qa
+
+print("PASS v170 core + optional explicit QA credit source safety gates; no iOS build")
