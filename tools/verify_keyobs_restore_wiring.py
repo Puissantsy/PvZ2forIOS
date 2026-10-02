@@ -50,4 +50,19 @@ check("strongSelf.keyobsRestorePromptActive=NO;" in prelaunch,
 check("Restauration refusée" in prelaunch and
       "ne démarrera pas automatiquement" in prelaunch,
       "restore failure should block guest startup")
+# After the first iPad run already consumed a key/opened a gate, the
+# in-place log-channel update must preserve that current profile BEFORE any
+# other guest execution, with a verified local v165 prelaunch snapshot.
+check("BOOL keyobsPrelaunchSnapshotTaken;" in main,
+      "missing once-per-launch save evidence guard")
+check("PVZSaveHasLocalSave()" in prelaunch and
+      'PVZSaveCreateSnapshot(\n                @"prelaunch", &snapshotError)' in prelaunch,
+      "current KEYOBS save must be snapshotted with v165 engine")
+check(prelaunch.index("PVZSavePendingRestores()") <
+      prelaunch.index("PVZSaveCreateSnapshot(") <
+      prelaunch.index("if (!V130RuntimeInstalled())"),
+      "current-state snapshot must follow any user-confirmed restore, before JIT")
+check('[KEYOBS SAVE] prelaunch VERIFIED' in prelaunch and
+      '[KEYOBS SAVE] prelaunch FAILED' in prelaunch,
+      "must explicitly report verified snapshot or actionable failure")
 print("PASS: isolated KEYOBS app, v165 manifest/hash/bounds, explicit pre-JIT restore and fail-closed launch")
