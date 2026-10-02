@@ -5,6 +5,7 @@ This is intentionally NOT a substitute for an iOS compile or physical-iPad
 verification. It verifies staging integration on an ordinary checkout.
 """
 from pathlib import Path
+import re
 
 ROOT = Path(__file__).resolve().parents[1]
 PATHS = {
@@ -23,8 +24,12 @@ def require(cond, what):
         raise AssertionError(what)
 
 require("ResearchWorldKeyReadOnly = 200u" in parts["header"], "missing optional mode")
-require("PvZ2DiagnosticMode::ResearchWorldKeyReadOnly,\\n    PvZ2DiagnosticMode::V151ProductionQsortCompat,".replace("\\\\n","\\n") in parts["defs"],
-        "research branch launcher must choose opt-in key mode first")
+require(re.search(
+    r"constexpr PvZ2DiagnosticMode kSelectableDiagnosticModes\[\]\s*=\s*\{\s*"
+    r"PvZ2DiagnosticMode::ResearchWorldKeyReadOnly,\s*"
+    r"PvZ2DiagnosticMode::V151ProductionQsortCompat,",
+    parts["defs"]) is not None,
+    "research branch launcher must choose opt-in key mode first")
 require("V151ProductionQsortCompat ||\n               WorldKeyResearchEnabled()" in parts["modes"],
         "optional mode must inherit production qsort behavior")
 require('world_key_event_view.hpp"' in parts["root"], "missing vetted event decoder")
