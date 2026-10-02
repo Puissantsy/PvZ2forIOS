@@ -52,3 +52,12 @@ clang++ -std=c++20 -Wall -Wextra -Werror -pedantic -Itests/staging \
 ```
 
 Locally, **21 pure eligibility tests passed**. Passing these does not establish iPad runtime behavior.
+## Exact ELF verifier
+
+The research branch also includes `tools/verify_world_key_arm.py` (read-only, Python standard library). Supply your **own** extracted original ELF:
+
+```sh
+python3 tools/verify_world_key_arm.py --elf /private/path/to/libPVZ2.so
+```
+
+It refuses the wrong SHA256 or any mismatch in **7** branch destinations and **9** decisive ARM instructions (key vector, gate cost, saved gate state and award paths). No game file is distributed here.
