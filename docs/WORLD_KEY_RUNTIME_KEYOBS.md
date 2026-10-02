@@ -73,3 +73,21 @@ The separate `verify-world-keys.yml` workflow compiles the **pure C++ tests** an
 - **NOT tested on real iPad yet.** No original gameplay economy change or key-to-coin conversion is included. Keep original port/v170 saved-state backups intact.
 
 GitHub docs appended here only **after** the one grouped iOS build: no further iOS source modifications or second build are introduced.
+
+## KEYOBS private save import (staged follow-up; grouped new build required)
+
+The first KEYOBS IPA (run 36973103978) lacked restore UI, so it cannot import a save just by putting `pp.dat` in the Files-visible Documents folder; the live USERFS directory is privately under `Library/Application Support/PvZ2forIOS/UserData`.
+
+This branch now reuses the **existing v165** SHA-256 verified, traversal-safe, manifest-validated `save_backups.mm/.hpp` restore engine with NO rewrite of any save or proprietary hash. KEYOBS creates its own Files-visible `PvZ2RestoreInbox` at first launch. Before starting JIT or the guest it offers an explicit Restore/Ignore prompt for the newest complete `save-...` snapshot folder. A failed restore blocks launch in that session with a visible error. If the separate KEYOBS app already contains test progress, the engine creates a verified pre-restore safety backup in its own `PvZ2Backups` folder. Neither app's data is automatically read from the other app.
+
+**The private project attachments** `Save test1 achat snowpea.zip` and `Test2 claim snowpea.zip` both contain v165-compatible `pvz2forios-save-v1` `snapshot-info.plist`, whole `UserData` and `config-v1.txt`. Their manifest files and SHA-256 inventory were checked in the private Project environment (9 and 10 files, respectively), but *neither* should be committed or incorporated into a public GitHub build. The latter archive is a CLAIM diagnostic snapshot, not necessarily the player's desired everyday progress. A fresh, verified export from the intended existing profile is preferable when available.
+
+### Transfer using iPad Files (after restoring-capable KEYOBS IPA is built)
+
+1. Keep the original PvZ2 app installed and retain a separate copy of the desired **complete** snapshot in iCloud Drive or a PC. For a current v165/v170 app, with gameplay safely stopped, `⋯ → Sauvegarder et arrêter` generates `PvZ2Backups/save-...`. Copy the whole `save-...` folder externally.
+2. Install/update the separate KEYOBS IPA **over KEYOBS only**, never the normal PvZ2 app. Open KEYOBS once and stop/force-quit; its Documents folder `PvZ2RestoreInbox` will exist. Its original locally selected APK/OBB remain unaffected if upgrading in place.
+3. In Files, extract the backed-up ZIP first (if zipped), then **copy**, never move, the **inner `save-...` directory itself** with its `snapshot-info.plist`, `UserData` tree and `config-v1.txt` to **On My iPad → PvZ2 Keys Research → PvZ2RestoreInbox**. Do not place the ZIP alone inside that directory; do not include an extra wrapper directory above `save-...`.
+4. Force-quit KEYOBS and reopen it. Answer **Restaurer** to the confirmation. Wait for confirmation before running any game. On success the separate app starts with the copied progression and records `[KEYOBS RESTORE] verified snapshot restored into isolated app`. The imported folder is renamed `Restored-save-...`.
+5. Verify profile, opened gates, existing key count, coins and gameplay. Then test ONE new key reward and export the full KEYOBS log. If the copied snapshot has all Egyptian gates already open, only the `GRANT_PRE` observation is needed; it still does **not** convert keys yet.
+
+**Do not** uninstall the original app, migrate only `pp.dat`, modify `global_save_data.hash`, or put any of these private archives on public GitHub. The restore function imports the snapshot atomically within the separate KEYOBS app, including the profile-specific `config-v1.txt`.
