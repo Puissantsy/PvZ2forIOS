@@ -60,3 +60,16 @@ clang++ -std=c++20 -Wall -Wextra -Werror -pedantic -Itests/staging tests/staging
 ```
 
 The separate `verify-world-keys.yml` workflow compiles the **pure C++ tests** and checks source wiring, without invoking an iOS/IPA build or accessing game files.
+
+## First grouped research IPA — October 2, 2026
+
+**One iOS arm64 CI build succeeded** from source commit `6611b9cdd558e9a940c54b27c8f7a57d3154dea7`:
+- Build: https://github.com/Puissantsy/PvZ2forIOS/actions/runs/36973103978
+- Artifact (unsigned IPA inside a GitHub ZIP): https://github.com/Puissantsy/PvZ2forIOS/actions/runs/36973103978/artifacts/11212556001
+- IPA SHA256 as emitted by CI: `848c621b46fa78e09d48a53444f9bd5eeee51d57e84f2a950f520a2d0af5fbad`
+- Installed bundle ID inspected from compiled `Info.plist`: `com.puissantsy.pvz2forios.keyobs`; display name `PvZ2 Keys Research`.
+- No APK/OBB/user saves in this artifact. It is unsigned and requires the user's normal local signing/test setup.
+- Non-IPA checks all succeeded: https://github.com/Puissantsy/PvZ2forIOS/actions/runs/36973037696 (21 eligibility, 6 decoder, 3 opt-in SVC emulation/wiring checks).
+- **NOT tested on real iPad yet.** No original gameplay economy change or key-to-coin conversion is included. Keep original port/v170 saved-state backups intact.
+
+GitHub docs appended here only **after** the one grouped iOS build: no further iOS source modifications or second build are introduced.
