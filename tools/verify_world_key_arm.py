@@ -16,6 +16,10 @@ CALLS = {
     0x375A80:0x42E5AC, # write original coins
 }
 INSTRUCTIONS = {
+    # Optional research probe exact-instruction sites: original MOV/MOV/LDR.
+    0x42CCD0:0xE1A0A000, # AddWorldKeys prologue: MOV r10,r0
+    0x5B846C:0xE3A03003, # gate before native update: MOV r3,#3
+    0x5B8474:0xE59F0088, # gate after: LDR r0,[pc,#0x88]
     0x5B8448:0xE594202C, # map item key cost +0x2c
     0x5B846C:0xE3A03003, # desired saved event state 3
     0x42D2C0:0xE1510007, # monotonic event-state comparison
