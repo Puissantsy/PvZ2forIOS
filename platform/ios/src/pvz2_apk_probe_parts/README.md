@@ -23,3 +23,7 @@ v110 also adds, without changing v109 scheduling semantics:
 3. UI_ANDROID vs UI_IPAD package-selection A/B in one IPA.
 
 Persistent USERFS/save work is deliberately deferred to a later isolated version.
+
+## KEYOBS isolated research-only build
+
+On `research/world-key-conversion` only, diagnostic entry zero launches `KEYOBS`, a read-only triple-instruction probe at `AddWorldKeys` and the original key-gate update boundary. It inherits v151 production runtime and does not change any award, save or wallet behavior. This **separate research build** has bundle ID `com.puissantsy.pvz2forios.keyobs` so normal v170/production app data is not replaced. See `docs/WORLD_KEY_RUNTIME_KEYOBS.md`. Do not merge this diagnostic-entry ordering into production.
