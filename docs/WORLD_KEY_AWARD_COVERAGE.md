@@ -10,12 +10,14 @@ A full ARM-mode `.text` scan finds **13** direct `BL 0x42CCC8` callsites. Static
 |---|---|---|
 | 0x161E60 | register r11 | generic award dispatcher, key case |
 | 0x176404 | immediate 1 | independent one-key grant |
-| 0x357128, 0x357170, 0x3571B8, 0x357200, 0x357248 | immediate 100 | repeated five-world bulk grant paths, **possibly debug/QA; not proven** |
-| 0x35AAD8, 0x35AB20, 0x35AB68, 0x35ABB0 | immediate 1 | four other one-key paths, **proven static quantity only** |
+| 0x357128, 0x357170, 0x3571B8, 0x357200, 0x357248 | immediate 100 | one bulk +100 grant per literal world **egypt, pirate, cowboy, future, dark**; its user-facing purpose is not yet proven |
+| 0x35AAD8, 0x35AB20, 0x35AB68, 0x35ABB0 | immediate 1 | one +1 grant per literal world **egypt, pirate, cowboy, future**; the triggering activity is not yet proven |
 | 0x479620 | object +0x1C | strong `PresentTypeKey`-style grant candidate: object+0x18 supplies world-string address, object+0x1C quantity |
 | 0x796540 | immediate 1 | separate one-key path |
 
 **Do not blindly replace every call to `AddWorldKeys`.** These paths may represent different game semantics; the generic dispatcher and type-specific method could represent the *same logical award at different moments*. Actual caller order must be established on the real iPad to prevent double-conversion. The scan covers direct ARM-mode `BL` only, not indirect `BLX`, virtual dispatch, Thumb code or arbitrary guest instruction patching.
+
+The world strings were resolved from the **original literal PC-relative pairs**, not guessed from the number of calls. The five +100 sources resolve to original ELF strings at `0xC67D80` (egypt), `0xC67D86` (pirate), `0xC67D8D` (cowboy), `0xC6C717` (future) and `0xC73A4E` (dark). The four +1 sources resolve to the first four of those. Neither group by itself proves that the source is an ordinary loot chest. Treat bulk +100, especially for otherwise unavailable dark, as a separate class, and keep disabled/unknown-world fallback unchanged.
 
 The generic dispatcher beginning at `0x161AA4` uses an ARM table, indexed by `discriminator - 3`. The statically verified table routes discriminator **11** to `0x161C70` (native coins at `0x161CAC`) and discriminator **13** to `0x161E20` (world keys at `0x161E60`). These are numerical native discriminators; do not assert `PresentType`'s source enum declarations without a runtime trace.
 
