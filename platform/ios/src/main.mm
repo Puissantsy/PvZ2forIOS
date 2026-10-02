@@ -21,6 +21,7 @@
 #include "dynarmic_smoke.hpp"
 #include "host_gles.hpp"
 #include "pvz2_apk_probe.hpp"
+#include "save_backups.hpp"
 
 extern "C" int csops(pid_t pid, unsigned int ops, void *useraddr, size_t usersize);
 
@@ -2147,6 +2148,13 @@ void PvZ2HostNotifyDirectFrame(
 @property(nonatomic, strong)
     UILabel *v130LauncherLabel;
 
+// The isolated KEYOBS app restores a user-supplied, integrity-checked
+// v165 snapshot only while the guest has not started.
+@property(nonatomic, assign)
+    BOOL keyobsRestoreChecked;
+@property(nonatomic, assign)
+    BOOL keyobsRestorePromptActive;
+
 @end
 
 @implementation ProbeViewController
@@ -2193,6 +2201,10 @@ void PvZ2HostNotifyDirectFrame(
 
     self.view.backgroundColor = UIColor.blackColor;
     self.v110SelectedUiModeIndex = 0;
+
+    // Create the Files-visible inbox at installation/first launch.
+    // Never restore silently and never copy data out of the production app.
+    (void)PVZSavePendingRestores();
 
     self.v130LauncherLabel = [[UILabel alloc] init];
     self.v130LauncherLabel.translatesAutoresizingMaskIntoConstraints = NO;
@@ -2354,8 +2366,73 @@ void PvZ2HostNotifyDirectFrame(
 }
 
 - (void)v130ContinueLaunch {
-    if (self.v130LaunchStarted || self.jniRunning) {
+    if (self.v130LaunchStarted || self.jniRunning ||
+        self.keyobsRestorePromptActive) {
         return;
+    }
+
+    // Guest/JIT must NOT start until the user has accepted or declined
+    // an explicit, integrity-verified import from this app's own Documents.
+    if (!self.keyobsRestoreChecked) {
+        self.keyobsRestoreChecked = YES;
+        NSArray<NSURL *> *pending = PVZSavePendingRestores();
+        if (pending.count != 0u) {
+            self.keyobsRestorePromptActive = YES;
+            NSURL *snapshot = pending.firstObject;
+            [self v130SetStatus:
+                @"Sauvegarde détectée. Choisis Restaurer ou Ignorer."];
+            UIAlertController *alert = [UIAlertController
+                alertControllerWithTitle:@"Restaurer dans KEYOBS ?"
+                message:[NSString stringWithFormat:
+                    @"Copie de : %@\n\nSeules les données de PvZ2 Keys Research seront remplacées. Une copie de sécurité sera créée si KEYOBS contient déjà une progression. L'application PvZ2 principale reste intacte.",
+                    snapshot.lastPathComponent]
+                preferredStyle:UIAlertControllerStyleAlert];
+            __weak typeof(self) weakSelf = self;
+            [alert addAction:[UIAlertAction actionWithTitle:@"Ignorer"
+                style:UIAlertActionStyleCancel handler:^(__unused UIAlertAction *action) {
+                    __strong typeof(weakSelf) strongSelf=weakSelf;
+                    if (!strongSelf) return;
+                    AppendPersistentLog(@"[KEYOBS RESTORE] declined; no live files changed");
+                    strongSelf.keyobsRestorePromptActive=NO;
+                    [strongSelf v130ContinueLaunch];
+                }]];
+            [alert addAction:[UIAlertAction actionWithTitle:@"Restaurer"
+                style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) {
+                    __strong typeof(weakSelf) strongSelf=weakSelf;
+                    if (!strongSelf) return;
+                    NSError *restoreError=nil;
+                    BOOL ok=PVZSaveRestoreSnapshot(snapshot,&restoreError);
+                    if (ok) {
+                        AppendPersistentLog(
+                            @"[KEYOBS RESTORE] verified snapshot restored into isolated app");
+                        [strongSelf v130SetStatus:
+                            @"Sauvegarde restaurée ! Démarrage de KEYOBS…"];
+                        strongSelf.keyobsRestorePromptActive=NO;
+                        [strongSelf v130ContinueLaunch];
+                    } else {
+                        NSString *reason=restoreError.localizedDescription ?:
+                            @"Échec de validation ou de restauration.";
+                        AppendPersistentLog(
+                            [@"[KEYOBS RESTORE] stopped: " stringByAppendingString:reason]);
+                        [strongSelf v130SetStatus:
+                            @"Restauration refusée : sauvegarde non validée."];
+                        UIAlertController *failed=[UIAlertController
+                            alertControllerWithTitle:@"Restauration impossible"
+                            message:[NSString stringWithFormat:
+                                @"%@\n\nKEYOBS ne démarrera pas automatiquement. Vérifie ton dossier et relance l'application.",
+                                reason]
+                            preferredStyle:UIAlertControllerStyleAlert];
+                        [failed addAction:[UIAlertAction
+                            actionWithTitle:@"Fermer" style:UIAlertActionStyleCancel
+                            handler:nil]];
+                        [strongSelf presentViewController:failed animated:YES completion:nil];
+                        // Stay blocked for this process: never silently boot
+                        // into a potentially wrong/partial profile.
+                    }
+                }]];
+            [self presentViewController:alert animated:YES completion:nil];
+            return;
+        }
     }
 
     if (!V130RuntimeInstalled()) {
