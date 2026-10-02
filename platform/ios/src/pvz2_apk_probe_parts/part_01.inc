@@ -2431,6 +2431,49 @@
         return nullptr;
     }
 
+
+    // A synthetic v2 token must not repeat after a cold restart of an
+    // otherwise identical owner/SKU. A skipped serial after interruption
+    // is harmless; replaying an old token is not. This counter is saved
+    // BEFORE a host RequestPayment can enter the native purchase broker.
+    bool OfflineStoreAllocateDurableSerial(std::uint64_t& allocated) {
+        allocated = 0u;
+        if (!V128Enabled()) return false;
+        V128LoadConfigOnce();
+        static constexpr char kKey[] =
+            "offline_store_receipt_serial_v2";
+        std::uint64_t previous = offline_purchase_serial;
+        const auto it = v51_config_strings.find(kKey);
+        if (it != v51_config_strings.end()) {
+            if (it->second.empty() ||
+                (it->second.size() > 1u &&
+                 it->second.front() == '0')) return false;
+            std::uint64_t persisted = 0u;
+            const auto parsed =
+                std::from_chars(
+                    it->second.data(),
+                    it->second.data() + it->second.size(),
+                    persisted);
+            if (parsed.ec != std::errc{} ||
+                parsed.ptr !=
+                    it->second.data() + it->second.size())
+                return false;
+            previous = std::max(previous, persisted);
+        } else if (v51_config_keys.count(kKey) != 0u) {
+            // Refuse a type-corrupted marker, never reset a serial.
+            return false;
+        }
+        if (previous ==
+            std::numeric_limits<std::uint64_t>::max()) return false;
+        const auto next = previous + 1u;
+        v51_config_keys.insert(kKey);
+        v51_config_strings[kKey] = std::to_string(next);
+        if (!V128FlushConfig()) return false;
+        offline_purchase_serial = next;
+        allocated = next;
+        return true;
+    }
+
     static int OfflineStorePlantBitForId(std::uint32_t id) {
         switch (id) {
         case 21u: return 0;

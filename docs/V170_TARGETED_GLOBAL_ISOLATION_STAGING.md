@@ -72,3 +72,8 @@ After the exact native/token/owner/sidecar/full-vector gate, runtime now fsync/r
 ### Explicit independent B-wallet QA control
 
 An explicit `⋯ → Crédit PvZCoins de test (profil actif)…` menu now asks for a second confirmation stating the currently selected account MUST be a disposable post-backup test account. Its host atomic request is consumed at an existing guest frame boundary, resolves the current original native profile and persists a unique `offline_store_v170_qa_credit_60000_profile_<id>` V128 marker BEFORE calling original GetCoins/SetCoins. A single explicit request raises this one profile to **at least** 60,000, never accumulates on repeated taps/restarts, never runs automatically and refuses if an unresolved transaction journal exists. This lets the real iPad test B's independent 10,000-coin Snow Pea BUY even when the supplied B had only 270 coins. Do not use on original user accounts; retain the verified external v165 backup. No new automatic startup credit was introduced beyond previously existing one-time v128 behavior.
+
+
+### v2 token cold-restart uniqueness
+
+The original v168 synthetic serial was only an in-memory counter and could restart from one after a cold launch. v170 now allocates the canonical receipt serial with a V128 fsync/rename-backed monotonically increasing `offline_store_receipt_serial_v2` config string at `RequestPayment`, before token creation or native delivery. A malformed marker, overflow or failed persistence rejects the purchase without charging. This avoids accidental same-profile/same-SKU token collisions across normal cold launches while retaining the exact owner/SKU/transaction journal binding. Reset/restore still follow the original safeguarded v166 lifecycle.

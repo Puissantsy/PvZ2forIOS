@@ -593,12 +593,13 @@
                         pending_offline_purchase = OfflinePurchaseRequest{};
                         pending_offline_purchase.pending = true;
                         pending_offline_purchase.sku = sku;
-                        pending_offline_purchase.serial = ++offline_purchase_serial;
                         pending_offline_purchase.initiating_profile_id =
                             OfflineStoreCurrentSelectionId();
                         if (entry != nullptr &&
                             pending_offline_purchase.initiating_profile_id !=
-                                0xffffffffu) {
+                                0xffffffffu &&
+                            OfflineStoreAllocateDurableSerial(
+                                pending_offline_purchase.serial)) {
                             pending_offline_purchase.coin_price = entry->coin_price;
                         } else {
                             // Never queue a payable purchase without a
