@@ -61,3 +61,9 @@ python3 tools/verify_world_key_arm.py --elf /private/path/to/libPVZ2.so
 ```
 
 It refuses the wrong SHA256 or any mismatch in **7** branch destinations and **9** decisive ARM instructions (key vector, gate cost, saved gate state and award paths). No game file is distributed here.
+
+## October 2 follow-up — full award coverage and native read-only event view
+
+The original two award callsites were **not exhaustive**. The complete direct ARM-mode BL scan now finds 13 calls into AddWorldKeys: see [WORLD_KEY_AWARD_COVERAGE.md](WORLD_KEY_AWARD_COVERAGE.md). Nine of those carry exact original world-name string references; five bulk +100 cases cover egypt/pirate/cowboy/future/**dark**, and four separate +1 cases cover egypt/pirate/cowboy/future. No automatic Dark Ages conversion is permitted without confirmed complete gate metadata.
+
+Additional read-only C++ event-view code decodes a bounded snapshot of the statically observed original 24-byte map-event records and feeds the existing fail-closed policy. Independent exact-ELF award coverage and unit tests live under `tools/verify_world_key_award_coverage.py` and `tests/staging/test_world_key_event_view.cpp`. Static checks are NOT a live iPad award test and no runtime hook or IPA is shipped from this research branch.
