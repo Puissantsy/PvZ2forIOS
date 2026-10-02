@@ -2154,6 +2154,8 @@ void PvZ2HostNotifyDirectFrame(
     BOOL keyobsRestoreChecked;
 @property(nonatomic, assign)
     BOOL keyobsRestorePromptActive;
+@property(nonatomic, assign)
+    BOOL keyobsPrelaunchSnapshotTaken;
 
 @end
 
@@ -2432,6 +2434,34 @@ void PvZ2HostNotifyDirectFrame(
                 }]];
             [self presentViewController:alert animated:YES completion:nil];
             return;
+        }
+    }
+
+    // KEYOBS-only: preserve the current gate/key state from the PRIOR
+    // physical-iPad session before running any more game code. The v165
+    // snapshot engine inventories/hashes the complete profile while the
+    // guest is fully stopped; it stays LOCAL under this app's Documents
+    // until the user explicitly copies it to Files/iCloud/PC.
+    if (!self.keyobsPrelaunchSnapshotTaken) {
+        self.keyobsPrelaunchSnapshotTaken = YES;
+        if (PVZSaveHasLocalSave()) {
+            NSError *snapshotError = nil;
+            NSURL *snapshot = PVZSaveCreateSnapshot(
+                @"prelaunch", &snapshotError);
+            if (snapshot != nil) {
+                AppendPersistentLog(
+                    [NSString stringWithFormat:
+                        @"[KEYOBS SAVE] prelaunch VERIFIED snapshot=%@ (Files/PvZ2Backups)",
+                        snapshot.lastPathComponent]);
+            } else {
+                AppendPersistentLog(
+                    [NSString stringWithFormat:
+                        @"[KEYOBS SAVE] prelaunch FAILED: %@",
+                        snapshotError.localizedDescription ?: @"unknown error"]);
+            }
+        } else {
+            AppendPersistentLog(
+                @"[KEYOBS SAVE] prelaunch no existing save to snapshot");
         }
     }
 
