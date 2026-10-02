@@ -23,7 +23,8 @@ def require(cond, what):
         raise AssertionError(what)
 
 require("ResearchWorldKeyReadOnly = 200u" in parts["header"], "missing optional mode")
-require("ResearchWorldKeyReadOnly,\n" in parts["defs"], "mode not selectable")
+require("PvZ2DiagnosticMode::ResearchWorldKeyReadOnly,\\n    PvZ2DiagnosticMode::V151ProductionQsortCompat,".replace("\\\\n","\\n") in parts["defs"],
+        "research branch launcher must choose opt-in key mode first")
 require("V151ProductionQsortCompat ||\n               WorldKeyResearchEnabled()" in parts["modes"],
         "optional mode must inherit production qsort behavior")
 require('world_key_event_view.hpp"' in parts["root"], "missing vetted event decoder")
@@ -49,6 +50,12 @@ require("regs[0]=mem.Read32Guest(kGuestBase+0x005b8504u);" in svc,
         "incorrect post-gate LDR emulation")
 require("keyobs_grants_logged < 64u" in svc, "missing grant log cap")
 require("keyobs_gate_pairs_logged < 16u" in svc, "missing gate log cap")
+# The research branch must use a distinct sandbox from the real user install.
+cmake = (ROOT / "platform/ios/CMakeLists.txt").read_text()
+plist = (ROOT / "platform/ios/Info.plist.in").read_text()
+for value in (cmake, plist):
+    require("com.puissantsy.pvz2forios.keyobs" in value,
+            "research build would overwrite the regular app sandbox")
 require("keyobs_pending_gate_thread==current_probe_thread_id" in svc,
         "missing pre/post thread pairing")
 print("PASS: opt-in research mode, exact three-point hooks, original-instruction emulation, bounded snapshot and logs")
