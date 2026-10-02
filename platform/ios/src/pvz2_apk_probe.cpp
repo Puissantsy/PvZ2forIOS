@@ -1,6 +1,8 @@
 #include "pvz2_apk_probe.hpp"
 #include "host_gles.hpp"
 #include "host_audio.hpp"
+// Optional research-mode only; reads bounded native event snapshots, no writes.
+#include "../../../tests/staging/world_key_event_view.hpp"
 
 #include <OpenGLES/ES2/gl.h>
 #include <OpenGLES/ES2/glext.h>
