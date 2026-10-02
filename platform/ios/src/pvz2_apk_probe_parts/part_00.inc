@@ -1327,6 +1327,7 @@ constexpr std::size_t kV72MaxQueuedTouches = 256u;
 std::mutex gV72TouchMutex;
 std::deque<V72TouchEvent> gV72TouchQueue;
 std::atomic<bool> gV72StopRequested{false};
+std::atomic<bool> gV170QaGrantRequested{false};
 
 // v152 host overlay queues a desired gameplay time scale without touching the
 // Dynarmic instance from UIKit's main thread. 0=no request, 1=normal, 2=fast.

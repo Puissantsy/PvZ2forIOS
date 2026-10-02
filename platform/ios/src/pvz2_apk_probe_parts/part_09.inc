@@ -2646,6 +2646,78 @@
                             }
                         }
 
+
+                        // Strictly user-invoked from the iOS ellipsis menu,
+                        // confirmed for a DISPOSABLE QA profile. The separate
+                        // persistent per-profile marker is written BEFORE
+                        // raising the original native wallet and refuses any
+                        // second grant. No automatic refill after relaunch.
+                        if (gV170QaGrantRequested.exchange(
+                                false, std::memory_order_acq_rel)) {
+                            std::uint32_t qa_profile = 0u;
+                            std::uint32_t qa_profile_id = 0xffffffffu;
+                            if (!resolve_current_profile(
+                                    "V170_QA_Credit_GetCurrentProfile",
+                                    qa_profile, qa_profile_id)) return false;
+                            if (qa_profile == 0u ||
+                                qa_profile_id == 0xffffffffu ||
+                                callbacks.V170UnresolvedGlobalJournal()) {
+                                callbacks.AppendCritical(
+                                    "V170 QA CREDIT refused: no stable "
+                                    "profile or unresolved global journal");
+                            } else {
+                                callbacks.V128LoadConfigOnce();
+                                const std::string qa_key =
+                                    "offline_store_v170_qa_credit_60000_profile_" +
+                                    std::to_string(qa_profile_id);
+                                if (callbacks.v51_config_keys.count(qa_key)) {
+                                    callbacks.Append(
+                                        "V170 QA CREDIT already used by "
+                                        "this profile; no second grant");
+                                } else if (!run_lifecycle(
+                                        "V170_QA_Credit_GetCoins",
+                                        kGetCoins, qa_profile,
+                                        0u, 0u, false, true)) {
+                                    return false;
+                                } else {
+                                    const std::uint32_t before =
+                                        jit.Regs()[0];
+                                    const std::uint32_t floor =
+                                        std::max<std::uint32_t>(
+                                            before, 60000u);
+                                    callbacks.v51_config_keys.insert(qa_key);
+                                    callbacks.v51_config_booleans[qa_key] =
+                                        true;
+                                    if (!callbacks.V128FlushConfig()) {
+                                        callbacks.AppendCritical(
+                                            "V170 QA CREDIT marker persistence "
+                                            "failed; NO wallet mutation");
+                                    } else if (floor != before &&
+                                               !run_lifecycle(
+                                                   "V170_QA_Credit_SetCoins",
+                                                   kSetCoins, qa_profile,
+                                                   floor, 0u, false, true)) {
+                                        callbacks.AppendCritical(
+                                            "V170 QA CREDIT native SetCoins "
+                                            "failed; marker NOT reset");
+                                        return false;
+                                    } else {
+                                        callbacks.
+                                            offline_store_coin_ui_refresh_pending =
+                                                true;
+                                        callbacks.Append(
+                                            "V170 QA CREDIT explicit "
+                                            "one-time profileId=" +
+                                            std::to_string(qa_profile_id) +
+                                            " before=" +
+                                            std::to_string(before) +
+                                            " after=" +
+                                            std::to_string(floor));
+                                    }
+                                }
+                            }
+                        }
+
                         // QA-only bootstrap for the first offline store test.
                         // Make the wallet at least 60k exactly once, then store
                         // a host-backed V128 marker. This is deliberately a
@@ -2807,7 +2879,9 @@
                         // never writes guest memory or save files.
                         auto audit_offline_original_global =
                             [&](const char* event,
-                                std::uint32_t profile_id) -> bool {
+                                std::uint32_t profile_id,
+                                std::uint32_t* plants_out = nullptr,
+                                std::uint32_t* features_out = nullptr) -> bool {
                                 constexpr std::uint32_t
                                     kGetGlobalSaveData =
                                         kGuestBase + 0x0043ebd0u;
@@ -2849,6 +2923,12 @@
                                         "V169 ORIGINAL GLOBAL invalid native "
                                         "plant/feature vectors");
                                     return false;
+                                }
+                                if (plants_out != nullptr) {
+                                    *plants_out = plants;
+                                }
+                                if (features_out != nullptr) {
+                                    *features_out = features;
                                 }
                                 callbacks.Append(
                                     "V169 ORIGINAL GLOBAL event=" +
@@ -2946,6 +3026,298 @@
                                 }
                                 return true;
                             };
+
+                        // v170 preflight only: do NOT mutate a real original
+                        // global purchase. We require the exact native v2
+                        // receipt's ConfirmDelivery AND durable host sidecar
+                        // before even planning removal of its new global bit.
+                        // Executed once at a lifecycle-safe frame boundary,
+                        // never as an arbitrary guest-memory/frame scan.
+                        auto& v170 = callbacks.v170_global_txn;
+                        if (v170.active &&
+                            v170.receipt_confirmed &&
+                            v170.sidecar_committed &&
+                            !v170.preview_logged) {
+                            v170.preview_logged = true;
+                            constexpr std::uint32_t kGetOriginalGlobal =
+                                kGuestBase + 0x0043ebd0u;
+                            if (!run_lifecycle(
+                                    "V170_Global_PreflightGetter",
+                                    kGetOriginalGlobal, 0u, 0u, 0u,
+                                    false, true)) {
+                                callbacks.AppendCritical(
+                                    "V170 GLOBAL PREVIEW failed: original "
+                                    "getter returned error; NEVER MUTATE");
+                            } else {
+                                const std::uint32_t original = jit.Regs()[0];
+                                std::uint32_t current_plants = 0u;
+                                std::uint32_t current_features = 0u;
+                                if (original == 0u ||
+                                    memory.Ptr(original, 0x28u) == nullptr ||
+                                    !callbacks.OfflineStoreReadTargetMask(
+                                        original, 0x04u, true, current_plants) ||
+                                    !callbacks.OfflineStoreReadTargetMask(
+                                        original, 0x10u, false,
+                                        current_features)) {
+                                    callbacks.AppendCritical(
+                                        "V170 GLOBAL PREVIEW failed: original "
+                                        "vector is absent/invalid; NEVER MUTATE");
+                                } else {
+                                    const bool non_target_unchanged =
+                                        v170.target_plants
+                                        ? current_features ==
+                                            v170.baseline_features
+                                        : current_plants ==
+                                            v170.baseline_plants;
+                                    const auto plan =
+                                        pvz2offline::PlanGlobalIsolation(
+                                            true,
+                                            v170.target_plants
+                                                ? v170.baseline_plants
+                                                : v170.baseline_features,
+                                            v170.target_plants
+                                                ? current_plants
+                                                : current_features,
+                                            v170.target_bit,
+                                            v170.target_plants
+                                                ? 0x3fu : 0x0fu);
+                                    callbacks.Append(
+                                        "V170 GLOBAL PREVIEW ownerProfile=" +
+                                        std::to_string(
+                                            v170.owner_profile_id) +
+                                        " sku=" + v170.sku +
+                                        " beforePlants=0x" +
+                                        JniProbeHex(v170.baseline_plants) +
+                                        " nowPlants=0x" +
+                                        JniProbeHex(current_plants) +
+                                        " beforeFeatures=0x" +
+                                        JniProbeHex(v170.baseline_features) +
+                                        " nowFeatures=0x" +
+                                        JniProbeHex(current_features) +
+                                        " plan=" +
+                                        std::to_string(
+                                            static_cast<unsigned>(
+                                                plan.decision)) +
+                                        " concurrentOtherCategory=" +
+                                        (non_target_unchanged ? "NO" : "YES"));
+                                    std::vector<std::uint32_t> full_plants;
+                                    std::vector<std::uint32_t> full_features;
+                                    const bool exact_vectors_valid =
+                                        callbacks.V170ReadOriginalGlobalVectors(
+                                            original, full_plants, full_features);
+                                    const auto exact_decision =
+                                        exact_vectors_valid
+                                        ? pvz2offline::PlanExactGlobalTransaction(
+                                            v170.journal, full_plants,
+                                            full_features,
+                                            v170.active &&
+                                            v170.receipt_confirmed &&
+                                            v170.sidecar_committed)
+                                        : pvz2offline::GlobalJournalDecision::
+                                              InvalidJournal;
+                                    callbacks.Append(
+                                        "V170 GLOBAL EXACT wholeVectorDecision=" +
+                                        std::to_string(
+                                            static_cast<unsigned>(
+                                                exact_decision)) +
+                                        " fullPlantCount=" +
+                                        std::to_string(full_plants.size()) +
+                                        " fullFeatureCount=" +
+                                        std::to_string(full_features.size()));
+                                    if (exact_decision ==
+                                            pvz2offline::GlobalJournalDecision::
+                                                ExactSyntheticOnlyDelta &&
+                                        non_target_unchanged &&
+                                        plan.decision ==
+                                            pvz2offline::
+                                                GlobalIsolationDecision::
+                                                    SyntheticChangeCanBeRemoved &&
+                                        plan.eligible_synthetic_delta ==
+                                            v170.target_bit) {
+                                        PvZ2JniCallbacks::
+                                            V170OriginalGlobalPreview preview;
+                                        if (callbacks.
+                                                V170PreviewOriginalGlobalRemoval(
+                                                    original,
+                                                    v170.target_plants,
+                                                    plan.eligible_synthetic_delta,
+                                                    preview)) {
+                                            callbacks.Append(
+                                                "V170 GLOBAL TARGET exact "
+                                                "vector verified; checkpoint "
+                                                "cleanup intent BEFORE mutation");
+                                            if (!callbacks.
+                                                    V170CheckpointGlobalJournal(
+                                                        v170.token,
+                                                        false, false, true)) {
+                                                callbacks.AppendCritical(
+                                                    "V170 GLOBAL cleanup intent "
+                                                    "fsync/rename FAILED; "
+                                                    "original rights PRESERVED");
+                                            } else {
+                                                PvZ2JniCallbacks::
+                                                    V170GlobalSaveStamp prior;
+                                                PvZ2JniCallbacks::
+                                                    V170GlobalSaveStamp after;
+                                                // The real A-payment trace
+                                                // confirms the native broker
+                                                // already wrote BOTH paths.
+                                                // If that did not happen,
+                                                // do not attempt a blind save.
+                                                if (!callbacks.
+                                                        V170GlobalSaveFilesStamp(
+                                                            prior, true)) {
+                                                    callbacks.AppendCritical(
+                                                        "V170 GLOBAL cannot "
+                                                        "verify paired original "
+                                                        "file baseline; "
+                                                        "PRESERVE journal");
+                                                } else {
+                                                    PvZ2JniCallbacks::
+                                                        V170GlobalUndo undo;
+                                                    const auto& target_now =
+                                                        v170.target_plants
+                                                        ? full_plants
+                                                        : full_features;
+                                                    const auto& baseline =
+                                                        v170.target_plants
+                                                        ? v170.journal.
+                                                              before_plants
+                                                        : v170.journal.
+                                                              before_features;
+                                                    if (!callbacks.
+                                                            V170CompactOriginalGlobalVector(
+                                                                original,
+                                                                v170.target_plants,
+                                                                v170.target_bit,
+                                                                target_now,
+                                                                baseline,
+                                                                undo)) {
+                                                        callbacks.AppendCritical(
+                                                            "V170 GLOBAL "
+                                                            "in-memory compact "
+                                                            "rejected; PRESERVE");
+                                                    } else {
+                                                        const auto failures =
+                                                            callbacks.
+                                                                v128_userfs_disk_failures;
+                                                        constexpr std::uint32_t
+                                                            kOriginalGlobalSaver =
+                                                                kGuestBase +
+                                                                0x0043ee24u;
+                                                        const bool saver_ok =
+                                                            run_lifecycle(
+                                                                "V170_SaveOriginalGlobal",
+                                                                kOriginalGlobalSaver,
+                                                                0u, 0u, 0u,
+                                                                false, true);
+                                                        std::vector<std::uint32_t>
+                                                            verify_plants;
+                                                        std::vector<std::uint32_t>
+                                                            verify_features;
+                                                        const bool vectors_ok =
+                                                            callbacks.
+                                                                V170ReadOriginalGlobalVectors(
+                                                                    original,
+                                                                    verify_plants,
+                                                                    verify_features) &&
+                                                            verify_plants ==
+                                                                v170.journal.
+                                                                    before_plants &&
+                                                            verify_features ==
+                                                                v170.journal.
+                                                                    before_features;
+                                                        const bool files_ok =
+                                                            callbacks.
+                                                                V170GlobalSaveFilesStamp(
+                                                                    after, true) &&
+                                                            prior.data !=
+                                                                after.data &&
+                                                            prior.hash !=
+                                                                after.hash &&
+                                                            failures ==
+                                                                callbacks.
+                                                                    v128_userfs_disk_failures;
+                                                        if (!saver_ok ||
+                                                            !vectors_ok ||
+                                                            !files_ok) {
+                                                            const bool
+                                                                rollback_ok =
+                                                                    callbacks.
+                                                                        V170RollbackGlobalVector(
+                                                                            undo);
+                                                            callbacks.AppendCritical(
+                                                                "V170 GLOBAL "
+                                                                "saver/readback "
+                                                                "AMBIGUOUS: "
+                                                                "halt and use "
+                                                                "protected "
+                                                                "disposable "
+                                                                "backup. "
+                                                                "RollbackRAM=" +
+                                                                std::string{
+                                                                    rollback_ok
+                                                                        ? "YES"
+                                                                        : "NO"});
+                                                            // The original
+                                                            // RTON+hash could
+                                                            // be partially
+                                                            // written: NEVER
+                                                            // clear intent or
+                                                            // retry on launch.
+                                                            return false;
+                                                        }
+                                                        const auto saved_owner =
+                                                            v170.owner_profile_id;
+                                                        const auto saved_target =
+                                                            v170.journal.sku.target_id;
+                                                        const std::string saved_token =
+                                                            v170.token;
+                                                        if (!callbacks.
+                                                                V170ClearFinishedGlobalJournal(
+                                                                    saved_token)) {
+                                                            callbacks.AppendCritical(
+                                                                "V170 GLOBAL "
+                                                                "native save "
+                                                                "verified, but "
+                                                                "journal clear "
+                                                                "failed; "
+                                                                "PRESERVE "
+                                                                "interlock");
+                                                        } else {
+                                                            callbacks.Append(
+                                                                "V170 GLOBAL "
+                                                                "CLEANUP SAVED "
+                                                                "owner=" +
+                                                                std::to_string(
+                                                                    saved_owner) +
+                                                                " id=" +
+                                                                std::to_string(
+                                                                    saved_target) +
+                                                                " nativeRTON"
+                                                                "+hash=CHANGED"
+                                                                " original "
+                                                                "other ids "
+                                                                "preserved");
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        } else {
+                                            callbacks.AppendCritical(
+                                                "V170 GLOBAL TARGET PREVIEW "
+                                                "rejected malformed/duplicate "
+                                                "original vector");
+                                        }
+                                    } else {
+                                        callbacks.Append(
+                                            "V170 GLOBAL TARGET PREVIEW "
+                                            "PRESERVE: legacy or unrelated "
+                                            "changes cannot be removed safely");
+                                    }
+                                }
+                            }
+                        }
 
                         if (callbacks.pending_offline_catalog_refresh) {
                             if (!driver_ready ||
@@ -3122,11 +3494,74 @@
                         // the original deferred event; a later refresh
                         // also captures AFTER processing, not a fake
                         // synchronous entitlement change.
+                        std::uint32_t v170_pre_global_plants =
+                            0xffffffffu;
+                        std::uint32_t v170_pre_global_features =
+                            0xffffffffu;
                         if (!audit_offline_original_global(
-                                "pre-paid-enqueue", profile_id)) {
+                                "pre-paid-enqueue", profile_id,
+                                &v170_pre_global_plants,
+                                &v170_pre_global_features)) {
                             callbacks.AppendCritical(
-                                "V169 original global pre-paid probe "
-                                "unavailable; no mutation attempted");
+                                "V170 original global pre-paid snapshot "
+                                "unavailable; cannot attribute native delta");
+                        }
+
+
+                        // Full pre-transaction global vectors, not masks alone:
+                        // an unknown existing ID or concurrent edit must NOT
+                        // be silently erased. Unresolved journals from a crash
+                        // interlock every new synthetic payment.
+                        const auto* v170_entry =
+                            callbacks.OfflineStoreFindCatalogEntry(request.sku);
+                        if (v170_entry == nullptr ||
+                            v170_pre_global_plants == 0xffffffffu ||
+                            v170_pre_global_features == 0xffffffffu ||
+                            callbacks.V170UnresolvedGlobalJournal()) {
+                            callbacks.AppendCritical(
+                                "V170 GLOBAL TXN payment blocked: missing "
+                                "preflight or unresolved prior journal");
+                            if (!fire_incomplete(6)) return false;
+                            callbacks.pending_offline_purchase =
+                                PvZ2JniCallbacks::OfflinePurchaseRequest{};
+                            return true;
+                        }
+                        constexpr std::uint32_t kV170OriginalGetter =
+                            kGuestBase + 0x0043ebd0u;
+                        std::vector<std::uint32_t> v170_before_plants;
+                        std::vector<std::uint32_t> v170_before_features;
+                        if (!run_lifecycle(
+                                "V170_Global_ExactBeforeGetter",
+                                kV170OriginalGetter, 0u, 0u, 0u,
+                                false, true) ||
+                            !callbacks.V170ReadOriginalGlobalVectors(
+                                jit.Regs()[0], v170_before_plants,
+                                v170_before_features)) {
+                            callbacks.AppendCritical(
+                                "V170 GLOBAL TXN cannot read both complete "
+                                "original-global preimages; rejecting payment");
+                            if (!fire_incomplete(6)) return false;
+                            callbacks.pending_offline_purchase =
+                                PvZ2JniCallbacks::OfflinePurchaseRequest{};
+                            return true;
+                        }
+                        const bool v170_target_plants =
+                            v170_entry->entitlement_kind ==
+                            PvZ2JniCallbacks::OfflineStoreEntitlementKind::Plant;
+                        const auto& v170_target_before =
+                            v170_target_plants
+                            ? v170_before_plants : v170_before_features;
+                        if (std::find(v170_target_before.begin(),
+                                      v170_target_before.end(),
+                                      v170_entry->entitlement_id) !=
+                            v170_target_before.end()) {
+                            callbacks.AppendCritical(
+                                "V170 GLOBAL TXN refusing to attribute "
+                                "pre-existing same-SKU original-global right");
+                            if (!fire_incomplete(6)) return false;
+                            callbacks.pending_offline_purchase =
+                                PvZ2JniCallbacks::OfflinePurchaseRequest{};
+                            return true;
                         }
 
                         if (!run_lifecycle(
@@ -3148,6 +3583,37 @@
                             return true;
                         }
 
+                        const std::string token =
+                            pvz2offline::MakeReceiptTokenV2(
+                                request.initiating_profile_id,
+                                request.serial, request.sku);
+                        pvz2offline::GlobalJournal v170_journal;
+                        v170_journal.token = token;
+                        v170_journal.owner = profile_id;
+                        v170_journal.sku = pvz2offline::GlobalJournalSku{
+                            v170_target_plants,
+                            v170_entry->entitlement_id,
+                            1u << v170_entry->entitlement_bit};
+                        v170_journal.before_plants =
+                            std::move(v170_before_plants);
+                        v170_journal.before_features =
+                            std::move(v170_before_features);
+                        if (token.empty() ||
+                            !callbacks.V170PersistNewGlobalJournal(
+                                v170_journal)) {
+                            callbacks.AppendCritical(
+                                "V170 GLOBAL TXN durable pre-payment journal "
+                                "unavailable; no debit or native event");
+                            if (!fire_incomplete(6)) return false;
+                            callbacks.pending_offline_purchase =
+                                PvZ2JniCallbacks::OfflinePurchaseRequest{};
+                            return true;
+                        }
+                        callbacks.Append(
+                            "V170 GLOBAL TXN durable BEFORE checkpoint "
+                            "profileId=" + std::to_string(profile_id) +
+                            " sku=" + request.sku);
+
                         const std::uint32_t coins_after =
                             coins_before - request.coin_price;
                         if (!run_lifecycle(
@@ -3168,26 +3634,8 @@
                             "v2:" +
                             std::to_string(request.initiating_profile_id) +
                             ":" + serial;
-                        const std::string token =
-                            pvz2offline::MakeReceiptTokenV2(
-                                request.initiating_profile_id,
-                                request.serial,
-                                request.sku);
-                        if (token.empty()) {
-                            callbacks.AppendCritical(
-                                "OFFLINE STORE invalid canonical v2 token "
-                                "before native enqueue; rolling back debit");
-                            if (!run_lifecycle(
-                                    "OfflineStore_RollbackInvalidToken",
-                                    kSetCoins, profile, coins_before,
-                                    0u, false, true)) {
-                                return false;
-                            }
-                            if (!fire_incomplete(6)) return false;
-                            callbacks.pending_offline_purchase =
-                                PvZ2JniCallbacks::OfflinePurchaseRequest{};
-                            return true;
-                        }
+                        // Token and both complete preimages were already
+                        // atomically journaled BEFORE any coin debit.
                         const std::string order_id =
                             "pvz2-offline-order:" + owner_serial;
                         const std::string original_json =
@@ -3212,6 +3660,31 @@
                         const std::uint32_t order_string =
                             callbacks.JniNewSyntheticString(order_id);
 
+                        callbacks.v170_global_txn =
+                            PvZ2JniCallbacks::V170GlobalTxnObservation{};
+                        {
+                            auto& observation = callbacks.v170_global_txn;
+                            observation.active = true;
+                            observation.owner_profile_id = profile_id;
+                            observation.baseline_plants = v170_pre_global_plants;
+                            observation.baseline_features = v170_pre_global_features;
+                            observation.target_plants =
+                                v170_entry->entitlement_kind ==
+                                PvZ2JniCallbacks::OfflineStoreEntitlementKind::Plant;
+                            observation.target_bit =
+                                1u << v170_entry->entitlement_bit;
+                            observation.sku = request.sku;
+                            observation.token = token;
+                            observation.journal = v170_journal;
+                            callbacks.Append(
+                                "V170 GLOBAL TXN BASELINE profileId=" +
+                                std::to_string(profile_id) +
+                                " sku=" + request.sku +
+                                " plantMask=0x" +
+                                JniProbeHex(observation.baseline_plants) +
+                                " featureMask=0x" +
+                                JniProbeHex(observation.baseline_features));
+                        }
                         callbacks.offline_purchase_unconfirmed = true;
                         callbacks.offline_purchase_unconfirmed_token = token;
                         callbacks.Append(
@@ -3238,6 +3711,8 @@
                                 request.sku);
                             callbacks.offline_purchase_unconfirmed = false;
                             callbacks.offline_purchase_unconfirmed_token.clear();
+                            callbacks.v170_global_txn =
+                                PvZ2JniCallbacks::V170GlobalTxnObservation{};
                             run_lifecycle(
                                 "OfflineStore_RollbackCoins",
                                 kSetCoins, profile, coins_before, 0u, false, true);
@@ -3255,15 +3730,29 @@
                             callbacks.OfflineStoreFindCatalogEntry(
                                 request.sku);
 
-                        if (purchased_entry != nullptr &&
-                            !callbacks
-                                .OfflineStoreRecordPurchasedEntitlement(
-                                    profile,
-                                    profile_id,
-                                    *purchased_entry)) {
+                        const bool v170_sidecar_committed =
+                            purchased_entry != nullptr &&
+                            callbacks.OfflineStoreRecordPurchasedEntitlement(
+                                profile,
+                                profile_id,
+                                *purchased_entry);
+                        if (!v170_sidecar_committed) {
                             callbacks.AppendCritical(
-                                "OFFLINE STORE PROFILE purchase was accepted by native broker but profile sidecar update failed sku=" +
-                                request.sku);
+                                "OFFLINE STORE PROFILE purchase was accepted "
+                                "by native broker but profile sidecar "
+                                "update failed sku=" + request.sku);
+                            callbacks.v170_global_txn =
+                                PvZ2JniCallbacks::V170GlobalTxnObservation{};
+                        } else if (callbacks.v170_global_txn.active &&
+                                   callbacks.v170_global_txn.token == token) {
+                            if (!callbacks.V170CheckpointGlobalJournal(
+                                    token, false, true)) {
+                                callbacks.v170_global_txn.active = false;
+                                callbacks.AppendCritical(
+                                    "V170 GLOBAL TXN paid sidecar persisted "
+                                    "but journal checkpoint failed: "
+                                    "PRESERVE; recovery required");
+                            }
                         }
 
                         // Also snapshot the live vectors after the native

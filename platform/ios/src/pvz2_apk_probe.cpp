@@ -1,6 +1,9 @@
 #include "pvz2_apk_probe.hpp"
 #include "offline_receipt_v2.hpp"
 #include "offline_purchase_policy.hpp"
+#include "offline_global_entitlement_policy.hpp"
+#include "offline_global_compaction.hpp"
+#include "offline_global_transaction.hpp"
 #include "host_gles.hpp"
 #include "host_audio.hpp"
 
@@ -22,10 +25,13 @@
 #include <cmath>
 #include <ctime>
 #include <chrono>
+#include <charconv>
 #include <fnmatch.h>
 #include <limits>
 #include <iomanip>
 #include <iterator>
+#include <optional>
+#include <string_view>
 #include <sstream>
 #include <string>
 #include <thread>

@@ -593,12 +593,13 @@
                         pending_offline_purchase = OfflinePurchaseRequest{};
                         pending_offline_purchase.pending = true;
                         pending_offline_purchase.sku = sku;
-                        pending_offline_purchase.serial = ++offline_purchase_serial;
                         pending_offline_purchase.initiating_profile_id =
                             OfflineStoreCurrentSelectionId();
                         if (entry != nullptr &&
                             pending_offline_purchase.initiating_profile_id !=
-                                0xffffffffu) {
+                                0xffffffffu &&
+                            OfflineStoreAllocateDurableSerial(
+                                pending_offline_purchase.serial)) {
                             pending_offline_purchase.coin_price = entry->coin_price;
                         } else {
                             // Never queue a payable purchase without a
@@ -631,6 +632,28 @@
                             token == offline_purchase_unconfirmed_token) {
                             offline_purchase_unconfirmed = false;
                             offline_purchase_unconfirmed_token.clear();
+                            // This is the *original native broker's* own
+                            // deferred delivery acknowledgement, not B's
+                            // free native CLAIM. Preserve only the matching
+                            // synthetic transaction's observation.
+                            if (v170_global_txn.active &&
+                                v170_global_txn.token == token) {
+                                if (V170CheckpointGlobalJournal(
+                                        token, true, false)) {
+                                    Append(
+                                        "V170 GLOBAL TXN native delivery "
+                                        "checkpoint persisted owner=" +
+                                        std::to_string(
+                                            v170_global_txn.owner_profile_id));
+                                } else {
+                                    v170_global_txn.active = false;
+                                    AppendCritical(
+                                        "V170 GLOBAL TXN native confirmation "
+                                        "journal checkpoint FAILED; preserve "
+                                        "original global rights and block "
+                                        "future synthetic purchase");
+                                }
+                            }
                         }
                         regs[0] = 0u;
                         Append("OFFLINE STORE ConfirmDelivery token=" + token +
@@ -645,6 +668,7 @@
                         pending_offline_purchase = OfflinePurchaseRequest{};
                         offline_purchase_unconfirmed = false;
                         offline_purchase_unconfirmed_token.clear();
+                        v170_global_txn = V170GlobalTxnObservation{};
                         regs[0] = 0u;
                         Append("OFFLINE STORE Close");
                         return true;

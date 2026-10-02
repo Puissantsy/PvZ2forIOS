@@ -107,6 +107,8 @@ void PvZ2HostNotifyDirectFrame(
     std::uint32_t height);
 
 void PvZ2RequestInteractiveStop();
+// Explicit, one-time per-profile QA credit only; never automatic.
+void PvZ2RequestV170QaCredit();
 
 // v152: host-only prototype control. UIKit queues the request; the guest
 // scheduler applies SetTimeScale only at a completed frame boundary.

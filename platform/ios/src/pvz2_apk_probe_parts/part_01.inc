@@ -2375,6 +2375,24 @@
         // a different profile at the later frame-boundary callback.
         std::uint32_t initiating_profile_id = 0xffffffffu;
     };
+    // Runtime-local owner/token plus host-persisted BEFORE image. An
+    // interrupted process is never authorized to replay a deletion.
+    struct V170GlobalTxnObservation {
+        bool active = false;
+        bool receipt_confirmed = false;
+        bool sidecar_committed = false;
+        bool preview_logged = false;
+        std::uint32_t owner_profile_id = 0xffffffffu;
+        std::uint32_t baseline_plants = 0u;
+        std::uint32_t baseline_features = 0u;
+        bool target_plants = false;
+        std::uint32_t target_bit = 0u;
+        std::string sku;
+        std::string token;
+        pvz2offline::GlobalJournal journal;
+    };
+    V170GlobalTxnObservation v170_global_txn{};
+
 
     std::uint32_t OfflineStoreCurrentSelectionId() {
         constexpr std::uint32_t kProfileMgrSingletonStorage =
@@ -2411,6 +2429,49 @@
             }
         }
         return nullptr;
+    }
+
+
+    // A synthetic v2 token must not repeat after a cold restart of an
+    // otherwise identical owner/SKU. A skipped serial after interruption
+    // is harmless; replaying an old token is not. This counter is saved
+    // BEFORE a host RequestPayment can enter the native purchase broker.
+    bool OfflineStoreAllocateDurableSerial(std::uint64_t& allocated) {
+        allocated = 0u;
+        if (!V128Enabled()) return false;
+        V128LoadConfigOnce();
+        static constexpr char kKey[] =
+            "offline_store_receipt_serial_v2";
+        std::uint64_t previous = offline_purchase_serial;
+        const auto it = v51_config_strings.find(kKey);
+        if (it != v51_config_strings.end()) {
+            if (it->second.empty() ||
+                (it->second.size() > 1u &&
+                 it->second.front() == '0')) return false;
+            std::uint64_t persisted = 0u;
+            const auto parsed =
+                std::from_chars(
+                    it->second.data(),
+                    it->second.data() + it->second.size(),
+                    persisted);
+            if (parsed.ec != std::errc{} ||
+                parsed.ptr !=
+                    it->second.data() + it->second.size())
+                return false;
+            previous = std::max(previous, persisted);
+        } else if (v51_config_keys.count(kKey) != 0u) {
+            // Refuse a type-corrupted marker, never reset a serial.
+            return false;
+        }
+        if (previous ==
+            std::numeric_limits<std::uint64_t>::max()) return false;
+        const auto next = previous + 1u;
+        v51_config_keys.insert(kKey);
+        v51_config_strings[kKey] = std::to_string(next);
+        if (!V128FlushConfig()) return false;
+        offline_purchase_serial = next;
+        allocated = next;
+        return true;
     }
 
     static int OfflineStorePlantBitForId(std::uint32_t id) {
@@ -2531,6 +2592,322 @@
             }
         }
 
+        return true;
+    }
+
+    // Returns a READ-ONLY, bounded preview. In particular, never pass a
+    // guest vector to a generic host std::vector erase or use the profile
+    // offsets 0x18/0x34 on original GLOBAL data. Original schema uses
+    // global +0x04 (plants) / +0x10 (features) for DWORD vectors.
+    struct V170OriginalGlobalPreview {
+        std::uint32_t begin = 0u;
+        std::uint32_t old_end = 0u;
+        std::uint32_t capacity = 0u;
+        pvz2offline::GlobalCompactPreview compaction;
+    };
+
+    bool V170PreviewOriginalGlobalRemoval(
+        std::uint32_t original_global,
+        bool plants,
+        std::uint32_t remove_mask,
+        V170OriginalGlobalPreview& result) {
+
+        result = V170OriginalGlobalPreview{};
+        const std::uint32_t vector_offset =
+            plants ? 0x04u : 0x10u;
+        if (original_global == 0u ||
+            mem.Ptr(original_global, 0x28u) == nullptr ||
+            mem.Ptr(original_global + vector_offset, 12u) == nullptr) {
+            return false;
+        }
+        const std::uint32_t begin =
+            mem.Read32Guest(original_global + vector_offset);
+        const std::uint32_t end =
+            mem.Read32Guest(original_global + vector_offset + 4u);
+        const std::uint32_t cap =
+            mem.Read32Guest(original_global + vector_offset + 8u);
+        if (begin == 0u || end < begin || cap < end ||
+            ((end - begin) & 3u) != 0u ||
+            ((cap - begin) & 3u) != 0u ||
+            end - begin > 512u ||
+            cap - begin > 8192u ||
+            mem.Ptr(begin, end - begin) == nullptr) {
+            return false;
+        }
+        std::vector<std::uint32_t> values;
+        values.reserve((end - begin) / 4u);
+        for (std::uint32_t cursor = begin; cursor < end; cursor += 4u) {
+            values.push_back(mem.Read32Guest(cursor));
+        }
+        const auto preview =
+            pvz2offline::PreviewGlobalCatalogRemoval(
+                values, plants, remove_mask);
+        if (!preview.safe()) {
+            return false;
+        }
+        result.begin = begin;
+        result.old_end = end;
+        result.capacity = cap;
+        result.compaction = preview;
+        return true;
+    }
+
+
+    // The exact GlobalSaveData vectors are distinct from per-profile
+    // premium vectors. Preserve unknown IDs and original element ordering.
+    bool V170ReadOriginalGlobalVector(
+        std::uint32_t original, bool plants,
+        std::vector<std::uint32_t>& out) {
+        out.clear();
+        const std::uint32_t off = plants ? 0x04u : 0x10u;
+        if (original == 0u ||
+            mem.Ptr(original, 0x28u) == nullptr ||
+            mem.Ptr(original + off, 12u) == nullptr) return false;
+        const std::uint32_t begin = mem.Read32Guest(original + off);
+        const std::uint32_t end = mem.Read32Guest(original + off + 4u);
+        const std::uint32_t cap = mem.Read32Guest(original + off + 8u);
+        if (begin == 0u && end == 0u && cap == 0u) return true;
+        if (begin == 0u || (begin & 3u) != 0u ||
+            end < begin || cap < end ||
+            ((end - begin) & 3u) != 0u ||
+            ((cap - begin) & 3u) != 0u ||
+            end - begin > 512u || cap - begin > 8192u ||
+            mem.Ptr(begin, cap - begin) == nullptr) return false;
+        out.reserve((end - begin) / 4u);
+        for (std::uint32_t at = begin; at < end; at += 4u)
+            out.push_back(mem.Read32Guest(at));
+        return true;
+    }
+
+    bool V170ReadOriginalGlobalVectors(
+        std::uint32_t original,
+        std::vector<std::uint32_t>& plants,
+        std::vector<std::uint32_t>& features) {
+        return V170ReadOriginalGlobalVector(original, true, plants) &&
+               V170ReadOriginalGlobalVector(original, false, features);
+    }
+
+    static std::optional<pvz2offline::GlobalJournalSku> V170LookupJournalSku(
+        std::string_view sku) {
+        const auto* entry = OfflineStoreFindCatalogEntry(std::string(sku));
+        if (!entry) return std::nullopt;
+        return pvz2offline::GlobalJournalSku{
+            entry->entitlement_kind == OfflineStoreEntitlementKind::Plant,
+            entry->entitlement_id, 1u << entry->entitlement_bit};
+    }
+
+    static constexpr const char* kV170GlobalJournalKey =
+        "offline_store_global_txn_v1";
+
+    // An invalid/unfinished journal is an interlock, not an instruction
+    // to guess historical entitlement provenance on the next launch.
+    bool V170UnresolvedGlobalJournal() {
+        V128LoadConfigOnce();
+        return v170_global_txn.active ||
+               v51_config_keys.count(kV170GlobalJournalKey) != 0u ||
+               v51_config_strings.count(kV170GlobalJournalKey) != 0u;
+    }
+
+    bool V170PersistNewGlobalJournal(
+        const pvz2offline::GlobalJournal& journal) {
+        if (V170UnresolvedGlobalJournal()) return false;
+        const auto encoded =
+            pvz2offline::EncodeGlobalJournal(journal, V170LookupJournalSku);
+        if (!encoded) return false;
+        v51_config_keys.insert(kV170GlobalJournalKey);
+        v51_config_strings[kV170GlobalJournalKey] = *encoded;
+        // Fail closed even if fsync/rename fails ambiguously.
+        return V128FlushConfig();
+    }
+
+    // Each stage is a separate fsync/rename checkpoint for the same token.
+    bool V170CheckpointGlobalJournal(
+        const std::string& token,
+        bool native_confirmed,
+        bool local_committed,
+        bool cleanup_intent = false) {
+        if (!v170_global_txn.active || v170_global_txn.token != token)
+            return false;
+        V128LoadConfigOnce();
+        const auto it = v51_config_strings.find(kV170GlobalJournalKey);
+        if (it == v51_config_strings.end()) return false;
+        auto parsed = pvz2offline::DecodeGlobalJournal(
+            it->second, V170LookupJournalSku);
+        if (!parsed || parsed->token != token ||
+            parsed->owner != v170_global_txn.owner_profile_id ||
+            parsed->before_plants != v170_global_txn.journal.before_plants ||
+            parsed->before_features != v170_global_txn.journal.before_features)
+            return false;
+        parsed->native_confirmed |= native_confirmed;
+        parsed->local_committed |= local_committed;
+        if (cleanup_intent) {
+            if (!parsed->native_confirmed || !parsed->local_committed)
+                return false;
+            parsed->cleanup_intent = true;
+        }
+        const auto encoded =
+            pvz2offline::EncodeGlobalJournal(*parsed, V170LookupJournalSku);
+        if (!encoded) return false;
+        v51_config_strings[kV170GlobalJournalKey] = *encoded;
+        if (!V128FlushConfig()) return false;
+        v170_global_txn.journal = *parsed;
+        if (native_confirmed) v170_global_txn.receipt_confirmed = true;
+        if (local_committed) v170_global_txn.sidecar_committed = true;
+        return true;
+    }
+
+    bool V170ClearFinishedGlobalJournal(const std::string& token) {
+        V128LoadConfigOnce();
+        const auto it = v51_config_strings.find(kV170GlobalJournalKey);
+        if (it == v51_config_strings.end()) return false;
+        const auto decoded = pvz2offline::DecodeGlobalJournal(
+            it->second, V170LookupJournalSku);
+        if (!decoded || decoded->token != token ||
+            !decoded->cleanup_intent) return false;
+        const std::string old = it->second;
+        v51_config_strings.erase(kV170GlobalJournalKey);
+        v51_config_keys.erase(kV170GlobalJournalKey);
+        if (!V128FlushConfig()) {
+            v51_config_strings[kV170GlobalJournalKey] = old;
+            v51_config_keys.insert(kV170GlobalJournalKey);
+            return false;
+        }
+        v170_global_txn = V170GlobalTxnObservation{};
+        return true;
+    }
+
+
+    struct V170GlobalUndo {
+        std::uint32_t original = 0u;
+        std::uint32_t offset = 0u;
+        std::uint32_t begin = 0u;
+        std::uint32_t old_end = 0u;
+        std::uint32_t capacity = 0u;
+        std::vector<std::uint32_t> before;
+        std::vector<std::uint32_t> after;
+        bool touched = false;
+    };
+
+    bool V170RollbackGlobalVector(V170GlobalUndo& u) {
+        if (!u.touched) return true;
+        if (u.original == 0u ||
+            mem.Ptr(u.original, 0x28u) == nullptr ||
+            mem.Read32Guest(u.original + u.offset) != u.begin ||
+            mem.Read32Guest(u.original + u.offset + 8u) != u.capacity ||
+            mem.Ptr(u.begin, u.capacity - u.begin) == nullptr) {
+            AppendCritical("V170 GLOBAL ROLLBACK ownership changed; "
+                           "stop and restore protected disposable backup");
+            return false;
+        }
+        const auto current_end =
+            mem.Read32Guest(u.original + u.offset + 4u);
+        const auto new_end =
+            u.begin + static_cast<std::uint32_t>(u.after.size() * 4u);
+        if (current_end != new_end && current_end != u.old_end) {
+            AppendCritical("V170 GLOBAL ROLLBACK unexpected vector end");
+            return false;
+        }
+        for (std::size_t i = 0; i < u.before.size(); ++i)
+            mem.Write32Guest(
+                u.begin + static_cast<std::uint32_t>(i * 4u),
+                u.before[i]);
+        mem.Write32Guest(u.original + u.offset + 4u, u.old_end);
+        std::vector<std::uint32_t> readback;
+        const bool ok =
+            mem.Read32Guest(u.original + u.offset + 4u) == u.old_end &&
+            V170ReadOriginalGlobalVector(
+                u.original, u.offset == 0x04u, readback) &&
+            readback == u.before;
+        if (ok) u.touched = false;
+        else AppendCritical("V170 GLOBAL ROLLBACK verification failed");
+        return ok;
+    }
+
+    bool V170CompactOriginalGlobalVector(
+        std::uint32_t original, bool plants,
+        std::uint32_t target_bit,
+        const std::vector<std::uint32_t>& expected_now,
+        const std::vector<std::uint32_t>& expected_after,
+        V170GlobalUndo& undo) {
+        undo = V170GlobalUndo{};
+        V170OriginalGlobalPreview preview;
+        std::vector<std::uint32_t> live;
+        if (!V170ReadOriginalGlobalVector(original, plants, live) ||
+            live != expected_now ||
+            !V170PreviewOriginalGlobalRemoval(
+                original, plants, target_bit, preview) ||
+            preview.compaction.kept != expected_after) return false;
+        const auto off = plants ? 0x04u : 0x10u;
+        if (preview.begin == 0u ||
+            preview.old_end < preview.begin ||
+            preview.capacity < preview.old_end ||
+            mem.Read32Guest(original + off) != preview.begin ||
+            mem.Read32Guest(original + off + 4u) != preview.old_end ||
+            mem.Read32Guest(original + off + 8u) != preview.capacity ||
+            mem.Ptr(preview.begin, preview.capacity-preview.begin) == nullptr ||
+            mem.V91OverlapsRelro(preview.begin,
+                                 preview.old_end - preview.begin) ||
+            mem.V91OverlapsRelro(original + off, 12u)) return false;
+        undo.original = original;
+        undo.offset = off;
+        undo.begin = preview.begin;
+        undo.old_end = preview.old_end;
+        undo.capacity = preview.capacity;
+        undo.before = std::move(live);
+        undo.after = preview.compaction.kept;
+        undo.touched = true;  // Set BEFORE first guest write for rollback.
+        for (std::size_t i = 0; i < undo.after.size(); ++i)
+            mem.Write32Guest(
+                undo.begin + static_cast<std::uint32_t>(i * 4u),
+                undo.after[i]);
+        const auto new_end =
+            undo.begin + static_cast<std::uint32_t>(
+                undo.after.size() * 4u);
+        mem.Write32Guest(original + off + 4u, new_end);
+        std::vector<std::uint32_t> readback;
+        if (mem.Read32Guest(original + off) != undo.begin ||
+            mem.Read32Guest(original + off + 4u) != new_end ||
+            mem.Read32Guest(original + off + 8u) != undo.capacity ||
+            !V170ReadOriginalGlobalVector(original, plants, readback) ||
+            readback != undo.after) {
+            const bool restored = V170RollbackGlobalVector(undo);
+            AppendCritical(
+                std::string{"V170 GLOBAL in-memory readback failed; "
+                            "rollback="} + (restored ? "PASS" : "FAILED"));
+            return false;
+        }
+        return true;
+    }
+
+    struct V170GlobalSaveStamp {
+        std::uint64_t data = 0u;
+        std::uint64_t hash = 0u;
+    };
+
+    bool V170GlobalSaveFilesStamp(
+        V170GlobalSaveStamp& out, bool require_clean) {
+        static constexpr const char* kData =
+            "/data/data/com.ea.game.pvz2_row/files/No_Backup/global_save_data";
+        static constexpr const char* kHash =
+            "/data/data/com.ea.game.pvz2_row/files/No_Backup/global_save_data.hash";
+        const auto d = v51_writable_files.find(kData);
+        const auto h = v51_writable_files.find(kHash);
+        if (d == v51_writable_files.end() ||
+            h == v51_writable_files.end() ||
+            !d->second || !h->second ||
+            d->second->empty() || h->second->empty() ||
+            (require_clean &&
+             (v128_userfs_dirty_paths.count(kData) != 0u ||
+              v128_userfs_dirty_paths.count(kHash) != 0u)))
+            return false;
+        const auto checksum = [](const std::vector<std::uint8_t>& bytes) {
+            std::uint64_t hash = 14695981039346656037ull;
+            for (auto byte : bytes)
+                hash = (hash ^ byte) * 1099511628211ull;
+            return hash;
+        };
+        out.data = checksum(*d->second);
+        out.hash = checksum(*h->second);
         return true;
     }
 
