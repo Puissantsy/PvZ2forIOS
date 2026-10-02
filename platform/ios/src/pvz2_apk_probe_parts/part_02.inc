@@ -780,9 +780,15 @@
     }
 
 
+    bool WorldKeyResearchEnabled() const {
+        return diagnostic_mode ==
+            PvZ2DiagnosticMode::ResearchWorldKeyReadOnly;
+    }
+
     bool V151Enabled() const {
         return diagnostic_mode ==
-            PvZ2DiagnosticMode::V151ProductionQsortCompat;
+                   PvZ2DiagnosticMode::V151ProductionQsortCompat ||
+               WorldKeyResearchEnabled();
     }
 
     bool V150Enabled() const {
@@ -4443,6 +4449,7 @@
     }
 
     const char* RuntimeModeTag() const {
+        if (WorldKeyResearchEnabled()) return "KEYOBS";
         if (V151Enabled()) return "V151";
         if (V150Enabled()) return "V150";
         if (V149Enabled()) return "V149";
