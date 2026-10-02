@@ -91,3 +91,17 @@ This branch now reuses the **existing v165** SHA-256 verified, traversal-safe, m
 5. Verify profile, opened gates, existing key count, coins and gameplay. Then test ONE new key reward and export the full KEYOBS log. If the copied snapshot has all Egyptian gates already open, only the `GRANT_PRE` observation is needed; it still does **not** convert keys yet.
 
 **Do not** uninstall the original app, migrate only `pp.dat`, modify `global_save_data.hash`, or put any of these private archives on public GitHub. The restore function imports the snapshot atomically within the separate KEYOBS app, including the profile-specific `config-v1.txt`.
+
+## Verified restore-capable KEYOBS build — 2026-10-02
+
+The single grouped **save-import** native iOS arm64 build passed. This is source/compiler/IPA validation, NOT yet a physical-iPad import acceptance result.
+
+- GitHub Actions run: https://github.com/Puissantsy/PvZ2forIOS/actions/runs/37057610625
+- Ready-to-download GitHub artifact ZIP (contains the new unsigned IPA): https://github.com/Puissantsy/PvZ2forIOS/actions/runs/37057610625/artifacts/11250110316
+- Build source commit: `9798a3c9ec2b9cdd893ebf55cf685ad87fc77bbe`.
+- SHA-256 of unsigned IPA as reported by build: `c6a2fd3b48ec5a3a32a074eceebeaa548f7c6e3714f1b1a3d72f0ff45f379018`.
+- Compiled Info.plist verified: display name `PvZ2 Keys Research`, bundle ID `com.puissantsy.pvz2forios.keyobs` (distinct from production).
+- Pre-build non-iOS validation passed: https://github.com/Puissantsy/PvZ2forIOS/actions/runs/37057527822 . All 21 world-key policy tests, 6 event decoder tests, native probe wiring checks and explicit pre-JIT v165 restore-flow static checks passed.
+- Private archive manifests were independently inspected in the user's project: `Save test1 achat snowpea.zip` (9 manifest entries) and `Test2 claim snowpea.zip` (10 entries) had matching SHA-256 contents. They were NOT bundled or uploaded to GitHub.
+
+The game does **not** automatically convert keys to coins yet. After installing the new IPA over the SEPARATE KEYOBS app and importing a snapshot in its Files-visible `PvZ2RestoreInbox`, the next real-iPad test should confirm the restored profile/world-map states and capture one real key-award trace.
