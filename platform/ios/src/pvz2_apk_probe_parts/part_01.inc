@@ -2559,6 +2559,7 @@
     struct V170OriginalGlobalPreview {
         std::uint32_t begin = 0u;
         std::uint32_t old_end = 0u;
+        std::uint32_t capacity = 0u;
         pvz2offline::GlobalCompactPreview compaction;
     };
 
@@ -2603,6 +2604,7 @@
         }
         result.begin = begin;
         result.old_end = end;
+        result.capacity = cap;
         result.compaction = preview;
         return true;
     }
@@ -2728,6 +2730,141 @@
             return false;
         }
         v170_global_txn = V170GlobalTxnObservation{};
+        return true;
+    }
+
+
+    struct V170GlobalUndo {
+        std::uint32_t original = 0u;
+        std::uint32_t offset = 0u;
+        std::uint32_t begin = 0u;
+        std::uint32_t old_end = 0u;
+        std::uint32_t capacity = 0u;
+        std::vector<std::uint32_t> before;
+        std::vector<std::uint32_t> after;
+        bool touched = false;
+    };
+
+    bool V170RollbackGlobalVector(V170GlobalUndo& u) {
+        if (!u.touched) return true;
+        if (u.original == 0u ||
+            mem.Ptr(u.original, 0x28u) == nullptr ||
+            mem.Read32Guest(u.original + u.offset) != u.begin ||
+            mem.Read32Guest(u.original + u.offset + 8u) != u.capacity ||
+            mem.Ptr(u.begin, u.capacity - u.begin) == nullptr) {
+            AppendCritical("V170 GLOBAL ROLLBACK ownership changed; "
+                           "stop and restore protected disposable backup");
+            return false;
+        }
+        const auto current_end =
+            mem.Read32Guest(u.original + u.offset + 4u);
+        const auto new_end =
+            u.begin + static_cast<std::uint32_t>(u.after.size() * 4u);
+        if (current_end != new_end && current_end != u.old_end) {
+            AppendCritical("V170 GLOBAL ROLLBACK unexpected vector end");
+            return false;
+        }
+        for (std::size_t i = 0; i < u.before.size(); ++i)
+            mem.Write32Guest(
+                u.begin + static_cast<std::uint32_t>(i * 4u),
+                u.before[i]);
+        mem.Write32Guest(u.original + u.offset + 4u, u.old_end);
+        std::vector<std::uint32_t> readback;
+        const bool ok =
+            mem.Read32Guest(u.original + u.offset + 4u) == u.old_end &&
+            V170ReadOriginalGlobalVector(
+                u.original, u.offset == 0x04u, readback) &&
+            readback == u.before;
+        if (ok) u.touched = false;
+        else AppendCritical("V170 GLOBAL ROLLBACK verification failed");
+        return ok;
+    }
+
+    bool V170CompactOriginalGlobalVector(
+        std::uint32_t original, bool plants,
+        std::uint32_t target_bit,
+        const std::vector<std::uint32_t>& expected_now,
+        const std::vector<std::uint32_t>& expected_after,
+        V170GlobalUndo& undo) {
+        undo = V170GlobalUndo{};
+        V170OriginalGlobalPreview preview;
+        std::vector<std::uint32_t> live;
+        if (!V170ReadOriginalGlobalVector(original, plants, live) ||
+            live != expected_now ||
+            !V170PreviewOriginalGlobalRemoval(
+                original, plants, target_bit, preview) ||
+            preview.compaction.kept != expected_after) return false;
+        const auto off = plants ? 0x04u : 0x10u;
+        if (preview.begin == 0u ||
+            preview.old_end < preview.begin ||
+            preview.capacity < preview.old_end ||
+            mem.Read32Guest(original + off) != preview.begin ||
+            mem.Read32Guest(original + off + 4u) != preview.old_end ||
+            mem.Read32Guest(original + off + 8u) != preview.capacity ||
+            mem.Ptr(preview.begin, preview.capacity-preview.begin) == nullptr ||
+            mem.V91OverlapsRelro(preview.begin,
+                                 preview.old_end - preview.begin) ||
+            mem.V91OverlapsRelro(original + off, 12u)) return false;
+        undo.original = original;
+        undo.offset = off;
+        undo.begin = preview.begin;
+        undo.old_end = preview.old_end;
+        undo.capacity = preview.capacity;
+        undo.before = std::move(live);
+        undo.after = preview.compaction.kept;
+        undo.touched = true;  // Set BEFORE first guest write for rollback.
+        for (std::size_t i = 0; i < undo.after.size(); ++i)
+            mem.Write32Guest(
+                undo.begin + static_cast<std::uint32_t>(i * 4u),
+                undo.after[i]);
+        const auto new_end =
+            undo.begin + static_cast<std::uint32_t>(
+                undo.after.size() * 4u);
+        mem.Write32Guest(original + off + 4u, new_end);
+        std::vector<std::uint32_t> readback;
+        if (mem.Read32Guest(original + off) != undo.begin ||
+            mem.Read32Guest(original + off + 4u) != new_end ||
+            mem.Read32Guest(original + off + 8u) != undo.capacity ||
+            !V170ReadOriginalGlobalVector(original, plants, readback) ||
+            readback != undo.after) {
+            const bool restored = V170RollbackGlobalVector(undo);
+            AppendCritical(
+                std::string{"V170 GLOBAL in-memory readback failed; "
+                            "rollback="} + (restored ? "PASS" : "FAILED"));
+            return false;
+        }
+        return true;
+    }
+
+    struct V170GlobalSaveStamp {
+        std::uint64_t data = 0u;
+        std::uint64_t hash = 0u;
+    };
+
+    bool V170GlobalSaveFilesStamp(
+        V170GlobalSaveStamp& out, bool require_clean) {
+        static constexpr const char* kData =
+            "/data/data/com.ea.game.pvz2_row/files/No_Backup/global_save_data";
+        static constexpr const char* kHash =
+            "/data/data/com.ea.game.pvz2_row/files/No_Backup/global_save_data.hash";
+        const auto d = v51_writable_files.find(kData);
+        const auto h = v51_writable_files.find(kHash);
+        if (d == v51_writable_files.end() ||
+            h == v51_writable_files.end() ||
+            !d->second || !h->second ||
+            d->second->empty() || h->second->empty() ||
+            (require_clean &&
+             (v128_userfs_dirty_paths.count(kData) != 0u ||
+              v128_userfs_dirty_paths.count(kHash) != 0u)))
+            return false;
+        const auto checksum = [](const std::vector<std::uint8_t>& bytes) {
+            std::uint64_t hash = 14695981039346656037ull;
+            for (auto byte : bytes)
+                hash = (hash ^ byte) * 1099511628211ull;
+            return hash;
+        };
+        out.data = checksum(*d->second);
+        out.hash = checksum(*h->second);
         return true;
     }
 

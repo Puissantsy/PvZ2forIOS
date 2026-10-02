@@ -3071,20 +3071,164 @@
                                                     plan.eligible_synthetic_delta,
                                                     preview)) {
                                             callbacks.Append(
-                                                "V170 GLOBAL TARGET PREVIEW "
-                                                "SAFE owner=" +
-                                                std::to_string(
-                                                    v170.owner_profile_id) +
-                                                " removedMask=0x" +
-                                                JniProbeHex(
-                                                    preview.compaction.
-                                                        removed_catalog_mask) +
-                                                " keptDWORDs=" +
-                                                std::to_string(
-                                                    preview.compaction.
-                                                        kept.size()) +
-                                                " mode=READ_ONLY; no original "
-                                                "or paired hash rewrite");
+                                                "V170 GLOBAL TARGET exact "
+                                                "vector verified; checkpoint "
+                                                "cleanup intent BEFORE mutation");
+                                            if (!callbacks.
+                                                    V170CheckpointGlobalJournal(
+                                                        v170.token,
+                                                        false, false, true)) {
+                                                callbacks.AppendCritical(
+                                                    "V170 GLOBAL cleanup intent "
+                                                    "fsync/rename FAILED; "
+                                                    "original rights PRESERVED");
+                                            } else {
+                                                PvZ2JniCallbacks::
+                                                    V170GlobalSaveStamp prior;
+                                                PvZ2JniCallbacks::
+                                                    V170GlobalSaveStamp after;
+                                                // The real A-payment trace
+                                                // confirms the native broker
+                                                // already wrote BOTH paths.
+                                                // If that did not happen,
+                                                // do not attempt a blind save.
+                                                if (!callbacks.
+                                                        V170GlobalSaveFilesStamp(
+                                                            prior, true)) {
+                                                    callbacks.AppendCritical(
+                                                        "V170 GLOBAL cannot "
+                                                        "verify paired original "
+                                                        "file baseline; "
+                                                        "PRESERVE journal");
+                                                } else {
+                                                    PvZ2JniCallbacks::
+                                                        V170GlobalUndo undo;
+                                                    const auto& target_now =
+                                                        v170.target_plants
+                                                        ? full_plants
+                                                        : full_features;
+                                                    const auto& baseline =
+                                                        v170.target_plants
+                                                        ? v170.journal.
+                                                              before_plants
+                                                        : v170.journal.
+                                                              before_features;
+                                                    if (!callbacks.
+                                                            V170CompactOriginalGlobalVector(
+                                                                original,
+                                                                v170.target_plants,
+                                                                v170.target_bit,
+                                                                target_now,
+                                                                baseline,
+                                                                undo)) {
+                                                        callbacks.AppendCritical(
+                                                            "V170 GLOBAL "
+                                                            "in-memory compact "
+                                                            "rejected; PRESERVE");
+                                                    } else {
+                                                        const auto failures =
+                                                            callbacks.
+                                                                v128_userfs_disk_failures;
+                                                        constexpr std::uint32_t
+                                                            kOriginalGlobalSaver =
+                                                                kGuestBase +
+                                                                0x0043ee24u;
+                                                        const bool saver_ok =
+                                                            run_lifecycle(
+                                                                "V170_SaveOriginalGlobal",
+                                                                kOriginalGlobalSaver,
+                                                                0u, 0u, 0u,
+                                                                false, true);
+                                                        std::vector<std::uint32_t>
+                                                            verify_plants;
+                                                        std::vector<std::uint32_t>
+                                                            verify_features;
+                                                        const bool vectors_ok =
+                                                            callbacks.
+                                                                V170ReadOriginalGlobalVectors(
+                                                                    original,
+                                                                    verify_plants,
+                                                                    verify_features) &&
+                                                            verify_plants ==
+                                                                v170.journal.
+                                                                    before_plants &&
+                                                            verify_features ==
+                                                                v170.journal.
+                                                                    before_features;
+                                                        const bool files_ok =
+                                                            callbacks.
+                                                                V170GlobalSaveFilesStamp(
+                                                                    after, true) &&
+                                                            prior.data !=
+                                                                after.data &&
+                                                            prior.hash !=
+                                                                after.hash &&
+                                                            failures ==
+                                                                callbacks.
+                                                                    v128_userfs_disk_failures;
+                                                        if (!saver_ok ||
+                                                            !vectors_ok ||
+                                                            !files_ok) {
+                                                            const bool
+                                                                rollback_ok =
+                                                                    callbacks.
+                                                                        V170RollbackGlobalVector(
+                                                                            undo);
+                                                            callbacks.AppendCritical(
+                                                                "V170 GLOBAL "
+                                                                "saver/readback "
+                                                                "AMBIGUOUS: "
+                                                                "halt and use "
+                                                                "protected "
+                                                                "disposable "
+                                                                "backup. "
+                                                                "RollbackRAM=" +
+                                                                std::string{
+                                                                    rollback_ok
+                                                                        ? "YES"
+                                                                        : "NO"});
+                                                            // The original
+                                                            // RTON+hash could
+                                                            // be partially
+                                                            // written: NEVER
+                                                            // clear intent or
+                                                            // retry on launch.
+                                                            return false;
+                                                        }
+                                                        if (!callbacks.
+                                                                V170ClearFinishedGlobalJournal(
+                                                                    v170.token)) {
+                                                            callbacks.AppendCritical(
+                                                                "V170 GLOBAL "
+                                                                "native save "
+                                                                "verified, but "
+                                                                "journal clear "
+                                                                "failed; "
+                                                                "PRESERVE "
+                                                                "interlock");
+                                                        } else {
+                                                            callbacks.Append(
+                                                                "V170 GLOBAL "
+                                                                "CLEANUP SAVED "
+                                                                "owner=" +
+                                                                std::to_string(
+                                                                    v170.
+                                                                        owner_profile_id) +
+                                                                " id=" +
+                                                                std::to_string(
+                                                                    v170.
+                                                                        journal.
+                                                                        sku.
+                                                                        target_id) +
+                                                                " nativeRTON"
+                                                                "+hash=CHANGED"
+                                                                " original "
+                                                                "other ids "
+                                                                "preserved");
+                                                        }
+                                                    }
+                                                }
+                                            }
                                         } else {
                                             callbacks.AppendCritical(
                                                 "V170 GLOBAL TARGET PREVIEW "
