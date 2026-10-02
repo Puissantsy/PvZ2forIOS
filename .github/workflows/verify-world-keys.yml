@@ -1,4 +1,4 @@
-name: Research world-key policy, log-channel and save-proof checks (no IPA)
+name: Research world-key logs and save ABI checks (no IPA)
 on:
   push:
     branches: [research/world-key-conversion]
@@ -9,6 +9,9 @@ on:
       - "tools/verify_keyobs_restore_wiring.py"
       - "platform/ios/src/pvz2_apk_probe.hpp"
       - "platform/ios/src/pvz2_apk_probe.cpp"
+      - "platform/ios/src/main.mm"
+      - "platform/ios/src/save_backups.hpp"
+      - "platform/ios/src/save_backups.mm"
       - "platform/ios/src/pvz2_apk_probe_parts/part_0*.inc"
   workflow_dispatch:
 
