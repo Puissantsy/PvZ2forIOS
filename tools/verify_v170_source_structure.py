@@ -48,4 +48,16 @@ assert 'V170UnresolvedGlobalJournal()' in qa
 assert qa.index('V128FlushConfig()') < qa.index('"V170_QA_Credit_SetCoins"')
 assert 'offline_store_v170_qa_credit_60000_profile_' in qa
 
-print("PASS v170 core + optional explicit QA credit source safety gates; no iOS build")
+
+# v2 serial must be durable before token can re-enter PurchaseBroker.
+assert '#include <charconv>' in aggregate
+assert 'bool OfflineStoreAllocateDurableSerial(' in part01
+serial_start=part01.index('bool OfflineStoreAllocateDurableSerial(')
+serial_end=part01.index('static int OfflineStorePlantBitForId(',serial_start)
+serial=part01[serial_start:serial_end]
+assert serial.index('V128FlushConfig()') < serial.index('offline_purchase_serial = next')
+assert 'std::numeric_limits<std::uint64_t>::max()' in serial
+assert 'OfflineStoreAllocateDurableSerial(' in part05
+assert part05.index('OfflineStoreAllocateDurableSerial(') < part05.index('OFFLINE STORE RequestPayment queued')
+
+print("PASS v170 native/global + QA + durable receipt source gates; no iOS build")
