@@ -578,6 +578,9 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
     // v151: production version of the qsort fix. Normal Power Up economy is
     // restored and the temporary radial diagnostic hooks are not installed.
     V151ProductionQsortCompat = 93u,
+
+    // Optional isolated research mode: normal v151 runtime + read-only key traces.
+    ResearchWorldKeyReadOnly = 200u,
 };
 
 enum class PvZ2ProbeCapability : std::uint64_t {
