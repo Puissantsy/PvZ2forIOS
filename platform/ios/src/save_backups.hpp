@@ -6,3 +6,5 @@
 FOUNDATION_EXPORT NSURL * _Nullable PVZSaveCreateSnapshot(NSString *reason, NSError **error);
 FOUNDATION_EXPORT NSArray<NSURL *> *PVZSavePendingRestores(void);
 FOUNDATION_EXPORT BOOL PVZSaveRestoreSnapshot(NSURL *snapshot, NSError **error);
+// v166-compatible read-only presence check reused by KEYOBS prelaunch snapshots.
+FOUNDATION_EXPORT BOOL PVZSaveHasLocalSave(void);
