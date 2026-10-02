@@ -1174,10 +1174,12 @@ constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::V149PowerupRadialSourcePolygon, "V149_POWERUP_RADIAL_SOURCE_POLYGON", "V149 Powerup Radial Source Polygon", kCapsV149, true},
     {PvZ2DiagnosticMode::V150GuestQsortCompat, "V150_GUEST_QSORT_COMPAT", "V150 Guest qsort Compat", kCapsV150, true},
     {PvZ2DiagnosticMode::V151ProductionQsortCompat, "V151_PRODUCTION_QSORT_COMPAT", "V151 Production qsort Compat", kCapsV151, true},
+    {PvZ2DiagnosticMode::ResearchWorldKeyReadOnly, "RESEARCH_WORLD_KEYS_READ_ONLY", "Research: keys (read-only)", kCapsV151, true},
 };
 
 constexpr PvZ2DiagnosticMode kSelectableDiagnosticModes[] = {
     PvZ2DiagnosticMode::V151ProductionQsortCompat,
+    PvZ2DiagnosticMode::ResearchWorldKeyReadOnly,
 };
 
 } // namespace
@@ -1648,6 +1650,10 @@ constexpr std::uint32_t kJniProbeSvcV150PowerupIgnoreCost = 0x00f0d5u;
 // v155: original @0x10c143f8 = VMOV s17,r1 at CAkResampler::SetPitch entry.
 // Handler emulates the VMOV and may add speed-dependent pitch to non-music PBI.
 constexpr std::uint32_t kJniProbeSvcV155SfxPitch = 0x00f0d6u;
+// Only research/world-key-conversion mode installs these observational hooks.
+constexpr std::uint32_t kJniProbeSvcWorldKeyAddObserve = 0x00f180u;
+constexpr std::uint32_t kJniProbeSvcWorldKeyGateBefore = 0x00f181u;
+constexpr std::uint32_t kJniProbeSvcWorldKeyGateAfter = 0x00f182u;
 
 constexpr std::uint32_t kJniProbeSvcUnsupportedJniBase = 0x00e000u;
 constexpr std::uint32_t kJniProbeJniSlotCount = 256u;
