@@ -72,6 +72,23 @@ def verify(data):
     targets = [base + word(data, base + i*4) for i in range(14)]
     assert targets[11-3] == 0x161C70, ("coin case", targets[11-3])
     assert targets[13-3] == 0x161E20, ("key case", targets[13-3])
+    # Verify original PC-relative string references (source-world identity).
+    world_literals = [
+        (0x35710C, 0x3578C0, 0x3578C4, b"egypt"),
+        (0x357154, 0x3578CC, 0x3578D0, b"pirate"),
+        (0x35719C, 0x3578D4, 0x3578D8, b"cowboy"),
+        (0x3571E4, 0x3578DC, 0x3578E0, b"future"),
+        (0x35722C, 0x3578E4, 0x3578E8, b"dark"),
+        (0x35AABC, 0x35AC78, 0x35AC7C, b"egypt"),
+        (0x35AB04, 0x35AC84, 0x35AC88, b"pirate"),
+        (0x35AB4C, 0x35AC8C, 0x35AC90, b"cowboy"),
+        (0x35AB94, 0x35AC94, 0x35AC98, b"future"),
+    ]
+    for add_pc, source_literal, delta_literal, expected in world_literals:
+        string_pc = (add_pc + 8 + word(data, source_literal)
+                     + word(data, delta_literal)) & 0xFFFFFFFF
+        assert data[string_pc:string_pc+len(expected)+1] == expected+b"\x00", (
+            hex(add_pc), hex(string_pc), expected)
     found = []
     for pc in range(0x000E9558, 0x00C25B9C, 4):
         opcode = word(data, pc)
