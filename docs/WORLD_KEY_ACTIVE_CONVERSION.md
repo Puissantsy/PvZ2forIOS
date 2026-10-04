@@ -61,3 +61,35 @@ balances and the reward presentation. If needed, reward-type presentation will
 be intercepted separately after the mutation path is proven.
 
 No production/v170 branch is changed.
+
+
+## Successful active conversion IPA build — 2026-10-04
+
+The first complete active conversion IPA build succeeded after replacing the
+dead historical Dynarmic source path with the exact public iOS revision already
+proven by Applesauce.
+
+- Source commit: `3872e63662fe28b3ded81412fa51c24b0fe007e5`
+- Build: https://github.com/Puissantsy/PvZ2forIOS/actions/runs/37228455841
+- Artifact ZIP containing unsigned IPA:
+  https://github.com/Puissantsy/PvZ2forIOS/actions/runs/37228455841/artifacts/11312587258
+- IPA SHA256:
+  `d999ac5455b4a78ec06594194417c322fda8801495ddef4d447b93c690cced4f`
+- Compiled display name: `PvZ2 Keys Research`
+- Bundle ID: `com.puissantsy.pvz2forios.keyobs`
+- Exact Dynarmic source used:
+  `johnny901901901/dynarmic@f488f760c69c42a97331961e8e6c359b46ccc9e9`
+- Pre-build policy/ARM/save/Dynarmic wiring checks:
+  https://github.com/Puissantsy/PvZ2forIOS/actions/runs/37228382759
+
+This IPA launches `RESEARCH_WORLD_KEYS_CONVERT`. It is still an isolated
+research build using the same separate KEYOBS sandbox. Incomplete worlds,
+missing/duplicate gate entries, Future/Dark, invalid quantities, coin overflow
+or ARM frame/profile verification failures preserve the original key award.
+
+Physical acceptance remains required. The most important first acceptance test
+is a **noneligible** award on the current Egypt profile: it must still grant the
+key exactly as before and log `KEYCONV GRANT_PRE ... decision=GateNotOpen`
+without `KEYCONV APPLY`. Only after that control succeeds should an
+all-Egypt-gates-open disposable profile be used to prove 1 key -> 1,000 coins,
+2 -> 2,000 and 3 -> 3,000 while key balance stays unchanged.
