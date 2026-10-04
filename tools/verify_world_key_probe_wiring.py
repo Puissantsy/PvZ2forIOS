@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only source wiring invariant checks for the opt-in world-key probe.
+"""Source wiring invariant checks for the opt-in world-key read-only/active probes.
 
 This is intentionally NOT a substitute for an iOS compile or physical-iPad
 verification. It verifies staging integration on an ordinary checkout.
@@ -23,13 +23,15 @@ def require(cond, what):
     if not cond:
         raise AssertionError(what)
 
-require("ResearchWorldKeyReadOnly = 200u" in parts["header"], "missing optional mode")
+require("ResearchWorldKeyReadOnly = 200u" in parts["header"], "missing read-only mode")
+require("ResearchWorldKeyConvert = 201u" in parts["header"], "missing active conversion mode")
 require(re.search(
-    r"constexpr PvZ2DiagnosticMode kSelectableDiagnosticModes\[\]\s*=\s*\{\s*"
+    r"constexpr PvZ2DiagnosticMode kSelectableDiagnosticModes\[\]\s*=\s*\{[^}]*"
+    r"PvZ2DiagnosticMode::ResearchWorldKeyConvert,\s*"
     r"PvZ2DiagnosticMode::ResearchWorldKeyReadOnly,\s*"
     r"PvZ2DiagnosticMode::V151ProductionQsortCompat,",
-    parts["defs"]) is not None,
-    "research branch launcher must choose opt-in key mode first")
+    parts["defs"], re.S) is not None,
+    "active child branch launcher must choose conversion mode first and retain read-only fallback")
 require("V151ProductionQsortCompat ||\n               WorldKeyResearchEnabled()" in parts["modes"],
         "optional mode must inherit production qsort behavior")
 require('world_key_event_view.hpp"' in parts["root"], "missing vetted event decoder")
@@ -49,7 +51,7 @@ for off, word, marker in (
             f"opt-in exact-instruction patch missing at {off}")
     require(marker not in install[stop:], f"probe leaked into unconditional patches: {marker}")
 svc = parts["svc"]
-require("regs[10] = regs[0];" in svc, "incorrect AddWorldKeys original MOV")
+require("regs[10]=regs[0];" in svc, "fail-open path must reproduce AddWorldKeys original MOV")
 require("regs[3]=3u;" in svc, "incorrect gate original MOV")
 require("regs[0]=mem.Read32Guest(kGuestBase+0x005b8504u);" in svc,
         "incorrect post-gate LDR emulation")
@@ -58,12 +60,15 @@ require("regs[0]=mem.Read32Guest(kGuestBase+0x005b8504u);" in svc,
 # log had no GRANT/GATE events for precisely this reason; every opt-in marker
 # MUST use Diagnostic, whose ShouldKeepLogLine path bypasses that filter.
 for marker in (
-    "KEYOBS GRANT_PRE sourceLR", "KEYOBS GRANT_PRE capped",
     "KEYOBS GATE_BEFORE", "KEYOBS GATE_AFTER ",
     "KEYOBS GATE_AFTER no matching", "KEYOBS GATE logs capped",
+    "KEYCONV APPLY world=", "KEYCONV FAIL_OPEN preserve original key world=",
 ):
-    require('AppendDiagnostic("'+marker in svc,
-            "KEYOBS event not on unfiltered diagnostic channel: "+marker)
+    require(marker in svc,
+            "world-key evidence missing from active SVC source: "+marker)
+require("KEYCONV GRANT_PRE sourceLR=0x" in svc and
+        "KEYOBS GRANT_PRE sourceLR=0x" in svc,
+        "active/read-only grant logs must share the unfiltered diagnostic path")
 require('callbacks.AppendDiagnostic("KEYOBS READ ONLY installed' in install,
         "missing installation signature in visible diagnostic channel")
 require('Append("KEYOBS' not in svc and 'callbacks.Append("KEYOBS' not in install,
@@ -84,4 +89,4 @@ for value in (cmake, plist):
             "research build would overwrite the regular app sandbox")
 require("keyobs_pending_gate_thread==current_probe_thread_id" in svc,
         "missing pre/post thread pairing")
-print("PASS: opt-in research mode, exact three-point hooks, original-instruction emulation, bounded snapshot and logs")
+print("PASS: active/read-only research modes, exact hooks, fail-open native path, bounded snapshots and unfiltered logs")
