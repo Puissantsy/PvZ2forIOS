@@ -14,6 +14,19 @@ endif()
 set(PVZ2_PREBUILT_DYNARMIC_ROOT "" CACHE PATH
     "Optional directory containing include/dynarmic and lib/libdynarmic.a")
 
+set(PVZ2_DYNARMIC_SOURCE_DIR "" CACHE PATH
+    "Optional already-cloned Dynarmic source tree to build as an iOS subproject")
+
+# Common Dynarmic options for source builds.
+set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
+set(DYNARMIC_TESTS OFF CACHE BOOL "" FORCE)
+set(DYNARMIC_TESTS_USE_UNICORN OFF CACHE BOOL "" FORCE)
+set(DYNARMIC_FRONTENDS "A32" CACHE STRING "" FORCE)
+set(DYNARMIC_USE_BUNDLED_EXTERNALS ON CACHE BOOL "" FORCE)
+set(DYNARMIC_USE_LLVM OFF CACHE BOOL "" FORCE)
+set(DYNARMIC_USE_PRECOMPILED_HEADERS OFF CACHE BOOL "" FORCE)
+set(DYNARMIC_WARNINGS_AS_ERRORS OFF CACHE BOOL "" FORCE)
+
 if(PVZ2_PREBUILT_DYNARMIC_ROOT)
     set(_pvz2_dynarmic_lib
         "${PVZ2_PREBUILT_DYNARMIC_ROOT}/lib/libdynarmic.a")
@@ -37,21 +50,31 @@ if(PVZ2_PREBUILT_DYNARMIC_ROOT)
     )
     message(STATUS
         "PvZ2: using externally staged prebuilt iOS Dynarmic bundle: ${PVZ2_PREBUILT_DYNARMIC_ROOT}")
+elseif(PVZ2_DYNARMIC_SOURCE_DIR)
+    if(NOT EXISTS "${PVZ2_DYNARMIC_SOURCE_DIR}/CMakeLists.txt" OR
+       NOT EXISTS "${PVZ2_DYNARMIC_SOURCE_DIR}/src/dynarmic/interface/A32/a32.h")
+        message(FATAL_ERROR
+            "PVZ2 Dynarmic source tree is missing/incompatible: ${PVZ2_DYNARMIC_SOURCE_DIR}")
+    endif()
+
+    # CI clones the exact Dynarmic gitlink used by Applesauce ios-host and all
+    # of its recursive externals before CMake runs. No network fetch happens
+    # through PvZ2's configure step.
+    add_subdirectory(
+        "${PVZ2_DYNARMIC_SOURCE_DIR}"
+        "${CMAKE_BINARY_DIR}/_deps/dynarmic-build"
+        EXCLUDE_FROM_ALL
+    )
+    if(NOT TARGET dynarmic)
+        message(FATAL_ERROR
+            "PVZ2 staged Dynarmic source did not define target 'dynarmic'")
+    endif()
+    message(STATUS
+        "PvZ2: building staged exact iOS Dynarmic source: ${PVZ2_DYNARMIC_SOURCE_DIR}")
 else()
     include(FetchContent)
 
-    set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
-    set(DYNARMIC_TESTS OFF CACHE BOOL "" FORCE)
-    set(DYNARMIC_TESTS_USE_UNICORN OFF CACHE BOOL "" FORCE)
-    set(DYNARMIC_FRONTENDS "A32" CACHE STRING "" FORCE)
-    set(DYNARMIC_USE_BUNDLED_EXTERNALS ON CACHE BOOL "" FORCE)
-    set(DYNARMIC_USE_LLVM OFF CACHE BOOL "" FORCE)
-    set(DYNARMIC_USE_PRECOMPILED_HEADERS OFF CACHE BOOL "" FORCE)
-    set(DYNARMIC_WARNINGS_AS_ERRORS OFF CACHE BOOL "" FORCE)
-
-    # Historical exact-source fallback retained for local environments that can
-    # still fetch the pinned fork. The project patch is applied only here;
-    # LiveExec32's published prebuilt archive already contains its iOS JIT path.
+    # Historical fallback only. CI does not use this inaccessible old fork.
     FetchContent_Declare(
         dynarmic
         GIT_REPOSITORY https://github.com/LiveContainer/dynarmic.git
