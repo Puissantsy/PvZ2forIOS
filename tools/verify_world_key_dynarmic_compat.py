@@ -21,10 +21,11 @@ need("KEYCONV DYNARMIC COMPAT: V113/V115/V116 direct page table disabled" in src
 need("KEYCONV JIT CONSTRUCT BEGIN pageTable=" in src and
      "KEYCONV JIT CONSTRUCT END" in src,
      "must bracket replacement-Dynarmic JIT construction for physical acceptance")
-need(src.index("KEYCONV JIT CONSTRUCT BEGIN") <
-     src.index("Dynarmic::A32::Jit jit{config}") <
-     src.index("KEYCONV JIT CONSTRUCT END"),
-     "JIT diagnostic markers do not actually bracket construction")
+begin=src.index("KEYCONV JIT CONSTRUCT BEGIN")
+jit=src.index("Dynarmic::A32::Jit jit{config}", begin)
+end=src.index("KEYCONV JIT CONSTRUCT END", jit)
+need(begin < jit < end,
+     "JIT diagnostic markers do not actually bracket full-load construction")
 # Don't globally turn V113 off: the proven KEYOBS parent still needs its original behavior.
 need("if (callbacks.V113Enabled() &&\n            !keyconv_callback_memory)" in src,
      "page table disable leaked beyond active conversion mode")
