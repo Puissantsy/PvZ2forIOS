@@ -18,23 +18,28 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Stage public LiveExec32 Dynarmic bundle
+      - name: Checkout exact Applesauce iOS Dynarmic revision
         shell: bash
         run: |
           set -euo pipefail
-          rm -rf .deps/liveexec32 .deps/liveexec32.tar.gz
-          mkdir -p .deps/liveexec32
-          curl -fL --retry 4 --retry-delay 2 --retry-all-errors \
-            "https://codeload.github.com/LiveContainer/LiveExec32/tar.gz/refs/heads/main" \
-            -o .deps/liveexec32.tar.gz
-          ARCHIVE_SHA="$(shasum -a 256 .deps/liveexec32.tar.gz | awk '{print $1}')"
-          tar -xzf .deps/liveexec32.tar.gz \
-            --strip-components=1 -C .deps/liveexec32
-          test -f .deps/liveexec32/lib/libdynarmic.a
-          test -f .deps/liveexec32/include/dynarmic/interface/A32/a32.h
-          file .deps/liveexec32/lib/libdynarmic.a
-          echo "LIVEEXEC32_ARCHIVE_SHA256=$ARCHIVE_SHA"
-          echo "PVZ2_DYNARMIC_ROOT=$GITHUB_WORKSPACE/.deps/liveexec32" >> "$GITHUB_ENV"
+          DYN_URL="https://github.com/johnny901901901/dynarmic.git"
+          DYN_SHA="f488f760c69c42a97331961e8e6c359b46ccc9e9"
+          rm -rf .deps/dynarmic
+          mkdir -p .deps
+          GIT_TERMINAL_PROMPT=0 git -c credential.helper= clone \
+            "$DYN_URL" .deps/dynarmic
+          (
+            cd .deps/dynarmic
+            git checkout --detach "$DYN_SHA"
+            git submodule update --init --recursive
+            test "$(git rev-parse HEAD)" = "$DYN_SHA"
+            test -f src/dynarmic/interface/A32/a32.h
+            test -f src/dynarmic/interface/A32/config.h
+            grep -q 'TARGET_OS_IPHONE' src/dynarmic/common/spin_lock_arm64.cpp
+            grep -q '__atomic_exchange_n' src/dynarmic/common/spin_lock_arm64.cpp
+            echo "DYNARMIC_HEAD=$(git rev-parse HEAD)"
+          )
+          echo "PVZ2_DYNARMIC_SOURCE_DIR=$GITHUB_WORKSPACE/.deps/dynarmic" >> "$GITHUB_ENV"
 
       - name: Show toolchain
         run: |
@@ -53,7 +58,7 @@ jobs:
             -DCMAKE_OSX_ARCHITECTURES=arm64 \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
-            -DPVZ2_PREBUILT_DYNARMIC_ROOT="$PVZ2_DYNARMIC_ROOT" \
+            -DPVZ2_DYNARMIC_SOURCE_DIR="$PVZ2_DYNARMIC_SOURCE_DIR" \
             -DBoost_INCLUDE_DIR="$(brew --prefix boost)/include"
 
       - name: Build unsigned arm64 app
