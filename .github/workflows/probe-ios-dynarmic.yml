@@ -1,4 +1,4 @@
-name: Probe public iOS Dynarmic replacement (no IPA)
+name: Probe exact Applesauce iOS Dynarmic gitlink (no IPA)
 
 on:
   workflow_dispatch:
@@ -17,36 +17,51 @@ jobs:
       - name: Checkout PvZ2 source
         uses: actions/checkout@v4
 
-      - name: Clone Applesauce Dynarmic fork anonymously
+      - name: Resolve exact Applesauce Dynarmic submodule
         shell: bash
         run: |
           set -euo pipefail
-          rm -rf /tmp/pvz2-dynarmic-probe
-          GIT_TERMINAL_PROMPT=0 git -c credential.helper= \
-            clone --filter=blob:none \
-            https://github.com/johnny901901901/dynarmic.git \
-            /tmp/pvz2-dynarmic-probe
-          cd /tmp/pvz2-dynarmic-probe
-          echo "DYNARMIC_HEAD=$(git rev-parse HEAD)"
-          echo "DYNARMIC_BRANCH=$(git branch --show-current)"
-          git submodule status || true
-          cat .gitmodules || true
+          rm -rf /tmp/applesauce-probe /tmp/pvz2-dynarmic-probe
+          GIT_TERMINAL_PROMPT=0 git -c credential.helper= clone             --depth=1 --branch ios-host             https://github.com/johnny901901901/Applesauce.git             /tmp/applesauce-probe
+          cd /tmp/applesauce-probe
+          echo "APPLESAUCE_HEAD=$(git rev-parse HEAD)"
+          cat .gitmodules
+          DYN_URL="$(git config -f .gitmodules --get submodule.vendor/dynarmic.url)"
+          DYN_SHA="$(git ls-tree HEAD vendor/dynarmic | awk '{print $3}')"
+          test -n "$DYN_URL"
+          test -n "$DYN_SHA"
+          echo "APPLESAUCE_DYNARMIC_URL=$DYN_URL"
+          echo "APPLESAUCE_DYNARMIC_SHA=$DYN_SHA"
+          echo "APPLESAUCE_DYNARMIC_URL=$DYN_URL" >> "$GITHUB_ENV"
+          echo "APPLESAUCE_DYNARMIC_SHA=$DYN_SHA" >> "$GITHUB_ENV"
 
-      - name: Inspect iOS JIT source and API compatibility
+      - name: Clone exact Applesauce Dynarmic revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          GIT_TERMINAL_PROMPT=0 git -c credential.helper= clone             "$APPLESAUCE_DYNARMIC_URL" /tmp/pvz2-dynarmic-probe
+          cd /tmp/pvz2-dynarmic-probe
+          git checkout --detach "$APPLESAUCE_DYNARMIC_SHA"
+          git submodule update --init --recursive
+          test "$(git rev-parse HEAD)" = "$APPLESAUCE_DYNARMIC_SHA"
+          echo "DYNARMIC_HEAD=$(git rev-parse HEAD)"
+          echo "DYNARMIC_DESCRIBE=$(git describe --always --dirty)"
+
+      - name: Inspect exact iOS JIT source and PvZ2 API compatibility
         shell: bash
         run: |
           set -euo pipefail
           cd /tmp/pvz2-dynarmic-probe
           test -f src/dynarmic/interface/A32/a32.h
           test -f src/dynarmic/interface/A32/config.h
-          grep -R -n -E 'MAP_JIT|pthread_jit_write|TARGET_OS_IPHONE|__APPLE__' \
-            src CMakeLists.txt CMakeModules 2>/dev/null | head -n 120 || true
           grep -q 'enable_cycle_counting' src/dynarmic/interface/A32/config.h
           grep -q 'check_halt_on_memory_access' src/dynarmic/interface/A32/config.h
           grep -q 'code_cache_size' src/dynarmic/interface/A32/config.h
           grep -q 'ClearExclusiveState' src/dynarmic/interface/A32/a32.h
+          echo "--- iOS/JIT markers ---"
+          grep -R -n -E             'MAP_JIT|pthread_jit_write|TARGET_OS_IPHONE|JITWriteProtect|jit_write|__APPLE__'             src CMakeLists.txt CMakeModules 2>/dev/null | head -n 180 || true
 
-      - name: Check PvZ2 iOS SpinLock patch compatibility
+      - name: Classify PvZ2 SpinLock adaptation
         shell: bash
         run: |
           set -euo pipefail
@@ -57,7 +72,6 @@ jobs:
                grep -q '__atomic_exchange_n' src/dynarmic/common/spin_lock_arm64.cpp; then
             echo "PVZ2_SPINLOCK_PATCH=ALREADY_EQUIVALENT"
           else
-            echo "PVZ2_SPINLOCK_PATCH=INCOMPATIBLE"
-            sed -n '1,150p' src/dynarmic/common/spin_lock_arm64.cpp
-            exit 1
+            echo "PVZ2_SPINLOCK_PATCH=NEEDS_PORT_TO_THIS_REVISION"
+            sed -n '1,180p' src/dynarmic/common/spin_lock_arm64.cpp
           fi
