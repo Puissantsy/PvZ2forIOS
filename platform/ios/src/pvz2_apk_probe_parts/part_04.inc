@@ -4295,17 +4295,13 @@
                 constexpr std::uint32_t kAddWorldKeysFrameBytes=56u;
                 constexpr std::uint32_t kSavedRegsOffset=20u;
                 constexpr std::uint32_t kSavedLrOffset=52u;
-                constexpr std::uint32_t kMaxSignedCoins=0x7fffffffu;
-
                 const std::uint32_t sp=regs[13];
-                const std::uint64_t requested_after=
-                    static_cast<std::uint64_t>(coins_before)+
-                    static_cast<std::uint64_t>(decision.coins);
+                const auto credit=pvz2_key_study::PlanCoinCredit(
+                    coins_before,decision.coins);
                 const bool stack_readable=
                     mem.Ptr(sp,kAddWorldKeysFrameBytes)!=nullptr;
                 const bool wallet_safe=
-                    profile_readable &&
-                    requested_after<=kMaxSignedCoins;
+                    profile_readable && credit.apply;
 
                 if (stack_readable && wallet_safe) {
                     const std::uint32_t saved_lr=
@@ -4321,8 +4317,7 @@
                         }
                         regs[13]=sp+kAddWorldKeysFrameBytes;
                         regs[0]=profile;
-                        regs[1]=static_cast<std::uint32_t>(
-                            requested_after);
+                        regs[1]=credit.after;
                         regs[14]=saved_lr;
                         regs[15]=kSetCoins;
 
@@ -4333,8 +4328,7 @@
                                 std::to_string(decision.coins)+
                             " coins="+std::to_string(coins_before)+
                             "->"+std::to_string(
-                                static_cast<std::uint32_t>(
-                                    requested_after))+
+                                credit.after)+
                             " via=SetCoins@0x1042e5ac returnLR=0x"+
                                 JniProbeHex(saved_lr));
                         return;
