@@ -2459,36 +2459,78 @@
 
     // Snapshot native profile+0x24 world-map events; never parse unbounded
     // guest pointers. Unknown/missing/duplicate gates stay NON-ELIGIBLE.
-    std::string WorldKeyReadOnlyGateSnapshot(std::uint32_t profile) {
+    std::optional<std::vector<pvz2_key_study::WorldEvent>>
+    WorldKeyReadOnlyEvents(std::uint32_t profile) {
         if (profile < kJniProbeHeapBase ||
             static_cast<std::uint64_t>(profile-kJniProbeHeapBase) >=
                 mem.HeapCapacity() ||
             mem.Ptr(profile+0x24u, 12u) == nullptr) {
-            return "profile=UNMAPPED gates=UNKNOWN";
+            return std::nullopt;
         }
 
-        const std::uint32_t begin = mem.Read32Guest(profile+0x24u);
-        const std::uint32_t end = mem.Read32Guest(profile+0x28u);
-        const std::uint32_t cap = mem.Read32Guest(profile+0x2cu);
-        if (begin == 0u && end == 0u && cap == 0u) {
-            return "events=EMPTY gates=UNKNOWN";
-        }
-        if (!begin || end<begin || cap<end ||
+        const std::uint32_t begin=mem.Read32Guest(profile+0x24u);
+        const std::uint32_t end=mem.Read32Guest(profile+0x28u);
+        const std::uint32_t cap=mem.Read32Guest(profile+0x2cu);
+        if (!begin || end<=begin || cap<end ||
             ((end-begin)%pvz2_key_study::kNativeEventStride)!=0u ||
             ((cap-begin)%pvz2_key_study::kNativeEventStride)!=0u ||
             (end-begin)/pvz2_key_study::kNativeEventStride >
                 pvz2_key_study::kMaxNativeEvents ||
-            mem.Ptr(begin, end-begin) == nullptr) {
-            return "eventVector=INVALID gates=UNKNOWN";
+            mem.Ptr(begin,end-begin)==nullptr) {
+            return std::nullopt;
         }
 
         const std::size_t bytes=static_cast<std::size_t>(end-begin);
-        if (bytes == 0u) return "events=EMPTY gates=UNKNOWN";
-        const auto* ptr=mem.Ptr(begin, static_cast<std::uint32_t>(bytes));
-        const auto view=pvz2_key_study::DecodeNativeEventSnapshot(
+        const auto* ptr=mem.Ptr(begin,static_cast<std::uint32_t>(bytes));
+        return pvz2_key_study::DecodeNativeEventSnapshot(
             std::span<const std::byte>(
-                reinterpret_cast<const std::byte*>(ptr), bytes));
-        if (!view) return "eventDecoder=REJECTED gates=UNKNOWN";
+                reinterpret_cast<const std::byte*>(ptr),bytes));
+    }
+
+    static std::uint32_t WorldKeyWorldId(const std::string& world) {
+        if (world=="egypt") return 2u;
+        if (world=="pirate") return 3u;
+        if (world=="cowboy") return 4u;
+        if (world=="future") return 5u;
+        return 0u;
+    }
+
+    pvz2_key_study::Decision WorldKeyReadOnlyDecision(
+        std::uint32_t profile,
+        const std::string& world,
+        std::uint32_t key_count) {
+        const std::uint32_t world_id=WorldKeyWorldId(world);
+        if (world_id==0u) {
+            return {pvz2_key_study::Reason::UnknownWorld,0u};
+        }
+        const auto events=WorldKeyReadOnlyEvents(profile);
+        if (!events) {
+            return {pvz2_key_study::Reason::IncompleteState,0u};
+        }
+        // Future stays deliberately disabled until this historical build's
+        // actual playable-world state is separately confirmed.
+        return pvz2_key_study::Evaluate(
+            world_id,key_count,*events,false);
+    }
+
+    static const char* WorldKeyDecisionReasonName(
+        pvz2_key_study::Reason reason) {
+        switch (reason) {
+            case pvz2_key_study::Reason::Convert: return "CONVERT";
+            case pvz2_key_study::Reason::UnknownWorld: return "UNKNOWN_WORLD";
+            case pvz2_key_study::Reason::InactiveWorld: return "INACTIVE_WORLD";
+            case pvz2_key_study::Reason::InvalidQuantity: return "INVALID_QUANTITY";
+            case pvz2_key_study::Reason::IncompleteState: return "INCOMPLETE_STATE";
+            case pvz2_key_study::Reason::DuplicateEvent: return "DUPLICATE_EVENT";
+            case pvz2_key_study::Reason::GateNotOpen: return "GATE_NOT_OPEN";
+        }
+        return "UNKNOWN";
+    }
+
+    std::string WorldKeyReadOnlyGateSnapshot(std::uint32_t profile) {
+        const auto view=WorldKeyReadOnlyEvents(profile);
+        if (!view) return "events=INVALID gates=UNKNOWN";
+
         std::ostringstream out;
         out << "eventCount=" << view->size();
         for (const auto& def : pvz2_key_study::worlds) {
@@ -2522,11 +2564,10 @@
     std::string WorldKeyReadOnlyWorldName(std::uint32_t string_object) {
         // Original AddWorldKeys dereferences r1 as a pointer to
         // the 32-bit libstdc++ std::string char pointer.
-        if (mem.Ptr(string_object, 4u) == nullptr)
-            return "UNKNOWN";
+        if (mem.Ptr(string_object,4u)==nullptr) return "UNKNOWN";
         const std::uint32_t chars=mem.Read32Guest(string_object);
-        if (mem.Ptr(chars, 1u)==nullptr) return "UNKNOWN";
-        const std::string world=mem.ReadCStringGuest(chars, 16u);
+        if (mem.Ptr(chars,1u)==nullptr) return "UNKNOWN";
+        const std::string world=mem.ReadCStringGuest(chars,16u);
         if (world=="egypt" || world=="pirate" || world=="cowboy" ||
             world=="future" || world=="dark") return world;
         return "OTHER";
