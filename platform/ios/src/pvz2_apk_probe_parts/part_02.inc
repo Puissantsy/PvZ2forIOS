@@ -780,9 +780,15 @@
     }
 
 
+    bool WorldKeyConversionEnabled() const {
+        return diagnostic_mode ==
+            PvZ2DiagnosticMode::ResearchWorldKeyConvert;
+    }
+
     bool WorldKeyResearchEnabled() const {
         return diagnostic_mode ==
-            PvZ2DiagnosticMode::ResearchWorldKeyReadOnly;
+                   PvZ2DiagnosticMode::ResearchWorldKeyReadOnly ||
+               WorldKeyConversionEnabled();
     }
 
     bool V151Enabled() const {
@@ -4449,6 +4455,7 @@
     }
 
     const char* RuntimeModeTag() const {
+        if (WorldKeyConversionEnabled()) return "KEYCONV";
         if (WorldKeyResearchEnabled()) return "KEYOBS";
         if (V151Enabled()) return "V151";
         if (V150Enabled()) return "V150";
