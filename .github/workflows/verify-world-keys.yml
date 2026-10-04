@@ -42,3 +42,5 @@ jobs:
         run: python3 tools/verify_keyobs_restore_wiring.py
       - name: Check exact public iOS Dynarmic source wiring (no IPA)
         run: python3 tools/verify_ios_dynarmic_wiring.py
+      - name: Check KEYCONV callback-memory startup fallback (no IPA)
+        run: python3 tools/verify_world_key_dynarmic_compat.py
