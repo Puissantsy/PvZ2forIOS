@@ -93,3 +93,42 @@ key exactly as before and log `KEYCONV GRANT_PRE ... decision=GateNotOpen`
 without `KEYCONV APPLY`. Only after that control succeeds should an
 all-Egypt-gates-open disposable profile be used to prove 1 key -> 1,000 coins,
 2 -> 2,000 and 3 -> 3,000 while key balance stays unchanged.
+
+
+## KEYCONV callback-memory compatibility IPA — 2026-10-04
+
+The first active conversion IPA launched on the physical iPad but its private
+log ended immediately after `V91 RELRO ARMED`, before the constructor phase.
+There was no `KEYCONV GRANT_PRE` or `KEYCONV APPLY`; therefore no key/coin
+mutation executed before the crash.
+
+The exact historical Dynarmic archive used by the working KEYOBS build could
+not be recovered: GitHub/codeload returned 404 for
+`LiveContainer/dynarmic@c97c525ec1432b1e5404ebf091027738005ec168`.
+The public replacement revision has the expected API but is not yet physically
+proven equivalent for PvZ2's V113 direct page table.
+
+Targeted compatibility change, active mode only:
+- do not attach V113/V115/V116's direct page table when
+  `ResearchWorldKeyConvert` is active;
+- retain Dynarmic callback-backed guest memory for that experiment;
+- retain the original page-table behavior for parent KEYOBS/production modes;
+- bracket JIT creation with `KEYCONV JIT CONSTRUCT BEGIN/END` markers.
+
+All policy/ARM/save/dependency/startup-fallback checks passed:
+https://github.com/Puissantsy/PvZ2forIOS/actions/runs/37230188057
+
+Corrected iOS arm64 build:
+- Build: https://github.com/Puissantsy/PvZ2forIOS/actions/runs/37230228110
+- Artifact ZIP:
+  https://github.com/Puissantsy/PvZ2forIOS/actions/runs/37230228110/artifacts/11312564471
+- IPA SHA256:
+  `610b38bdc452bdec6b611c8b4cad1792ac9a2507009b4240ca0fe24120ec1a42`
+- Bundle ID remains `com.puissantsy.pvz2forios.keyobs`
+- Display name remains `PvZ2 Keys Research`.
+
+Physical acceptance step 1 is deliberately minimal: update the existing KEYOBS
+install in place and only confirm that startup reaches the normal map/menu.
+If startup still fails, the new BEGIN/END marker pair will isolate whether
+replacement Dynarmic JIT construction itself is the failure. Do not replay
+Day 2/Day 3 until startup is accepted.
