@@ -1,0 +1,35 @@
+name: Probe legacy proven Dynarmic archive (no IPA)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [research/world-key-conversion-active]
+    paths:
+      - ".github/workflows/probe-legacy-dynarmic.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  archive-probe:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download exact previously-proven Dynarmic archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          SHA="c97c525ec1432b1e5404ebf091027738005ec168"
+          URL="https://codeload.github.com/LiveContainer/dynarmic/tar.gz/$SHA"
+          rm -rf /tmp/dynarmic-c97 /tmp/dynarmic-c97.tgz
+          mkdir -p /tmp/dynarmic-c97
+          curl -fL --retry 4 --retry-delay 2 --retry-all-errors "$URL" -o /tmp/dynarmic-c97.tgz
+          echo "ARCHIVE_SHA256=$(shasum -a 256 /tmp/dynarmic-c97.tgz | awk '{print $1}')"
+          tar -xzf /tmp/dynarmic-c97.tgz --strip-components=1 -C /tmp/dynarmic-c97
+          test -f /tmp/dynarmic-c97/CMakeLists.txt
+          test -f /tmp/dynarmic-c97/src/dynarmic/interface/A32/a32.h
+          echo "--- .gitmodules ---"
+          cat /tmp/dynarmic-c97/.gitmodules || true
+          echo "--- external directories ---"
+          find /tmp/dynarmic-c97/externals -maxdepth 2 -type f -name CMakeLists.txt -print | sort | head -n 40
+          echo "LEGACY_ARCHIVE=READY"
