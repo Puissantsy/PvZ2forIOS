@@ -6,11 +6,11 @@ if(NOT IOS)
     message(FATAL_ERROR "This target is intended for iOS/iPadOS. Configure with -DCMAKE_SYSTEM_NAME=iOS.")
 endif()
 
-# Build source for Dynarmic:
-# - CI may pass PVZ2_PREBUILT_DYNARMIC_ROOT pointing at LiveExec32's published
-#   iOS arm64 include/ + lib/libdynarmic.a bundle. This avoids depending on a
-#   currently unreliable external Git clone during GitHub Actions.
-# - Local/development builds retain the original exact-source FetchContent path.
+# Dynarmic inputs:
+# - active CI clones the exact public Dynarmic gitlink proven by Applesauce
+#   ios-host and passes PVZ2_DYNARMIC_SOURCE_DIR;
+# - PVZ2_PREBUILT_DYNARMIC_ROOT remains an optional local escape hatch;
+# - the old FetchContent fork is historical local fallback only.
 set(PVZ2_PREBUILT_DYNARMIC_ROOT "" CACHE PATH
     "Optional directory containing include/dynarmic and lib/libdynarmic.a")
 
