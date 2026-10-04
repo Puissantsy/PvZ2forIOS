@@ -30,3 +30,23 @@ https://github.com/Puissantsy/PvZ2forIOS/actions/runs/37228382759
 
 This commit intentionally triggers the **single grouped IPA build** after all
 source and dependency changes were staged.
+
+
+## Startup compatibility rebuild after first device crash
+
+Physical iPad log `pvz2forios-probe(20261004-194529).log` ended immediately
+after `V91 RELRO ARMED`, before constructors and before any `KEYCONV GRANT_PRE`
+or `KEYCONV APPLY`. Therefore the economy mutation did not execute.
+
+The inaccessible historical Dynarmic archive could not be recovered (public
+codeload returned 404). The replacement public Dynarmic revision compiles with
+the expected API but differs from the historical runtime. For this active
+research mode only, V113/V115/V116's direct page-table optimization is disabled
+at JIT construction; all guest memory stays on the already-supported callback
+path. Parent KEYOBS and production modes retain their previous mapping behavior.
+
+This build adds explicit `KEYCONV JIT CONSTRUCT BEGIN/END` markers. Full
+offline validation passed:
+https://github.com/Puissantsy/PvZ2forIOS/actions/runs/37230188057
+
+This commit triggers one grouped corrected IPA build.
