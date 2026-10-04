@@ -581,6 +581,9 @@ enum class PvZ2DiagnosticMode : std::uint32_t {
 
     // Optional isolated research mode: normal v151 runtime + read-only key traces.
     ResearchWorldKeyReadOnly = 200u,
+
+    // Isolated test mode: fail-closed key->coin replacement after every verified gate is open.
+    ResearchWorldKeyConvert = 201u,
 };
 
 enum class PvZ2ProbeCapability : std::uint64_t {
