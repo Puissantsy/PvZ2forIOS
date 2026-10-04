@@ -1,0 +1,41 @@
+name: Probe historical LiveExec32 Dynarmic bundle (no IPA)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [research/world-key-conversion-active]
+    paths:
+      - ".github/workflows/probe-liveexec32-bundle.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Clone historical LiveExec32 main
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/liveexec32
+          GIT_TERMINAL_PROMPT=0 git -c credential.helper= clone             --depth=1 --branch=main             https://github.com/LiveContainer/LiveExec32.git /tmp/liveexec32
+          cd /tmp/liveexec32
+          echo "LIVEEXEC32_HEAD=$(git rev-parse HEAD)"
+          test -f lib/libdynarmic.a
+          test -f include/dynarmic/interface/A32/a32.h
+          file lib/libdynarmic.a
+          shasum -a 256 lib/libdynarmic.a
+      - name: Verify PvZ2 API surface
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT=/tmp/liveexec32
+          grep -q 'enable_cycle_counting' "$ROOT/include/dynarmic/interface/A32/config.h"
+          grep -q 'check_halt_on_memory_access' "$ROOT/include/dynarmic/interface/A32/config.h"
+          grep -q 'code_cache_size' "$ROOT/include/dynarmic/interface/A32/config.h"
+          grep -q 'ClearExclusiveState' "$ROOT/include/dynarmic/interface/A32/a32.h"
+          lipo -info "$ROOT/lib/libdynarmic.a" || true
+          ar -t "$ROOT/lib/libdynarmic.a" | head -n 30
+          echo "PASS: historical LiveExec32 bundle exposes PvZ2 Dynarmic API"
