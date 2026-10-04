@@ -1175,6 +1175,7 @@ constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::V150GuestQsortCompat, "V150_GUEST_QSORT_COMPAT", "V150 Guest qsort Compat", kCapsV150, true},
     {PvZ2DiagnosticMode::V151ProductionQsortCompat, "V151_PRODUCTION_QSORT_COMPAT", "V151 Production qsort Compat", kCapsV151, true},
     {PvZ2DiagnosticMode::ResearchWorldKeyReadOnly, "RESEARCH_WORLD_KEYS_READ_ONLY", "Research: keys (read-only)", kCapsV151, true},
+    {PvZ2DiagnosticMode::ResearchWorldKeyConvert, "RESEARCH_WORLD_KEYS_CONVERT", "Research: keys -> 1000 coins", kCapsV151, true},
 };
 
 // This research branch deliberately selects KEYOBS as the first launch
@@ -1182,6 +1183,8 @@ constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
 // DO NOT merge this ordering into main/v170 production; only a purposely
 // built disposable research IPA may run the observational mode.
 constexpr PvZ2DiagnosticMode kSelectableDiagnosticModes[] = {
+    // ACTIVE CHILD BRANCH ONLY: launch conversion mode first.
+    PvZ2DiagnosticMode::ResearchWorldKeyConvert,
     PvZ2DiagnosticMode::ResearchWorldKeyReadOnly,
     PvZ2DiagnosticMode::V151ProductionQsortCompat,
 };
