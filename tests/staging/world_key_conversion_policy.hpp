@@ -26,6 +26,19 @@ inline constexpr std::array<std::uint32_t, 4> future{13,14,15,16};
 inline constexpr std::array<WorldDefinition, 4> worlds{{
     {2,egypt,false}, {3,pirate,false}, {4,cowboy,false}, {5,future,true}
 }};
+struct CoinCreditPlan {
+    bool apply;
+    std::uint32_t after;
+};
+inline constexpr std::uint32_t kMaxSignedCoins = 0x7fffffffu;
+inline CoinCreditPlan PlanCoinCredit(std::uint32_t before,
+                                     std::uint32_t delta) {
+    const std::uint64_t after =
+        static_cast<std::uint64_t>(before) + delta;
+    if (delta == 0u || after > kMaxSignedCoins)
+        return {false, before};
+    return {true, static_cast<std::uint32_t>(after)};
+}
 inline Decision Evaluate(std::uint32_t world_id,
                          std::uint32_t key_count,
                          std::span<const WorldEvent> saved_events,
