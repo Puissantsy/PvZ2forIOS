@@ -18,6 +18,21 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Checkout pinned Dynarmic dependency
+        uses: actions/checkout@v4
+        with:
+          repository: LiveContainer/dynarmic
+          ref: c97c525ec1432b1e5404ebf091027738005ec168
+          path: .deps/dynarmic
+          submodules: recursive
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Apply PvZ2 iOS Dynarmic patch
+        run: |
+          git -C .deps/dynarmic apply --check "$GITHUB_WORKSPACE/platform/ios/patches/dynarmic-ios-nontxm.patch"
+          git -C .deps/dynarmic apply "$GITHUB_WORKSPACE/platform/ios/patches/dynarmic-ios-nontxm.patch"
+
       - name: Show toolchain
         run: |
           xcodebuild -version
@@ -35,6 +50,7 @@ jobs:
             -DCMAKE_OSX_ARCHITECTURES=arm64 \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+            -DFETCHCONTENT_SOURCE_DIR_DYNARMIC="$GITHUB_WORKSPACE/.deps/dynarmic" \
             -DBoost_INCLUDE_DIR="$(brew --prefix boost)/include"
 
       - name: Build unsigned arm64 app
