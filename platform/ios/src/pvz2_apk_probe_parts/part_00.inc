@@ -1178,10 +1178,9 @@ constexpr PvZ2DiagnosticModeDescriptor kDiagnosticModes[] = {
     {PvZ2DiagnosticMode::ResearchWorldKeyConvert, "RESEARCH_WORLD_KEYS_CONVERT", "Research: keys -> 1000 coins", kCapsV151, true},
 };
 
-// This research branch deliberately selects KEYOBS as the first launch
-// mode because the v130 launcher unconditionally reads entry zero.
-// DO NOT merge this ordering into main/v170 production; only a purposely
-// built disposable research IPA may run the observational mode.
+// The active child branch deliberately selects KEYCONV as entry zero because
+// the v130 launcher unconditionally launches that entry. The parent research
+// branch remains KEYOBS/read-only. Never merge this ordering into main/v170.
 constexpr PvZ2DiagnosticMode kSelectableDiagnosticModes[] = {
     // ACTIVE CHILD BRANCH ONLY: launch conversion mode first.
     PvZ2DiagnosticMode::ResearchWorldKeyConvert,
