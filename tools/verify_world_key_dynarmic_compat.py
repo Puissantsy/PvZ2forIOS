@@ -21,7 +21,8 @@ need("KEYCONV DYNARMIC COMPAT: V113/V115/V116 direct page table disabled" in src
 need("KEYCONV JIT CONSTRUCT BEGIN pageTable=" in src and
      "KEYCONV JIT CONSTRUCT END" in src,
      "must bracket replacement-Dynarmic JIT construction for physical acceptance")
-# There is an older JNI-only Jit constructor earlier in part_08; scope to full-load KEYCONV.\nbegin=src.index("KEYCONV JIT CONSTRUCT BEGIN")
+# There is an older JNI-only Jit constructor earlier in part_08; scope to full-load KEYCONV.
+begin=src.index("KEYCONV JIT CONSTRUCT BEGIN")
 jit=src.index("Dynarmic::A32::Jit jit{config}", begin)
 end=src.index("KEYCONV JIT CONSTRUCT END", jit)
 need(begin < jit < end,
