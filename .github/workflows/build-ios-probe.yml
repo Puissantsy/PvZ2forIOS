@@ -18,20 +18,23 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Checkout pinned Dynarmic dependency
-        uses: actions/checkout@v4
-        with:
-          repository: LiveContainer/dynarmic
-          ref: c97c525ec1432b1e5404ebf091027738005ec168
-          path: .deps/dynarmic
-          submodules: recursive
-          fetch-depth: 1
-          persist-credentials: false
-
-      - name: Apply PvZ2 iOS Dynarmic patch
+      - name: Stage public LiveExec32 Dynarmic bundle
+        shell: bash
         run: |
-          git -C .deps/dynarmic apply --check "$GITHUB_WORKSPACE/platform/ios/patches/dynarmic-ios-nontxm.patch"
-          git -C .deps/dynarmic apply "$GITHUB_WORKSPACE/platform/ios/patches/dynarmic-ios-nontxm.patch"
+          set -euo pipefail
+          rm -rf .deps/liveexec32 .deps/liveexec32.tar.gz
+          mkdir -p .deps/liveexec32
+          curl -fL --retry 4 --retry-delay 2 --retry-all-errors \
+            "https://codeload.github.com/LiveContainer/LiveExec32/tar.gz/refs/heads/main" \
+            -o .deps/liveexec32.tar.gz
+          ARCHIVE_SHA="$(shasum -a 256 .deps/liveexec32.tar.gz | awk '{print $1}')"
+          tar -xzf .deps/liveexec32.tar.gz \
+            --strip-components=1 -C .deps/liveexec32
+          test -f .deps/liveexec32/lib/libdynarmic.a
+          test -f .deps/liveexec32/include/dynarmic/interface/A32/a32.h
+          file .deps/liveexec32/lib/libdynarmic.a
+          echo "LIVEEXEC32_ARCHIVE_SHA256=$ARCHIVE_SHA"
+          echo "PVZ2_DYNARMIC_ROOT=$GITHUB_WORKSPACE/.deps/liveexec32" >> "$GITHUB_ENV"
 
       - name: Show toolchain
         run: |
@@ -50,7 +53,7 @@ jobs:
             -DCMAKE_OSX_ARCHITECTURES=arm64 \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
-            -DFETCHCONTENT_SOURCE_DIR_DYNARMIC="$GITHUB_WORKSPACE/.deps/dynarmic" \
+            -DPVZ2_PREBUILT_DYNARMIC_ROOT="$PVZ2_DYNARMIC_ROOT" \
             -DBoost_INCLUDE_DIR="$(brew --prefix boost)/include"
 
       - name: Build unsigned arm64 app
