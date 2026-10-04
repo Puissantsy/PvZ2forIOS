@@ -44,5 +44,17 @@ int main() {
         events=AllOpen(2); events.push_back({2,4000,1});
         assert(Evaluate(2,1,events).coins==1000); ++checks;
     }
+    {
+        auto p=PlanCoinCredit(680,1000);
+        assert(p.apply && p.after==1680); ++checks;
+        p=PlanCoinCredit(680,3000);
+        assert(p.apply && p.after==3680); ++checks;
+        p=PlanCoinCredit(kMaxSignedCoins-999,1000);
+        assert(!p.apply && p.after==kMaxSignedCoins-999); ++checks;
+        p=PlanCoinCredit(kMaxSignedCoins,1000);
+        assert(!p.apply && p.after==kMaxSignedCoins); ++checks;
+        p=PlanCoinCredit(10,0);
+        assert(!p.apply && p.after==10); ++checks;
+    }
     std::cout<<"PASS: "<<checks<<" decision checks\n";
 }
