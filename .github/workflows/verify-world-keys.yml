@@ -7,6 +7,9 @@ on:
       - "tests/staging/world_key_*"
       - "tools/verify_world_key_*"
       - "tools/verify_keyobs_restore_wiring.py"
+      - "tools/verify_ios_dynarmic_wiring.py"
+      - "platform/ios/CMakeLists.txt"
+      - ".github/workflows/build-ios-probe.yml"
       - "platform/ios/src/pvz2_apk_probe.hpp"
       - "platform/ios/src/pvz2_apk_probe.cpp"
       - "platform/ios/src/main.mm"
@@ -37,3 +40,5 @@ jobs:
         run: python3 tools/verify_world_key_conversion_tailcall.py
       - name: Check isolated KEYOBS save-transfer integration (no IPA)
         run: python3 tools/verify_keyobs_restore_wiring.py
+      - name: Check exact public iOS Dynarmic source wiring (no IPA)
+        run: python3 tools/verify_ios_dynarmic_wiring.py
