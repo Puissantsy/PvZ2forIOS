@@ -1,4 +1,4 @@
-name: Probe historical LiveExec32 Dynarmic bundle (no IPA)
+name: Probe historical LiveExec32 Dynarmic bundle (no IPA) # runtime-compat probe
 
 on:
   workflow_dispatch:
