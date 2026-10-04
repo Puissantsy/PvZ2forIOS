@@ -36,7 +36,8 @@ require("V151ProductionQsortCompat ||\n               WorldKeyResearchEnabled()"
         "optional mode must inherit production qsort behavior")
 require('world_key_event_view.hpp"' in parts["root"], "missing vetted event decoder")
 require("WorldKeyReadOnlyGateSnapshot" in parts["state"], "missing guest bounds-check snapshot")
-require("mem.Ptr(begin, end-begin) == nullptr" in parts["state"], "missing vector memory bounds")
+require(re.search(r"mem\.Ptr\(begin,\s*end-begin\)\s*==\s*nullptr", parts["state"]) is not None,
+        "missing vector memory bounds")
 require("WorldKeyReadOnlyWorldName" in parts["state"], "missing capped native string reader")
 install = parts["install"]
 start = install.index("if (callbacks.WorldKeyResearchEnabled()) {")
