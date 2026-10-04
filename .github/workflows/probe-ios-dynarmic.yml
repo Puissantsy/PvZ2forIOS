@@ -26,7 +26,7 @@ jobs:
           cd /tmp/applesauce-probe
           echo "APPLESAUCE_HEAD=$(git rev-parse HEAD)"
           cat .gitmodules
-          DYN_URL="$(git config -f .gitmodules --get submodule.vendor/dynarmic.url)"
+          DYN_URL="$(git config -f .gitmodules --get submodule.dynarmic.url)"
           DYN_SHA="$(git ls-tree HEAD vendor/dynarmic | awk '{print $3}')"
           test -n "$DYN_URL"
           test -n "$DYN_SHA"
