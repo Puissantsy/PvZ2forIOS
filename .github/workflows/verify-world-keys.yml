@@ -1,7 +1,7 @@
-name: Research world-key logs and save ABI checks (no IPA)
+name: Active world-key conversion policy and ARM tail-call checks (no IPA)
 on:
   push:
-    branches: [research/world-key-conversion]
+    branches: [research/world-key-conversion-active]
     paths:
       - ".github/workflows/verify-world-keys.yml"
       - "tests/staging/world_key_*"
@@ -30,8 +30,10 @@ jobs:
           /tmp/world_key_event_test
       - name: Python syntax check (exact ELF stays private)
         run: |
-          python3 -m py_compile tools/verify_world_key_arm.py tools/verify_world_key_award_coverage.py tools/verify_world_key_probe_wiring.py
+          python3 -m py_compile tools/verify_world_key_arm.py tools/verify_world_key_award_coverage.py tools/verify_world_key_probe_wiring.py tools/verify_world_key_conversion_tailcall.py
       - name: Check opt-in native probe integration (no IPA)
         run: python3 tools/verify_world_key_probe_wiring.py
+      - name: Check active AddWorldKeys to native SetCoins tail-call (no IPA)
+        run: python3 tools/verify_world_key_conversion_tailcall.py
       - name: Check isolated KEYOBS save-transfer integration (no IPA)
         run: python3 tools/verify_keyobs_restore_wiring.py
