@@ -22,48 +22,51 @@ need("config.page_table = nullptr;" in src and
      "active mode must explicitly remain callback-backed")
 need("KEYCONV DYNARMIC COMPAT: V113/V115/V116 direct page table disabled" in src,
      "missing runtime callback-memory marker")
-need("KEYCONV JIT BACKEND: A14/pre-TXM single-map RWX forced; BRK #0xf00d broker disabled." in src,
-     "missing runtime marker for the A14 single-map RWX backend")
+need("KEYCONV JIT BACKEND: A14/pre-TXM dual-map RW/RX forced; BRK #0xf00d broker disabled." in src,
+     "missing runtime marker for the A14 dual-map backend")
 need("KEYCONV JIT CONSTRUCT BEGIN pageTable=" in src and
      "KEYCONV JIT CONSTRUCT END" in src,
      "must bracket replacement-Dynarmic JIT construction for physical acceptance")
+need("KEYCONV FIRST CONSTRUCTOR RUN BEGIN" in src and
+     "KEYCONV FIRST CONSTRUCTOR RUN END" in src,
+     "first guest dispatch is not bracketed by non-filterable diagnostics")
 
-# There is an older JNI-only Jit constructor earlier in part_08; scope to full-load KEYCONV.
 begin=src.index("KEYCONV JIT CONSTRUCT BEGIN")
 jit=src.index("Dynarmic::A32::Jit jit{config}", begin)
 end=src.index("KEYCONV JIT CONSTRUCT END", jit)
 need(begin < jit < end,
      "JIT diagnostic markers do not actually bracket full-load construction")
 
-# Don't globally turn V113 off: the proven KEYOBS parent still needs its original behavior.
 need("if (callbacks.V113Enabled() &&\n            !keyconv_callback_memory)" in src,
      "page table disable leaked beyond active conversion mode")
 
-# The public f488 iOS fork enters an external broker with BRK #0xf00d on physical
-# iOS. The project target is A14/pre-TXM under StikDebug/CS_DEBUGGED, so this
-# isolated build uses one persistent RWX mapping. A single RX<->RW mapping is
-# invalid for Dynarmic because its generated dispatcher calls GetOrEmit() while
-# executing inside the code cache itself.
+# f488's BRK broker is wrong for this A14/non-TXM StikDebug flow. The old PvZ2
+# Dynarmic dependency was explicitly dual-mapped, so the replacement build must
+# reproduce two aliases of the same code-cache pages: RW for emission, RX for
+# execution. Physical protect()/unprotect() stay no-ops.
 need("PVZ2_DYNARMIC_FORCE_NONTXM_JIT=1" in cmake,
      "Dynarmic target is not forced onto the A14/pre-TXM path")
-need("single-map RWX Dynarmic code cache" in cmake,
-     "CMake does not document the required persistent RWX code-cache contract")
+need("dual-map RW/RX Dynarmic code cache" in cmake,
+     "CMake does not document the historical dual-map contract")
 need("tools/patch_dynarmic_a14_nontxm.py" in workflow and
      'python3 "$GITHUB_WORKSPACE/tools/patch_dynarmic_a14_nontxm.py"' in workflow,
      "IPA workflow does not invoke the exact f488 A14 patcher")
-need("PROT_READ | PROT_WRITE | PROT_EXEC" in patcher,
-     "A14 patcher does not create/upgrade to persistent RWX")
+need("m_wmemory = (std::uint32_t*)mmap(" in patcher and
+     "PROT_READ | PROT_WRITE" in patcher,
+     "A14 patcher does not allocate the permanent RW alias")
+need("const kern_return_t remap_result = vm_remap(" in patcher and
+     "VM_PROT_READ | VM_PROT_EXECUTE" in patcher,
+     "A14 patcher does not create/protect the permanent RX alias")
+need("PROT_READ | PROT_WRITE | PROT_EXEC" not in patcher,
+     "A14 patcher must not fall back to persistent single-map RWX")
 need("PVZ2_DYNARMIC_FORCE_NONTXM_JIT" in patcher,
-     "A14 patcher does not compile the broker branch out")
-need('if "TARGET_OS_SIMULATOR || defined(PVZ2_DYNARMIC_FORCE_NONTXM_JIT)" in source:' in patcher and
-     'raise SystemExit("unsafe physical-iOS mprotect toggle is still present")' in patcher,
-     "A14 patcher does not actively reject the unsafe forced-mode RX<->RW toggle")
+     "A14 patcher does not isolate the broker branch")
 need("CHECKPOINT constructor[" in log_filter and
      "WorldKeyConversionEnabled()" in log_filter,
      "KEYCONV constructor breadcrumbs are not exempt from performance filtering")
 
 print(
-    "PASS: KEYCONV keeps callback guest memory, forces A14/pre-TXM persistent "
-    "single-map RWX Dynarmic code cache, and preserves constructor breadcrumbs; "
-    "parent V113 behavior remains isolated"
+    "PASS: KEYCONV keeps callback guest memory, restores the historical "
+    "A14/pre-TXM RW/RX dual-mapped Dynarmic code cache, brackets first guest "
+    "dispatch, and leaves parent V113 behavior isolated"
 )
