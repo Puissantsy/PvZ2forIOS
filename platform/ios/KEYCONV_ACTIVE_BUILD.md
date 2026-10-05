@@ -50,3 +50,30 @@ offline validation passed:
 https://github.com/Puissantsy/PvZ2forIOS/actions/runs/37230188057
 
 This commit triggers one grouped corrected IPA build.
+
+
+## A14 / pre-TXM Dynarmic constructor fix — 2026-10-05
+
+Physical iPad log `pvz2forios-probe(20261005-101846).log` now proves the
+V113/V115/V116 fallback itself works: runtime reaches
+`KEYCONV DYNARMIC COMPAT...` and
+`KEYCONV JIT CONSTRUCT BEGIN pageTable=OFF`, then dies before
+`KEYCONV JIT CONSTRUCT END`. Therefore the direct guest page table is not the
+startup root cause.
+
+The pinned public Dynarmic revision
+`f488f760c69c42a97331961e8e6c359b46ccc9e9` changed physical-iOS Oaknut
+CodeBlock allocation to enter an external JIT broker through
+`BRK #0xf00d`. That is not the established A14/pre-TXM StikDebug path used by
+this project. The isolated KEYCONV build now applies
+`dynarmic-ios-a14-nontxm-codeblock.patch` and compiles Dynarmic with
+`PVZ2_DYNARMIC_FORCE_NONTXM_JIT=1`, restoring the historical iPhone
+mmap(RX) <-> mprotect(RW) W^X code-cache path and compiling the f00d broker
+branch out.
+
+The IPA workflow performs `git apply --check`, applies the patch, runs
+`verify_world_key_dynarmic_compat.py`, and only then configures/builds.
+KEYCONV's callback-backed guest memory remains enabled for this acceptance
+build; parent KEYOBS/production V113 behavior remains unchanged.
+
+This commit intentionally triggers the single grouped corrected IPA build.
