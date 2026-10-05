@@ -39,16 +39,18 @@ jobs:
             grep -q '__atomic_exchange_n' src/dynarmic/common/spin_lock_arm64.cpp
 
             # f488f760's physical-iOS CodeBlock enters an external JIT broker
-            # with BRK #0xf00d. KEYCONV runs on A14/pre-TXM under StikDebug:
-            # use one debugger-authorized RWX mapping. Do NOT toggle that same
-            # mapping RX<->RW while Dynarmic's dispatcher is executing in it.
+            # with BRK #0xf00d. KEYCONV runs on the project's A14/pre-TXM
+            # StikDebug path. Recreate the historical Dynarmic contract instead:
+            # permanent RW and RX aliases of the same code-cache pages.
             python3 "$GITHUB_WORKSPACE/tools/patch_dynarmic_a14_nontxm.py" \
               "$PWD/externals/oaknut/include/oaknut/code_block.hpp"
             grep -q 'PVZ2_DYNARMIC_FORCE_NONTXM_JIT' externals/oaknut/include/oaknut/code_block.hpp
-            grep -q 'PROT_READ | PROT_WRITE | PROT_EXEC' externals/oaknut/include/oaknut/code_block.hpp
+            grep -q 'm_wmemory = (std::uint32_t\*)mmap' externals/oaknut/include/oaknut/code_block.hpp
+            grep -q 'const kern_return_t remap_result = vm_remap' externals/oaknut/include/oaknut/code_block.hpp
+            grep -q 'VM_PROT_READ | VM_PROT_EXECUTE' externals/oaknut/include/oaknut/code_block.hpp
             ! grep -q 'TARGET_OS_SIMULATOR || defined(PVZ2_DYNARMIC_FORCE_NONTXM_JIT)' externals/oaknut/include/oaknut/code_block.hpp
             echo "DYNARMIC_HEAD=$(git rev-parse HEAD)"
-            echo "DYNARMIC_PVZ2_NONTXM_RWX_PATCH=applied"
+            echo "DYNARMIC_PVZ2_NONTXM_DUALMAP_PATCH=applied"
           )
           echo "PVZ2_DYNARMIC_SOURCE_DIR=$GITHUB_WORKSPACE/.deps/dynarmic" >> "$GITHUB_ENV"
 
