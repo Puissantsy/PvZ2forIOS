@@ -55,8 +55,9 @@ need("PROT_READ | PROT_WRITE | PROT_EXEC" in patcher,
      "A14 patcher does not create/upgrade to persistent RWX")
 need("PVZ2_DYNARMIC_FORCE_NONTXM_JIT" in patcher,
      "A14 patcher does not compile the broker branch out")
-need("TARGET_OS_SIMULATOR || defined(PVZ2_DYNARMIC_FORCE_NONTXM_JIT)" not in patcher,
-     "unsafe forced-mode RX<->RW mprotect condition reintroduced")
+need('if "TARGET_OS_SIMULATOR || defined(PVZ2_DYNARMIC_FORCE_NONTXM_JIT)" in source:' in patcher and
+     'raise SystemExit("unsafe physical-iOS mprotect toggle is still present")' in patcher,
+     "A14 patcher does not actively reject the unsafe forced-mode RX<->RW toggle")
 need("CHECKPOINT constructor[" in log_filter and
      "WorldKeyConversionEnabled()" in log_filter,
      "KEYCONV constructor breadcrumbs are not exempt from performance filtering")
