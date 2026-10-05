@@ -3210,6 +3210,11 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                 "KEYCONV DYNARMIC COMPAT: V113/V115/V116 direct page table disabled; using callback-backed guest memory.");
         }
 
+        if (callbacks.WorldKeyConversionEnabled()) {
+            callbacks.AppendDiagnostic(
+                "KEYCONV JIT BACKEND: A14/pre-TXM legacy W^X forced; BRK #0xf00d broker disabled.");
+        }
+
         callbacks.AppendDiagnostic(
             std::string{"KEYCONV JIT CONSTRUCT BEGIN pageTable="} +
             (config.page_table != nullptr ? "ON" : "OFF"));
