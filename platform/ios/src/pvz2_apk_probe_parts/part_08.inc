@@ -3212,7 +3212,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
 
         if (callbacks.WorldKeyConversionEnabled()) {
             callbacks.AppendDiagnostic(
-                "KEYCONV JIT BACKEND: A14/pre-TXM legacy W^X forced; BRK #0xf00d broker disabled.");
+                "KEYCONV JIT BACKEND: A14/pre-TXM single-map RWX forced; BRK #0xf00d broker disabled.");
         }
 
         callbacks.AppendDiagnostic(
