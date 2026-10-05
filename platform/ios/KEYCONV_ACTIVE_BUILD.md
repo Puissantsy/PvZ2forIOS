@@ -77,3 +77,24 @@ KEYCONV's callback-backed guest memory remains enabled for this acceptance
 build; parent KEYOBS/production V113 behavior remains unchanged.
 
 This commit intentionally triggers the single grouped corrected IPA build.
+
+
+### Successful grouped build
+
+- Source commit: `643562becdd8387bb89959e640365d8b7e85d3f8`
+- GitHub Actions: https://github.com/Puissantsy/PvZ2forIOS/actions/runs/37296757464
+- Artifact: https://github.com/Puissantsy/PvZ2forIOS/actions/runs/37296757464/artifacts/11340660787
+- IPA SHA256: `c6806917e0a7c2f31b67fbe10a99784de0f2bfc6154cb986517682b01a9c5388`
+- Bundle ID: `com.puissantsy.pvz2forios.keyobs`
+- Display name: `PvZ2 Keys Research`
+
+CI confirmed:
+- pinned Dynarmic patch applied;
+- A14/pre-TXM compatibility regression test passed;
+- CMake reported the f00d broker disabled;
+- iOS arm64 build, inspection, IPA package and artifact upload all passed.
+
+Physical acceptance remains intentionally startup-only first. Expected sequence:
+`KEYCONV JIT BACKEND: A14/pre-TXM legacy W^X forced; BRK #0xf00d broker disabled.`
+then `KEYCONV JIT CONSTRUCT BEGIN pageTable=OFF`, then
+`KEYCONV JIT CONSTRUCT END`.
