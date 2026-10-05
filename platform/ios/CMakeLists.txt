@@ -74,17 +74,17 @@ elseif(PVZ2_DYNARMIC_SOURCE_DIR)
     # physical iOS. The target device for this isolated KEYCONV research app
     # is an A14/pre-TXM iPad running under StikDebug/CS_DEBUGGED.
     #
-    # Dynarmic's generated dispatcher calls GetOrEmit() while executing from
-    # its own code cache, so a single mapping must NOT be toggled RX <-> RW:
-    # doing so removes EXEC underneath the live dispatcher. The staged patcher
-    # therefore uses one debugger-authorized RWX mapping for this A14 path.
+    # The historical PvZ2 Dynarmic fork used dual-mapped executable memory.
+    # Recreate that contract on the pinned public source: a permanent RW alias
+    # receives Oaknut emission while a distinct permanent RX alias executes it.
+    # This avoids both the f488 BRK broker and same-address permission flipping.
     target_compile_definitions(
         dynarmic PRIVATE PVZ2_DYNARMIC_FORCE_NONTXM_JIT=1
     )
     message(STATUS
         "PvZ2: building staged exact iOS Dynarmic source: ${PVZ2_DYNARMIC_SOURCE_DIR}")
     message(STATUS
-        "PvZ2: forcing A14/pre-TXM single-map RWX Dynarmic code cache (BRK #0xf00d broker disabled)")
+        "PvZ2: forcing A14/pre-TXM dual-map RW/RX Dynarmic code cache (BRK #0xf00d broker disabled)")
 else()
     include(FetchContent)
 
