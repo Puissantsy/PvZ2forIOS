@@ -4,9 +4,10 @@ from pathlib import Path
 
 ROOT=Path(__file__).resolve().parents[1]
 src=(ROOT/"platform/ios/src/pvz2_apk_probe_parts/part_08.inc").read_text()
+log_filter=(ROOT/"platform/ios/src/pvz2_apk_probe_parts/part_02.inc").read_text()
 cmake=(ROOT/"platform/ios/CMakeLists.txt").read_text()
 workflow=(ROOT/".github/workflows/build-ios-probe.yml").read_text()
-patch=(ROOT/"platform/ios/patches/dynarmic-ios-a14-nontxm-codeblock.patch").read_text()
+patcher=(ROOT/"tools/patch_dynarmic_a14_nontxm.py").read_text()
 
 def need(ok,msg):
     if not ok:
@@ -20,9 +21,9 @@ need("config.page_table = nullptr;" in src and
      "callbacks.V113AttachPageTable(nullptr);" in src,
      "active mode must explicitly remain callback-backed")
 need("KEYCONV DYNARMIC COMPAT: V113/V115/V116 direct page table disabled" in src,
-     "missing runtime compatibility marker")
-need("KEYCONV JIT BACKEND: A14/pre-TXM legacy W^X forced; BRK #0xf00d broker disabled." in src,
-     "missing runtime marker for the physical-iPad JIT backend")
+     "missing runtime callback-memory marker")
+need("KEYCONV JIT BACKEND: A14/pre-TXM single-map RWX forced; BRK #0xf00d broker disabled." in src,
+     "missing runtime marker for the A14 single-map RWX backend")
 need("KEYCONV JIT CONSTRUCT BEGIN pageTable=" in src and
      "KEYCONV JIT CONSTRUCT END" in src,
      "must bracket replacement-Dynarmic JIT construction for physical acceptance")
@@ -38,20 +39,30 @@ need(begin < jit < end,
 need("if (callbacks.V113Enabled() &&\n            !keyconv_callback_memory)" in src,
      "page table disable leaked beyond active conversion mode")
 
-# The public f488 iOS fork enters an external broker with BRK #0xf00d on every
-# physical iOS CodeBlock. This project's target iPad is A14/pre-TXM and uses
-# the already-established StikDebug non-TXM W^X path, so the active build must
-# compile the broker branch out and restore mmap(RX) <-> mprotect(RW).
+# The public f488 iOS fork enters an external broker with BRK #0xf00d on physical
+# iOS. The project target is A14/pre-TXM under StikDebug/CS_DEBUGGED, so this
+# isolated build uses one persistent RWX mapping. A single RX<->RW mapping is
+# invalid for Dynarmic because its generated dispatcher calls GetOrEmit() while
+# executing inside the code cache itself.
 need("PVZ2_DYNARMIC_FORCE_NONTXM_JIT=1" in cmake,
-     "Dynarmic target is not forced onto the pre-TXM code-cache path")
-need("dynarmic-ios-a14-nontxm-codeblock.patch" in workflow and
-     'git apply "$GITHUB_WORKSPACE/platform/ios/patches/dynarmic-ios-a14-nontxm-codeblock.patch"' in workflow,
-     "IPA workflow does not apply the pinned f488 pre-TXM CodeBlock patch")
-need("!defined(PVZ2_DYNARMIC_FORCE_NONTXM_JIT)" in patch,
-     "CodeBlock patch does not compile the BRK broker out")
-need("TARGET_OS_SIMULATOR || defined(PVZ2_DYNARMIC_FORCE_NONTXM_JIT)" in patch,
-     "CodeBlock patch does not restore mprotect W^X on physical pre-TXM iOS")
-need("brk #0xf00d" not in patch,
-     "project patch must not introduce a new broker trap")
+     "Dynarmic target is not forced onto the A14/pre-TXM path")
+need("single-map RWX Dynarmic code cache" in cmake,
+     "CMake does not document the required persistent RWX code-cache contract")
+need("tools/patch_dynarmic_a14_nontxm.py" in workflow and
+     'python3 "$GITHUB_WORKSPACE/tools/patch_dynarmic_a14_nontxm.py"' in workflow,
+     "IPA workflow does not invoke the exact f488 A14 patcher")
+need("PROT_READ | PROT_WRITE | PROT_EXEC" in patcher,
+     "A14 patcher does not create/upgrade to persistent RWX")
+need("PVZ2_DYNARMIC_FORCE_NONTXM_JIT" in patcher,
+     "A14 patcher does not compile the broker branch out")
+need("TARGET_OS_SIMULATOR || defined(PVZ2_DYNARMIC_FORCE_NONTXM_JIT)" not in patcher,
+     "unsafe forced-mode RX<->RW mprotect condition reintroduced")
+need("CHECKPOINT constructor[" in log_filter and
+     "WorldKeyConversionEnabled()" in log_filter,
+     "KEYCONV constructor breadcrumbs are not exempt from performance filtering")
 
-print("PASS: KEYCONV keeps callback guest memory and forces the A14/pre-TXM Dynarmic W^X code-cache path; parent V113 behavior remains isolated")
+print(
+    "PASS: KEYCONV keeps callback guest memory, forces A14/pre-TXM persistent "
+    "single-map RWX Dynarmic code cache, and preserves constructor breadcrumbs; "
+    "parent V113 behavior remains isolated"
+)
