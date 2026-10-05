@@ -3212,7 +3212,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
 
         if (callbacks.WorldKeyConversionEnabled()) {
             callbacks.AppendDiagnostic(
-                "KEYCONV JIT BACKEND: A14/pre-TXM single-map RWX forced; BRK #0xf00d broker disabled.");
+                "KEYCONV JIT BACKEND: A14/pre-TXM dual-map RW/RX forced; BRK #0xf00d broker disabled.");
         }
 
         callbacks.AppendDiagnostic(
@@ -3299,8 +3299,29 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
                     JniProbeHex(function));
             }
 
+            if (callbacks.WorldKeyConversionEnabled() &&
+                index == 0u) {
+                callbacks.AppendDiagnostic(
+                    "KEYCONV FIRST CONSTRUCTOR RUN BEGIN addr=0x" +
+                    JniProbeHex(function) +
+                    " pc=0x" +
+                    JniProbeHex(jit.Regs()[15]) +
+                    " cpsr=0x" +
+                    JniProbeHex(jit.Cpsr()));
+            }
+
             const Dynarmic::HaltReason halt =
                 jit.Run();
+
+            if (callbacks.WorldKeyConversionEnabled() &&
+                index == 0u) {
+                callbacks.AppendDiagnostic(
+                    "KEYCONV FIRST CONSTRUCTOR RUN END halt=0x" +
+                    JniProbeHex(
+                        static_cast<std::uint32_t>(halt)) +
+                    " pc=0x" +
+                    JniProbeHex(jit.Regs()[15]));
+            }
 
             result.final_pc =
                 jit.Regs()[15];
