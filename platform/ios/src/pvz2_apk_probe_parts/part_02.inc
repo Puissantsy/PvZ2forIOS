@@ -4674,6 +4674,15 @@
             return true;
         }
 
+        // KEYCONV startup acceptance must always reveal the last constructor
+        // reached. The normal v85 performance filter suppresses these legacy
+        // checkpoint lines, which made a first-jit.Run native crash look as if
+        // it occurred before constructor[0].
+        if (WorldKeyConversionEnabled() &&
+            line.rfind("CHECKPOINT constructor[", 0u) == 0u) {
+            return true;
+        }
+
         if (!V85PerformanceEnabled()) {
             return log_class != ProbeLogClass::Verbose;
         }
