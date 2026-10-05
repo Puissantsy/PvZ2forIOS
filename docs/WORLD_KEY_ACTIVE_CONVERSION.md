@@ -132,3 +132,38 @@ install in place and only confirm that startup reaches the normal map/menu.
 If startup still fails, the new BEGIN/END marker pair will isolate whether
 replacement Dynarmic JIT construction itself is the failure. Do not replay
 Day 2/Day 3 until startup is accepted.
+
+
+## Startup-compat corrected active IPA — 2026-10-04
+
+Physical iPad crash log `pvz2forios-probe(20261004-194529).log` showed the
+first KEYCONV IPA died immediately after `V91 RELRO ARMED`, before constructors
+and before any `KEYCONV GRANT_PRE` / `KEYCONV APPLY`. Therefore no
+key->coin mutation executed.
+
+The corrective build keeps the public replacement Dynarmic revision but, in
+`ResearchWorldKeyConvert` only, disables the newer V113/V115/V116 direct guest
+page table optimization and falls back to the already-supported callback-backed
+guest memory path. Parent KEYOBS/read-only and production modes keep their
+existing memory mapping behavior. Additional
+`KEYCONV JIT CONSTRUCT BEGIN/END` markers bracket full-load JIT creation for
+device acceptance.
+
+Successful corrected build:
+- Source commit: `e25b0a5dd64449cba00b397983ea30440466a076`
+- Run: https://github.com/Puissantsy/PvZ2forIOS/actions/runs/37230228110
+- Artifact ZIP:
+  https://github.com/Puissantsy/PvZ2forIOS/actions/runs/37230228110/artifacts/11312564471
+- IPA SHA256:
+  `610b38bdc452bdec6b611c8b4cad1792ac9a2507009b4240ca0fe24120ec1a42`
+- Bundle ID remains `com.puissantsy.pvz2forios.keyobs`
+
+Device acceptance order:
+1. update in place over the separate KEYOBS app;
+2. confirm the game reaches menu/map without startup crash and share full log;
+3. only then replay the noneligible Egypt key reward. It must still grant a key,
+   log `decision=GateNotOpen`, and produce no `KEYCONV APPLY`;
+4. only after that control passes, use an all-gates-open disposable profile for
+   the actual 1-key -> 1,000-coin acceptance.
+
+No visual reward remap is considered finished yet.
