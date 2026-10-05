@@ -136,3 +136,15 @@ collapsing the failure to the generic constructors phase.
 
 All changes are staged with `[skip ci]`; no new IPA build has been launched
 yet. One grouped build will be triggered only after source/wiring review.
+
+
+### Grouped A14 RWX acceptance build trigger
+
+Source/wiring review against pinned Dynarmic f488 passed before this trigger:
+the upstream CodeBlock has the expected six physical-iOS guards, one broker
+allocation guard and one legacy iPhone allocation fallback. The staged patcher
+matches all three contracts, the unsafe same-map RX<->RW toggle is rejected by
+regression checks, and KEYCONV constructor breadcrumbs are retained.
+
+This commit intentionally triggers the single grouped IPA build for the
+persistent A14/pre-TXM RWX correction.
