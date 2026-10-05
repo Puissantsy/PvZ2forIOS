@@ -72,16 +72,19 @@ elseif(PVZ2_DYNARMIC_SOURCE_DIR)
 
     # The public iOS fork uses a BRK #0xf00d broker unconditionally on
     # physical iOS. The target device for this isolated KEYCONV research app
-    # is an A14/pre-TXM iPad running through the established StikDebug
-    # non-TXM path, so keep Dynarmic on the historical iPhone W^X
-    # mmap(RX) <-> mprotect(RW) code-cache path instead.
+    # is an A14/pre-TXM iPad running under StikDebug/CS_DEBUGGED.
+    #
+    # Dynarmic's generated dispatcher calls GetOrEmit() while executing from
+    # its own code cache, so a single mapping must NOT be toggled RX <-> RW:
+    # doing so removes EXEC underneath the live dispatcher. The staged patcher
+    # therefore uses one debugger-authorized RWX mapping for this A14 path.
     target_compile_definitions(
         dynarmic PRIVATE PVZ2_DYNARMIC_FORCE_NONTXM_JIT=1
     )
     message(STATUS
         "PvZ2: building staged exact iOS Dynarmic source: ${PVZ2_DYNARMIC_SOURCE_DIR}")
     message(STATUS
-        "PvZ2: forcing pre-TXM iOS Dynarmic code-cache path (BRK #0xf00d broker disabled)")
+        "PvZ2: forcing A14/pre-TXM single-map RWX Dynarmic code cache (BRK #0xf00d broker disabled)")
 else()
     include(FetchContent)
 
