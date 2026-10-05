@@ -41,6 +41,7 @@ jobs:
             # f488f760's physical-iOS CodeBlock enters an external JIT broker
             # with BRK #0xf00d. KEYCONV is tested on the project's A14/pre-TXM
             # StikDebug path, so restore the historical iPhone W^X path instead.
+            git apply --check "$GITHUB_WORKSPACE/platform/ios/patches/dynarmic-ios-a14-nontxm-codeblock.patch"
             git apply "$GITHUB_WORKSPACE/platform/ios/patches/dynarmic-ios-a14-nontxm-codeblock.patch"
             grep -q 'PVZ2_DYNARMIC_FORCE_NONTXM_JIT' externals/oaknut/include/oaknut/code_block.hpp
             grep -q 'TARGET_OS_SIMULATOR || defined(PVZ2_DYNARMIC_FORCE_NONTXM_JIT)' externals/oaknut/include/oaknut/code_block.hpp
@@ -48,6 +49,9 @@ jobs:
             echo "DYNARMIC_PVZ2_NONTXM_PATCH=applied"
           )
           echo "PVZ2_DYNARMIC_SOURCE_DIR=$GITHUB_WORKSPACE/.deps/dynarmic" >> "$GITHUB_ENV"
+
+      - name: Verify KEYCONV A14 pre-TXM Dynarmic wiring
+        run: python3 tools/verify_world_key_dynarmic_compat.py
 
       - name: Show toolchain
         run: |
