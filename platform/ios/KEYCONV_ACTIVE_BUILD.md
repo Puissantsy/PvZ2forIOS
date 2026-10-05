@@ -148,3 +148,34 @@ regression checks, and KEYCONV constructor breadcrumbs are retained.
 
 This commit intentionally triggers the single grouped IPA build for the
 persistent A14/pre-TXM RWX correction.
+
+
+## A14 dual-map correction after 2026-10-05 19:40 device log
+
+Physical log `pvz2forios-probe(20261005-194047).log` proves the previous
+broker-removal build now reaches `KEYCONV JIT CONSTRUCT END` and enters the
+constructors phase. The visible crash therefore moved past JIT construction.
+
+The subsequently staged single-map persistent-RWX experiment was **not**
+accepted as the final fix. Its GitHub Actions run 37366344076 ended without an
+artifact, so no physical iPad result exists for that path. Static review also
+recovered the more important historical contract from this repository's
+original Dynarmic wiring: the working LiveContainer fork was selected
+specifically for its dual-mapped executable-memory path.
+
+This grouped correction therefore recreates that historical contract on the
+pinned public f488 source for KEYCONV only:
+- permanent anonymous RW mapping for Oaknut writes;
+- `vm_remap` alias of the same pages;
+- permanent RX protection on the executable alias;
+- physical-iOS `protect()/unprotect()` remain no-ops;
+- f488's `BRK #0xf00d` broker stays compiled out only for the forced A14 path;
+- callback-backed guest memory remains enabled for KEYCONV only;
+- KEYOBS/production V113 behavior remains unchanged.
+
+The first constructor `jit.Run()` is additionally bracketed by non-filterable
+`KEYCONV FIRST CONSTRUCTOR RUN BEGIN/END` diagnostics, and constructor
+checkpoints are exempt from the V85/V118 performance log filter.
+
+This commit intentionally triggers one grouped IPA build after all source,
+workflow and regression changes were staged.
