@@ -69,8 +69,19 @@ elseif(PVZ2_DYNARMIC_SOURCE_DIR)
         message(FATAL_ERROR
             "PVZ2 staged Dynarmic source did not define target 'dynarmic'")
     endif()
+
+    # The public iOS fork uses a BRK #0xf00d broker unconditionally on
+    # physical iOS. The target device for this isolated KEYCONV research app
+    # is an A14/pre-TXM iPad running through the established StikDebug
+    # non-TXM path, so keep Dynarmic on the historical iPhone W^X
+    # mmap(RX) <-> mprotect(RW) code-cache path instead.
+    target_compile_definitions(
+        dynarmic PRIVATE PVZ2_DYNARMIC_FORCE_NONTXM_JIT=1
+    )
     message(STATUS
         "PvZ2: building staged exact iOS Dynarmic source: ${PVZ2_DYNARMIC_SOURCE_DIR}")
+    message(STATUS
+        "PvZ2: forcing pre-TXM iOS Dynarmic code-cache path (BRK #0xf00d broker disabled)")
 else()
     include(FetchContent)
 
