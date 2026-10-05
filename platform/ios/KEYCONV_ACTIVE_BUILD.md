@@ -179,3 +179,23 @@ checkpoints are exempt from the V85/V118 performance log filter.
 
 This commit intentionally triggers one grouped IPA build after all source,
 workflow and regression changes were staged.
+
+
+### Successful grouped dual-map build
+
+- Source commit: `75c3bde796f6dc0a526da7250acc3ebd5be7863e`
+- GitHub Actions: https://github.com/Puissantsy/PvZ2forIOS/actions/runs/37372393069
+- Artifact: https://github.com/Puissantsy/PvZ2forIOS/actions/runs/37372393069/artifacts/11370583418
+- IPA SHA256: `085395ed0fa3920e34fac6bba9cb8f7d4c8eee00ebd6863b2af1ffd24d269832`
+- Bundle ID: `com.puissantsy.pvz2forios.keyobs`
+- Display name: `PvZ2 Keys Research`
+
+CI confirmed the exact f488 source was patched to the A14/pre-TXM permanent
+RW/RX dual-map path, the KEYCONV regression contract passed, CMake configured,
+the arm64 iOS target built, and the IPA artifact uploaded successfully.
+
+Physical acceptance remains startup-only first. Expected decisive markers are:
+`KEYCONV JIT CONSTRUCT END`,
+`CHECKPOINT constructor[0] begin ...`,
+`KEYCONV FIRST CONSTRUCTOR RUN BEGIN ...`, and, if the first guest dispatch
+returns, `KEYCONV FIRST CONSTRUCTOR RUN END ...`.
