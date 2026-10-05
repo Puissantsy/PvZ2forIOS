@@ -23,9 +23,9 @@ physical_guard = (
     "defined(__APPLE__) && TARGET_OS_IPHONE && !TARGET_OS_SIMULATOR"
 )
 guard_count = source.count(physical_guard)
-if guard_count != 7:
+if guard_count != 6:
     raise SystemExit(
-        f"unexpected f488 physical-iOS guard count: {guard_count} (expected 7)"
+        f"unexpected f488 physical-iOS guard count: {guard_count} (expected 6)"
     )
 
 # Compile the broker-only structures/calls out when PvZ2 explicitly selects its
@@ -33,6 +33,14 @@ if guard_count != 7:
 source = source.replace(
     physical_guard,
     physical_guard + " && !defined(PVZ2_DYNARMIC_FORCE_NONTXM_JIT)",
+)
+
+allocation_guard = "#    if TARGET_OS_IPHONE && !TARGET_OS_SIMULATOR"
+if source.count(allocation_guard) != 1:
+    raise SystemExit("unexpected f488 physical-iOS allocation guard")
+source = source.replace(
+    allocation_guard,
+    allocation_guard + " && !defined(PVZ2_DYNARMIC_FORCE_NONTXM_JIT)",
 )
 
 old_fallback = """#    elif TARGET_OS_IPHONE
