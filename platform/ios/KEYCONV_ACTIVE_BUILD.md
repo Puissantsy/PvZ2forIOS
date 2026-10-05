@@ -98,3 +98,41 @@ Physical acceptance remains intentionally startup-only first. Expected sequence:
 `KEYCONV JIT BACKEND: A14/pre-TXM legacy W^X forced; BRK #0xf00d broker disabled.`
 then `KEYCONV JIT CONSTRUCT BEGIN pageTable=OFF`, then
 `KEYCONV JIT CONSTRUCT END`.
+
+
+## First guest-dispatch crash after fixing JIT construction — 2026-10-05
+
+Physical iPad log `pvz2forios-probe(20261005-194047).log` proves the previous
+broker-removal change fixed JIT construction itself. Runtime now reaches:
+
+- `KEYCONV JIT BACKEND: ... BRK #0xf00d broker disabled.`
+- `KEYCONV JIT CONSTRUCT BEGIN pageTable=OFF`
+- `KEYCONV JIT CONSTRUCT END`
+- `V88 STARTUP BEGIN phase=constructors count=618`
+
+and then the process dies before any later retained startup diagnostic.
+
+Inspection of pinned Dynarmic f488 identifies the next incompatibility. Its
+generated A32 dispatcher executes from the code cache and, on a cache miss,
+calls `GetOrEmit()`. `AddressSpace::Emit()` calls `UnprotectCodeMemory()`
+while that dispatcher is still executing. The previous compatibility patch
+used one mapping and changed it RX -> RW -> RX, so the first guest translation
+removed EXEC from the mapping underneath the currently executing host PC.
+That explains why JIT construction succeeded but the first `jit.Run()`
+faulted immediately.
+
+The active A14/pre-TXM correction now uses one persistent anonymous RWX code
+mapping after StikDebug has attached / `CS_DEBUGGED=YES`. The f488
+`BRK #0xf00d` broker remains compiled out only under
+`PVZ2_DYNARMIC_FORCE_NONTXM_JIT`; normal upstream/TXM behavior remains
+available outside this isolated build. Dynarmic `protect()/unprotect()` stay
+no-ops for the forced physical-iOS path, so `GetOrEmit()` cannot revoke EXEC
+from its live dispatcher.
+
+KEYCONV also now exempts `CHECKPOINT constructor[...]` lines from the v85
+performance log filter. If any guest constructor remains incompatible, the
+next device log will identify the exact last constructor entered instead of
+collapsing the failure to the generic constructors phase.
+
+All changes are staged with `[skip ci]`; no new IPA build has been launched
+yet. One grouped build will be triggered only after source/wiring review.
