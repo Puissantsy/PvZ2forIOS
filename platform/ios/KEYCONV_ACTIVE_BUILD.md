@@ -273,3 +273,20 @@ opened, a real 1-key reward must remain a key, log
 `KEYCONV GRANT_PRE ... decision=GateNotOpen`, and produce no
 `KEYCONV APPLY`. Only after that control passes should an all-gates-open
 disposable profile test actual key-to-coin conversion.
+
+
+### Physical noneligible award acceptance — 2026-10-06
+
+Physical log `pvz2forios-probe(20261006-190700).log` validates the fail-open
+noneligible path:
+- real Egypt award observed at original caller LR `0x10176408`;
+- `world=egypt amount=1 coinsBefore=890`;
+- decision `GATE_NOT_OPEN`;
+- Egypt gate states `{13:1,23:1,33:1,39:1,41:2}`, therefore not eligible;
+- no `KEYCONV APPLY` occurred;
+- physical UI confirmed +1 Egypt Key and unchanged coin balance.
+
+Noneligible award acceptance is PASS. Next safe device check is opening the
+currently available one-key Egypt gate and confirming the native gate path still
+spends the key and transitions that gate from state 2 to state 3 under the
+active KEYCONV build.
