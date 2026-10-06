@@ -18,12 +18,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Checkout exact Applesauce iOS Dynarmic revision
+      - name: Checkout exact proven LiveContainer Dynarmic revision
         shell: bash
         run: |
           set -euo pipefail
-          DYN_URL="https://github.com/johnny901901901/dynarmic.git"
-          DYN_SHA="f488f760c69c42a97331961e8e6c359b46ccc9e9"
+          DYN_URL="https://github.com/LiveContainer/dynarmic.git"
+          DYN_SHA="c97c525ec1432b1e5404ebf091027738005ec168"
           rm -rf .deps/dynarmic
           mkdir -p .deps
           GIT_TERMINAL_PROMPT=0 git -c credential.helper= clone \
@@ -35,26 +35,27 @@ jobs:
             test "$(git rev-parse HEAD)" = "$DYN_SHA"
             test -f src/dynarmic/interface/A32/a32.h
             test -f src/dynarmic/interface/A32/config.h
-            grep -q 'TARGET_OS_IPHONE' src/dynarmic/common/spin_lock_arm64.cpp
-            grep -q '__atomic_exchange_n' src/dynarmic/common/spin_lock_arm64.cpp
 
-            # f488f760's physical-iOS CodeBlock enters an external JIT broker
-            # with BRK #0xf00d. KEYCONV runs on the project's A14/pre-TXM
-            # StikDebug path. Recreate the historical Dynarmic contract instead:
-            # permanent RW and RX aliases of the same code-cache pages.
-            python3 "$GITHUB_WORKSPACE/tools/patch_dynarmic_a14_nontxm.py" \
-              "$PWD/externals/oaknut/include/oaknut/code_block.hpp"
-            grep -q 'PVZ2_DYNARMIC_FORCE_NONTXM_JIT' externals/oaknut/include/oaknut/code_block.hpp
-            grep -q 'm_wmemory = (std::uint32_t\*)mmap' externals/oaknut/include/oaknut/code_block.hpp
-            grep -q 'const kern_return_t remap_result = vm_remap' externals/oaknut/include/oaknut/code_block.hpp
-            grep -q 'VM_PROT_READ | VM_PROT_EXECUTE' externals/oaknut/include/oaknut/code_block.hpp
-            ! grep -q 'TARGET_OS_SIMULATOR || defined(PVZ2_DYNARMIC_FORCE_NONTXM_JIT)' externals/oaknut/include/oaknut/code_block.hpp
+            # Match the already-proven KEYOBS/production dependency exactly:
+            # LiveContainer c97c525e plus the project's historical iOS spinlock
+            # patch. Do not patch its executable-memory allocator.
+            git apply --check "$GITHUB_WORKSPACE/platform/ios/patches/dynarmic-ios-nontxm.patch"
+            git apply "$GITHUB_WORKSPACE/platform/ios/patches/dynarmic-ios-nontxm.patch"
+
+            DUAL=externals/oaknut/include/oaknut/dual_code_block.hpp
+            grep -q 'm_xmem = (std::uint32_t\*)mmap(nullptr, size, PROT_READ | PROT_EXEC' "$DUAL"
+            grep -q 'vm_remap(mach_task_self(), &wmem' "$DUAL"
+            grep -q 'mprotect(m_wmem, size, PROT_READ | PROT_WRITE)' "$DUAL"
+            grep -q 'if (DeviceHasTXM())' "$DUAL"
+            grep -q 'JIT26PrepareRegion(m_xmem, m_size)' "$DUAL"
+
             echo "DYNARMIC_HEAD=$(git rev-parse HEAD)"
-            echo "DYNARMIC_PVZ2_NONTXM_DUALMAP_PATCH=applied"
+            echo "DYNARMIC_PVZ2_HISTORICAL_SOURCE=exact"
+            echo "DYNARMIC_PVZ2_SPINLOCK_PATCH=applied"
           )
           echo "PVZ2_DYNARMIC_SOURCE_DIR=$GITHUB_WORKSPACE/.deps/dynarmic" >> "$GITHUB_ENV"
 
-      - name: Verify KEYCONV A14 pre-TXM Dynarmic wiring
+      - name: Verify KEYCONV historical Dynarmic wiring
         run: python3 tools/verify_world_key_dynarmic_compat.py
 
       - name: Show toolchain
