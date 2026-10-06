@@ -253,3 +253,23 @@ Physical startup acceptance should now show
 `KEYCONV DYNARMIC RESTORE...`, `JIT CONSTRUCT BEGIN pageTable=ON`, then
 the first-constructor BEGIN/END markers. No Day 3 reward should be triggered
 until startup reaches the menu/map.
+
+
+### Physical startup acceptance — 2026-10-06
+
+Physical log `pvz2forios-probe(20261006-185231).log` validates the exact-runtime
+restoration on iPad:
+- `KEYCONV JIT CONSTRUCT BEGIN pageTable=ON` / `END`;
+- first constructor enters and returns;
+- all 618 constructors complete;
+- JNI_OnLoad and application/surface lifecycles complete;
+- V113/V117/V116 direct page tables activate at frame 1;
+- runtime remains stable through frame 6000+ and reaches the normal menu;
+- no `KEYCONV GRANT_PRE` or `KEYCONV APPLY` occurs during startup.
+
+Startup acceptance is therefore PASS. Next acceptance step is the noneligible
+Egypt key-award control: while at least one verified Egypt key gate is not
+opened, a real 1-key reward must remain a key, log
+`KEYCONV GRANT_PRE ... decision=GateNotOpen`, and produce no
+`KEYCONV APPLY`. Only after that control passes should an all-gates-open
+disposable profile test actual key-to-coin conversion.
