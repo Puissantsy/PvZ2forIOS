@@ -70,25 +70,18 @@ elseif(PVZ2_DYNARMIC_SOURCE_DIR)
             "PVZ2 staged Dynarmic source did not define target 'dynarmic'")
     endif()
 
-    # The public iOS fork uses a BRK #0xf00d broker unconditionally on
-    # physical iOS. The target device for this isolated KEYCONV research app
-    # is an A14/pre-TXM iPad running under StikDebug/CS_DEBUGGED.
-    #
-    # The historical PvZ2 Dynarmic fork used dual-mapped executable memory.
-    # Recreate that contract on the pinned public source: a permanent RW alias
-    # receives Oaknut emission while a distinct permanent RX alias executes it.
-    # This avoids both the f488 BRK broker and same-address permission flipping.
-    target_compile_definitions(
-        dynarmic PRIVATE PVZ2_DYNARMIC_FORCE_NONTXM_JIT=1
-    )
+    # CI stages the exact LiveContainer Dynarmic revision that powered the
+    # already-proven PvZ2/KEYOBS iPad runtime, with only the project's historical
+    # iOS spinlock patch applied. Do not add allocator/JIT compatibility defines:
+    # c97c525e already owns the correct A14/TXM detection and RX->RW dual mapping.
     message(STATUS
-        "PvZ2: building staged exact iOS Dynarmic source: ${PVZ2_DYNARMIC_SOURCE_DIR}")
+        "PvZ2: building staged historical LiveContainer Dynarmic source: ${PVZ2_DYNARMIC_SOURCE_DIR}")
     message(STATUS
-        "PvZ2: forcing A14/pre-TXM dual-map RW/RX Dynarmic code cache (BRK #0xf00d broker disabled)")
+        "PvZ2: exact runtime dependency c97c525ec1432b1e5404ebf091027738005ec168; native iOS allocator policy preserved")
 else()
     include(FetchContent)
 
-    # Historical fallback only. CI does not use this inaccessible old fork.
+    # Historical fallback. The same exact fork/revision is also staged by CI.
     FetchContent_Declare(
         dynarmic
         GIT_REPOSITORY https://github.com/LiveContainer/dynarmic.git
