@@ -233,3 +233,23 @@ so physical acceptance can prove the first guest dispatch immediately.
 
 This commit intentionally triggers one grouped IPA build after all restoration
 changes were staged with [skip ci].
+
+
+### Successful exact-runtime build
+
+- Source commit: `22ec02c6e921a053b20920d82688587e8c5fa900`
+- GitHub Actions: https://github.com/Puissantsy/PvZ2forIOS/actions/runs/37513543303
+- Artifact: https://github.com/Puissantsy/PvZ2forIOS/actions/runs/37513543303/artifacts/11435824843
+- IPA SHA256: `ffdfd9027ea3d7488f9a66af63beb7f5eee422accd6cd9be770fc30bf757440f`
+- Bundle ID: `com.puissantsy.pvz2forios.keyobs`
+- Display name: `PvZ2 Keys Research`
+
+CI confirmed `DYNARMIC_HEAD=c97c525ec1432b1e5404ebf091027738005ec168`,
+the historical iOS spinlock patch applied, the allocator remained unmodified,
+the V113 direct page table was restored, and the full arm64 build/package
+succeeded.
+
+Physical startup acceptance should now show
+`KEYCONV DYNARMIC RESTORE...`, `JIT CONSTRUCT BEGIN pageTable=ON`, then
+the first-constructor BEGIN/END markers. No Day 3 reward should be triggered
+until startup reaches the menu/map.
