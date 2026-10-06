@@ -3181,20 +3181,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
 
         std::unique_ptr<PvZ2JniCallbacks::V113PageTable>
             v113_page_table;
-
-        // The physically validated KEYOBS IPA used the historical Dynarmic
-        // fork.  The replacement public iOS Dynarmic revision compiles with
-        // the same API but the first KEYCONV device run died while creating
-        // the JIT, immediately after RELRO and before constructor execution.
-        // Keep the conversion experiment on Dynarmic's ordinary callbacks:
-        // V113/V115/V116 are performance-only and already no-op safely when
-        // no page table is attached.  Parent KEYOBS/production modes retain
-        // their validated mapping behavior.
-        const bool keyconv_callback_memory =
-            callbacks.WorldKeyConversionEnabled();
-
-        if (callbacks.V113Enabled() &&
-            !keyconv_callback_memory) {
+        if (callbacks.V113Enabled()) {
             v113_page_table =
                 std::make_unique<
                     PvZ2JniCallbacks::V113PageTable>();
@@ -3203,14 +3190,11 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
             config.absolute_offset_page_table = false;
             callbacks.V113AttachPageTable(
                 v113_page_table.get());
-        } else if (keyconv_callback_memory) {
-            config.page_table = nullptr;
-            callbacks.V113AttachPageTable(nullptr);
-            callbacks.AppendDiagnostic(
-                "KEYCONV DYNARMIC COMPAT: V113/V115/V116 direct page table disabled; using callback-backed guest memory.");
         }
 
         if (callbacks.WorldKeyConversionEnabled()) {
+            callbacks.AppendDiagnostic(
+                "KEYCONV DYNARMIC RESTORE: exact proven LiveContainer c97c525e + historical V113 direct page table.");
             callbacks.AppendDiagnostic(
                 "KEYCONV JIT BACKEND: exact proven LiveContainer c97c525e allocator; native A14/TXM policy preserved.");
         }
