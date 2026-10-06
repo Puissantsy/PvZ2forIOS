@@ -3212,7 +3212,7 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
 
         if (callbacks.WorldKeyConversionEnabled()) {
             callbacks.AppendDiagnostic(
-                "KEYCONV JIT BACKEND: A14/pre-TXM dual-map RW/RX forced; BRK #0xf00d broker disabled.");
+                "KEYCONV JIT BACKEND: exact proven LiveContainer c97c525e allocator; native A14/TXM policy preserved.");
         }
 
         callbacks.AppendDiagnostic(
