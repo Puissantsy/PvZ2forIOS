@@ -290,3 +290,19 @@ Noneligible award acceptance is PASS. Next safe device check is opening the
 currently available one-key Egypt gate and confirming the native gate path still
 spends the key and transitions that gate from state 2 to state 3 under the
 active KEYCONV build.
+
+
+### Physical key-gate spend/state acceptance — 2026-10-06
+
+Physical log `pvz2forios-probe(20261006-191241).log` validates normal gate
+opening under active KEYCONV:
+- Egypt gate event 41 is observed at state 2 before the native open path;
+- native path requests `desiredState=3`;
+- after the path returns, event 41 is state 3;
+- other Egypt gates remain state 1, so the world remains noneligible;
+- no `KEYCONV APPLY` occurs during gate opening;
+- physical test opened the gate using the previously earned Egypt key.
+
+Gate-spend/state acceptance is PASS. The remaining functional acceptance target
+is an all-Egypt-key-gates-open disposable profile followed by a fresh real
+Egypt key award, which must skip key credit and add exactly 1,000 coins.
