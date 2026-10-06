@@ -199,3 +199,37 @@ Physical acceptance remains startup-only first. Expected decisive markers are:
 `CHECKPOINT constructor[0] begin ...`,
 `KEYCONV FIRST CONSTRUCTOR RUN BEGIN ...`, and, if the first guest dispatch
 returns, `KEYCONV FIRST CONSTRUCTOR RUN END ...`.
+
+
+## Exact historical Dynarmic restoration — 2026-10-06
+
+Physical log `pvz2forios-probe(20261006-183744).log` proves the reconstructed
+f488 dual-map path still dies inside the first `jit.Run()`:
+`CHECKPOINT constructor[0]` and
+`KEYCONV FIRST CONSTRUCTOR RUN BEGIN addr=0x100e96c0` are present, while
+`KEYCONV FIRST CONSTRUCTOR RUN END` is absent.
+
+The decisive change is that the original dependency became publicly accessible
+again:
+`LiveContainer/dynarmic@c97c525ec1432b1e5404ebf091027738005ec168`.
+That is the exact revision referenced by the already-working PvZ2/KEYOBS
+runtime. Its Oaknut allocator:
+- maps the executable alias RX first;
+- detects TXM at runtime;
+- on non-TXM A14 skips JIT26PrepareRegion;
+- vm_remaps the RX pages to a distinct writable alias;
+- mprotects only the writable alias RW.
+
+The active branch now restores that exact source and the project's historical
+`dynarmic-ios-nontxm.patch` spinlock fix. All f488 allocator patching and
+`PVZ2_DYNARMIC_FORCE_NONTXM_JIT` overrides are removed.
+
+The temporary KEYCONV callback-memory workaround is also removed. V113 direct
+page-table behavior is restored exactly as in the first active KEYCONV commit
+and the physically proven KEYOBS/production runtime.
+
+The first-constructor BEGIN/END diagnostics and constructor checkpoints remain
+so physical acceptance can prove the first guest dispatch immediately.
+
+This commit intentionally triggers one grouped IPA build after all restoration
+changes were staged with [skip ci].
