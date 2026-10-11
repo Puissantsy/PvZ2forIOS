@@ -47,4 +47,39 @@ inline StockPlan PlanExistingWorldKeys(
                 coins_before,coins_before};
     return {StockReason::Ready,world_id,stock,coins_before,credit.after};
 }
+
+enum class SettlementObservation {
+    InvalidPlan,
+    NotYetApplied,
+    FullyApplied,
+    PartialKeyDebit,
+    PartialCoinCredit,
+    UnexpectedState
+};
+
+// Crash/restart recovery discriminator, NOT a migration routine.
+// A future WAL/checkpoint layer must read stable persisted wallet+key data
+// before using this. Never automatically retry half-applied states: doing so
+// could silently duplicate coins or destroy remaining keys.
+inline SettlementObservation InspectSettlement(
+    const StockPlan& plan,
+    std::uint32_t observed_keys,
+    std::uint32_t observed_coins) {
+    if (!plan.ready() || plan.keys_to_remove==0u)
+        return SettlementObservation::InvalidPlan;
+    const bool keys_before=observed_keys==plan.keys_to_remove;
+    const bool keys_after=observed_keys==0u;
+    const bool coins_before=observed_coins==plan.coins_before;
+    const bool coins_after=observed_coins==plan.coins_after;
+    if (keys_before && coins_before)
+        return SettlementObservation::NotYetApplied;
+    if (keys_after && coins_after)
+        return SettlementObservation::FullyApplied;
+    if (keys_after && coins_before)
+        return SettlementObservation::PartialKeyDebit;
+    if (keys_before && coins_after)
+        return SettlementObservation::PartialCoinCredit;
+    return SettlementObservation::UnexpectedState;
+}
+
 } // namespace pvz2_key_study
