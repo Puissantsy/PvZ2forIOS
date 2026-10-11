@@ -18,19 +18,34 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # A successful source checkout is cached under the exact proven SHA.
+      # On cache hits reset to the *unpatched* commit before applying the
+      # historical spinlock patch, preventing both drift and double-patching.
+      - name: Cache exact historical Dynarmic checkout
+        id: dynarmic-exact-source
+        uses: actions/cache@v4
+        with:
+          path: .deps/dynarmic
+          key: ${{ runner.os }}-pvz2-livecontainer-dynarmic-c97c525ec1432b1e5404ebf091027738005ec168-v1
+
       - name: Checkout exact proven LiveContainer Dynarmic revision
         shell: bash
         run: |
           set -euo pipefail
           DYN_URL="https://github.com/LiveContainer/dynarmic.git"
           DYN_SHA="c97c525ec1432b1e5404ebf091027738005ec168"
-          rm -rf .deps/dynarmic
-          mkdir -p .deps
-          GIT_TERMINAL_PROMPT=0 git -c credential.helper= clone \
-            "$DYN_URL" .deps/dynarmic
+          if [ ! -d .deps/dynarmic/.git ]; then
+            rm -rf .deps/dynarmic
+            mkdir -p .deps
+            GIT_TERMINAL_PROMPT=0 git -c credential.helper= clone \\
+              "$DYN_URL" .deps/dynarmic
+          else
+            echo "PVZ2_DYNARMIC_SOURCE_CACHE=HIT"
+          fi
           (
             cd .deps/dynarmic
             git checkout --detach "$DYN_SHA"
+            git reset --hard "$DYN_SHA"
             git submodule update --init --recursive
             test "$(git rev-parse HEAD)" = "$DYN_SHA"
             test -f src/dynarmic/interface/A32/a32.h
@@ -54,6 +69,12 @@ jobs:
             echo "DYNARMIC_PVZ2_SPINLOCK_PATCH=applied"
           )
           echo "PVZ2_DYNARMIC_SOURCE_DIR=$GITHUB_WORKSPACE/.deps/dynarmic" >> "$GITHUB_ENV"
+
+      - name: Check source provenance for reusable cache
+        run: |
+          test "$(git -C .deps/dynarmic rev-parse HEAD)" = "c97c525ec1432b1e5404ebf091027738005ec168"
+          echo "PVZ2_DYNARMIC_CACHE_KEY=exact-c97c525e"
+
 
       - name: Verify KEYCONV historical Dynarmic wiring
         run: python3 tools/verify_world_key_dynarmic_compat.py
