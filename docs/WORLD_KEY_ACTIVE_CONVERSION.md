@@ -202,3 +202,27 @@ coins=7800->8800 via=SetCoins@0x1042e5ac`. User physically confirmed
    A simulated policy acceptance of 4 keys is not a physical Yeti test.
 
 Production/v170 and the read-only KEYOBS parent remain unchanged.
+
+
+## Follow-up engineering completed without new IPA — 2026-10-11
+
+- Added `tests/staging/world_key_stock_reconcile.hpp` and companion tests:
+  pure no-write planning for old keys, 0..99 stock, gate eligibility, overflow,
+  safe zero-stock no-op, and 1,000 coins per unspent key.
+- Tightened active research `WorldKeyReadOnlyStockSnapshot` checks:
+  vector bounds, COW original-world-string header/length, duplicate world
+  rejection, known world whitelist, count <=99; all fail as INVALID rather
+  than implying conversion eligibility.
+- Added repeatable exact-SHA Dynarmic source caching in the build workflow,
+  with cleanup/reset before historical iOS spinlock patching. Cache is empty
+  until the upstream git source becomes available again.
+- Updated branch-aware Dynarmic source verifier: strict expected
+  LiveContainer/c97c source in KEYCONV, legacy Applesauce/f488 only in
+  its matching build; cannot mix.
+- All isolated policy/decoder/source wiring checks PASS in
+  https://github.com/Puissantsy/PvZ2forIOS/actions/runs/38175096127
+  (33 + 7 + 26 C++ checks). No new IPA has been built; no native save
+  mutation is enabled and original production remains unchanged.
+
+User has preserved a separate six-key/last-gate iCloud profile and a 10k-coin
+iCloud profile for future device tests. They have not been shared with CI.
