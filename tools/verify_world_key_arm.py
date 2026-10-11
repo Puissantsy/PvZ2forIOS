@@ -29,6 +29,21 @@ INSTRUCTIONS = {
     0x42CE38:0xE082200B, # count increase
     0x42CE3C:0xE3520063, # cap count to 99
     0x42CE44:0xE5802004, # write new count
+    # Verified directly against the uploaded reference APK's native ELF:
+    # GetWorldKeys compares original libstdc++ COW string length via ptr-12;
+    # SpendWorldKeys consumes the same per-world vector + count.
+    0x42CC74:0xE244000C, # GetWorldKeys COW name header = chars-12
+    0x42CC78:0xE5905000, # GetWorldKeys name string length
+    0x42CEEC:0xE92D4BF0, # SpendWorldKeys native prologue
+    0x42CEF0:0xE590707C, # SpendWorldKeys vector begin at profile+0x7c
+    0x42CEF8:0xE5909080, # SpendWorldKeys vector end at profile+0x80
+    0x42CF0C:0xE245000C, # SpendWorldKeys input name chars-12
+    0x42CF10:0xE5906000, # SpendWorldKeys COW string length
+    0x42CF50:0xE0870184, # SpendWorldKeys entry stride 8
+    0x42CF60:0xE5907004, # SpendWorldKeys old stock count +4
+    0x42CF68:0xE0573008, # new count = old - requested spend
+    0x42CF70:0xD3A03000, # clamp negative result to zero
+    0x42CF74:0xE5803004, # write new count through native path
 }
 def verify(path):
     data=path.read_bytes()
