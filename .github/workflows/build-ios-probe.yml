@@ -37,7 +37,7 @@ jobs:
           if [ ! -d .deps/dynarmic/.git ]; then
             rm -rf .deps/dynarmic
             mkdir -p .deps
-            GIT_TERMINAL_PROMPT=0 git -c credential.helper= clone \\
+            GIT_TERMINAL_PROMPT=0 git -c credential.helper= clone \
               "$DYN_URL" .deps/dynarmic
           else
             echo "PVZ2_DYNARMIC_SOURCE_CACHE=HIT"
