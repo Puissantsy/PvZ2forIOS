@@ -21,6 +21,7 @@ int main() {
     auto events=DecodeNativeEventSnapshot(bytes);
     assert(events && events->size()==5);
     assert(Evaluate(2,3,*events).coins==3000);
+    assert(Evaluate(2,4,*events).coins==4000);
     bytes[4]=std::byte{2};
     events=DecodeNativeEventSnapshot(bytes);
     assert(events && Evaluate(2,3,*events).reason==Reason::GateNotOpen);
