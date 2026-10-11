@@ -99,3 +99,15 @@ cannot be built while the historical `LiveContainer/dynarmic@c97c525e`
 source is unavailable. The workflow now caches the exact historical git
 checkout after a successful fetch, checks SHA and leaves allocator unchanged;
 it does not claim a cache exists before one is actually created.
+
+
+## Latest no-IPA regression
+
+https://github.com/Puissantsy/PvZ2forIOS/actions/runs/38175743041
+passed **33** reward policy checks, **7** read-only event decoder checks and
+**37** stock settlement checks under UBSan, along with ARM tail-call and
+Dynarmic source-wiring verifications. The runtime now logs a bounded
+`KEYCONV STOCK_PROFILE` at native active-profile initialization, but the
+change has not yet been compiled to an IPA or verified on the physical iPad.
+The original APK's exact hash and the native stock/spend ARM words have
+been checked locally; native save transaction atomicity is still unknown.
