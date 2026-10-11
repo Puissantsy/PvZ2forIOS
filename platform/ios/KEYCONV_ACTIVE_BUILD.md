@@ -384,3 +384,36 @@ backed-up profile and confirm original gate/key stock readings.
 Do not activate old-stock mutations without a native transaction design and
 device evidence. Premium purchase failure has not recurred; continue
 instrumentation-only investigation instead of speculative changes.
+
+
+### Native stock ARM verification + crash-safe staged planner — 2026-10-11
+
+Original reference APK was read locally (not committed): extracted
+`libPVZ2.so` SHA256 matches the exact expected
+`f5ae581d56d5548ed18639aac19470cc67dab6a251c6cedff7cfd841e8ce0e9f`.
+Direct native disassembly confirms GetWorldKeys/SpendWorldKeys COW world
+string `chars-12` length and `profile+0x7c/+0x80` 8-byte WorldSpecificKeys
+entries; spend subtracts requested count, clamps to zero, and writes via
+native notify path. Extended `tools/verify_world_key_arm.py` with exact
+opcodes for these witnesses.
+
+Active KEYCONV now includes one-time read-only `KEYCONV STOCK_PROFILE`
+snapshot after `OfflineStoreApplyProfileEntitlements` resolves the active
+native profile. It can observe iCloud-restored surplus keys at startup
+without a new key award or gate opening. This is NOT built/tested on device.
+
+Added pure `InspectSettlement` safety classifier: NotYetApplied,
+FullyApplied, PartialKeyDebit, PartialCoinCredit, UnexpectedState,
+InvalidPlan. Partial cases never imply automatic retry. Added precise
+backup regression: Egypt=6 with one state-2 gate => noneligible; after
+native 5-key spend to Egypt=1 and all gates=3 => exactly 1000-coin plan.
+No runtime stock mutation nor host checkpoint transaction exists yet.
+
+New green policy-only CI:
+https://github.com/Puissantsy/PvZ2forIOS/actions/runs/38175743041
+- 33 award policy tests;
+- 7 native event decoder tests;
+- 37 stock-reconcile/interrupt classification tests under UBSan;
+- all related static/wiring verification steps pass.
+A new IPA still cannot be produced until exact proven Dynarmic c97c
+checkout is available/cached. Do not switch to a different allocator.
