@@ -2527,6 +2527,48 @@
         return "UNKNOWN";
     }
 
+    // Read-only witness for profile+0x7c: vector<WorldSpecificKeys>.
+    // Original ARM Get/Add/RemoveWorldKeys use an eight-byte entry:
+    // [string char pointer, u32 count]. Do not mutate legacy key stock.
+    std::string WorldKeyReadOnlyStockSnapshot(std::uint32_t profile) {
+        constexpr std::uint32_t kMaxWorldSlots=16u;
+        if (profile<kJniProbeHeapBase ||
+            static_cast<std::uint64_t>(profile-kJniProbeHeapBase)>=
+                mem.HeapCapacity() ||
+            mem.Ptr(profile+0x7cu,12u)==nullptr) {
+            return "wsk=UNKNOWN(profile)";
+        }
+        const std::uint32_t begin=mem.Read32Guest(profile+0x7cu);
+        const std::uint32_t end=mem.Read32Guest(profile+0x80u);
+        const std::uint32_t cap=mem.Read32Guest(profile+0x84u);
+        if (begin==0u && end==0u && cap==0u) return "wsk={}";
+        if (begin==0u || end<begin || cap<end ||
+            ((end-begin)%8u)!=0u || ((cap-begin)%8u)!=0u ||
+            (end-begin)/8u>kMaxWorldSlots ||
+            mem.Ptr(begin,end-begin)==nullptr) {
+            return "wsk=INVALID(vector)";
+        }
+        std::ostringstream out;
+        out << "wsk={";
+        for (std::uint32_t index=0u;index<(end-begin)/8u;++index) {
+            const std::uint32_t entry=begin+index*8u;
+            const std::uint32_t chars=mem.Read32Guest(entry);
+            const std::uint32_t count=mem.Read32Guest(entry+4u);
+            if (chars==0u || mem.Ptr(chars,1u)==nullptr || count>99u) {
+                return "wsk=INVALID(entry)";
+            }
+            const std::string world=mem.ReadCStringGuest(chars,16u);
+            if (world!="egypt" && world!="pirate" &&
+                world!="cowboy" && world!="future" && world!="dark") {
+                return "wsk=INVALID(world)";
+            }
+            if (index!=0u) out << ",";
+            out << world << ":" << count;
+        }
+        out << "}";
+        return out.str();
+    }
+
     std::string WorldKeyReadOnlyGateSnapshot(std::uint32_t profile) {
         const auto view=WorldKeyReadOnlyEvents(profile);
         if (!view) return "events=INVALID gates=UNKNOWN";
@@ -2557,6 +2599,9 @@
                 def.id,1u,*view,false);
             out << " eligible="
                 << (decision.convert() ? "YES" : "NO");
+        }
+        if (WorldKeyConversionEnabled()) {
+            out << " " << WorldKeyReadOnlyStockSnapshot(profile);
         }
         return out.str();
     }
