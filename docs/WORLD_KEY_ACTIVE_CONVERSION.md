@@ -30,7 +30,7 @@ Confirmed live events:
 branch. The read-only branch remains intact.
 
 The active mode still traps the single common `AddWorldKeys` entry at exact
-original instruction `0x42CCD0 MOV r10,r0`. For a 1..3-key award:
+original instruction `0x42CCD0 MOV r10,r0`. For a 1..4-key award (4-key source still unverified physically):
 
 1. Decode the bounded native event vector and map the original world string.
 2. Require every verified gate in Egypt/Pirate/Cowboy to have exactly one saved
@@ -167,3 +167,38 @@ Device acceptance order:
    the actual 1-key -> 1,000-coin acceptance.
 
 No visual reward remap is considered finished yet.
+
+
+## Device acceptance — 2026-10-11
+
+Physical iPad log `pvz2forios-probe(20261011-200804).log`:
+`KEYCONV GRANT_PRE sourceLR=0x10176408 tid=0 world=egypt amount=1
+coinsBefore=7800 decision=CONVERT W2={13:3,23:3,33:3,39:3,41:3}`
+followed by exactly one `KEYCONV APPLY world=egypt keys=1 coinsDelta=1000
+coins=7800->8800 via=SetCoins@0x1042e5ac`. User physically confirmed
++1000 coins with unchanged Egypt key count. Exact eligible conversion PASS.
+
+### Discovered gaps
+
+1. Previously accumulated keys are not converted: the initial active hook
+   runs only on a new AddWorldKeys invocation. Need an isolated one-time
+   native stock reconciliation after validating the full saved-key vector
+   and writing only via native notifications / save semantics, with a
+   disposable backup and idempotence. Do not blindly zero counters.
+2. Green/multi-key Yeti awards: static PresentTypeKey RTON defines amounts
+   1, 2 and 3; Yeti-specific four-key provenance is not verified.
+   The common AddWorldKeys hook sees any caller using that native function,
+   but it does not prove Yeti routes through it. The initial eligibility
+   policy rejected amounts above 3, so 4 would have preserved the keys.
+   Expanded isolated policy now accepts 4 (4000 coins if world completed),
+   while leaving >4 and historical 100-key caller paths unchanged.
+3. Experimental next build adds only a read-only, bounded
+   `profile+0x7c` WorldSpecificKeys inventory witness
+   `wsk={egypt:N,...}` to active KEYCONV reward/gate diagnostics.
+   It uses the actual native 8-byte vector record shape; neither stock
+   counters nor saves are modified. Verify stock readings physically
+   before designing migration.
+4. Future remains disabled, Dark unknown, wallet overflow fail-open.
+   A simulated policy acceptance of 4 keys is not a physical Yeti test.
+
+Production/v170 and the read-only KEYOBS parent remain unchanged.
