@@ -60,6 +60,13 @@ need("WorldKeyReadOnlyStockSnapshot" in state and
 need("WorldKeyConversionEnabled()" in state and
      "WorldKeyReadOnlyStockSnapshot(profile)" in state,
      "stock observation must be restricted to active research mode")
+need("KEYCONV STOCK_PROFILE id=" in state and
+     "WorldKeyReadOnlyGateSnapshot(profile)" in state,
+     "must snapshot stock at profile load without replaying rewards")
+need("seen_worlds" in state and
+     "chars-12u" in state and
+     "wsk=INVALID(string)" in state,
+     "COW name and duplicate world key validation missing")
 need("WorldKeyReadOnlyStockSnapshot" not in svc,
      "no key stock write or sweep may be installed before physical profile validation")
 need("original_amount" in svc and "decision.coins" in svc,
