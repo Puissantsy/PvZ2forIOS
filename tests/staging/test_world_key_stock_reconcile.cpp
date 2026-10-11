@@ -55,6 +55,25 @@ int main() {
         assert(PlanExistingWorldKeys(2,4,7800,event).reason==
                StockReason::WorldNotEligible); ++checks;
     }
+    // User's preserved backup: 6 Egypt keys, one 5-key door not yet open.
+    // The native door spends 5 -> 1; only after its native state becomes 3
+    // is the remaining key eligible for the 1,000-coin reconciliation.
+    {
+        auto pre=Gates(2u);
+        pre.back().state=2u;
+        const auto before=PlanExistingWorldKeys(2u,6u,7800u,pre);
+        assert(before.reason==StockReason::WorldNotEligible &&
+               before.keys_to_remove==0u && before.coins_after==7800u);
+        ++checks;
+        pre.back().state=3u;
+        const auto after=PlanExistingWorldKeys(2u,1u,7800u,pre);
+        assert(after.ready() && after.keys_to_remove==1u &&
+               after.coins_before==7800u && after.coins_after==8800u);
+        ++checks;
+        assert(InspectSettlement(after,0u,8800u)==
+               SettlementObservation::FullyApplied);
+        ++checks;
+    }
     // After a restart, compare persisted native stock+wallet with the plan.
     // Any partial state must stop; it must never trigger a blind retry.
     {
