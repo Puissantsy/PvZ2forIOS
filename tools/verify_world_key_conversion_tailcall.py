@@ -51,6 +51,17 @@ need("decision.convert()" in svc,
 need("KEYCONV FAIL_OPEN preserve original key" in svc and
      "regs[10]=regs[0];" in svc,
      "unsafe cases must preserve original AddWorldKeys path")
+need("key_count > 4" in policy and "1000 * key_count" in policy,
+     "bounded 1..4 conversion and exactly 1000 coins per key missing")
+need("WorldKeyReadOnlyStockSnapshot" in state and
+     "profile+0x7cu" in state and "wsk=INVALID(vector)" in state and
+     "wsk=INVALID(entry)" in state and "wsk=INVALID(world)" in state,
+     "read-only bounded WorldSpecificKeys inventory witness missing")
+need("WorldKeyConversionEnabled()" in state and
+     "WorldKeyReadOnlyStockSnapshot(profile)" in state,
+     "stock observation must be restricted to active research mode")
+need("WorldKeyReadOnlyStockSnapshot" not in svc,
+     "no key stock write or sweep may be installed before physical profile validation")
 need("original_amount" in svc and "decision.coins" in svc,
      "per-key quantity/credit data missing")
 need("regs[2]=0" not in svc,
