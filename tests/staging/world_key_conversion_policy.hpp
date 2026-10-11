@@ -49,7 +49,10 @@ inline Decision Evaluate(std::uint32_t world_id,
     if (!definition) return {Reason::UnknownWorld,0};
     if (definition->requires_activation && !future_enabled)
         return {Reason::InactiveWorld,0};
-    if (key_count == 0 || key_count > 3)
+    // Native PresentTypeKey metadata defines 1..3; a possible four-key
+    // multi-award is accepted through the same bounded AddWorldKeys ABI.
+    // Keep the historical 100-key callers outside the conversion policy.
+    if (key_count == 0 || key_count > 4)
         return {Reason::InvalidQuantity,0};
     // Whitelist has only worlds with a nonempty verified gate set.
     if (definition->gates.empty()) return {Reason::IncompleteState,0};
