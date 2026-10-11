@@ -306,3 +306,22 @@ opening under active KEYCONV:
 Gate-spend/state acceptance is PASS. The remaining functional acceptance target
 is an all-Egypt-key-gates-open disposable profile followed by a fresh real
 Egypt key award, which must skip key credit and add exactly 1,000 coins.
+
+
+### Physical eligible conversion and grouped multi-key/stock probe — 2026-10-11
+
+Physical iPad `pvz2forios-probe(20261011-200804).log` proved:
+- `KEYCONV GRANT_PRE sourceLR=0x10176408 world=egypt amount=1 coinsBefore=7800 decision=CONVERT`;
+- all Egyptian key gates `13,23,33,39,41` have native state 3;
+- `KEYCONV APPLY world=egypt keys=1 coinsDelta=1000 coins=7800->8800 via=SetCoins@0x1042e5ac`;
+- physical UI showed +1000 coins and unchanged Egypt keys.
+
+Eligible 1-key conversion is now physically PASS.
+
+A single grouped *research* follow-up:
+- support incoming 4-key AddWorldKeys awards (4,000 coins after verified completed gates); legacy >4, especially the statically catalogued 100-key callers, remain fail-open into original native award;
+- add bounded read-only `wsk={...}` stock snapshot from the original profile's WorldSpecificKeys vector at +0x7c, included in active reward/gate diagnostics;
+- do NOT migrate or write preexisting keys, since the exact live stock layout and native save/notify semantics still require device validation;
+- pure policy tests cover 4 and rejection of 5/100; static verifier enforces nonmutating stock probe.
+
+Next iPad probe: preserve the existing KEYCONV app and save; trigger a normal Egyptian key reward and check that the log shows `wsk={egypt:...}` with expected stock. No Yeti needed for testing pure 4-key policy, but live Yeti award provenance remains unproven. If logs show INVALID/UNKNOWN, do not interpret stock values or enable migration. No production changes.
