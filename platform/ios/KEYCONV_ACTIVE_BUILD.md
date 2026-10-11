@@ -342,3 +342,45 @@ failed physical device tests before first guest dispatch.
 The existing successful c97c KEYCONV IPA remains the last device-proven build.
 The four-key/stock-witness changes remain on the isolated research branch,
 UNBUILT and UNTESTED on device. Standalone policy tests may run independently.
+
+
+### Guarded stock-reconciliation policy and CI — 2026-10-11
+
+User reports a separate iCloud backup at **6 Egypt Keys with one 5-key gate
+remaining**, and another backup with **10,000 PvZCoins** for repeated premium
+purchase tests. These cloud backups are NOT embedded in this repository or
+visible to this CI, and no data migration has been attempted.
+
+Staged read-only policy `tests/staging/world_key_stock_reconcile.hpp` plans
+previously stranded keys (range 1..99) into 1000 coins each, only if all
+verified key gates for the target world are open, native saved stock is valid,
+and signed wallet addition is safe. It returns a PLAN only and never calls
+native guest functions or writes pp.dat. Unit tests exercise idempotence at
+zero stock, 1/6/99 keys, overflow, closed/duplicate/missing gates,
+unknown/future worlds, and invalid 100-key stock.
+
+Bounded KEYCONV inventory logs now validate native COW string size headers at
+char pointer -12, readable count, bounded string memory, and reject duplicate
+world entries rather than giving a misleading stock snapshot.
+
+Exact historical Dynarmic dependency is now cached by immutable SHA through
+actions/cache@v4. The source cache will be seeded on the NEXT successful
+checkout, not retroactively; current Dynarmic upstream 404 can still block
+the first restored build. Git reset to pinned SHA removes previous spinlock
+patch from a restored cache before fresh application. No alternate backend
+is introduced.
+
+Standalone CI is green:
+https://github.com/Puissantsy/PvZ2forIOS/actions/runs/38175096127
+- 33 key-award policy assertions;
+- 7 read-only native event-view assertions;
+- 26 pure existing-stock reconciliation assertions;
+- source-wiring/ARM tail-call/fail-open/save-isolation checks all pass.
+This does NOT prove actual native stock mutation or device behavior.
+The working prior KEYCONV IPA remains the recommended device installation.
+
+The first future device validation must inspect `wsk={...}` on a verified
+backed-up profile and confirm original gate/key stock readings.
+Do not activate old-stock mutations without a native transaction design and
+device evidence. Premium purchase failure has not recurred; continue
+instrumentation-only investigation instead of speculative changes.
