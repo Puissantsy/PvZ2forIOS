@@ -2527,9 +2527,10 @@
         return "UNKNOWN";
     }
 
-    // Read-only witness for profile+0x7c: vector<WorldSpecificKeys>.
-    // Original ARM Get/Add/RemoveWorldKeys use an eight-byte entry:
-    // [string char pointer, u32 count]. Do not mutate legacy key stock.
+    // Read-only native profile+0x7c WorldSpecificKeys vector witness.
+    // Each native entry is [COW char pointer (header at -12), u32 count].
+    // Never write a guest address. Invalid/ambiguous data is not eligible
+    // for any future stock reconciliation.
     std::string WorldKeyReadOnlyStockSnapshot(std::uint32_t profile) {
         constexpr std::uint32_t kMaxWorldSlots=16u;
         if (profile<kJniProbeHeapBase ||
@@ -2545,23 +2546,37 @@
         if (begin==0u || end<begin || cap<end ||
             ((end-begin)%8u)!=0u || ((cap-begin)%8u)!=0u ||
             (end-begin)/8u>kMaxWorldSlots ||
-            mem.Ptr(begin,end-begin)==nullptr) {
+            (end!=begin && mem.Ptr(begin,end-begin)==nullptr)) {
             return "wsk=INVALID(vector)";
         }
         std::ostringstream out;
+        std::uint32_t seen_worlds=0u;
         out << "wsk={";
         for (std::uint32_t index=0u;index<(end-begin)/8u;++index) {
             const std::uint32_t entry=begin+index*8u;
             const std::uint32_t chars=mem.Read32Guest(entry);
             const std::uint32_t count=mem.Read32Guest(entry+4u);
-            if (chars==0u || mem.Ptr(chars,1u)==nullptr || count>99u) {
+            if (chars<12u || mem.Ptr(chars-12u,4u)==nullptr ||
+                count>99u) {
                 return "wsk=INVALID(entry)";
             }
-            const std::string world=mem.ReadCStringGuest(chars,16u);
-            if (world!="egypt" && world!="pirate" &&
-                world!="cowboy" && world!="future" && world!="dark") {
+            const std::uint32_t len=mem.Read32Guest(chars-12u);
+            if (len==0u || len>16u ||
+                mem.Ptr(chars,len+1u)==nullptr) {
+                return "wsk=INVALID(string)";
+            }
+            const std::string world=mem.ReadCStringGuest(chars,len+1u);
+            if (world.size()!=len) return "wsk=INVALID(string)";
+            const std::uint32_t flag=
+                world=="egypt" ? 1u :
+                world=="pirate" ? 2u :
+                world=="cowboy" ? 4u :
+                world=="future" ? 8u :
+                world=="dark" ? 16u : 0u;
+            if (flag==0u || (seen_worlds&flag)!=0u) {
                 return "wsk=INVALID(world)";
             }
+            seen_worlds|=flag;
             if (index!=0u) out << ",";
             out << world << ":" << count;
         }
