@@ -55,6 +55,27 @@ int main() {
         assert(PlanExistingWorldKeys(2,4,7800,event).reason==
                StockReason::WorldNotEligible); ++checks;
     }
+    // After a restart, compare persisted native stock+wallet with the plan.
+    // Any partial state must stop; it must never trigger a blind retry.
+    {
+        const auto p=PlanExistingWorldKeys(2u,6u,10000u,Gates(2u));
+        assert(p.ready() && p.coins_after==16000u); ++checks;
+        assert(InspectSettlement(p,6u,10000u)==
+               SettlementObservation::NotYetApplied); ++checks;
+        assert(InspectSettlement(p,0u,16000u)==
+               SettlementObservation::FullyApplied); ++checks;
+        assert(InspectSettlement(p,0u,10000u)==
+               SettlementObservation::PartialKeyDebit); ++checks;
+        assert(InspectSettlement(p,6u,16000u)==
+               SettlementObservation::PartialCoinCredit); ++checks;
+        assert(InspectSettlement(p,3u,13000u)==
+               SettlementObservation::UnexpectedState); ++checks;
+        assert(InspectSettlement(p,6u,14000u)==
+               SettlementObservation::UnexpectedState); ++checks;
+        const auto zero=PlanExistingWorldKeys(2u,0u,10000u,Gates(2u));
+        assert(InspectSettlement(zero,0u,10000u)==
+               SettlementObservation::InvalidPlan); ++checks;
+    }
     std::cout << "PASS: " << checks <<
         " pure existing-key reconciliation policy checks (zero writes)\n";
 }
