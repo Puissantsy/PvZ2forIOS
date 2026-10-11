@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Static CI wiring checks for the exact public iOS Dynarmic source dependency."""
+"""Static CI wiring checks for the pinned Dynarmic source dependency.
+
+Production historically used Applesauce f488; KEYCONV now strictly requires the
+device-proven LiveContainer c97c with the original iOS spinlock patch.
+Do not accept an unpinned or mixed backend in either mode.
+"""
 from pathlib import Path
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -10,22 +15,40 @@ def need(ok,msg):
     if not ok:
         raise AssertionError(msg)
 
-URL="https://github.com/johnny901901901/dynarmic.git"
-SHA="f488f760c69c42a97331961e8e6c359b46ccc9e9"
+old_url="https://github.com/johnny901901901/dynarmic.git"
+old_sha="f488f760c69c42a97331961e8e6c359b46ccc9e9"
+proven_url="https://github.com/LiveContainer/dynarmic.git"
+proven_sha="c97c525ec1432b1e5404ebf091027738005ec168"
+if proven_url in workflow:
+    need(proven_sha in workflow and old_url not in workflow,
+         "KEYCONV must pin only physically proven LiveContainer c97c")
+    need('git reset --hard "$DYN_SHA"' in workflow,
+         "cached historical source must be reset before patching")
+    need("actions/cache@v4" in workflow and proven_sha+"-v1" in workflow,
+         "immutable historical checkout must be cached under exact SHA")
+    need('git apply --check "$GITHUB_WORKSPACE/platform/ios/patches/dynarmic-ios-nontxm.patch"' in workflow and
+         'git apply "$GITHUB_WORKSPACE/platform/ios/patches/dynarmic-ios-nontxm.patch"' in workflow,
+         "historical iOS spinlock patch is missing")
+    need("m_xmem = (std::uint32_t\\*)mmap(nullptr, size, PROT_READ | PROT_EXEC" in workflow and
+         "vm_remap(mach_task_self(), &wmem" in workflow and
+         "mprotect(m_wmem, size, PROT_READ | PROT_WRITE)" in workflow and
+         "if (DeviceHasTXM())" in workflow and
+         "JIT26PrepareRegion(m_xmem, m_size)" in workflow,
+         "historical RX-first dual-map/TXM allocator signatures missing")
+    source_name="verified LiveContainer c97c native allocator"
+else:
+    need(old_url in workflow and old_sha in workflow,
+         "production must pin the exact public Applesauce Dynarmic gitlink")
+    need("TARGET_OS_IPHONE" in workflow and "__atomic_exchange_n" in workflow,
+         "production must assert proven iOS spin-lock implementation")
+    source_name="verified Applesauce f488 public gitlink"
 
-need(URL in workflow and SHA in workflow,
-     "build workflow must pin the exact public Applesauce Dynarmic gitlink")
 need('git submodule update --init --recursive' in workflow,
      "Dynarmic bundled externals must be materialized before CMake")
 need('test "$(git rev-parse HEAD)" = "$DYN_SHA"' in workflow,
      "workflow must verify exact Dynarmic revision")
-need("TARGET_OS_IPHONE" in workflow and "__atomic_exchange_n" in workflow,
-     "workflow must assert the proven iOS spin-lock implementation")
 need('-DPVZ2_DYNARMIC_SOURCE_DIR="$PVZ2_DYNARMIC_SOURCE_DIR"' in workflow,
      "CMake must receive the staged exact source directory")
-need("PVZ2_PREBUILT_DYNARMIC_ROOT=\"$PVZ2_DYNARMIC_ROOT\"" not in workflow,
-     "dead LiveExec32 prebuilt path still drives CI")
-
 need('set(PVZ2_DYNARMIC_SOURCE_DIR "" CACHE PATH' in cmake,
      "CMake staged-source cache variable missing")
 need("elseif(PVZ2_DYNARMIC_SOURCE_DIR)" in cmake,
@@ -40,4 +63,4 @@ need('set(DYNARMIC_FRONTENDS "A32"' in cmake and
      'set(DYNARMIC_USE_BUNDLED_EXTERNALS ON' in cmake and
      'set(DYNARMIC_USE_LLVM OFF' in cmake,
      "PvZ2's known Dynarmic configuration was not preserved")
-print("PASS: exact public Applesauce iOS Dynarmic gitlink is pinned, recursively staged and wired into CMake source build")
+print("PASS: "+source_name+" is pinned, recursively staged and wired into CMake")
