@@ -325,3 +325,20 @@ A single grouped *research* follow-up:
 - pure policy tests cover 4 and rejection of 5/100; static verifier enforces nonmutating stock probe.
 
 Next iPad probe: preserve the existing KEYCONV app and save; trigger a normal Egyptian key reward and check that the log shows `wsk={egypt:...}` with expected stock. No Yeti needed for testing pure 4-key policy, but live Yeti award provenance remains unproven. If logs show INVALID/UNKNOWN, do not interpret stock values or enable migration. No production changes.
+
+
+### Build blocked by historical dependency availability — 2026-10-11
+
+Single grouped build attempt: https://github.com/Puissantsy/PvZ2forIOS/actions/runs/38171726047
+on source `c1b71edf54b883c822f4aeb00d96e9c2fd4f407f`.
+GitHub Actions failed in `Checkout exact proven LiveContainer Dynarmic revision`
+BEFORE source verification, CMake configuration or compilation.
+Git printed `fatal: could not read Username for 'https://github.com':
+terminal prompts disabled` while cloning
+`https://github.com/LiveContainer/dynarmic.git`.
+The original repository/commit now returns 404 via GitHub API again.
+No new IPA was produced. Do not fall back to f488: that alternate allocator
+failed physical device tests before first guest dispatch.
+The existing successful c97c KEYCONV IPA remains the last device-proven build.
+The four-key/stock-witness changes remain on the isolated research branch,
+UNBUILT and UNTESTED on device. Standalone policy tests may run independently.
