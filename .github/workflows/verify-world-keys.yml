@@ -34,7 +34,7 @@ jobs:
           /tmp/world_key_event_test
       - name: Compile and test read-only existing-world-key reconciliation plans
         run: |
-          clang++ -std=c++20 -O2 -Wall -Wextra -Werror -pedantic -Itests/staging tests/staging/test_world_key_stock_reconcile.cpp -o /tmp/world_key_stock_test
+          clang++ -std=c++20 -O2 -Wall -Wextra -Werror -pedantic -fsanitize=undefined -fno-sanitize-recover=all -Itests/staging tests/staging/test_world_key_stock_reconcile.cpp -o /tmp/world_key_stock_test
           /tmp/world_key_stock_test
       - name: Python syntax check (exact ELF stays private)
         run: |
