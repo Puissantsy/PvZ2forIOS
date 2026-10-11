@@ -13,7 +13,7 @@ static std::vector<WorldEvent> AllOpen(unsigned id) {
 int main() {
     unsigned checks = 0;
     for (unsigned world : {2u,3u,4u}) {
-        for (unsigned qty : {1u,2u,3u}) {
+        for (unsigned qty : {1u,2u,3u,4u}) {
             const auto result = Evaluate(world,qty,AllOpen(world));
             assert(result.convert() && result.coins == qty*1000);
             ++checks;
@@ -28,7 +28,9 @@ int main() {
         auto events=AllOpen(2);
         assert(Evaluate(77,1,events).reason==Reason::UnknownWorld); ++checks;
         assert(Evaluate(2,0,events).reason==Reason::InvalidQuantity); ++checks;
-        assert(Evaluate(2,4,events).reason==Reason::InvalidQuantity); ++checks;
+        assert(Evaluate(2,4,events).coins==4000); ++checks;
+        assert(Evaluate(2,5,events).reason==Reason::InvalidQuantity); ++checks;
+        assert(Evaluate(2,100,events).reason==Reason::InvalidQuantity); ++checks;
         events[0].state=1;
         assert(Evaluate(2,1,events).reason==Reason::GateNotOpen); ++checks;
         events[0].state=2;
@@ -47,6 +49,8 @@ int main() {
     {
         auto p=PlanCoinCredit(680,1000);
         assert(p.apply && p.after==1680); ++checks;
+        p=PlanCoinCredit(680,4000);
+        assert(p.apply && p.after==4680); ++checks;
         p=PlanCoinCredit(680,3000);
         assert(p.apply && p.after==3680); ++checks;
         p=PlanCoinCredit(kMaxSignedCoins-999,1000);
