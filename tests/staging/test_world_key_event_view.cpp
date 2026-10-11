@@ -29,5 +29,5 @@ int main() {
     assert(!DecodeNativeEventSnapshot(bytes));
     bytes.resize((kMaxNativeEvents+1)*kNativeEventStride);
     assert(!DecodeNativeEventSnapshot(bytes));
-    std::cout << "PASS: 6 native event-view checks\n";
+    std::cout << "PASS: 7 native event-view checks\n";
 }
