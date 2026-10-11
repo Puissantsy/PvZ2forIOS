@@ -35,6 +35,7 @@ int main() {
         assert(Evaluate(2,1,events).reason==Reason::GateNotOpen); ++checks;
         events[0].state=2;
         assert(Evaluate(2,1,events).reason==Reason::GateNotOpen); ++checks;
+        assert(Evaluate(2,4,events).reason==Reason::GateNotOpen); ++checks;
         events[0].state=4;
         assert(Evaluate(2,3,events).coins==3000); ++checks;
         events.pop_back();
