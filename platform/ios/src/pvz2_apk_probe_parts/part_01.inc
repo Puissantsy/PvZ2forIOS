@@ -2948,6 +2948,17 @@
         offline_store_last_profile_id = profile_id;
         offline_store_last_profile_ptr = profile;
 
+        // The native profile was already resolved by GetCurrentProfile.
+        // KEYCONV must observe legacy stock without waiting for another award.
+        // Logging only after a successful one-time profile entitlement apply
+        // avoids per-frame expensive scans and never changes save contents.
+        if (WorldKeyConversionEnabled()) {
+            AppendDiagnostic(
+                "KEYCONV STOCK_PROFILE id=" +
+                std::to_string(profile_id) +
+                " " + WorldKeyReadOnlyGateSnapshot(profile));
+        }
+
         Append(
             "OFFLINE STORE PROFILE APPLY id=" +
             std::to_string(profile_id) +
