@@ -76,6 +76,10 @@ jobs:
         run: python3 -m unittest discover -s tests/staging -p test_keyconv_prelaunch.py -v
       - name: Test native C++20 exact RTON token parity (synthetic only)
         run: python3 -m unittest discover -s tests/staging -p test_keyconv_rton_native.py -v
+      - name: Compile and test native C++20 paired profile converter (synthetic only)
+        run: |
+          clang++ -std=c++20 -O1 -Wall -Wextra -Werror -pedantic -fsanitize=undefined -fno-sanitize-recover=all -Itests/staging tests/staging/test_world_key_rton_native_pair.cpp -o /tmp/keyconv_native_pair_test
+          /tmp/keyconv_native_pair_test
       - name: Verify nonempty-key ABI and divergent snapshot export isolation
         run: python3 tools/verify_keyconv_offline_export.py
       - name: Python syntax check (exact ELF stays private)
