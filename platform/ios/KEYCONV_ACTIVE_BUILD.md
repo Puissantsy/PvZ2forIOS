@@ -513,3 +513,44 @@ device-proven KEYCONV IPA is currently suitable for physical testing.
 
 Full next-device acceptance plan:
 `docs/WORLD_KEY_WRITESET_PROBE.md`.
+
+
+### October 12 — offline native RTON save-edit research route
+
+The original October 1 user save snapshots were analyzed LOCALLY,
+without committing their private contents. Original PlayerInfo saved
+objects are RTON with `objdata.c` (coins), `objdata.wsk` (world
+keys), `objdata.wm` (gate event state) and `objdata.i` (native
+profile index). Both archives contain byte-identical pp.dat and
+snapshot2.dat; their snapshot-info.plist SHA-256 inventories pass (9/9
+and 10/10). `local_profiles` also contains the corresponding
+PlayerInfoLocalSaveData ProfileIndex for each saved player slot.
+
+Added:
+- `tools/inspect_pvz2_rton_save.py`: read-only RTON parser + manifest
+  SHA-256 verifier, no player names/UIDs in emitted JSON;
+- `tools/experimental_keyconv_rton_memory.py`: pure exact numeric-token
+  mutation in memory only, only for all-open Egyptian gates, with full
+  post-edit reparse/structural diff and signed-wallet overflow guards;
+- `tools/experimental_keyconv_rton_archive.py`: **explicitly opted-in
+  disposable-output ZIP experiment only**, never overwrites source,
+  requires identical profile mirror, valid inventory and matching
+  PlayerInfo.i / local_profiles.ProfileIndex, refreshes both RTON
+  profile images and their manifest checksums, verifies the output;
+- isolated tests `test_readonly_rton_save.py`,
+  `test_keyconv_rton_memory.py`,
+  `test_keyconv_rton_archive.py`.
+
+Green CI:
+https://github.com/Puissantsy/PvZ2forIOS/actions/runs/38212259281
+197 C++ checks + 23 read-only Python + 9 in-memory token edits
++ 10 disposable ZIP tests = **239 checks** plus static safeguards.
+
+IMPORTANT: neither original private snapshot contains a NONEMPTY wsk,
+so the actual live six-key world-vector serialized schema is still
+unproven. The experimental archive **must not be imported into a
+primary profile** until a disposable backed-up real world-key
+sample and actual iPad save restore/restart verification pass.
+The stable iPad app is unchanged. This offline research does NOT remove
+the historical Dynarmic c97c source 404 for future IPA builds.
+See `docs/WORLD_KEY_OFFLINE_RTON_INSPECTOR.md`.
