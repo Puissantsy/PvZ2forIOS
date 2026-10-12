@@ -188,8 +188,77 @@ Future KEYCONV research-only iOS control flow:
    ambiguous save. Continue to JIT/guest launch only on clean recovery,
    no-op or completed atomic settlement.
 
-**Remaining hard blocker before iOS activation:** an iOS-compilable,
-SHA-256-based crash-journal and its filesystem/kill/recovery tests still
-need implementing. The existing C++ SaveBundleJournal fixture uses FNV-1a
-and is **not production-ready**. The new C++ token converter is purely
-in-memory; it must not be confused with a complete atomic migration.
+**Status update:** a SHA-256-based, stopped-guest **research-only C++20
+journal** now exists under `tests/staging/world_key_prelaunch_native.hpp`.
+Its synthetic file-system crash/recovery tests run on Linux and macOS;
+the same source is syntax-checked for iPadOS arm64. It is still **NOT linked**
+into the iOS runtime or proven power-loss-atomic on iPad. The older
+`SaveBundleJournal` uses FNV-1a and remains research-only; do not substitute
+it for the new journal. The remaining blocker is the controlled native iOS
+prelaunch integration, opt-in UI, recovery-before-restore barrier and real
+iPad failure injection.
+
+
+## Native SHA-256 transaction with Apple toolchain gate — 2026-10-12
+
+The branch now stages the platform-neutral journal
+`tests/staging/world_key_prelaunch_native.hpp` and synthetic fault tests
+`tests/staging/test_world_key_prelaunch_native.cpp`. These are NOT
+included in `platform/ios/CMakeLists.txt` and cannot mutate a real app.
+
+The native flow uses the existing tested C++20 exact-token RTON pairing
+planner and an explicit **stopped guest + research opt-in** gate. It
+checks the `local_profiles` native ID, preserves distinct primary/fallback
+coin balances, stages both before/after bytes in a separate journal directory
+OUTSIDE `UserData`, verifies SHA-256/lengths and uses exclusive create,
+`fsync`, same-volume `rename` and parent-directory sync. A durable commit
+marker appears only after both new images have been re-read and checked.
+
+Recovery refuses missing/mismatched registry identity, symlinks, unknown
+journal files, tampered old/new images, and concurrent/unexpected saves.
+With no commit marker it restores BOTH old images; with a verified commit
+marker it preserves BOTH new images. Partial cleanups resume from
+`.done`. An interrupted recovery does **not** automatically start another
+conversion in that same launch; an explicit later clean-start attempt is
+required. On first installation without `UserData`, an empty journal
+correctly yields `NoJournal` before any restore prompt.
+
+**Security limitation:** SHA-256 checks here detect byte corruption,
+not hostile rewriting of both an image and its unauthenticated manifest.
+This is a stopped-process, single-sandbox research protocol; without
+a verified startup lock and real iOS-kill tests it does NOT guarantee
+atomicity against simultaneous guest writes, hostile filesystem actors
+or device power failure.
+
+### Apple-specific crash found and repaired
+
+Adding a macOS native smoke job exposed a real AddressSanitizer
+**heap-use-after-free** inside the RTON nested array decoding path during
+`ConvertEgypt`. The failing frame was the vector's element relocation
+when parsing a nested array; the subsequent complete Value-tree copy
+reached stale storage. `Reader::Read` now preallocates bounded array
+storage using the parser-verified element count. The guarded converter
+then completed the same crash suite with Apple AddressSanitizer/UBSan.
+
+### Green cross-platform checks
+
+- GitHub Actions: https://github.com/Puissantsy/PvZ2forIOS/actions/runs/38239442677
+- Ubuntu: complete existing world-key/RTON tests and the native SHA-256
+  filesystem crash test under AddressSanitizer and UBSan.
+- macOS 15 (Apple arm64): same native recovery/transaction test with
+  CommonCrypto SHA-256 under AddressSanitizer and UBSan.
+- Xcode iPhoneOS SDK: `clang++ -fsyntax-only` targeting
+  `arm64-apple-ios17.4` succeeded, without any link/app/IPA build.
+- Existing real-iPad offline ZIP conversion still validated separately;
+  this new native journal has NOT run on the iPad.
+
+### Next research-only integration batch
+
+Before changing `platform/ios`: specify a journal-recovery gate that
+runs once before **any** v165 restore prompt, a distinct
+post-restore/pre-guest explicit opt-in for migration, a mandatory successful
+verified prelaunch backup, strict selected-profile confirmation, and
+fail-closed startup UI on conflicts. Confirm all guest/JNI/V128 threads
+remain stopped through the whole transaction. Only then stage an iOS
+adapter and its source-wiring tests. Do not trigger multiple IPA builds:
+consolidate all changes and build the research IPA once after CI checks.
