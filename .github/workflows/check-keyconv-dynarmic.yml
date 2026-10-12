@@ -1,0 +1,59 @@
+name: Recover exact validated Dynarmic source (no IPA)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [research/world-key-conversion-active]
+    paths:
+      - ".github/workflows/check-keyconv-dynarmic.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  recover-source:
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore immutable source cache
+        id: verified-source-cache
+        uses: actions/cache@v4
+        with:
+          path: .deps/dynarmic
+          key: ${{ runner.os }}-pvz2-livecontainer-dynarmic-c97c525ec1432b1e5404ebf091027738005ec168-v1
+
+      - name: Verify exact historical source without building an IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL="https://github.com/LiveContainer/dynarmic.git"
+          SHA="c97c525ec1432b1e5404ebf091027738005ec168"
+          if [ ! -d .deps/dynarmic/.git ]; then
+            mkdir -p .deps
+            echo "DYNARMIC_SOURCE_CACHE=MISS; anonymous probe of exact remote"
+            # Fail clearly and quickly if the upstream is private or missing.
+            GIT_TERMINAL_PROMPT=0 timeout 90 git -c credential.helper= \
+              ls-remote "$URL" HEAD
+            GIT_TERMINAL_PROMPT=0 timeout 300 git -c credential.helper= \
+              clone "$URL" .deps/dynarmic
+          else
+            echo "DYNARMIC_SOURCE_CACHE=HIT"
+          fi
+          (
+            cd .deps/dynarmic
+            git checkout --detach "$SHA"
+            git reset --hard "$SHA"
+            git submodule update --init --recursive
+            test "$(git rev-parse HEAD)" = "$SHA"
+            test -f src/dynarmic/interface/A32/a32.h
+            test -f src/dynarmic/interface/A32/config.h
+            DUAL=externals/oaknut/include/oaknut/dual_code_block.hpp
+            test -f "$DUAL"
+            grep -Fq 'vm_remap(mach_task_self(), &wmem' "$DUAL"
+            grep -Fq 'if (DeviceHasTXM())' "$DUAL"
+            grep -Fq 'JIT26PrepareRegion(m_xmem, m_size)' "$DUAL"
+            git apply --check "$GITHUB_WORKSPACE/platform/ios/patches/dynarmic-ios-nontxm.patch"
+            echo "DYNARMIC_EXACT_SOURCE_VERIFIED=$SHA"
+            echo "DYNARMIC_UPSTREAM_SOURCE_CACHE=READY"
+          )
