@@ -311,3 +311,29 @@ single-session success as full persistence acceptance.
 
 No iOS binary, production branch, private archive, save bytes, profile
 identifiers or device paths were published or changed as part of this note.
+
+## Physical iPad cold-start acceptance — 2026-10-12 (PASS)
+
+The user explicitly **force-quit/reopened the isolated research IPA after the
+disposable restore**, without importing the experimental save again, and
+reported the exact same game-visible values: **0 Egyptian keys** and **10,010
+PvZCoins** (original 9,010 plus exactly 1,000). This complements the prior
+world-map screenshot and single-session FULLLOAD log.
+
+**Validated on a physical iPad:** the independent offline RTON patches to
+`pp.dat` and `snapshot2.dat` can be restored by the existing research app,
+are accepted by the original game, and preserve the intended key/coin result
+through an ordinary cold process restart, with no repeated +1,000 credit in
+that restart. This is **not** a validation of a live, automatic native guest
+migration, of interrupted write/recovery atomicity, or of every unrelated
+progression field. No second-restart diagnostic log or post-restart archive was
+required/provided for the game-visible check.
+
+**Next engineering gate:** implement an *opt-in, research-only* pre-guest-load
+host migration path which inspects exact native profile identity, original
+RTON save pair and all native gate states; never merge divergent `pp.dat`/
+`snapshot2.dat` by copying one onto the other; settle keys/coins with
+durably journaled **bundle** replacement and fail closed on ambiguity or
+crash interruption; then run interrupted-process and same-profile/no-repeat
+acceptance on disposable data. The currently successful research IPA and
+production app remain unchanged; no additional iOS build for this validation.
