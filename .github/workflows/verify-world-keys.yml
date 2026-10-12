@@ -80,6 +80,10 @@ jobs:
         run: |
           clang++ -std=c++20 -O1 -Wall -Wextra -Werror -pedantic -fsanitize=undefined -fno-sanitize-recover=all -Itests/staging tests/staging/test_world_key_rton_native_pair.cpp -o /tmp/keyconv_native_pair_test
           /tmp/keyconv_native_pair_test
+      - name: Compile and crash-test stopped-guest native SHA-256 two-image journal (no IPA)
+        run: |
+          clang++ -std=c++20 -O1 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined -fno-sanitize-recover=all -Itests/staging tests/staging/test_world_key_prelaunch_native.cpp -lcrypto -o /tmp/keyconv_native_prelaunch
+          /tmp/keyconv_native_prelaunch
       - name: Verify nonempty-key ABI and divergent snapshot export isolation
         run: python3 tools/verify_keyconv_offline_export.py
       - name: Python syntax check (exact ELF stays private)
