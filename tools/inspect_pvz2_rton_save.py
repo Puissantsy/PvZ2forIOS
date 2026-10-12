@@ -283,6 +283,53 @@ def inspect_snapshot_manifest(archive, pp_path):
     return {"status": "VERIFIED", "file_count": len(seen)}
 
 
+
+def preview_legacy_key_recycle(player, verified_backup):
+    """PREVIEW ONLY: never changes the native key or coin balance.
+
+    The world-key vector layout of a real nonempty iCloud backup has not
+    yet been device-validated. A nonempty vector can only produce a
+    hypothetical candidate, never an automatic patch.
+    """
+    result = {"status": "NO_CONVERSION", "would_add_coins": 0,
+              "would_consume_keys": 0, "preview_only": True}
+    if not verified_backup:
+        result["status"] = "UNVERIFIED_BACKUP"
+        return result
+    coins = player.get("coins")
+    keys = player.get("world_keys", {})
+    gates = player.get("gates", {})
+    if type(coins) is not int or not 0 <= coins <= 0x7fffffff:
+        result["status"] = "INVALID_WALLET"
+        return result
+    if keys.get("status") == "empty":
+        return result
+    if keys.get("status") != "observed_unvalidated_schema":
+        result["status"] = "UNCONFIRMED_KEY_SCHEMA"
+        return result
+    by_world = {"egypt": "2", "pirate": "3", "cowboy": "4"}
+    candidate = []
+    for entry in keys["entries"]:
+        world = entry["world"]
+        count = entry["keys"]
+        if (world in by_world and count > 0 and
+                gates.get(by_world[world], {}).get("all_open") is True):
+            candidate.append((world, count))
+    total_keys = sum(count for _, count in candidate)
+    if not total_keys:
+        return result
+    total_coins = total_keys * 1000
+    if total_coins > 0x7fffffff - coins:
+        result["status"] = "WALLET_OVERFLOW"
+        return result
+    return {"status": "CANDIDATE_REQUIRES_REAL_KEY_SCHEMA_VALIDATION",
+            "would_add_coins": total_coins,
+            "would_consume_keys": total_keys,
+            "coins_after_if_confirmed": coins + total_coins,
+            "candidate_worlds": [world for world, _ in candidate],
+            "preview_only": True}
+
+
 def inspect_archive(path):
     with zipfile.ZipFile(path) as archive:
         matches = [info for info in archive.infolist()
@@ -307,6 +354,13 @@ def inspect_archive(path):
         result = summarize_player_save(pp)
         result["snapshot2_comparison"] = mirror
         result["manifest"] = manifest
+        # A candidate still requires a real nonempty 'wsk' differential and
+        # dedicated disposable-profile acceptance on the physical iPad.
+        trusted = (mirror == "IDENTICAL" and
+                   manifest["status"] == "VERIFIED")
+        for player in result["players"]:
+            player["legacy_recycle_preview"] = preview_legacy_key_recycle(
+                player, trusted)
         result["read_only"] = True
         return result
 
