@@ -95,3 +95,34 @@ The Dynarmic historical source `LiveContainer/dynarmic@c97c525e`
 is still not accessible via the current GitHub API, and the previous
 successful IPA artifact contains neither that source nor its build
 tree. No iOS IPA build was attempted with a substituted backend.
+
+
+## Latest accepted research CI — 2026-10-12
+
+GitHub Actions (no IPA):
+https://github.com/Puissantsy/PvZ2forIOS/actions/runs/38208306965
+
+All 180 unit checks PASS:
+- key award policy 33; gate vector 7; native stock decoder 13;
+- stock reconciliation/restart classification 37;
+- single-save journal 31; **three-file bundle** journal 59.
+
+The 59 multi-file checks specifically include:
+- crash after each of three file replacements;
+- interruption while rolling back an incomplete transaction, followed
+  by a second successful recovery;
+- interrupted Prepare before publication of a manifest (no original
+  files touched);
+- valid committed marker surviving interruption before cleanup;
+- corrupt marker or target checkpoint fail closed;
+- concurrent/unexpected file changes and cross-profile recovery refused;
+- path traversal, duplicate names and unexpected journal files refused.
+
+The test uses three synthetic files named `pp.dat`, `snapshot2.dat` and
+`local_profiles`, not the user's real saves. AddressSanitizer/UBSan
+are enabled; results establish the host file-journal implementation's
+test behavior, not full PvZ2 guest/native save atomicity.
+
+`tools/verify_world_key_save_isolation.py` also PASSES: the V128
+per-file path remains intact and the experimental save journals are
+not included by `pvz2_apk_probe.cpp` or other live iOS sources.
