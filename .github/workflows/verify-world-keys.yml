@@ -48,6 +48,10 @@ jobs:
         run: |
           clang++ -std=c++20 -O2 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined -fno-sanitize-recover=all -Itests/staging tests/staging/test_world_key_save_bundle_journal.cpp -o /tmp/world_key_save_bundle_test
           /tmp/world_key_save_bundle_test
+      - name: Test exact KEYCONV native profile file write-set whitelist
+        run: |
+          clang++ -std=c++20 -O2 -Wall -Wextra -Werror -pedantic -fsanitize=undefined -fno-sanitize-recover=all -Itests/staging tests/staging/test_world_key_save_write_observer.cpp -o /tmp/keyconv_v128_path_test
+          /tmp/keyconv_v128_path_test
       - name: Python syntax check (exact ELF stays private)
         run: |
           python3 -m py_compile tools/verify_world_key_arm.py tools/verify_world_key_award_coverage.py tools/verify_world_key_probe_wiring.py tools/verify_world_key_conversion_tailcall.py
@@ -61,5 +65,7 @@ jobs:
         run: python3 tools/verify_ios_dynarmic_wiring.py
       - name: Verify unproven multi-file journal is NOT wired to live iOS runtime
         run: python3 tools/verify_world_key_save_isolation.py
+      - name: Verify KEYCONV native save V128 observer isolation
+        run: python3 tools/verify_world_key_v128_observer.py
       - name: Check KEYCONV callback-memory startup fallback (no IPA)
         run: python3 tools/verify_world_key_dynarmic_compat.py
