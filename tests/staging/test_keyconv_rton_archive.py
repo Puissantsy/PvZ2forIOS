@@ -105,11 +105,23 @@ class DisposableRtonArchiveTests(unittest.TestCase):
             build_disposable_copy(self.before, self.after, 0)
         self.assertFalse(self.after.exists())
 
-    def test_different_snapshot_mirror_fails(self):
+    def test_divergent_snapshot_patched_independently(self):
         synthetic_zip(self.before, mirror_matches=False)
-        with self.assertRaisesRegex(RtonError, "non-identical"):
-            build_disposable_copy(self.before, self.after, 0)
-        self.assertFalse(self.after.exists())
+        original = self.before.read_bytes()
+        result = build_disposable_copy(self.before, self.after, 0)
+        self.assertEqual(result["coins_after"], 8800)
+        self.assertEqual(result["fallback_coins_after"], 8801)
+        self.assertEqual(self.before.read_bytes(), original)
+        self.assertEqual(inspect_archive(self.after)["snapshot2_comparison"],
+                         "DIFFERENT")
+        with zipfile.ZipFile(self.after) as z:
+            from inspect_pvz2_rton_save import RtonReader
+            snap = RtonReader(z.read(PREFIX+"snapshot2.dat")).decode()
+            pp = RtonReader(z.read(PREFIX+"pp.dat")).decode()
+            self.assertEqual(snap["objects"][0]["objdata"]["c"], 8801)
+            self.assertEqual(pp["objects"][0]["objdata"]["c"], 8800)
+            self.assertEqual(snap["objects"][0]["objdata"]["wsk"][0]["kc"], 0)
+            self.assertEqual(pp["objects"][0]["objdata"]["wsk"][0]["kc"], 0)
 
     def test_mismatched_native_local_profile_identity_refused(self):
         synthetic_zip(self.before, local_profile_index=1790861460)
