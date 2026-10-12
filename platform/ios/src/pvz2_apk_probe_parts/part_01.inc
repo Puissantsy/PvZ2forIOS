@@ -3160,13 +3160,7 @@
     std::uint64_t keyconv_v128_profile_flush_ns = 0u;
     std::uint64_t keyconv_v128_profile_flush_max_ns = 0u;
     static bool KeyconvV128ProfilePath(const std::string& path) {
-        static const std::string base="/No_Backup/";
-        const auto pos=path.rfind(base);
-        if(pos==std::string::npos ||
-           pos+base.size()+6u>path.size()) return false;
-        const auto name=path.substr(pos+base.size());
-        return name=="pp.dat" || name=="snapshot2.dat" ||
-               name=="local_profiles";
+        return pvz2_key_study::IsObservedNativeProfileSave(path);
     }
     std::uint64_t v128_userfs_mkdirs = 0u;
     std::uint64_t v128_userfs_unlinks = 0u;
