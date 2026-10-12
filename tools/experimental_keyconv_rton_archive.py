@@ -30,8 +30,10 @@ def build_disposable_copy(original, output, profile_slot):
     inspection = inspect_archive(original)
     if inspection["manifest"]["status"] != "VERIFIED":
         raise RtonError("Refuse experiment without verified save manifest")
-    if inspection["snapshot2_comparison"] != "IDENTICAL":
-        raise RtonError("Refuse experiment with non-identical profile mirror")
+    if inspection["snapshot2_comparison"] == "MISSING":
+        raise RtonError("Refuse experiment without native profile fallback image")
+    # The actual 2026-10-12 user save proves snapshot2.dat can be a
+    # different, older native state. Preserve and patch its own contents.
 
     with zipfile.ZipFile(original) as archive:
         infos = archive.infolist()
@@ -56,6 +58,7 @@ def build_disposable_copy(original, output, profile_slot):
                 local_name not in names):
             raise RtonError("Missing native profile mirror, registry or manifest")
         original_pp = archive.read(pp)
+        original_snapshot = archive.read(mirror)
         # Real physical saves: PlayerInfo.objdata.i matches
         # PlayerInfoLocalSaveData.objdata.ProfileIndex at the same slot.
         # Refuse any ambiguous cross-profile mapping before touching bytes.
@@ -81,31 +84,53 @@ def build_disposable_copy(original, output, profile_slot):
         if (type(original_id) is not int or original_id <= 0 or
                 type(local_id) is not int or local_id != original_id):
             raise RtonError("PlayerInfo ID mismatch with local_profiles")
+        # Patch each original RTON individually. NEVER replace the older
+        # native snapshot2.dat wholesale with pp.dat.
+        fallback_doc = RtonReader(original_snapshot).decode()
+        fallback_players = fallback_doc.get("objects")
+        if (not isinstance(fallback_players, list) or
+                len(fallback_players) != len(players) or
+                profile_slot >= len(fallback_players) or
+                not isinstance(fallback_players[profile_slot], dict) or
+                fallback_players[profile_slot].get("objclass") != "PlayerInfo" or
+                not isinstance(fallback_players[profile_slot].get("objdata"), dict)):
+            raise RtonError("Invalid fallback profile array")
+        fallback_data = fallback_players[profile_slot]["objdata"]
+        if fallback_data.get("i") != original_id:
+            raise RtonError("Fallback profile ID mismatch")
+        if fallback_data.get("wsk") != player_data.get("wsk"):
+            raise RtonError("Backup and fallback key stocks differ")
+
         changed_pp, preview = in_memory_egypt_surplus_candidate(
             original_pp, profile_slot)
-        if not preview.get("changed"):
-            raise RtonError("No eligible saved Egypt keys; nothing to export")
+        changed_snapshot, fallback_preview = in_memory_egypt_surplus_candidate(
+            original_snapshot, profile_slot)
+        if not preview.get("changed") or not fallback_preview.get("changed"):
+            raise RtonError("No eligible saved Egypt keys in both images")
+        if preview["key_count"] != fallback_preview["key_count"]:
+            raise RtonError("Original/fallback conversion quantity mismatch")
 
         meta = plistlib.loads(archive.read(manifest_name))
         inventory = meta.get("files")
         if not isinstance(inventory, list):
             raise RtonError("Invalid backup manifest")
-        patched = {"UserData/No_Backup/pp.dat",
-                   "UserData/No_Backup/snapshot2.dat"}
+        patched = {"UserData/No_Backup/pp.dat": changed_pp,
+                   "UserData/No_Backup/snapshot2.dat": changed_snapshot}
         found = set()
         for entry in inventory:
             if isinstance(entry, dict) and entry.get("path") in patched:
                 if entry["path"] in found:
                     raise RtonError("Duplicate profile manifest entry")
                 found.add(entry["path"])
-                entry["size"] = len(changed_pp)
-                entry["sha256"] = hashlib.sha256(changed_pp).hexdigest()
-        if found != patched:
+                target_bytes = patched[entry["path"]]
+                entry["size"] = len(target_bytes)
+                entry["sha256"] = hashlib.sha256(target_bytes).hexdigest()
+        if found != set(patched):
             raise RtonError("Original manifest omits protected profile pair")
 
         updates = {
             pp: changed_pp,
-            mirror: changed_pp,
+            mirror: changed_snapshot,
             manifest_name: plistlib.dumps(meta, fmt=plistlib.FMT_XML),
         }
         copied_original_bytes = {
@@ -128,7 +153,8 @@ def build_disposable_copy(original, output, profile_slot):
                                         copied_original_bytes[info.filename]))
             verified = inspect_archive(output)
             if (verified["manifest"]["status"] != "VERIFIED" or
-                    verified["snapshot2_comparison"] != "IDENTICAL" or
+                    verified["snapshot2_comparison"] !=
+                        inspection["snapshot2_comparison"] or
                     profile_slot >= len(verified["players"]) or
                     verified["players"][profile_slot]["coins"] !=
                     preview["coins_after"]):
@@ -139,6 +165,15 @@ def build_disposable_copy(original, output, profile_slot):
                         continue
                     if target.read(name) != data:
                         raise RtonError("Unrelated backup bytes changed")
+                # Verify the fallback independently; the primary inspector
+                # intentionally reports only the current pp.dat profile.
+                fallback_after = RtonReader(target.read(mirror)).decode()
+                observed = fallback_after["objects"][profile_slot]["objdata"]
+                if (observed.get("c") != fallback_preview["coins_after"] or
+                        observed.get("wsk") !=
+                        RtonReader(changed_snapshot).decode()
+                           ["objects"][profile_slot]["objdata"]["wsk"]):
+                    raise RtonError("Fallback save recheck failed")
             return {
                 "status": "EXPERIMENTAL_DISPOSABLE_COPY_CREATED",
                 "never_import_on_main_profile": True,
@@ -149,6 +184,9 @@ def build_disposable_copy(original, output, profile_slot):
                 "keys_recycled": preview["key_count"],
                 "coins_before": preview["coins_before"],
                 "coins_after": preview["coins_after"],
+                "fallback_coins_before": fallback_preview["coins_before"],
+                "fallback_coins_after": fallback_preview["coins_after"],
+                "fallback_independently_patched": True,
             }
         except Exception:
             if created:
