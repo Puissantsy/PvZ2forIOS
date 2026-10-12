@@ -73,6 +73,13 @@ class PrelaunchTransactionTests(unittest.TestCase):
                 self.assertFalse((self.root / JOURNAL).exists())
                 self.assertFalse((self.root / DONE).exists())
 
+    def test_crash_after_durable_commit_prepare_rolls_back(self):
+        with self.assertRaises(SimulatedInterruption):
+            settle_disposable_root(self.root, 0, guest_stopped=True,
+                                   crash_at="before_commit_marker")
+        self.assertEqual(recover(self.root), "ROLLED_BACK")
+        self.assertEqual(self.balances(), ((7800, 1), (7801, 1)))
+
     def test_crash_after_commit_preserves_both_images(self):
         with self.assertRaises(SimulatedInterruption):
             settle_disposable_root(self.root, 0, guest_stopped=True,

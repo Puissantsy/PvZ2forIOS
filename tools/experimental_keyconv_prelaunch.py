@@ -163,7 +163,8 @@ def recover(live_root):
     })
     if "manifest" not in present:
         # No target files may have changed before durable manifest publish.
-        if "committed" in present or any(n.startswith("swap-") for n in present):
+        if ("committed" in present or "committed.tmp" in present or
+                any(n.startswith("swap-") for n in present)):
             raise PrelaunchConflict("Inconsistent unpublished transaction")
         finish(root, journal)
         return "DISCARDED_UNPUBLISHED"
@@ -291,8 +292,14 @@ def settle_disposable_root(live_root, profile_slot, *,
         install_image(journal, working / name, new[name])
         if crash_at == f"after_replace_{i}":
             raise SimulatedInterruption(f"after_replace_{i}")
+    # Recheck BOTH installed target images before publishing commit.
+    if any(read_regular(working / name, MAX_IMAGE) != new[name]
+           for name in FILES):
+        raise PrelaunchConflict("Post-install image verification failed")
     exclusive(journal / "committed.tmp", b"COMMITTED\n")
     syncdir(journal)
+    if crash_at == "before_commit_marker":
+        raise SimulatedInterruption("before_commit_marker")
     os.replace(journal / "committed.tmp", journal / "committed")
     syncdir(journal)
     if crash_at == "after_commit":
