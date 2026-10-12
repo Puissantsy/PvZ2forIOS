@@ -219,6 +219,9 @@ struct Reader {
                 const auto n=Varint();
                 if(n>100000) throw Error("Oversized array");
                 Value a; a.kind=Value::Kind::Array;
+                // Keep nested Value storage stable for the entire parse,
+                // avoiding intermediate vector element relocation on Apple.
+                a.items.reserve(static_cast<std::size_t>(n));
                 for(std::uint64_t i=0;i<n;++i) {
                     path.push_back(std::to_string(i));
                     a.items.push_back(Read(depth+1));
