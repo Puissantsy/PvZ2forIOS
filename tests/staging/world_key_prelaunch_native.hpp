@@ -272,7 +272,9 @@ inline std::array<std::string,4> ValidateImages(const fs::path& journal,
 }
 inline Recovery Recover(const fs::path& root,bool guest_stopped) {
     Require(guest_stopped,"Recovery requires stopped guest and V128");
-    ValidateRoot(root);
+    // A fresh app has no UserData yet: the recovery gate must be safe even
+    // BEFORE v165 offers its first restore or before the first game launch.
+    SafeDirectory(root);
     const auto journal=root/Journal,done=root/Done;
     const bool active=fs::exists(journal) || fs::is_symlink(journal);
     const bool completed=fs::exists(done) || fs::is_symlink(done);
@@ -282,6 +284,7 @@ inline Recovery Recover(const fs::path& root,bool guest_stopped) {
         return Recovery::CleanedDone;
     }
     if(!active) return Recovery::NoJournal;
+    ValidateRoot(root);
     const auto entries=Entries(journal);
     if(!Has(entries,"manifest")) {
         Require(!Has(entries,"committed") && !Has(entries,"committed.tmp") &&

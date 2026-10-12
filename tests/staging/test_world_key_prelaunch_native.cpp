@@ -11,6 +11,7 @@
 #include <utility>
 #include <vector>
 using namespace pvz2_key_study::prelaunch_native;
+namespace rton_native=pvz2_key_study::rton_native;
 using Fields=std::vector<std::pair<std::string,std::string>>;
 static int checks=0;
 void Check(bool value,const char* msg) {++checks; if(!value) throw std::runtime_error(msg);}
@@ -160,6 +161,18 @@ void TestRecoveryFaults() {
               "Committed conversion double credited after crash");
     }
 }
+void TestFreshAppRecovery() {
+    auto prefix=(fs::temp_directory_path()/"keyconv-native-empty-XXXXXX").string();
+    std::vector<char> buffer(prefix.begin(),prefix.end()); buffer.push_back('\0');
+    char* tmp=::mkdtemp(buffer.data());
+    Check(tmp!=nullptr,"Fresh sandbox creation failed");
+    const fs::path empty(tmp);
+    Check(Recover(empty,true)==Recovery::NoJournal,
+          "Fresh install without UserData was blocked");
+    Check(!Settle(empty,0,true,false).changed,
+          "Disabled research conversion cannot require a save yet");
+    std::error_code ec; fs::remove_all(empty,ec);
+}
 void TestSafetyBarriers() {
     {
         Sandbox s;
@@ -247,6 +260,7 @@ void TestSafetyBarriers() {
 int main() {
     try {
         TestSha();
+        TestFreshAppRecovery();
         TestNormalAndNoRepeat();
         TestRecoveryFaults();
         TestSafetyBarriers();
