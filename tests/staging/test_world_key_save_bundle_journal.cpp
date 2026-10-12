@@ -57,6 +57,14 @@ int main() {
         check(false);++checks;
         assert(journal.Recover(7)==SaveOutcome::NoJournal);++checks;
     }
+    // Recovery can be interrupted itself; a second restart must finish.
+    assert(journal.Prepare(changes,7));++checks;
+    assert(!journal.Commit(7,3));++checks;
+    assert(journal.Recover(7,1)==SaveOutcome::IOFailure);++checks;
+    assert(Eq(root/paths[0],B(old[0])));++checks;
+    assert(Eq(root/paths[1],B(newer[1])));++checks;
+    assert(journal.Recover(7)==SaveOutcome::PreparedAborted);++checks;
+    check(false);++checks;
     assert(journal.Prepare(changes,7));++checks;
     assert(journal.Commit(7));++checks;
     check(true);++checks;
@@ -84,7 +92,15 @@ int main() {
     auto traversed=changes;
     traversed[0].basename="../pp.dat";
     assert(!journal.Prepare(traversed,7));++checks;
+    // Crash before Prepare has published the manifest: only stray staging
+    // files exist, so recovery may clean them without touching original saves.
     fs::create_directory(journal.journal);
+    assert(SaveWriteExclusive(journal.journal/"old0",B(old[0])));
+    assert(SaveWriteExclusive(journal.journal/"new0",B(newer[0])));
+    assert(journal.Recover(7)==SaveOutcome::PreparedAborted);++checks;
+    check(false);++checks;
+    fs::create_directory(journal.journal);
+    assert(SaveWriteExclusive(journal.journal/"unexpected",B("not ours")));
     assert(journal.Recover(7)==SaveOutcome::Conflict);++checks;
     fs::remove_all(journal.journal);
     fs::remove_all(root);
