@@ -148,8 +148,14 @@ public:
                 meta->files[i].basename)) return false;
             if(stop_after_installed==i+1u) return false; // crash fixture
         }
-        if(!SaveWriteExclusiveText(journal/"committed","COMMITTED\n")||
-           !SaveSyncDirectory(journal) ||
+        // Commit marker must itself be atomically published. A torn marker
+        // would leave an otherwise complete transaction requiring manual
+        // recovery after a sudden power loss.
+        if(!SaveWriteExclusiveText(journal/"committed.tmp","COMMITTED\n")||
+           !SaveSyncDirectory(journal)) return false;
+        std::error_code ec;
+        fs::rename(journal/"committed.tmp",journal/"committed",ec);
+        if(ec || !SaveSyncDirectory(journal) ||
            !SaveSyncDirectory(directory)) return false;
         return Cleanup();
     }
