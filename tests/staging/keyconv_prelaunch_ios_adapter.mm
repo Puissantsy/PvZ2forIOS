@@ -14,7 +14,7 @@ NSString * const kDomain = @"PvZ2forIOS.Keyconv.Prelaunch";
 // original save byte content or real absolute device paths in alerts/logs.
 NSError *ErrorMessage(NSString *message) {
     return [NSError errorWithDomain:kDomain code:1 userInfo:@{
-        NSLocalizedDescriptionKey:message ?: @"Transaction KEYCONV non vérifiée"
+        NSLocalizedDescriptionKey:(message != nil ? message : @"Transaction KEYCONV non vérifiée")
     }];
 }
 bool ResearchBundle() {
