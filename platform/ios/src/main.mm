@@ -2442,10 +2442,10 @@ void PvZ2HostNotifyDirectFrame(
                     @"Copie de : %@\n\nSeules les données de PvZ2 Keys Research seront remplacées. Une copie de sécurité sera créée si KEYOBS contient déjà une progression. L'application PvZ2 principale reste intacte.",
                     snapshot.lastPathComponent]
                 preferredStyle:UIAlertControllerStyleAlert];
-            __weak typeof(self) weakSelf = self;
+            __weak ProbeViewController *weakSelf = self;
             [alert addAction:[UIAlertAction actionWithTitle:@"Ignorer"
                 style:UIAlertActionStyleCancel handler:^(__unused UIAlertAction *action) {
-                    __strong typeof(weakSelf) strongSelf=weakSelf;
+                    __strong ProbeViewController *strongSelf = weakSelf;
                     if (!strongSelf) return;
                     AppendPersistentLog(@"[KEYOBS RESTORE] declined; no live files changed");
                     strongSelf.keyobsRestorePromptActive=NO;
@@ -2453,7 +2453,7 @@ void PvZ2HostNotifyDirectFrame(
                 }]];
             [alert addAction:[UIAlertAction actionWithTitle:@"Restaurer"
                 style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) {
-                    __strong typeof(weakSelf) strongSelf=weakSelf;
+                    __strong ProbeViewController *strongSelf = weakSelf;
                     if (!strongSelf) return;
                     NSError *restoreError=nil;
                     BOOL ok=PVZSaveRestoreSnapshot(snapshot,&restoreError);
@@ -2540,12 +2540,12 @@ void PvZ2HostNotifyDirectFrame(
                     alertControllerWithTitle:@"KEYCONV — sauvegarde expérimentale"
                     message:@"Des clés égyptiennes excédentaires peuvent être converties en 1 000 PvZCoins chacune. Une sauvegarde de sécurité vérifiée a été créée. Choisis uniquement le profil de TEST à convertir. Rien ne sera modifié si tu ignores."
                     preferredStyle:UIAlertControllerStyleAlert];
-                __weak typeof(self) weakSelf = self;
+                __weak ProbeViewController *weakSelf = self;
                 [alert addAction:[UIAlertAction
                     actionWithTitle:@"Ignorer — lancer sans convertir"
                     style:UIAlertActionStyleCancel
                     handler:^(__unused UIAlertAction *action) {
-                        __strong typeof(weakSelf) strongSelf = weakSelf;
+                        __strong ProbeViewController *strongSelf = weakSelf;
                         if (!strongSelf) return;
                         strongSelf.keyconvPromptActive = NO;
                         AppendPersistentLog(
@@ -2561,7 +2561,7 @@ void PvZ2HostNotifyDirectFrame(
                     [alert addAction:[UIAlertAction
                         actionWithTitle:title style:UIAlertActionStyleDefault
                         handler:^(__unused UIAlertAction *action) {
-                            __strong typeof(weakSelf) strongSelf = weakSelf;
+                            __strong ProbeViewController *strongSelf = weakSelf;
                             if (!strongSelf) return;
                             if (strongSelf.jniRunning ||
                                 strongSelf.v130LaunchStarted) {
