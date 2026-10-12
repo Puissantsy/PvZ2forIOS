@@ -163,5 +163,41 @@ successfully executed:
 - 9 Python tests of disposable mirrored ZIP export, manifest rebuild,
   refusal to overwrite, closed gates and repeated conversion.
 
-**238 combined test cases/checks**, plus static ARM/runtime wiring
+**239 combined test cases/checks** (including the strict native profile-ID regression), plus static ARM/runtime wiring
 verifiers, all pass. No iOS build or device test occurred.
+
+
+### Native PlayerInfo identity binding — 2026-10-12
+
+A further source investigation decoded `No_Backup/local_profiles` in
+both original user-provided private snapshots. Each `PlayerInfo`
+contains a native integer `objdata.i`, while
+`PlayerInfoLocalSaveData` at the corresponding slot contains
+`objdata.ProfileIndex`. Both user snapshots show the IDs matching for
+each of the 1 and 2 player slots, respectively.
+
+The experimental archive exporter now REFUSES output unless:
+
+- both `pp.dat` and `local_profiles` are valid full RTON documents;
+- the selected zero-based slot exists in both and has the expected
+  PlayerInfo/PlayerInfoLocalSaveData classes;
+- the selected `PlayerInfo.objdata.i` is a positive integer and equals
+  the selected `local_profiles.objdata.ProfileIndex`;
+- the preexisting backup inventory is valid and all previous safety
+  conditions pass.
+
+The current synthetic archive tests explicitly include a negative
+profile-ID mismatch case. This guards against an archive containing
+multiple unrelated user profiles; the exporter still requires that
+the operator deliberately choose the intended disposable slot.
+
+**Last green CI:**
+https://github.com/Puissantsy/PvZ2forIOS/actions/runs/38212259281
+
+- 197 existing native/host C++ checks;
+- 23 read-only RTON inspection/manifest tests;
+- 9 exact in-memory RTON numeric patch tests;
+- 10 disposable separate-ZIP backup export tests.
+
+**239 validations/checks** plus static checks pass, no iOS IPA was
+built and no real player file was modified.
