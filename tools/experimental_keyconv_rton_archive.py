@@ -13,7 +13,7 @@ import sys
 import zipfile
 from pathlib import Path
 
-from inspect_pvz2_rton_save import RtonError, inspect_archive
+from inspect_pvz2_rton_save import RtonError, RtonReader, inspect_archive
 from experimental_keyconv_rton_memory import in_memory_egypt_surplus_candidate
 
 MAX_TOTAL_UNCOMPRESSED = 128 * 1024 * 1024
@@ -51,9 +51,36 @@ def build_disposable_copy(original, output, profile_slot):
         root = pp[:-len("UserData/No_Backup/pp.dat")]
         mirror = root + "UserData/No_Backup/snapshot2.dat"
         manifest_name = root + "snapshot-info.plist"
-        if mirror not in names or manifest_name not in names:
-            raise RtonError("Missing snapshot mirror or manifest")
+        local_name = root + "UserData/No_Backup/local_profiles"
+        if (mirror not in names or manifest_name not in names or
+                local_name not in names):
+            raise RtonError("Missing native profile mirror, registry or manifest")
         original_pp = archive.read(pp)
+        # Real physical saves: PlayerInfo.objdata.i matches
+        # PlayerInfoLocalSaveData.objdata.ProfileIndex at the same slot.
+        # Refuse any ambiguous cross-profile mapping before touching bytes.
+        player_doc = RtonReader(original_pp).decode()
+        local_doc = RtonReader(archive.read(local_name)).decode()
+        players = player_doc.get("objects")
+        locals_ = local_doc.get("objects")
+        if (not isinstance(players, list) or
+                not isinstance(locals_, list) or
+                profile_slot >= len(players) or
+                profile_slot >= len(locals_) or
+                not isinstance(players[profile_slot], dict) or
+                not isinstance(locals_[profile_slot], dict) or
+                players[profile_slot].get("objclass") != "PlayerInfo" or
+                locals_[profile_slot].get("objclass") != "PlayerInfoLocalSaveData"):
+            raise RtonError("No unambiguous matching native profile slot")
+        player_data = players[profile_slot].get("objdata")
+        local_data = locals_[profile_slot].get("objdata")
+        if not isinstance(player_data, dict) or not isinstance(local_data, dict):
+            raise RtonError("Invalid native profile id records")
+        original_id = player_data.get("i")
+        local_id = local_data.get("ProfileIndex")
+        if (type(original_id) is not int or original_id <= 0 or
+                type(local_id) is not int or local_id != original_id):
+            raise RtonError("PlayerInfo ID mismatch with local_profiles")
         changed_pp, preview = in_memory_egypt_surplus_candidate(
             original_pp, profile_slot)
         if not preview.get("changed"):
