@@ -78,6 +78,11 @@ need("chars-12u" in state and
      "ValidStockWorld" in stock_view and
      "prior.world==*world" in stock_view,
      "native COW length, terminator and duplicate-world validation missing")
+probe=(ROOT/"platform/ios/src/pvz2_apk_probe.cpp").read_text()
+need("world_key_save_bundle_journal.hpp" not in probe and
+     "world_key_save_journal.hpp" not in probe and
+     "SaveBundleJournal" not in svc and "SaveJournal" not in svc,
+     "experimental multi-file journal must remain isolated until iPad write-set acceptance")
 need("WorldKeyReadOnlyStockSnapshot" not in svc,
      "no key stock write or sweep may be installed before physical profile validation")
 need("original_amount" in svc and "decision.coins" in svc,
