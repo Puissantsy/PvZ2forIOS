@@ -95,7 +95,7 @@ class DisposableRtonArchiveTests(unittest.TestCase):
 
     def test_closed_gate_fails_without_writing(self):
         synthetic_zip(self.before, opened=False, keys=6)
-        with self.assertRaisesRegex(RtonError, "nothing to export"):
+        with self.assertRaisesRegex(RtonError, "No eligible saved Egypt keys"):
             build_disposable_copy(self.before, self.after, 0)
         self.assertFalse(self.after.exists())
 
@@ -139,7 +139,7 @@ class DisposableRtonArchiveTests(unittest.TestCase):
         synthetic_zip(self.before)
         build_disposable_copy(self.before, self.after, 0)
         second = self.root / "SECOND-EXPERIMENTAL.zip"
-        with self.assertRaisesRegex(RtonError, "nothing to export"):
+        with self.assertRaisesRegex(RtonError, "No eligible saved Egypt keys"):
             build_disposable_copy(self.after, second, 0)
         self.assertFalse(second.exists())
 
