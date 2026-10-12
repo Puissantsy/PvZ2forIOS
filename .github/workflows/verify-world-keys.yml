@@ -16,6 +16,8 @@ on:
       - "tests/staging/test_keyconv_prelaunch.py"
       - "tests/staging/test_keyconv_rton_native.py"
       - "tests/staging/keyconv_rton_native_cli.cpp"
+      - "tests/staging/keyconv_prelaunch_ios_adapter.hpp"
+      - "tests/staging/keyconv_prelaunch_ios_adapter.mm"
       - "tools/verify_keyconv_offline_export.py"
       - "tools/verify_world_key_*"
       - "tools/verify_keyobs_restore_wiring.py"
@@ -114,9 +116,22 @@ jobs:
         run: |
           clang++ -std=c++20 -O0 -g -Wall -Wextra -Werror -pedantic \
             -fsanitize=address,undefined -fno-omit-frame-pointer \
-            -Itests/staging tests/staging/test_world_key_prelaunch_native.cpp \
+            -Itests/staging tests/staging/test_world_key_prelaunch_native.cpp
+      - name: Syntax-check isolated KEYCONV Objective-C++ adapter for iPadOS arm64
+        run: |
+          SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
+          xcrun --sdk iphoneos clang++ -std=c++20 \
+            -target arm64-apple-ios17.4 -isysroot "$SDK" \
+            -fobjc-arc -x objective-c++ -fsyntax-only \
+            -Wall -Wextra -Werror -pedantic \
+            -Itests/staging tests/staging/keyconv_prelaunch_ios_adapter.mm \
             -o /tmp/pvz2-keyconv-native-apple
           ASAN_OPTIONS=detect_leaks=0 /tmp/pvz2-keyconv-native-apple
+      - name: Compile check research-only ObjC++ KEYCONV adapter on macOS
+        run: |
+          clang++ -std=c++20 -fobjc-arc -x objective-c++ -fsyntax-only \
+            -Wall -Wextra -Werror -pedantic \
+            -Itests/staging tests/staging/keyconv_prelaunch_ios_adapter.mm
       - name: Syntax-check same C++ code for iPadOS arm64 (NO IPA)
         run: |
           SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
