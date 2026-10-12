@@ -62,6 +62,7 @@ def sample(coins=7800, old_keys=6, opened=False):
                       ("c", number(coins)),
                       ("wsk", wsk),
                       ("wm", wm),
+                      ("i", number(1790861459)),
                   ]))])
     return b"RTON\x01\x00\x00\x00" + (
         text("version") + number(1) +
