@@ -2528,11 +2528,10 @@
     }
 
     // Read-only native profile+0x7c WorldSpecificKeys vector witness.
-    // Each native entry is [COW char pointer (header at -12), u32 count].
-    // Never write a guest address. Invalid/ambiguous data is not eligible
-    // for any future stock reconciliation.
+    // Validation of entry quantities, known names and duplicate worlds is
+    // shared with the standalone unit tests. The callback only reads exact
+    // COW world strings from guest memory, never writes guest state.
     std::string WorldKeyReadOnlyStockSnapshot(std::uint32_t profile) {
-        constexpr std::uint32_t kMaxWorldSlots=16u;
         if (profile<kJniProbeHeapBase ||
             static_cast<std::uint64_t>(profile-kJniProbeHeapBase)>=
                 mem.HeapCapacity() ||
@@ -2544,41 +2543,53 @@
         const std::uint32_t cap=mem.Read32Guest(profile+0x84u);
         if (begin==0u && end==0u && cap==0u) return "wsk={}";
         if (begin==0u || end<begin || cap<end ||
-            ((end-begin)%8u)!=0u || ((cap-begin)%8u)!=0u ||
-            (end-begin)/8u>kMaxWorldSlots ||
+            ((end-begin)%pvz2_key_study::kWorldKeyStockStride)!=0u ||
+            ((cap-begin)%pvz2_key_study::kWorldKeyStockStride)!=0u ||
+            (end-begin)/pvz2_key_study::kWorldKeyStockStride>
+                pvz2_key_study::kMaxWorldKeyStockSlots ||
             (end!=begin && mem.Ptr(begin,end-begin)==nullptr)) {
             return "wsk=INVALID(vector)";
         }
+        const std::size_t bytes=end-begin;
+        std::span<const std::byte> snapshot;
+        if (bytes!=0u) {
+            snapshot=std::span<const std::byte>(
+                reinterpret_cast<const std::byte*>(
+                    mem.Ptr(begin,static_cast<std::uint32_t>(bytes))),
+                bytes);
+        }
+        bool invalid_string=false;
+        const auto parsed=pvz2_key_study::DecodeNativeWorldKeyStock(
+            snapshot,
+            [&](std::uint32_t chars)->std::optional<std::string> {
+                if (mem.Ptr(chars-12u,4u)==nullptr) {
+                    invalid_string=true;
+                    return std::nullopt;
+                }
+                const std::uint32_t len=mem.Read32Guest(chars-12u);
+                if (len==0u || len>16u ||
+                    mem.Ptr(chars,len+1u)==nullptr ||
+                    mem.Read8Guest(chars+len)!=0u) {
+                    invalid_string=true;
+                    return std::nullopt;
+                }
+                const std::string world=mem.ReadCStringGuest(chars,len+1u);
+                if (world.size()!=len) {
+                    invalid_string=true;
+                    return std::nullopt;
+                }
+                return world;
+            });
+        if (!parsed) {
+            return invalid_string
+                ? "wsk=INVALID(string)"
+                : "wsk=INVALID(entry/world)";
+        }
         std::ostringstream out;
-        std::uint32_t seen_worlds=0u;
         out << "wsk={";
-        for (std::uint32_t index=0u;index<(end-begin)/8u;++index) {
-            const std::uint32_t entry=begin+index*8u;
-            const std::uint32_t chars=mem.Read32Guest(entry);
-            const std::uint32_t count=mem.Read32Guest(entry+4u);
-            if (chars<12u || mem.Ptr(chars-12u,4u)==nullptr ||
-                count>99u) {
-                return "wsk=INVALID(entry)";
-            }
-            const std::uint32_t len=mem.Read32Guest(chars-12u);
-            if (len==0u || len>16u ||
-                mem.Ptr(chars,len+1u)==nullptr) {
-                return "wsk=INVALID(string)";
-            }
-            const std::string world=mem.ReadCStringGuest(chars,len+1u);
-            if (world.size()!=len) return "wsk=INVALID(string)";
-            const std::uint32_t flag=
-                world=="egypt" ? 1u :
-                world=="pirate" ? 2u :
-                world=="cowboy" ? 4u :
-                world=="future" ? 8u :
-                world=="dark" ? 16u : 0u;
-            if (flag==0u || (seen_worlds&flag)!=0u) {
-                return "wsk=INVALID(world)";
-            }
-            seen_worlds|=flag;
-            if (index!=0u) out << ",";
-            out << world << ":" << count;
+        for (std::size_t i=0;i<parsed->size();++i) {
+            if (i!=0u) out << ",";
+            out << (*parsed)[i].world << ":" << (*parsed)[i].count;
         }
         out << "}";
         return out.str();
