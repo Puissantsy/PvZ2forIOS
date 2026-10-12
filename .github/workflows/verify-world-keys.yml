@@ -133,6 +133,16 @@ jobs:
             -target arm64-apple-ios17.4 -isysroot "$SDK" \
             -fsyntax-only -Wall -Wextra -Werror -pedantic \
             -Itests/staging tests/staging/test_world_key_prelaunch_native.cpp
+      - name: Syntax-check full UIKit launcher and v165 snapshot code for iPadOS arm64 (no Dynarmic)
+        run: |
+          SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
+          for unit in platform/ios/src/main.mm platform/ios/src/save_backups.mm; do
+            xcrun --sdk iphoneos clang++ -std=c++20 \
+              -target arm64-apple-ios17.4 -isysroot "$SDK" \
+              -fobjc-arc -x objective-c++ -fsyntax-only \
+              -Wall -Wextra -Wno-unused-parameter \
+              -Iplatform/ios/src -Itests/staging "$unit"
+          done
       - name: Syntax-check isolated KEYCONV Objective-C++ adapter for iPadOS arm64
         run: |
           SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
