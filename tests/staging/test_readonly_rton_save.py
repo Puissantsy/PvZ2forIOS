@@ -12,7 +12,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
 from inspect_pvz2_rton_save import (
     RtonError, RtonReader, describe_world_keys, inspect_archive,
-    summarize_player_save,
+    preview_legacy_key_recycle, summarize_player_save,
 )
 
 
@@ -93,6 +93,49 @@ class ReadOnlyRtonSaveTests(unittest.TestCase):
         )["players"][0]
         self.assertEqual(player["coins"], 8800)
         self.assertEqual(player["world_keys"]["entries"][0]["keys"], 0)
+
+    def test_preview_only_if_verified_and_all_gates_open(self):
+        before = summarize_player_save(sample())["players"][0]
+        self.assertEqual(
+            preview_legacy_key_recycle(before, True)["status"],
+            "NO_CONVERSION")
+        after = summarize_player_save(
+            sample(coins=7800, old_keys=1, opened=True)
+        )["players"][0]
+        self.assertEqual(
+            preview_legacy_key_recycle(after, False)["status"],
+            "UNVERIFIED_BACKUP")
+        candidate = preview_legacy_key_recycle(after, True)
+        self.assertEqual(candidate["status"],
+                         "CANDIDATE_REQUIRES_REAL_KEY_SCHEMA_VALIDATION")
+        self.assertTrue(candidate["preview_only"])
+        self.assertEqual(candidate["would_consume_keys"], 1)
+        self.assertEqual(candidate["would_add_coins"], 1000)
+        self.assertEqual(candidate["coins_after_if_confirmed"], 8800)
+
+    def test_preview_rejects_wallet_overflow(self):
+        after = summarize_player_save(
+            sample(coins=0x7ffffffe, old_keys=1, opened=True)
+        )["players"][0]
+        candidate = preview_legacy_key_recycle(after, True)
+        self.assertEqual(candidate["status"], "WALLET_OVERFLOW")
+        self.assertEqual(candidate["would_add_coins"], 0)
+
+    def test_preview_refuses_unknown_key_record_format(self):
+        after = summarize_player_save(
+            sample(coins=7800, old_keys=1, opened=True)
+        )["players"][0]
+        after["world_keys"] = {"status": "unknown_schema", "count": 1}
+        self.assertEqual(preview_legacy_key_recycle(after, True)["status"],
+                         "UNCONFIRMED_KEY_SCHEMA")
+
+    def test_preview_is_idempotent_when_no_keys_left(self):
+        after = summarize_player_save(
+            sample(coins=8800, old_keys=0, opened=True)
+        )["players"][0]
+        result = preview_legacy_key_recycle(after, True)
+        self.assertEqual(result["status"], "NO_CONVERSION")
+        self.assertEqual(result["would_consume_keys"], 0)
 
     def test_archive_mirrors_and_no_write(self):
         data = sample()
