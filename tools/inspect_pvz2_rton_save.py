@@ -178,19 +178,17 @@ def describe_world_keys(raw):
         return {"status": "empty", "count": 0, "entries": []}
     entries = []
     for item in raw:
-        if not isinstance(item, dict):
+        # Real 2026-10-12 iPad backup confirms EXACT record {wn, kc}.
+        if (not isinstance(item, dict) or set(item) != {"wn", "kc"} or
+                not isinstance(item["wn"], str) or
+                item["wn"] not in WORLD_NAMES or
+                type(item["kc"]) is not int or
+                not 0 <= item["kc"] <= 99):
             return {"status": "unknown_schema", "count": len(raw)}
-        # Report only known world-name literals and safe counts, no player info.
-        names = [v for v in item.values()
-                 if isinstance(v, str) and v in WORLD_NAMES]
-        counts = [v for v in item.values()
-                  if type(v) is int and 0 <= v <= 99]
-        if len(names) != 1 or len(counts) != 1:
-            return {"status": "unknown_schema", "count": len(raw)}
-        entries.append({"world": names[0], "keys": counts[0]})
+        entries.append({"world": item["wn"], "keys": item["kc"]})
     if len({e["world"] for e in entries}) != len(entries):
         return {"status": "duplicate_world", "count": len(raw)}
-    return {"status": "observed_unvalidated_schema",
+    return {"status": "observed_wn_kc_schema",
             "count": len(entries), "entries": entries}
 
 
@@ -304,7 +302,7 @@ def preview_legacy_key_recycle(player, verified_backup):
         return result
     if keys.get("status") == "empty":
         return result
-    if keys.get("status") != "observed_unvalidated_schema":
+    if keys.get("status") != "observed_wn_kc_schema":
         result["status"] = "UNCONFIRMED_KEY_SCHEMA"
         return result
     by_world = {"egypt": "2", "pirate": "3", "cowboy": "4"}
@@ -322,7 +320,7 @@ def preview_legacy_key_recycle(player, verified_backup):
     if total_coins > 0x7fffffff - coins:
         result["status"] = "WALLET_OVERFLOW"
         return result
-    return {"status": "CANDIDATE_REQUIRES_REAL_KEY_SCHEMA_VALIDATION",
+    return {"status": "CANDIDATE_NEEDS_IPAD_RESTORE_VALIDATION",
             "would_add_coins": total_coins,
             "would_consume_keys": total_keys,
             "coins_after_if_confirmed": coins + total_coins,
