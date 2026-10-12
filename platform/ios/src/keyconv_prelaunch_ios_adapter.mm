@@ -1,5 +1,6 @@
 #import "keyconv_prelaunch_ios_adapter.hpp"
 #include "world_key_prelaunch_native.hpp"
+#include "keyconv_research_identity_policy.hpp"
 #include <cerrno>
 #include <mutex>
 #include <sys/stat.h>
@@ -17,9 +18,35 @@ NSError *ErrorMessage(NSString *message) {
         NSLocalizedDescriptionKey:(message != nil ? message : @"Transaction KEYCONV non vérifiée")
     }];
 }
+#if !defined(PVZ2_KEYCONV_RESEARCH_BUILD) || PVZ2_KEYCONV_RESEARCH_BUILD != 1
+#error "KEYCONV adapter must only be compiled into the isolated research IPA"
+#endif
 bool ResearchBundle() {
-    return [[[NSBundle mainBundle] bundleIdentifier]
-        isEqualToString:@"com.puissantsy.pvz2forios.keyobs"];
+    NSBundle *bundle=[NSBundle mainBundle];
+    NSString *runtimeID=bundle.bundleIdentifier;
+    id marker=[bundle objectForInfoDictionaryKey:@"PVZ2KeyconvResearchBuild"];
+    id original=[bundle objectForInfoDictionaryKey:@"PVZ2KeyconvOriginalIdentifier"];
+    // The build-specific marker stays in Info.plist when AltStore/iLoader
+    // re-signs an IPA with a changed CFBundleIdentifier.
+    const bool marked=[marker isKindOfClass:[NSNumber class]] &&
+                      [marker boolValue] &&
+                      [original isKindOfClass:[NSString class]] &&
+                      [original isEqualToString:
+                          @"com.puissantsy.pvz2forios.keyobs"];
+    const auto checked=pvz2_key_study::keyconv_identity::Evaluate(
+        runtimeID != nil ? std::string_view(runtimeID.UTF8String) :
+                           std::string_view{},
+        marked);
+    if (checked!=pvz2_key_study::keyconv_identity::Result::Allowed) {
+        NSLog(@"[KEYCONV PRELAUNCH] RESEARCH_IDENTITY_REFUSED cause=%ld marker=%@",
+              static_cast<long>(checked), marked ? @"YES":@"NO");
+        return false;
+    }
+    if (![runtimeID isEqualToString:
+          @"com.puissantsy.pvz2forios.keyobs"]) {
+        NSLog(@"[KEYCONV PRELAUNCH] RESIGNED_BUNDLE_ID_ACCEPTED research_marker=YES");
+    }
+    return true;
 }
 std::filesystem::path LiveRoot() {
     NSURL *support = [[NSFileManager defaultManager]

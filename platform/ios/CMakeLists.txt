@@ -127,6 +127,8 @@ set_target_properties(PvZ2forIOS PROPERTIES
 )
 
 target_compile_features(PvZ2forIOS PRIVATE cxx_std_20)
+# Compile-time isolation independent of sideload-modified bundle identifiers.
+target_compile_definitions(PvZ2forIOS PRIVATE PVZ2_KEYCONV_RESEARCH_BUILD=1)
 
 # Only KEYOBS uses the research-only native RTON + journal headers.
 # No separate guest/V128 code is started by these pure C++20 modules.

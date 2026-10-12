@@ -10,6 +10,12 @@
     <string>PvZ2forIOS</string>
     <key>CFBundleIdentifier</key>
     <string>com.puissantsy.pvz2forios.keyobs</string>
+    <!-- Deliberately not CFBundleIdentifier: signing tools can rewrite that
+         standard key. Only the research IPA carries these two markers. -->
+    <key>PVZ2KeyconvResearchBuild</key>
+    <true/>
+    <key>PVZ2KeyconvOriginalIdentifier</key>
+    <string>com.puissantsy.pvz2forios.keyobs</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>

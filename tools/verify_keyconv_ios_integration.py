@@ -25,7 +25,16 @@ assert "style:UIAlertActionStyleCancel" in launch
 assert "self.keyconvStartupNote.length" in main
 assert "keyconv_prelaunch_ios_adapter.mm" in cmake
 assert "tests/staging" in cmake
+info=(root/"platform/ios/Info.plist.in").read_text()
+policy=(root/"tests/staging/keyconv_research_identity_policy.hpp").read_text()
 assert "com.puissantsy.pvz2forios.keyobs" in adapter
+assert "PVZ2KeyconvResearchBuild" in info
+assert "PVZ2KeyconvOriginalIdentifier" in info
+assert "PVZ2KeyconvResearchBuild" in adapter
+assert "PVZ2_KEYCONV_RESEARCH_BUILD=1" in cmake
+assert 'Evaluate(' in adapter and 'Result::Allowed' in adapter
+assert "ProductionIdentifier" in policy
+assert "CFBundleIdentifier" in info
 assert "native::Recover(root,true)" in adapter
 assert "native::Settle(root," in adapter
 assert "if (!ResearchBundle())" in adapter

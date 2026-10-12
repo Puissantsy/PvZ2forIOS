@@ -18,6 +18,9 @@ on:
       - "tests/staging/keyconv_rton_native_cli.cpp"
       - "tests/staging/keyconv_prelaunch_ios_adapter.hpp"
       - "tests/staging/keyconv_prelaunch_ios_adapter.mm"
+      - "tests/staging/keyconv_research_identity_policy.hpp"
+      - "tests/staging/test_keyconv_research_identity.cpp"
+      - "platform/ios/Info.plist.in"
       - "tools/verify_keyconv_offline_export.py"
       - "tools/verify_keyconv_ios_integration.py"
       - "tools/verify_world_key_*"
@@ -79,6 +82,10 @@ jobs:
         run: python3 -m unittest discover -s tests/staging -p test_keyconv_prelaunch.py -v
       - name: Test native C++20 exact RTON token parity (synthetic only)
         run: python3 -m unittest discover -s tests/staging -p test_keyconv_rton_native.py -v
+      - name: Verify re-signed research app marker and production ID rejection
+        run: |
+          clang++ -std=c++20 -O2 -Wall -Wextra -Werror -pedantic -Itests/staging tests/staging/test_keyconv_research_identity.cpp -o /tmp/keyconv_research_identity
+          /tmp/keyconv_research_identity
       - name: Compile and test native C++20 paired profile converter (synthetic only)
         run: |
           clang++ -std=c++20 -O1 -Wall -Wextra -Werror -pedantic -fsanitize=undefined -fno-sanitize-recover=all -Itests/staging tests/staging/test_world_key_rton_native_pair.cpp -o /tmp/keyconv_native_pair_test
@@ -162,6 +169,7 @@ jobs:
         run: |
           clang++ -std=c++20 -fobjc-arc -x objective-c++ -fsyntax-only \
             -Wall -Wextra -Werror -pedantic \
+            -DPVZ2_KEYCONV_RESEARCH_BUILD=1 \
             -Itests/staging tests/staging/keyconv_prelaunch_ios_adapter.mm
       - name: Syntax-check same C++ code for iPadOS arm64 (NO IPA)
         run: |
@@ -178,6 +186,7 @@ jobs:
               -target arm64-apple-ios17.4 -isysroot "$SDK" \
               -fobjc-arc -x objective-c++ -fsyntax-only \
               -Wall -Wextra -Wno-unused-parameter \
+              -DPVZ2_KEYCONV_RESEARCH_BUILD=1 \
               -Iplatform/ios/src -Itests/staging "$unit"
           done
       - name: Compile actual iPadOS arm64 ObjC++ launcher adapter and restore object files (NO IPA)
@@ -200,4 +209,5 @@ jobs:
             -target arm64-apple-ios17.4 -isysroot "$SDK" \
             -fobjc-arc -x objective-c++ -fsyntax-only \
             -Wall -Wextra -Werror -pedantic \
+            -DPVZ2_KEYCONV_RESEARCH_BUILD=1 \
             -Itests/staging tests/staging/keyconv_prelaunch_ios_adapter.mm
