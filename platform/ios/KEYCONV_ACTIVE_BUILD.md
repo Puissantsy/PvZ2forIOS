@@ -554,3 +554,34 @@ sample and actual iPad save restore/restart verification pass.
 The stable iPad app is unchanged. This offline research does NOT remove
 the historical Dynarmic c97c source 404 for future IPA builds.
 See `docs/WORLD_KEY_OFFLINE_RTON_INSPECTOR.md`.
+
+
+### October 12 — PRIVATE native surplus-key save finally inspected
+
+The user supplied `Save clé excédentaire.zip` to private project
+Sources. Local read-only inspection verifies `PlayerInfo.wsk` is exactly
+`[{wn:"egypt",kc:1}]` in the relevant player slot; all five Egypt
+gate events are state 3. Source manifest's 11 entries pass SHA-256
+verification. `PlayerInfo.i` equals matching local_profiles.ProfileIndex.
+The original backup remains unmodified and is NEVER uploaded to GitHub.
+
+Important correction to the previous identical-mirror assumption:
+native `pp.dat` and `snapshot2.dat` differ in nine other decoded
+fields and represent distinct original progression snapshots.
+A safe OFFLINE experiment must preserve that difference, patching
+each snapshot's own `c` and `kc` numeric fields separately,
+then rebuilding two distinct manifest checksum records.
+
+Modified offline tools and synthetic tests:
+- `tools/inspect_pvz2_rton_save.py` exact wn/kc reader;
+- `tools/experimental_keyconv_rton_memory.py` strict two-token edits;
+- `tools/experimental_keyconv_rton_archive.py` distinct pp/snapshot2
+  edits and validated local_profiles native profile identity;
+- three synthetic Python test suites with specific diverged-fallback
+  regression and fail-closed tests.
+
+A PRIVATE disposable converted ZIP has been produced in the conversation
+container, with independent read-back and checksum validation. It has
+NOT been loaded into the iPad and is NOT considered a validated game save.
+Actual restore/restart acceptance remains required on a disposable test
+installation; stable research/production iPad IPA files are untouched.
