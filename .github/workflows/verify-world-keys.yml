@@ -6,6 +6,8 @@ on:
       - ".github/workflows/verify-world-keys.yml"
       - "tests/staging/world_key_*"
       - "tests/staging/test_world_key_*"
+      - "tests/staging/test_readonly_rton_save.py"
+      - "tools/inspect_pvz2_rton_save.py"
       - "tools/verify_world_key_*"
       - "tools/verify_keyobs_restore_wiring.py"
       - "tools/verify_ios_dynarmic_wiring.py"
