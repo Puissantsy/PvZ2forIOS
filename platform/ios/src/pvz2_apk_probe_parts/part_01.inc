@@ -2972,7 +2972,6 @@
             AppendDiagnostic(
                 "KEYCONV STOCK_PROFILE id=" +
                 std::to_string(profile_id) +
-                " " + WorldKeyReadOnlyStockSnapshot(profile) +
                 " " + WorldKeyReadOnlyGateSnapshot(profile));
         }
 
