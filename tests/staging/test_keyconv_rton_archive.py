@@ -119,7 +119,7 @@ class DisposableRtonArchiveTests(unittest.TestCase):
 
     def test_wrong_profile_slot_fails(self):
         synthetic_zip(self.before)
-        with self.assertRaisesRegex(RtonError, "Profile slot"):
+        with self.assertRaisesRegex(RtonError, "matching native profile slot"):
             build_disposable_copy(self.before, self.after, 1)
         self.assertFalse(self.after.exists())
 
