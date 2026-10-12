@@ -143,6 +143,19 @@ jobs:
               -Wall -Wextra -Wno-unused-parameter \
               -Iplatform/ios/src -Itests/staging "$unit"
           done
+      - name: Compile actual iPadOS arm64 ObjC++ launcher adapter and restore object files (NO IPA)
+        run: |
+          SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
+          mkdir -p /tmp/pvz2-keyconv-ios-objects
+          for unit in platform/ios/src/main.mm platform/ios/src/save_backups.mm platform/ios/src/keyconv_prelaunch_ios_adapter.mm; do
+            base="$(basename "$unit" .mm)"
+            xcrun --sdk iphoneos clang++ -std=c++20 -O1 \
+              -target arm64-apple-ios17.4 -isysroot "$SDK" \
+              -fobjc-arc -x objective-c++ -c \
+              -Iplatform/ios/src -Itests/staging "$unit" \
+              -o "/tmp/pvz2-keyconv-ios-objects/${base}.o"
+            file "/tmp/pvz2-keyconv-ios-objects/${base}.o"
+          done
       - name: Syntax-check isolated KEYCONV Objective-C++ adapter for iPadOS arm64
         run: |
           SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
