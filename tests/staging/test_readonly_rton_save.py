@@ -108,7 +108,7 @@ class ReadOnlyRtonSaveTests(unittest.TestCase):
             "UNVERIFIED_BACKUP")
         candidate = preview_legacy_key_recycle(after, True)
         self.assertEqual(candidate["status"],
-                         "CANDIDATE_REQUIRES_REAL_KEY_SCHEMA_VALIDATION")
+                         "CANDIDATE_NEEDS_IPAD_RESTORE_VALIDATION")
         self.assertTrue(candidate["preview_only"])
         self.assertEqual(candidate["would_consume_keys"], 1)
         self.assertEqual(candidate["would_add_coins"], 1000)
