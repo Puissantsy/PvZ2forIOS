@@ -159,9 +159,29 @@ public:
            !SaveSyncDirectory(directory)) return false;
         return Cleanup();
     }
-    SaveOutcome Recover(std::uint32_t profile_id) const {
+    SaveOutcome Recover(std::uint32_t profile_id,
+                        std::size_t stop_after_restores=0u) const {
         std::error_code ec;
         if(!fs::exists(journal,ec)&&!ec) return SaveOutcome::NoJournal;
+        // A crash during Prepare, before publishing the durable manifest,
+        // cannot have replaced any live save: Commit refuses an unprepared
+        // journal. Only delete recognized, non-symlink staging files.
+        if(fs::is_directory(journal,ec) && !ec &&
+           !fs::exists(journal/"manifest",ec) && !ec &&
+           !fs::exists(journal/"committed",ec) && !ec) {
+            for(const auto& entry:fs::directory_iterator(journal,ec)) {
+                if(ec) return SaveOutcome::IOFailure;
+                const std::string s=entry.path().filename().string();
+                const bool expected=s.size()==4u &&
+                    (s.rfind("old",0)==0 || s.rfind("new",0)==0) &&
+                    s[3]>='0' && s[3]<='7';
+                if(!expected || !entry.is_regular_file(ec) ||
+                   entry.is_symlink(ec) || ec)
+                    return SaveOutcome::Conflict;
+            }
+            return Cleanup()?SaveOutcome::PreparedAborted:
+                             SaveOutcome::IOFailure;
+        }
         const auto meta=VerifiedRecord();
         if(!meta||meta->profile!=profile_id) return SaveOutcome::Conflict;
         const auto marker=journal/"committed";
@@ -188,6 +208,7 @@ public:
                              SaveOutcome::IOFailure;
         // No commit marker: rollback ALL new/partial file replacements.
         // This is replayable after another crash, before guest profile load.
+        std::size_t restored=0u;
         for(std::size_t i=0;i<meta->files.size();++i) {
             const auto& e=meta->files[i];
             std::vector<std::uint8_t> current;
@@ -197,6 +218,9 @@ public:
                 if(!ReplaceFromJournal(
                     "old"+std::to_string(i),"restore"+std::to_string(i),
                     e.basename)) return SaveOutcome::IOFailure;
+                ++restored;
+                if(stop_after_restores==restored)
+                    return SaveOutcome::IOFailure; // crash fixture
             }
         }
         return Cleanup()?SaveOutcome::PreparedAborted:SaveOutcome::IOFailure;
