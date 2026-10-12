@@ -123,6 +123,12 @@ jobs:
           DYN_TREE="fd5b3ab282948fcdacc202ee11ee6d7aec339125"
           GIT_TERMINAL_PROMPT=0 git -c credential.helper= clone --no-tags "$DYN_URL" /tmp/pvz2-dynarmic-exact
           cd /tmp/pvz2-dynarmic-exact
+          # The commit may be present in GitHub's object store but absent
+          # from the repository's current advertised branch history.
+          if ! git cat-file -e "$DYN_SHA^{commit}" 2>/dev/null; then
+            echo "PVZ2_DYNARMIC_NOT_ADVERTISED_ATTEMPT_EXACT_FETCH=YES"
+            GIT_TERMINAL_PROMPT=0 git -c credential.helper= fetch origin "$DYN_SHA"
+          fi
           git checkout --detach "$DYN_SHA"
           git reset --hard "$DYN_SHA"
           test "$(git rev-parse HEAD)" = "$DYN_SHA"
