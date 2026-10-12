@@ -145,22 +145,21 @@ def in_memory_egypt_surplus_candidate(original, player_slot):
     for idx, entry in enumerate(entries):
         if not isinstance(entry, dict):
             raise RtonError("Unknown saved key entry layout")
-        names = [(key, value) for key, value in entry.items()
-                 if isinstance(value, str) and
-                 value in {"egypt", "pirate", "cowboy", "future", "dark"}]
-        numbers = [(key, value) for key, value in entry.items()
-                   if type(value) is int]
-        if len(names) != 1 or len(numbers) != 1:
-            raise RtonError("Ambiguous world-key entry layout")
-        world = names[0][1]
+        # VERIFIED against the user's PRIVATE 2026-10-12 nonempty save:
+        # native world keys are exactly [{"wn":"egypt","kc":1}].
+        # Do not guess based on matching *any* string/int in a record.
+        if set(entry) != {"wn", "kc"}:
+            raise RtonError("Unknown world-key fields, refusing mutation")
+        world, amount = entry["wn"], entry["kc"]
+        if (not isinstance(world, str) or
+                world not in {"egypt", "pirate", "cowboy", "future", "dark"} or
+                type(amount) is not int or not 0 <= amount <= 99):
+            raise RtonError("Invalid native wn/kc record")
         if world in seen_worlds:
             raise RtonError("Duplicate native world-key entry")
         seen_worlds.add(world)
-        amount = numbers[0][1]
-        if not 0 <= amount <= 99:
-            raise RtonError("Native key amount outside expected bounds")
         if world == "egypt" and amount:
-            selected.append((idx, numbers[0][0], amount))
+            selected.append((idx, "kc", amount))
     if not selected:
         return original, {"status": "NO_ELIGIBLE_OLD_KEYS", "changed": False}
     if len(selected) != 1:
