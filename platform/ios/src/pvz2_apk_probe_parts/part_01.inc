@@ -2597,7 +2597,12 @@
 
     std::string WorldKeyReadOnlyGateSnapshot(std::uint32_t profile) {
         const auto view=WorldKeyReadOnlyEvents(profile);
-        if (!view) return "events=INVALID gates=UNKNOWN";
+        if (!view) {
+            return "events=INVALID gates=UNKNOWN" +
+                (WorldKeyConversionEnabled()
+                    ? " " + WorldKeyReadOnlyStockSnapshot(profile)
+                    : std::string{});
+        }
 
         std::ostringstream out;
         out << "eventCount=" << view->size();
@@ -2967,6 +2972,7 @@
             AppendDiagnostic(
                 "KEYCONV STOCK_PROFILE id=" +
                 std::to_string(profile_id) +
+                " " + WorldKeyReadOnlyStockSnapshot(profile) +
                 " " + WorldKeyReadOnlyGateSnapshot(profile));
         }
 
