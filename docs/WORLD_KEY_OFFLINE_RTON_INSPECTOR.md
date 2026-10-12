@@ -103,3 +103,65 @@ real save files are part of the public CI.
 RTON token definitions cross-checked with RETON's public format
 documentation. The authoritative runtime evidence is still the original
 PvZ2 ELF and physical iPad logs.
+
+
+## Further progress — in-memory edit and disposable archive prototype
+
+The research branch now includes two new components:
+
+- `tools/experimental_keyconv_rton_memory.py`: indexes the original RTON
+  integer-token byte spans, then changes **only** the selected PlayerInfo
+  `objdata.c` and Egyptian `objdata.wsk` count **in memory**. It
+  requires verified W2 gate states 13/23/33/39/41 >=3, a single
+  unambiguous Egyptian key entry, saved keys 1..99, a wallet amount that
+  cannot overflow signed 32 bits, and a supported original numeric token
+  type. It redecodes the entire resulting RTON and checks every
+  unrelated field is unchanged. A second attempt after count 0 is a no-op.
+- `tools/experimental_keyconv_rton_archive.py`: exports to a **new,
+  explicitly named disposable ZIP** only. It requires a fully verified
+  `snapshot-info.plist`, an identical `pp.dat`/`snapshot2.dat`
+  pair, a unique original PlayerInfo path, an explicit zero-based
+  profile slot, and an explicit `--ack-disposable-only` flag. The
+  exporter updates both copies of the same RTON and their manifest
+  SHA-256/size entries. It then reparses the output, validates the
+  entire inventory, and compares all unrelated archive bytes. It
+  refuses pre-existing output paths and never overwrites the source.
+
+**Warning:** this is a research utility. Although it generates a
+structurally validated ZIP under synthetic tests, it has **not**
+been used on the user's live six-key snapshot or accepted/rebooted on
+the physical iPad. The actual saved layout of a NONEMPTY `wsk`
+is not yet confirmed. Do NOT import the generated experimental ZIP
+into the primary game profile or replace your untouched iCloud backups.
+
+Syntax of the guarded experimental invocation, for future work on
+a **disposable, separately restored test profile only**:
+
+```bash
+python3 tools/experimental_keyconv_rton_archive.py \
+  /private/path/to/COPIED_AFTER_GATE_OPEN.zip \
+  --profile-slot 0 \
+  --output /private/path/to/EXPERIMENTAL-key-conversion.zip \
+  --ack-disposable-only
+```
+
+Even this command will REFUSE conversion if the key gate is still
+closed (the original six-key/five-key-door backup is a PRE-gate fixture),
+if the manifest/mirror differs, if the key layout is ambiguous, or if
+the result cannot be verified. It remains an *experiment*, not a
+recommended production migration.
+
+### New green tests
+
+https://github.com/Puissantsy/PvZ2forIOS/actions/runs/38211868074
+successfully executed:
+
+- 197 existing C++ checks across award policies, native stock,
+  recovery journals and V128 profile write-set paths;
+- 23 Python tests of read-only RTON inspection and manifest integrity;
+- 9 Python tests of exact in-memory two-token currency transformation;
+- 9 Python tests of disposable mirrored ZIP export, manifest rebuild,
+  refusal to overwrite, closed gates and repeated conversion.
+
+**238 combined test cases/checks**, plus static ARM/runtime wiring
+verifiers, all pass. No iOS build or device test occurred.
