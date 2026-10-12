@@ -121,6 +121,25 @@ class PrelaunchTransactionTests(unittest.TestCase):
         with self.assertRaisesRegex(PrelaunchConflict, "diverged"):
             recover(self.root)
 
+
+    def test_registry_changed_after_first_file_crash_refuses_recovery(self):
+        with self.assertRaises(SimulatedInterruption):
+            settle_disposable_root(self.root, 0, guest_stopped=True,
+                                   crash_at="after_replace_0")
+        # Simulates a concurrent profile/restore change between sessions.
+        registry = self.working / "local_profiles"
+        registry.write_bytes(registry.read_bytes() + b"unexpected")
+        with self.assertRaisesRegex(PrelaunchConflict, "registry changed"):
+            recover(self.root)
+        self.assertTrue((self.root / JOURNAL).is_dir())
+
+    def test_corrupt_registry_unchanged_hash_rejected_pretransaction(self):
+        (self.working / "local_profiles").write_bytes(b"bad registry")
+        with self.assertRaises(Exception):
+            settle_disposable_root(self.root, 0, guest_stopped=True)
+        self.assertEqual(self.balances(), ((7800, 1), (7801, 1)))
+        self.assertFalse((self.root / JOURNAL).exists())
+
     def test_wrong_native_profile_identity_refused(self):
         # Registry is one higher than original PlayerInfo native ID.
         self.source.unlink()

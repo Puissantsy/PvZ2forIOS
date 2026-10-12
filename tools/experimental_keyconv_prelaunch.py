@@ -107,8 +107,14 @@ def validate_manifest(journal):
     except (ValueError, UnicodeError) as exc:
         raise PrelaunchConflict("Unreadable journal manifest") from exc
     if (not isinstance(doc, dict) or
-            set(doc) != {"version", "profile_id", "files"} or
-            doc["version"] != 1 or
+            set(doc) != {"version", "profile_id", "profile_slot",
+                         "local_profiles_sha256", "files"} or
+            doc["version"] != 2 or
+            type(doc["profile_slot"]) is not int or doc["profile_slot"] < 0 or
+            not isinstance(doc["local_profiles_sha256"], str) or
+            len(doc["local_profiles_sha256"]) != 64 or
+            any(c not in "0123456789abcdef"
+                for c in doc["local_profiles_sha256"]) or
             type(doc["profile_id"]) is not int or doc["profile_id"] <= 0 or
             not isinstance(doc["files"], dict) or
             set(doc["files"]) != set(FILES)):
@@ -127,7 +133,7 @@ def validate_manifest(journal):
             if digest(data) != entry[kind]:
                 raise PrelaunchConflict("Corrupt journal image")
             images[(kind, name)] = data
-    return images
+    return images, doc
 
 
 def install_image(journal, destination, data):
@@ -168,11 +174,25 @@ def recover(live_root):
             raise PrelaunchConflict("Inconsistent unpublished transaction")
         finish(root, journal)
         return "DISCARDED_UNPUBLISHED"
-    images = validate_manifest(journal)
+    images, manifest = validate_manifest(journal)
     working = root / "UserData" / "No_Backup"
     if (working.is_symlink() or (root / "UserData").is_symlink() or
             not working.is_dir()):
         raise PrelaunchConflict("Unsafe live PlayerInfo directory")
+    # The local profile registry is an IMMUTABLE transaction precondition:
+    # a profile switch/restore between crash and recovery is a conflict.
+    registry_bytes = read_regular(working / "local_profiles", MAX_REGISTRY)
+    if digest(registry_bytes) != manifest["local_profiles_sha256"]:
+        raise PrelaunchConflict("Native profile registry changed during transaction")
+    registered = RtonReader(registry_bytes).decode().get("objects")
+    slot = manifest["profile_slot"]
+    if (not isinstance(registered, list) or slot >= len(registered) or
+            not isinstance(registered[slot], dict) or
+            registered[slot].get("objclass") != "PlayerInfoLocalSaveData" or
+            not isinstance(registered[slot].get("objdata"), dict) or
+            registered[slot]["objdata"].get("ProfileIndex") !=
+            manifest["profile_id"]):
+        raise PrelaunchConflict("Native profile identity changed during transaction")
     for name in FILES:
         state = read_regular(working / name, MAX_IMAGE)
         if state not in (images[("old", name)], images[("new", name)]):
@@ -203,8 +223,8 @@ def prepare(live_root, profile_slot):
             type(profile_slot) is not int or profile_slot < 0):
         raise PrelaunchConflict("Unsafe game save path or profile slot")
     old = {name: read_regular(working / name, MAX_IMAGE) for name in FILES}
-    registry = RtonReader(
-        read_regular(working / "local_profiles", MAX_REGISTRY)).decode()
+    registry_bytes = read_regular(working / "local_profiles", MAX_REGISTRY)
+    registry = RtonReader(registry_bytes).decode()
     registered = registry.get("objects")
     parsed = {name: RtonReader(old[name]).decode() for name in FILES}
     if not isinstance(registered, list) or profile_slot >= len(registered):
@@ -239,7 +259,10 @@ def prepare(live_root, profile_slot):
             in_memory_egypt_surplus_candidate(old[name], profile_slot))
     flags = [previews[name].get("changed") is True for name in FILES]
     if not any(flags):
-        return old, {}, native_id, {"status": "NO_ELIGIBLE_STOCK"}
+        return old, {}, native_id, {
+            "status": "NO_ELIGIBLE_STOCK",
+            "local_profiles_sha256": digest(registry_bytes)
+        }
     if not all(flags) or (
             previews[FILES[0]]["key_count"] !=
             previews[FILES[1]]["key_count"]):
@@ -247,6 +270,7 @@ def prepare(live_root, profile_slot):
     first = previews[FILES[0]]
     return old, changed, native_id, {
         "status": "READY", "keys": first["key_count"],
+        "local_profiles_sha256": digest(registry_bytes),
         "primary_coins_before": first["coins_before"],
         "primary_coins_after": first["coins_after"]
     }
@@ -274,10 +298,15 @@ def settle_disposable_root(live_root, profile_slot, *,
         exclusive(journal / f"new-{name}", new[name])
     syncdir(journal)
     manifest = {
-        "version": 1, "profile_id": native_id,
+        "version": 2, "profile_id": native_id,
+        "profile_slot": profile_slot,
+        "local_profiles_sha256": plan["local_profiles_sha256"],
         "files": {n: {"old": digest(old[n]), "new": digest(new[n])}
                   for n in FILES}
     }
+    if digest(read_regular(working / "local_profiles", MAX_REGISTRY)) != (
+            manifest["local_profiles_sha256"]):
+        raise PrelaunchConflict("Native profile registry changed before journal publish")
     exclusive(journal / "manifest.tmp",
               (json.dumps(manifest, sort_keys=True) + "\n").encode())
     syncdir(journal)
@@ -292,6 +321,9 @@ def settle_disposable_root(live_root, profile_slot, *,
         install_image(journal, working / name, new[name])
         if crash_at == f"after_replace_{i}":
             raise SimulatedInterruption(f"after_replace_{i}")
+    if digest(read_regular(working / "local_profiles", MAX_REGISTRY)) != (
+            manifest["local_profiles_sha256"]):
+        raise PrelaunchConflict("Native profile registry changed before commit")
     # Recheck BOTH installed target images before publishing commit.
     if any(read_regular(working / name, MAX_IMAGE) != new[name]
            for name in FILES):
