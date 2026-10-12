@@ -6013,6 +6013,22 @@
                 " configFlushes=" + std::to_string(v128_config_flushes) +
                 " configFailures=" + std::to_string(v128_config_failures));
         }
+        if (WorldKeyConversionEnabled()) {
+            AppendDiagnostic(
+                "KEYCONV V128 PROFILE WRITESET SUMMARY flushes=" +
+                std::to_string(keyconv_v128_profile_flushes) +
+                " changed=" + std::to_string(keyconv_v128_profile_changed) +
+                " unchanged=" +
+                    std::to_string(keyconv_v128_profile_unchanged) +
+                " unknown=" +
+                    std::to_string(keyconv_v128_profile_flushes -
+                      keyconv_v128_profile_changed -
+                      keyconv_v128_profile_unchanged) +
+                " totalMs=" +
+                    std::to_string(keyconv_v128_profile_flush_ns/1000000u) +
+                " maxUs=" +
+                    std::to_string(keyconv_v128_profile_flush_max_ns/1000u));
+        }
         if (V110ProfilingEnabled()) AppendDiagnostic(V110AudioSummary());
         if (V111Enabled()) AppendDiagnostic(V111AudioSampleSummary());
         if (V112Enabled()) V112EmitAudioBoundarySummary();
