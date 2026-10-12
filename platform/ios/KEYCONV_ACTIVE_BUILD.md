@@ -480,3 +480,36 @@ Next physical acceptance after restoring exact Dynarmic checkout:
 3. Only then integrate a quiescent guest save-serialization barrier
    and a prelaunch journal recovery barrier, with fail-closed
    process-kill tests before enabling automatic surplus settlement.
+
+
+### October 12 — Key stock + exact V128 write-set diagnostic preflight
+
+KEYCONV research-mode-only instrumentation:
+- a shared, standalone-tested whitelist of three native profile files:
+  `pp.dat`, `snapshot2.dat`, `local_profiles`;
+- baseline bytes loaded only after a successful V128 disk read, capped at
+  1 MiB/file; exact byte comparison after successful native V128 flush;
+- log line adds frame, sameAsPrior=YES/NO/UNKNOWN and flushUs; a
+  separate summary records changed/unchanged/unknown counts, total and
+  maximum flush time;
+- preserves the original guest VFS flush ordering, fsync, rename, and
+  all non-KEYCONV modes; does not change saves or automatic key settlement;
+- even with an invalid native gate event vector, `KEYCONV STOCK_PROFILE`
+  still logs the bounded `wsk` inventory observation.
+
+Off-device C++ unit tests: **197 checks** pass
+(33+7+13+37+31+59+17); static wiring checks also PASS.
+CI: https://github.com/Puissantsy/PvZ2forIOS/actions/runs/38208827380
+
+Exact historical Dynarmic recovery was tested separately without
+starting another IPA build. Source probe:
+https://github.com/Puissantsy/PvZ2forIOS/actions/runs/38208937421
+on GitHub Actions macOS returned:
+`remote: Repository not found.`
+`fatal: repository 'https://github.com/LiveContainer/dynarmic.git/' not found`
+when attempting an **anonymous git ls-remote**.
+The source cache is therefore still empty. Only the previously installed
+device-proven KEYCONV IPA is currently suitable for physical testing.
+
+Full next-device acceptance plan:
+`docs/WORLD_KEY_WRITESET_PROBE.md`.
