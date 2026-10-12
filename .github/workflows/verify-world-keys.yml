@@ -198,6 +198,7 @@ jobs:
             xcrun --sdk iphoneos clang++ -std=c++20 -O1 \
               -target arm64-apple-ios17.4 -isysroot "$SDK" \
               -fobjc-arc -x objective-c++ -c \
+              -DPVZ2_KEYCONV_RESEARCH_BUILD=1 \
               -Iplatform/ios/src -Itests/staging "$unit" \
               -o "/tmp/pvz2-keyconv-ios-objects/${base}.o"
             file "/tmp/pvz2-keyconv-ios-objects/${base}.o"
