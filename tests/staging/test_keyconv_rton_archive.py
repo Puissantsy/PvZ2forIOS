@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from experimental_keyconv_rton_archive import build_disposable_copy
 from inspect_pvz2_rton_save import RtonError, inspect_archive
-from test_readonly_rton_save import sample
+from test_readonly_rton_save import sample, obj, arr, text, direct, number
 
 PREFIX = "synthetic-TEST/UserData/No_Backup/"
 ROOT = "synthetic-TEST/"
@@ -23,9 +23,16 @@ def synthetic_zip(destination, *, opened=True, keys=1, coins=7800,
                   mirror_matches=True, correct_manifest=True):
     pp = sample(coins=coins, old_keys=keys, opened=opened)
     other = sample(coins=coins + 1, old_keys=keys, opened=opened)
+    local = (b"RTON\\x01\\x00\\x00\\x00" +
+             text("version") + number(1) +
+             text("objects") + arr([
+                 obj([("objclass", direct("PlayerInfoLocalSaveData")),
+                      ("objdata", obj([("ProfileIndex", number(1790861459))]))])
+             ]) + b"\\xffDONE")
     members = {
         "UserData/No_Backup/pp.dat": pp,
         "UserData/No_Backup/snapshot2.dat": pp if mirror_matches else other,
+        "UserData/No_Backup/local_profiles": local,
         "UserData/No_Backup/other.bin": EXTRA,
     }
     inventory = [
