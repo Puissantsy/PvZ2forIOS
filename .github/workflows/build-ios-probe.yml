@@ -3,12 +3,13 @@ name: Build iOS JIT Probe
 on:
   workflow_dispatch:
   # Research branch updates run policy+Apple SDK checks, not full IPA builds.
-  # A single explicitly dispatched IPA build is permitted after all gates pass.
+  # A single explicitly dispatched IPA build or build-request marker is permitted after all gates pass.
   push:
-    branches: [main]
+    # This research branch requires ONE explicit source-marker commit to build.
+    # Production main keeps its independent default-branch workflow intact.
+    branches: [research/world-key-conversion-active]
     paths:
-      - "platform/ios/**"
-      - ".github/workflows/build-ios-probe.yml"
+      - "platform/ios/.keyconv-build-request"
 
 permissions:
   contents: read
@@ -49,6 +50,12 @@ jobs:
           fi
           (
             cd .deps/dynarmic
+            test "$(git remote get-url origin)" = "$DYN_URL"
+            # Upstream still holds c97c, but its current cloned refs do not.
+            # Explicit fetch retrieves the verified historical Git object.
+            if ! git cat-file -e "$DYN_SHA^{commit}" 2>/dev/null; then
+              GIT_TERMINAL_PROMPT=0 git -c credential.helper= fetch origin "$DYN_SHA"
+            fi
             git checkout --detach "$DYN_SHA"
             git reset --hard "$DYN_SHA"
             git submodule update --init --recursive

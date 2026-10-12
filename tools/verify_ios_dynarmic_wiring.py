@@ -25,6 +25,10 @@ if proven_url in workflow:
          "KEYCONV must pin only physically proven Dynarmic c97c commit")
     need('git reset --hard "$DYN_SHA"' in workflow,
          "cached historical source must be reset before patching")
+    need('git -c credential.helper= fetch origin "$DYN_SHA"' in workflow,
+         "unadvertised historical commit must be fetched explicitly")
+    need("fd5b3ab282948fcdacc202ee11ee6d7aec339125" in workflow,
+         "missing exact source-tree provenance")
     need("actions/cache@v4" in workflow and proven_sha+"-upstream-v2" in workflow,
          "historical checkout must be cached under exact SHA")
     need('git apply --check "$GITHUB_WORKSPACE/platform/ios/patches/dynarmic-ios-nontxm.patch"' in workflow and

@@ -354,3 +354,22 @@ build may be dispatched.
 This is a transport/origin correction, not a Dynarmic update or
 recompilation of the JIT. A full IPA must still pass one explicit manual
 build and physical-iPad acceptance. DO NOT alter production.
+
+### Upstream Git fetch correction and single-build gating
+
+The **first** no-IPA preflight proved that a normal clone of
+`lioncash/dynarmic` does **not** download c97c's older object; `git
+checkout c97c...` therefore failed. The **second**, fully green
+[no-IPA preflight](https://github.com/Puissantsy/PvZ2forIOS/actions/runs/38254071471)
+added an explicit `git fetch origin c97c525ec1432b1e5404ebf091027738005ec168`
+and then verified `HEAD`, full tree SHA
+`fd5b3ab282948fcdacc202ee11ee6d7aec339125`, JIT/TXM
+signatures, vendored externals and patch applicability. Its Linux
+source preflight, Apple object tests and original policy tests all passed.
+
+The full IPA workflow now uses the **same explicit fetch** and refuses
+a cache whose remote origin is not the verified upstream. Research
+branch source commits never trigger it. A one-time commit of
+`platform/ios/.keyconv-build-request` will request exactly one
+IPA build after this preflight; normal manual `workflow_dispatch`
+remains an alternative.
