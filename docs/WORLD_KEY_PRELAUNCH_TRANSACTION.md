@@ -506,3 +506,14 @@ Confirm +1000 coins/zero keys and second cold start. If the marker is
 stripped by the signing tool, the launch must continue to fail closed;
 preserve the complete probe log and signing method before changing
 identity rules again. Never disable the runtime isolation entirely.
+
+
+### Re-signed KEYOBS build ready for physical iPad retest (2026-10-12)
+
+- **Build run:** https://github.com/Puissantsy/PvZ2forIOS/actions/runs/38263681735 — SUCCESS, with `BUILD SUCCEEDED`, app inspection, IPA ZIP packaging and artifact upload.
+- **Source/build commit:** `b0521a1d9312c8d425244f16885f593aaf566cac`
+- **Artifact:** `PvZ2forIOS-JIT-Probe-unsigned`, ID `11753259759`. The artifact ZIP contains a separate unsigned IPA and its `.ipa.sha256`. GitHub reports archive integrity digest `sha256:30ac3fd49f1f70b26caf6c00db8d6bcb07e108ad5518c3b80a13bee4350e3676` (**digest of the Actions artifact archive**, not necessarily the inner IPA).
+- **Verified generated Info.plist:** `CFBundleIdentifier=com.puissantsy.pvz2forios.keyobs`, `PVZ2KeyconvOriginalIdentifier=com.puissantsy.pvz2forios.keyobs`, `PVZ2KeyconvResearchBuild=true`. This is pre-sign metadata; the iPad signer may still change the installed bundle ID.
+- **No build retries or alternate Dynarmic:** historically proven c97c525e original SHA and tree, spinlock patch unchanged. Full arm64 app compiled and packaged in **one** marker-triggered run after three green CI jobs.
+
+**Required iPad sequence:** install/sign only within isolated KEYOBS research app. First launch without new restoration must no longer show “KEYCONV réservé à l'application de recherche”. An existing already-converted state (0 keys) legitimately offers no key-credit prompt. For actual native conversion testing, reimport ONLY the disposable *unconverted* original save, choose v165 `Restaurer`, then explicit `Convertir uniquement le profil 2` (zero-based slot 1), expect Egypt 1→0 key, primary 9,010→10,010 coins, snapshot2 distinct historical wallet preserved, and repeat cold start without double credit. Full local probe log and `.ips` on any failure. **Physical-device success is still pending.**
