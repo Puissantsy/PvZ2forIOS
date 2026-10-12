@@ -106,6 +106,7 @@ set_source_files_properties(
 add_executable(PvZ2forIOS MACOSX_BUNDLE
     src/main.mm
     src/save_backups.mm
+    src/keyconv_prelaunch_ios_adapter.mm
     src/dynarmic_smoke.cpp
     src/pvz2_apk_probe.cpp
     src/host_gles.mm
@@ -125,6 +126,12 @@ set_target_properties(PvZ2forIOS PROPERTIES
 )
 
 target_compile_features(PvZ2forIOS PRIVATE cxx_std_20)
+
+# Only KEYOBS uses the research-only native RTON + journal headers.
+# No separate guest/V128 code is started by these pure C++20 modules.
+target_include_directories(PvZ2forIOS PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../tests/staging"
+)
 
 find_library(UIKIT_FRAMEWORK UIKit REQUIRED)
 find_library(FOUNDATION_FRAMEWORK Foundation REQUIRED)

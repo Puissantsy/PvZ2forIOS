@@ -19,6 +19,7 @@ on:
       - "tests/staging/keyconv_prelaunch_ios_adapter.hpp"
       - "tests/staging/keyconv_prelaunch_ios_adapter.mm"
       - "tools/verify_keyconv_offline_export.py"
+      - "tools/verify_keyconv_ios_integration.py"
       - "tools/verify_world_key_*"
       - "tools/verify_keyobs_restore_wiring.py"
       - "tools/verify_ios_dynarmic_wiring.py"
@@ -95,6 +96,8 @@ jobs:
         run: python3 tools/verify_world_key_probe_wiring.py
       - name: Check active AddWorldKeys to native SetCoins tail-call (no IPA)
         run: python3 tools/verify_world_key_conversion_tailcall.py
+      - name: Verify KEYCONV recovery/restore/opt-in/prelaunch wiring (no IPA)
+        run: python3 tools/verify_keyconv_ios_integration.py
       - name: Check isolated KEYOBS save-transfer integration (no IPA)
         run: python3 tools/verify_keyobs_restore_wiring.py
       - name: Check exact public iOS Dynarmic source wiring (no IPA)

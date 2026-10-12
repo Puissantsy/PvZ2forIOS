@@ -22,6 +22,7 @@
 #include "host_gles.hpp"
 #include "pvz2_apk_probe.hpp"
 #include "save_backups.hpp"
+#include "keyconv_prelaunch_ios_adapter.hpp"
 
 extern "C" int csops(pid_t pid, unsigned int ops, void *useraddr, size_t usersize);
 
@@ -2157,6 +2158,16 @@ void PvZ2HostNotifyDirectFrame(
 @property(nonatomic, assign)
     BOOL keyobsPrelaunchSnapshotTaken;
 
+// KEYCONV research-only prelaunch migration never starts guest code while
+// restoring, journaling or awaiting an explicit profile-specific decision.
+@property(nonatomic, assign) BOOL keyconvRecoveryChecked;
+@property(nonatomic, assign) BOOL keyconvRecoveryWasClean;
+@property(nonatomic, assign) BOOL keyconvFatalBlocked;
+@property(nonatomic, assign) BOOL keyconvPromptActive;
+@property(nonatomic, assign) BOOL keyconvOfferChecked;
+@property(nonatomic, assign) BOOL keyconvPrelaunchBackupVerified;
+@property(nonatomic, strong) NSString *keyconvStartupNote;
+
 @end
 
 @implementation ProbeViewController
@@ -2367,10 +2378,52 @@ void PvZ2HostNotifyDirectFrame(
         didPickDocumentsAtURLs:@[apk, obb]];
 }
 
+- (void)v130KeyconvStopLaunch:(NSString *)reason {
+    if (self.keyconvFatalBlocked) return;
+    self.keyconvFatalBlocked = YES;
+    AppendPersistentLog(
+        @"[KEYCONV PRELAUNCH] FAIL_CLOSED; guest launch prohibited");
+    [self v130SetStatus:
+        @"KEYCONV : sauvegarde non vérifiée. Lancement bloqué."];
+    UIAlertController *alert = [UIAlertController
+        alertControllerWithTitle:@"KEYCONV — démarrage interrompu"
+        message:(reason != nil ? reason :
+            @"Une incohérence de sauvegarde empêche ce démarrage.")
+        preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Fermer"
+        style:UIAlertActionStyleCancel handler:nil]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
 - (void)v130ContinueLaunch {
     if (self.v130LaunchStarted || self.jniRunning ||
-        self.keyobsRestorePromptActive) {
+        self.keyobsRestorePromptActive || self.keyconvPromptActive ||
+        self.keyconvFatalBlocked) {
         return;
+    }
+
+    // Recovery runs with the guest stopped, BEFORE any v165 restore prompt.
+    // Even if migration is not chosen, an outstanding journal may never
+    // be bypassed by the original Android guest.
+    if (!self.keyconvRecoveryChecked) {
+        self.keyconvRecoveryChecked = YES;
+        NSError *recoveryError = nil;
+        PVZKeyconvRecoveryResult status =
+            PVZKeyconvRecoverBeforeRestore(&recoveryError);
+        if (status == PVZKeyconvRecoveryFailed) {
+            [self v130KeyconvStopLaunch:
+                recoveryError.localizedDescription];
+            return;
+        }
+        self.keyconvRecoveryWasClean =
+            (status == PVZKeyconvRecoveryNoJournal);
+        if (!self.keyconvRecoveryWasClean) {
+            self.keyconvStartupNote =
+                [NSString stringWithFormat:
+                    @"[KEYCONV PRELAUNCH] recovered=%ld conversion_deferred_this_launch=YES",
+                    (long)status];
+            AppendPersistentLog(self.keyconvStartupNote);
+        }
     }
 
     // Guest/JIT must NOT start until the user has accepted or declined
@@ -2449,6 +2502,7 @@ void PvZ2HostNotifyDirectFrame(
             NSURL *snapshot = PVZSaveCreateSnapshot(
                 @"prelaunch", &snapshotError);
             if (snapshot != nil) {
+                self.keyconvPrelaunchBackupVerified = YES;
                 AppendPersistentLog(
                     [NSString stringWithFormat:
                         @"[KEYOBS SAVE] prelaunch VERIFIED snapshot=%@ (Files/PvZ2Backups)",
@@ -2462,6 +2516,86 @@ void PvZ2HostNotifyDirectFrame(
         } else {
             AppendPersistentLog(
                 @"[KEYOBS SAVE] prelaunch no existing save to snapshot");
+        }
+    }
+
+    // Never mutate without a newly VERIFIED prelaunch backup and an
+    // explicit slot-specific confirmation. If readonly discovery is
+    // uncertain, disable this optional experiment, not the original game.
+    if (!self.keyconvOfferChecked) {
+        self.keyconvOfferChecked = YES;
+        if (self.keyconvRecoveryWasClean &&
+            self.keyconvPrelaunchBackupVerified) {
+            NSError *previewError = nil;
+            NSArray<NSNumber *> *eligible =
+                PVZKeyconvEligibleSlots(&previewError);
+            if (eligible == nil) {
+                AppendPersistentLog(
+                    @"[KEYCONV PRELAUNCH] readonly discovery refused; no migration");
+            } else if (eligible.count != 0u) {
+                self.keyconvPromptActive = YES;
+                [self v130SetStatus:
+                    @"Clés excédentaires détectées. Choisis un profil ou Ignore."];
+                UIAlertController *alert = [UIAlertController
+                    alertControllerWithTitle:@"KEYCONV — sauvegarde expérimentale"
+                    message:@"Des clés égyptiennes excédentaires peuvent être converties en 1 000 PvZCoins chacune. Une sauvegarde de sécurité vérifiée a été créée. Choisis uniquement le profil de TEST à convertir. Rien ne sera modifié si tu ignores."
+                    preferredStyle:UIAlertControllerStyleAlert];
+                __weak typeof(self) weakSelf = self;
+                [alert addAction:[UIAlertAction
+                    actionWithTitle:@"Ignorer — lancer sans convertir"
+                    style:UIAlertActionStyleCancel
+                    handler:^(__unused UIAlertAction *action) {
+                        __strong typeof(weakSelf) strongSelf = weakSelf;
+                        if (!strongSelf) return;
+                        strongSelf.keyconvPromptActive = NO;
+                        AppendPersistentLog(
+                            @"[KEYCONV PRELAUNCH] user_declined; no migration");
+                        [strongSelf v130ContinueLaunch];
+                    }]];
+                for (NSNumber *slotNumber in eligible) {
+                    const NSUInteger slot = slotNumber.unsignedIntegerValue;
+                    if (slot >= 16u) continue;
+                    NSString *title = [NSString stringWithFormat:
+                        @"Convertir uniquement le profil %lu",
+                        (unsigned long)(slot + 1u)];
+                    [alert addAction:[UIAlertAction
+                        actionWithTitle:title style:UIAlertActionStyleDefault
+                        handler:^(__unused UIAlertAction *action) {
+                            __strong typeof(weakSelf) strongSelf = weakSelf;
+                            if (!strongSelf) return;
+                            if (strongSelf.jniRunning ||
+                                strongSelf.v130LaunchStarted) {
+                                strongSelf.keyconvPromptActive = NO;
+                                [strongSelf v130KeyconvStopLaunch:
+                                    @"Le moteur est déjà actif. Conversion refusée."];
+                                return;
+                            }
+                            NSError *conversionError = nil;
+                            NSUInteger usedKeys = 0u;
+                            BOOL converted = PVZKeyconvSettleSelectedSlot(
+                                slot, &usedKeys, &conversionError);
+                            strongSelf.keyconvPromptActive = NO;
+                            if (!converted) {
+                                [strongSelf v130KeyconvStopLaunch:
+                                    conversionError.localizedDescription];
+                                return;
+                            }
+                            strongSelf.keyconvStartupNote =
+                                [NSString stringWithFormat:
+                                    @"[KEYCONV PRELAUNCH] settled_slot=%lu keys=%lu status=SUCCESS_OR_NOOP",
+                                    (unsigned long)slot,
+                                    (unsigned long)usedKeys];
+                            AppendPersistentLog(strongSelf.keyconvStartupNote);
+                            [strongSelf v130ContinueLaunch];
+                        }]];
+                }
+                [self presentViewController:alert
+                                 animated:YES completion:nil];
+                return;
+            }
+        } else {
+            AppendPersistentLog(
+                @"[KEYCONV PRELAUNCH] no new migration: pending recovery or no verified backup");
         }
     }
 
@@ -3066,6 +3200,11 @@ void PvZ2HostNotifyDirectFrame(
             : @"UNKNOWN";
 
     ResetPersistentLog();
+    // documentPicker resets its diagnostic log: replay the bounded
+    // prelaunch transaction outcome so iPad tests can confirm persistence.
+    if (self.keyconvStartupNote.length != 0u) {
+        AppendPersistentLog(self.keyconvStartupNote);
+    }
     self.logView.text = @"";
 
     [self
