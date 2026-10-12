@@ -20,14 +20,15 @@ EXTRA = b"untouched other save"
 
 
 def synthetic_zip(destination, *, opened=True, keys=1, coins=7800,
-                  mirror_matches=True, correct_manifest=True):
+                  mirror_matches=True, correct_manifest=True,
+                  local_profile_index=1790861459):
     pp = sample(coins=coins, old_keys=keys, opened=opened)
     other = sample(coins=coins + 1, old_keys=keys, opened=opened)
     local = (b"RTON\x01\x00\x00\x00" +
              text("version") + number(1) +
              text("objects") + arr([
                  obj([("objclass", direct("PlayerInfoLocalSaveData")),
-                      ("objdata", obj([("ProfileIndex", number(1790861459))]))])
+                      ("objdata", obj([("ProfileIndex", number(local_profile_index))]))])
              ]) + b"\xffDONE")
     members = {
         "UserData/No_Backup/pp.dat": pp,
@@ -107,6 +108,12 @@ class DisposableRtonArchiveTests(unittest.TestCase):
     def test_different_snapshot_mirror_fails(self):
         synthetic_zip(self.before, mirror_matches=False)
         with self.assertRaisesRegex(RtonError, "non-identical"):
+            build_disposable_copy(self.before, self.after, 0)
+        self.assertFalse(self.after.exists())
+
+    def test_mismatched_native_local_profile_identity_refused(self):
+        synthetic_zip(self.before, local_profile_index=1790861460)
+        with self.assertRaisesRegex(RtonError, "ID mismatch"):
             build_disposable_copy(self.before, self.after, 0)
         self.assertFalse(self.after.exists())
 
