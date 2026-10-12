@@ -242,7 +242,10 @@ def inspect_snapshot_manifest(archive, pp_path):
     entries = manifest.get("files")
     if not isinstance(entries, list) or not (1 <= len(entries) <= 16384):
         raise RtonError("Invalid save manifest inventory")
+    from collections import Counter
+    names = Counter(info.filename for info in archive.infolist())
     seen = set()
+    total_bytes = 0
     for item in entries:
         if not isinstance(item, dict):
             raise RtonError("Invalid manifest entry")
@@ -261,6 +264,11 @@ def inspect_snapshot_manifest(archive, pp_path):
                 not re.fullmatch(r"[0-9a-f]{64}", digest)):
             raise RtonError("Unsafe or duplicate manifest entry")
         seen.add(path)
+        total_bytes += length
+        if total_bytes > 128 * 1024 * 1024:
+            raise RtonError("Manifest exceeds total save size limit")
+        if names[prefix + path] != 1:
+            raise RtonError("Missing or duplicate inventoried save member")
         try:
             member = archive.getinfo(prefix + path)
         except KeyError as exc:
