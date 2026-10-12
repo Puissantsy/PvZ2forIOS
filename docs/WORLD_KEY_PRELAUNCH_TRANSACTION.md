@@ -516,4 +516,50 @@ identity rules again. Never disable the runtime isolation entirely.
 - **Verified generated Info.plist:** `CFBundleIdentifier=com.puissantsy.pvz2forios.keyobs`, `PVZ2KeyconvOriginalIdentifier=com.puissantsy.pvz2forios.keyobs`, `PVZ2KeyconvResearchBuild=true`. This is pre-sign metadata; the iPad signer may still change the installed bundle ID.
 - **No build retries or alternate Dynarmic:** historically proven c97c525e original SHA and tree, spinlock patch unchanged. Full arm64 app compiled and packaged in **one** marker-triggered run after three green CI jobs.
 
-**Required iPad sequence:** install/sign only within isolated KEYOBS research app. First launch without new restoration must no longer show “KEYCONV réservé à l'application de recherche”. An existing already-converted state (0 keys) legitimately offers no key-credit prompt. For actual native conversion testing, reimport ONLY the disposable *unconverted* original save, choose v165 `Restaurer`, then explicit `Convertir uniquement le profil 2` (zero-based slot 1), expect Egypt 1→0 key, primary 9,010→10,010 coins, snapshot2 distinct historical wallet preserved, and repeat cold start without double credit. Full local probe log and `.ips` on any failure. **Physical-device success is still pending.**
+**Required iPad sequence:** install/sign only within isolated KEYOBS research app. First launch without new restoration must no longer show “KEYCONV réservé à l'application de recherche”. An existing already-converted state (0 keys) legitimately offers no key-credit prompt. For actual native conversion testing, reimport ONLY the disposable *unconverted* original save, choose v165 `Restaurer`, then explicit `Convertir uniquement le profil 2` (zero-based slot 1), expect Egypt 1→0 key, primary 9,010→10,010 coins, snapshot2 distinct historical wallet preserved, and repeat cold start without double credit. Full local probe log and `.ips` on any failure. **First device-visible conversion now PARTIAL PASS; cold restart and new-log inspection pending.**
+
+
+## Native in-app KEYCONV — first successful physical iPad acceptance, 2026-10-12 (PARTIAL PASS)
+
+**User's explicit on-device report** after installing the repaired KEYOBS
+IPA from [Actions #38263681735](https://github.com/Puissantsy/PvZ2forIOS/actions/runs/38263681735):
+
+- The instantaneous "KEYCONV réservé à l'application de recherche"
+  launcher-blocking alert from the previous IPA **no longer appears**.
+- The native experimental KEYCONV dialog actually **offered a profile choice**
+  on the physical iPad.
+- After selecting the profile, the user observed their surplus Egyptian key
+  converted into **+1,000 PvZCoins in the running original game**.
+
+**Validated milestone:** the research build marker / re-signed-bundle
+compatibility works far enough to reach the profile picker, and the
+**in-app native pre-guest-load conversion** has produced the expected
+visible reward on real iPad hardware. This is a different milestone from
+the previously confirmed *offline archive* edit. No new IPA build is
+needed to claim this initial observed result.
+
+**Strict evidence boundary:** a **new** full probe log was reported as
+uploaded to Project Sources by the user, but was *not currently accessible*
+through the assistant's Files index or container at the time this note
+was written. The only mounted source log found was
+`pvz2forios-probe(20261012-142020).log` with the **earlier failing**
+14:19 UTC launcher attempts. That older log must **not** be cited as
+evidence for the successful conversion. No assertions are made about
+the new log's exact `KEYCONV PRELAUNCH`, `KEYOBS SAVE`, `V128 FLUSH`,
+frame counts or crashes until the proper new log can be read.
+
+**Still to test/verify before FULL PASS:** close the research app
+completely and reopen **without another import/restoration**; confirm
+Egyptian stock remains 0, the wallet remains at the newly credited
+value (10,010 if starting from the original 9,010 wallet), all five
+Egyptian gates remain open, no extra +1,000 credit appears and normal
+world-map/game rendering persists. Verify the complete new local log:
+the restore dialog (if used), a verified prelaunch snapshot **before**
+native settlement, exact selected slot (profile 2 is zero-based slot 1),
+a single successful native journal commit, guest launch and subsequent
+native `pp.dat` and `snapshot2.dat` saves. No automatic crash-recovery
+test has been carried out on real hardware.
+
+Do not mark this as end-to-end crash-safe, change production, or
+create an IPA solely on the basis of a missing log. Keep research
+tests and backups isolated.
