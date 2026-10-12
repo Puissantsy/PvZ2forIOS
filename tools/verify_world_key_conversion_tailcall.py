@@ -53,20 +53,26 @@ need("KEYCONV FAIL_OPEN preserve original key" in svc and
      "unsafe cases must preserve original AddWorldKeys path")
 need("key_count > 4" in policy and "1000 * key_count" in policy,
      "bounded 1..4 conversion and exactly 1000 coins per key missing")
+stock_view=(ROOT/"tests/staging/world_key_stock_view.hpp").read_text()
+probe_cpp=(ROOT/"platform/ios/src/pvz2_apk_probe.cpp").read_text()
 need("WorldKeyReadOnlyStockSnapshot" in state and
      "profile+0x7cu" in state and "wsk=INVALID(vector)" in state and
-     "wsk=INVALID(entry)" in state and "wsk=INVALID(world)" in state,
-     "read-only bounded WorldSpecificKeys inventory witness missing")
+     "wsk=INVALID(entry/world)" in state and
+     "DecodeNativeWorldKeyStock(" in state and
+     "world_key_stock_view.hpp" in probe_cpp,
+     "shared tested native WorldSpecificKeys decoder not integrated")
 need("WorldKeyConversionEnabled()" in state and
      "WorldKeyReadOnlyStockSnapshot(profile)" in state,
      "stock observation must be restricted to active research mode")
 need("KEYCONV STOCK_PROFILE id=" in state and
      "WorldKeyReadOnlyGateSnapshot(profile)" in state,
      "must snapshot stock at profile load without replaying rewards")
-need("seen_worlds" in state and
-     "chars-12u" in state and
-     "wsk=INVALID(string)" in state,
-     "COW name and duplicate world key validation missing")
+need("chars-12u" in state and
+     "mem.Read8(chars+len)!=0u" in state and
+     "wsk=INVALID(string)" in state and
+     "ValidStockWorld" in stock_view and
+     "prior.world==*world" in stock_view,
+     "native COW length, terminator and duplicate-world validation missing")
 need("WorldKeyReadOnlyStockSnapshot" not in svc,
      "no key stock write or sweep may be installed before physical profile validation")
 need("original_amount" in svc and "decision.coins" in svc,
