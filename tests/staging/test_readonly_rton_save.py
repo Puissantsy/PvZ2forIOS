@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Synthetic tests only. Never commit a real player's RTON save or cloud ZIP."""
+# Tests use synthetic and non-identifying RTON saves, never real user snapshots.
 import hashlib
 import io
 import json
