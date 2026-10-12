@@ -84,9 +84,10 @@ must all be validated for the concrete iOS implementation.
 - only afterwards can `v130StartStoredRuntime` invoke the guest
   `documentPicker`/full-load pipeline.
 
-A native research-only prelaunch settlement hook would belong **after**
-the confirmed restore and successful prelaunch snapshot but **before**
-starting the guest/JIT. It must have an explicit one-shot/opt-in gate and
+The migration **settlement** must run after the confirmed restore and
+successful prelaunch snapshot but **before** guest/JIT. A separate
+**journal-recovery gate must run before even presenting a new restore**;
+see sequencing correction below. It must have an explicit one-shot/opt-in gate and
 a recovery barrier even when an experiment is disabled. The current
 Python prototype cannot run inside the compiled iOS app as-is; it must
 be ported to tested Objective-C++/C++ code, not simply linked.
@@ -122,3 +123,73 @@ the same wallet and no extra `APPLY`. Also test deliberately interrupted
 prelaunch/forced-kill/restart and confirm old **or** new state, never
 partial debit/credit or lost unrelated progression. Keep full logs and
 an iOS `.ips` on any crash.
+
+
+## Native converter staged — C++20 byte-exact parity and profile pairing (2026-10-12)
+
+A platform-neutral native RTON parser/converter has been staged under the
+**test-only** directory, not linked into `platform/ios`:
+
+- `tests/staging/world_key_rton_native.hpp` decodes the original 1.5.252752
+  RTON token tags, string caches and nested objects, remembers the precise
+  numeric token spans, writes only `objdata.c` and Egyptian `wsk[].kc`,
+  reparses the entire document and rejects unrelated semantic differences.
+  Unrecognized token types fail closed. Supports signed/unsigned varints
+  and fixed integer encodings.
+- `tests/staging/world_key_rton_native_pair.hpp` requires the explicit
+  selected PlayerInfo slot and `local_profiles` registry, validates native
+  ID matches in both images and equality of old key stock, while preserving
+  different fallback wallet/progression values. Mismatched gate eligibility,
+  slot count or native IDs are rejected.
+- `tests/staging/keyconv_rton_native_cli.cpp` is a synthetic-fixture runner
+  only; the final iOS runtime must call a library function directly.
+- `tests/staging/test_keyconv_rton_native.py` verifies **byte-for-byte
+  equality** of C++ output with the previously iPad-validated Python
+  prototype across numeric-width changes, zero keys, closed gates,
+  malformed tags, overflow, invalid slot and fallback wallet difference.
+- `tests/staging/test_world_key_rton_native_pair.cpp` tests two-image
+  pairing, identical stock, different coin totals, native registry binding,
+  idempotence and fail-closed cases.
+
+Separately, `experimental_keyconv_prelaunch.py` now uses a **version 2**
+recovery manifest bound to the exact `local_profiles` SHA-256, explicit
+profile slot and native ID. If the profile registry changes across an
+interrupted conversion, recovery stops rather than touching the wrong
+profile. The research-only Python crash suite now has **15 passing tests**.
+
+**Latest green CI:** https://github.com/Puissantsy/PvZ2forIOS/actions/runs/38226303428
+(15 Python prelaunch tests, 8 new Python/C++ byte-parity cases, native
+paired C++ checks, all existing world-key/RTON/backup tests and static
+wiring guards). No iOS build was triggered and no personal backup file was
+published. Native converter parity is proven for the tested synthetic RTON
+cases, not yet the user's complete private iPad save.
+
+### Required prelaunch sequencing correction
+
+A crash-recovery journal needs to be checked **before offering a new v165
+restore**. A previous interrupted prelaunch migration may still refer to
+live old/new player images; importing another backup while recovery is
+pending would destroy the checkpoint invariant.
+
+Future KEYCONV research-only iOS control flow:
+
+1. With the guest stopped, recover or fail closed on ANY pending journal.
+   Even if automatic conversion is disabled, a pending journal must not
+   be bypassed.
+2. Then offer existing explicit v165 restore/ignore and verify inventory,
+   preserving current fail-closed restore semantics.
+3. Capture a complete verified `prelaunch` backup after any approved
+   restoration, BEFORE attempting migration. A failed checkpoint must
+   prevent an opted-in migration.
+4. After explicit research-only opt-in, decode and check native identity
+   and both original RTON images; settle them via a native crash-durable
+   two-file journal; verify both images and commit before guest load.
+5. If any step fails, block guest launch rather than run on a partial or
+   ambiguous save. Continue to JIT/guest launch only on clean recovery,
+   no-op or completed atomic settlement.
+
+**Remaining hard blocker before iOS activation:** an iOS-compilable,
+SHA-256-based crash-journal and its filesystem/kill/recovery tests still
+need implementing. The existing C++ SaveBundleJournal fixture uses FNV-1a
+and is **not production-ready**. The new C++ token converter is purely
+in-memory; it must not be confused with a complete atomic migration.
