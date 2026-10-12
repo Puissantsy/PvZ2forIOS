@@ -1,8 +1,7 @@
-# One-time research IPA build request (2026-10-12)
-# Triggered after no-IPA CI PASS at:
-# https://github.com/Puissantsy/PvZ2forIOS/actions/runs/38254346034
-# Exact Dynarmic Git commit: c97c525ec1432b1e5404ebf091027738005ec168
-# Exact Dynarmic tree: fd5b3ab282948fcdacc202ee11ee6d7aec339125
-# Source origin: https://github.com/lioncash/dynarmic.git
-# KEYCONV opt-in prelaunch; isolated research app only.
-# No production app or saved game data in repository.
+# One-time research IPA build request: re-signed KEYOBS identity fix (2026-10-12)
+# Prior iPad app blocked before touching save due to runtime bundleIdentifier mismatch.
+# This build carries explicit research compiler and Info.plist markers.
+# CI all-green: https://github.com/Puissantsy/PvZ2forIOS/actions/runs/38263388274
+# Exact proven Dynarmic: c97c525ec1432b1e5404ebf091027738005ec168
+# Immutable source tree: fd5b3ab282948fcdacc202ee11ee6d7aec339125
+# Research-only bundle, native profile+backup guards, no production mutation.

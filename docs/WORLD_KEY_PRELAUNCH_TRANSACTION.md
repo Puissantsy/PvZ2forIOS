@@ -442,3 +442,67 @@ unchanged and test only with disposable research profiles.
 If the restore/preview is refused on-device, do not work around the
 fail-closed guard; inspect the full log, profile identity/slot and
 unmodified original archive before proposing any code changes.
+
+
+## iPad initial launch failure — re-signed KEYOBS bundle identity (2026-10-12)
+
+**Physical-device observation:** the first KEYCONV research IPA
+(`b398de49b1e42adf8c1cba39ced4ee87f71173e9`,
+[Actions #38254470277](https://github.com/Puissantsy/PvZ2forIOS/actions/runs/38254470277))
+immediately displayed:
+
+> KEYCONV — démarrage interrompu / KEYCONV réservé à l'application de
+> recherche / KEYCONV : sauvegarde non vérifiée. Lancement bloqué.
+
+Source-level root cause: `ResearchBundle()` in
+`platform/ios/src/keyconv_prelaunch_ios_adapter.mm` compared the
+*runtime* `NSBundle.mainBundle.bundleIdentifier` to exactly
+`com.puissantsy.pvz2forios.keyobs`. GitHub build's unsigned
+`Info.plist` carried that exact ID, but the runtime check returned false
+on the physically installed/signed IPA. A signing/hosting-time bundle
+identity change is the leading explanation; the exact post-sign
+identifier has not been recovered from a device log. No recovery, native
+save load or conversion was entered by this rejected launch, based on
+the displayed branch path.
+
+**One grouped correction** (no production change):
+- Explicit research-only compiler definition
+  `PVZ2_KEYCONV_RESEARCH_BUILD=1` on the research CMake target; adapter
+  emits a compile error if built without it.
+- An independent Info.plist research marker
+  `PVZ2KeyconvResearchBuild=true` and immutable logical original
+  identifier `PVZ2KeyconvOriginalIdentifier` baked into the
+  **unsigned KEYOBS IPA**. These nonstandard plist fields survive
+  ordinary bundle-ID re-signing without relying on the installation ID.
+- A pure C++ identity policy that accepts the canonical KEYOBS bundle,
+  a signer-appended suffix, or a wholly replaced runtime ID only when
+  the verified build marker is present. Explicitly refuses known
+  production PvZ2 IDs even with a marker. The existing prelaunch
+  backup, consent, native profile identity and stopped-guest transactional
+  checks remain unchanged.
+- Privacy-safe `NSLog` diagnostic for missing marker or re-signed
+  bundle ID. No raw user profile, coins, RTON, or device IDs are printed.
+- New C++ synthetic policy test and additional static UI/CMake checks.
+  Original save ZIP was inspected **read-only** on the assistant side:
+  two native profile slots; the second holds Egyptian `kc=1`,
+  `pp.dat.c=9010`, and independent `snapshot2.dat.c=7750`.
+  All five Egyptian gates have the open state in both copies.
+  These original images remain strictly private and untouched.
+
+**Gate before next IPA:**
+[GitHub Actions #38263388274](https://github.com/Puissantsy/PvZ2forIOS/actions/runs/38263388274)
+PASS — all Ubuntu native/RTON/policy suites, Apple/CommonCrypto
+crash tests, full arm64 iPadOS launcher/backup/adapter object compilation,
+and exact historical Dynarmic source preflight. The prior CI error
+came only from missing `-DPVZ2_KEYCONV_RESEARCH_BUILD=1` in the standalone
+object-test command and was corrected. No additional IPA build before
+the complete set passed.
+
+**On-device retest:** signed research IPA only, do not remove old
+research sandbox or touch production, first open without restoring.
+If the KEYCONV prompt now appears after restoring a fresh **original**
+unconverted experimental snapshot, select only profile 2.
+Confirm +1000 coins/zero keys and second cold start. If the marker is
+stripped by the signing tool, the launch must continue to fail closed;
+preserve the complete probe log and signing method before changing
+identity rules again. Never disable the runtime isolation entirely.
