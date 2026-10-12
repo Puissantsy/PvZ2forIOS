@@ -107,8 +107,7 @@ jobs:
         run: python3 tools/verify_world_key_dynarmic_compat.py
 
   apple-native-smoke:
-    # Compile the *research-only* C++ core against the real iOS SDK.
-    # No app packaging, no code signing, no Dynarmic fetch, no IPA build.
+    # Test native C++ on macOS and syntax-check iPadOS arm64. NEVER build IPA.
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
@@ -116,15 +115,7 @@ jobs:
         run: |
           clang++ -std=c++20 -O0 -g -Wall -Wextra -Werror -pedantic \
             -fsanitize=address,undefined -fno-omit-frame-pointer \
-            -Itests/staging tests/staging/test_world_key_prelaunch_native.cpp
-      - name: Syntax-check isolated KEYCONV Objective-C++ adapter for iPadOS arm64
-        run: |
-          SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
-          xcrun --sdk iphoneos clang++ -std=c++20 \
-            -target arm64-apple-ios17.4 -isysroot "$SDK" \
-            -fobjc-arc -x objective-c++ -fsyntax-only \
-            -Wall -Wextra -Werror -pedantic \
-            -Itests/staging tests/staging/keyconv_prelaunch_ios_adapter.mm \
+            -Itests/staging tests/staging/test_world_key_prelaunch_native.cpp \
             -o /tmp/pvz2-keyconv-native-apple
           ASAN_OPTIONS=detect_leaks=0 /tmp/pvz2-keyconv-native-apple
       - name: Compile check research-only ObjC++ KEYCONV adapter on macOS
@@ -139,3 +130,11 @@ jobs:
             -target arm64-apple-ios17.4 -isysroot "$SDK" \
             -fsyntax-only -Wall -Wextra -Werror -pedantic \
             -Itests/staging tests/staging/test_world_key_prelaunch_native.cpp
+      - name: Syntax-check isolated KEYCONV Objective-C++ adapter for iPadOS arm64
+        run: |
+          SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
+          xcrun --sdk iphoneos clang++ -std=c++20 \
+            -target arm64-apple-ios17.4 -isysroot "$SDK" \
+            -fobjc-arc -x objective-c++ -fsyntax-only \
+            -Wall -Wextra -Werror -pedantic \
+            -Itests/staging tests/staging/keyconv_prelaunch_ios_adapter.mm
