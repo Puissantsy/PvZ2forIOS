@@ -40,6 +40,10 @@ jobs:
         run: |
           clang++ -std=c++20 -O2 -Wall -Wextra -Werror -pedantic -fsanitize=undefined -fno-sanitize-recover=all -Itests/staging tests/staging/test_world_key_stock_reconcile.cpp -o /tmp/world_key_stock_test
           /tmp/world_key_stock_test
+      - name: Compile and exercise interrupted single-save journal (research only)
+        run: |
+          clang++ -std=c++20 -O2 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined -fno-sanitize-recover=all -Itests/staging tests/staging/test_world_key_save_journal.cpp -o /tmp/world_key_save_journal_test
+          /tmp/world_key_save_journal_test
       - name: Python syntax check (exact ELF stays private)
         run: |
           python3 -m py_compile tools/verify_world_key_arm.py tools/verify_world_key_award_coverage.py tools/verify_world_key_probe_wiring.py tools/verify_world_key_conversion_tailcall.py
