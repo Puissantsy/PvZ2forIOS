@@ -304,6 +304,7 @@ def settle_disposable_root(live_root, profile_slot, *,
         "files": {n: {"old": digest(old[n]), "new": digest(new[n])}
                   for n in FILES}
     }
+    working = root / "UserData" / "No_Backup"
     if digest(read_regular(working / "local_profiles", MAX_REGISTRY)) != (
             manifest["local_profiles_sha256"]):
         raise PrelaunchConflict("Native profile registry changed before journal publish")
