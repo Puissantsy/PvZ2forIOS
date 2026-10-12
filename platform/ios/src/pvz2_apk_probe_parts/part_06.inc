@@ -3324,6 +3324,16 @@
                 }
 
                 v51_writable_files[guest] = std::move(bytes);
+                // Establish a trusted in-process baseline only after the
+                // original disk load completed. Never write, truncate or
+                // persist any comparison data in the game's own profile.
+                if (WorldKeyConversionEnabled() &&
+                    KeyconvV128ProfilePath(guest) &&
+                    v51_writable_files[guest] &&
+                    v51_writable_files[guest]->size()<=1024u*1024u) {
+                    keyconv_v128_last_profile_bytes[guest]=
+                        *v51_writable_files[guest];
+                }
                 ++v128_userfs_disk_loads;
                 v128_userfs_disk_load_bytes +=
                     static_cast<std::uint64_t>(st.st_size);
@@ -3401,6 +3411,12 @@
                     return false;
                 }
 
+                const bool keyconv_profile_trace =
+                    WorldKeyConversionEnabled() &&
+                    KeyconvV128ProfilePath(guest);
+                const std::uint64_t keyconv_flush_started =
+                    keyconv_profile_trace ? V85SteadyNowNs() : 0u;
+
                 const std::string temp = host + ".tmp";
                 std::FILE* file = std::fopen(temp.c_str(), "wb");
                 if (file == nullptr) {
@@ -3432,10 +3448,45 @@
                 ++v128_userfs_disk_flushes;
                 v128_userfs_disk_flush_bytes +=
                     static_cast<std::uint64_t>(bytes.size());
+                std::string keyconv_extra;
+                if (keyconv_profile_trace) {
+                    const std::uint64_t elapsed =
+                        V85SteadyNowNs()-keyconv_flush_started;
+                    ++keyconv_v128_profile_flushes;
+                    keyconv_v128_profile_flush_ns += elapsed;
+                    keyconv_v128_profile_flush_max_ns =
+                        std::max(keyconv_v128_profile_flush_max_ns,elapsed);
+                    const auto previous=
+                        keyconv_v128_last_profile_bytes.find(guest);
+                    const bool baseline =
+                        previous!=keyconv_v128_last_profile_bytes.end();
+                    const bool exactly_equal =
+                        baseline && previous->second==bytes;
+                    if (baseline) {
+                        if (exactly_equal)
+                            ++keyconv_v128_profile_unchanged;
+                        else
+                            ++keyconv_v128_profile_changed;
+                    }
+                    // Limit memory to the three small profile files.
+                    // If unexpectedly large, keep comparison UNKNOWN.
+                    if (bytes.size()<=1024u*1024u) {
+                        keyconv_v128_last_profile_bytes[guest]=bytes;
+                    } else {
+                        keyconv_v128_last_profile_bytes.erase(guest);
+                    }
+                    keyconv_extra=
+                        " frame="+std::to_string(current_frame_number)+
+                        " sameAsPrior="+
+                            (baseline ? (exactly_equal ? "YES" : "NO")
+                                      : "UNKNOWN")+
+                        " flushUs="+std::to_string(elapsed/1000u);
+                }
                 AppendDiagnostic(
                     "V128 USERFS FLUSH guest=\"" + guest +
                     "\" host=\"" + host +
-                    "\" bytes=" + std::to_string(bytes.size()));
+                    "\" bytes=" + std::to_string(bytes.size())+
+                    keyconv_extra);
                 return true;
             };
 
