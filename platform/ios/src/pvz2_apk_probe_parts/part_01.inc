@@ -3148,6 +3148,26 @@
     std::uint64_t v128_userfs_disk_flushes = 0u;
     std::uint64_t v128_userfs_disk_flush_bytes = 0u;
     std::uint64_t v128_userfs_disk_failures = 0u;
+
+    // KEYCONV research-only: exact byte comparisons for a tiny whitelist of
+    // native profile files, without guest writes or additional host disk IO.
+    // This is telemetry, NEVER a transaction commit or integrity check.
+    std::unordered_map<std::string, std::vector<std::uint8_t>>
+        keyconv_v128_last_profile_bytes;
+    std::uint64_t keyconv_v128_profile_flushes = 0u;
+    std::uint64_t keyconv_v128_profile_changed = 0u;
+    std::uint64_t keyconv_v128_profile_unchanged = 0u;
+    std::uint64_t keyconv_v128_profile_flush_ns = 0u;
+    std::uint64_t keyconv_v128_profile_flush_max_ns = 0u;
+    static bool KeyconvV128ProfilePath(const std::string& path) {
+        static const std::string base="/No_Backup/";
+        const auto pos=path.rfind(base);
+        if(pos==std::string::npos ||
+           pos+base.size()+6u>path.size()) return false;
+        const auto name=path.substr(pos+base.size());
+        return name=="pp.dat" || name=="snapshot2.dat" ||
+               name=="local_profiles";
+    }
     std::uint64_t v128_userfs_mkdirs = 0u;
     std::uint64_t v128_userfs_unlinks = 0u;
     bool v128_config_loaded = false;
