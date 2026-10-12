@@ -438,3 +438,45 @@ Atomic file rename alone DOES NOT make both operations a transaction.
 A WAL/backed-up crash-safe commit remains necessary before active
 existing-key migration. No new IPA is built because the proven
 LiveContainer c97c dependency checkout is still unavailable.
+
+
+### October 12 — 3-file save-journal proof of concept (research only)
+
+Private snapshots (2026-10-01) show `pp.dat` and `snapshot2.dat`
+byte-identical within each snapshot, at 3,620 and 7,080 bytes
+respectively; `local_profiles` differs between snapshots. Real
+2026-10-11 KEYCONV log has 307 `pp.dat` V128 flushes and additional
+`snapshot2.dat`, `local_profiles`, loot and draper writes.
+The old `pp.dat`-only rollback design is insufficient as a general
+game-save transaction.
+
+Added bounded, research-only durable multi-file staging / journal with
+atomic per-file rename and an atomic published committed marker.
+On a startup recovery barrier, interrupted batches roll back all
+affected files; fully committed batches keep their new images.
+Unknown/concurrent states are CONFLICT, never overwritten or retried.
+Tested interruption before manifest, between three replacements,
+mid-rollback and after commit marker.
+
+Source files:
+- `tests/staging/world_key_save_journal.hpp`
+- `tests/staging/world_key_save_bundle_journal.hpp`
+- `tests/staging/test_world_key_save_journal.cpp`
+- `tests/staging/test_world_key_save_bundle_journal.cpp`
+- `tools/verify_world_key_save_isolation.py`
+- `docs/WORLD_KEY_SAVE_TRANSACTION.md`
+
+CI https://github.com/Puissantsy/PvZ2forIOS/actions/runs/38208306965
+is GREEN: 180 isolated unit checks and all static/integration checks.
+No iOS build attempted, no code activated that spends stock keys, no
+changes to the original stable Probe, and no user save modifications.
+
+Next physical acceptance after restoring exact Dynarmic checkout:
+1. Boot KEYCONV read-only profile and confirm `KEYCONV STOCK_PROFILE`
+   includes `wsk` even when gate vector is invalid.
+2. Restore disposable 6-key profile, observe 6 -> 1 keys on native
+   5-key gate opening, collect complete V128 save write-set and identify
+   which files the exact transition edits.
+3. Only then integrate a quiescent guest save-serialization barrier
+   and a prelaunch journal recovery barrier, with fail-closed
+   process-kill tests before enabling automatic surplus settlement.
