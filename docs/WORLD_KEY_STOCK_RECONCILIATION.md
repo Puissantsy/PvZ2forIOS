@@ -111,3 +111,40 @@ Dynarmic source-wiring verifications. The runtime now logs a bounded
 change has not yet been compiled to an IPA or verified on the physical iPad.
 The original APK's exact hash and the native stock/spend ARM words have
 been checked locally; native save transaction atomicity is still unknown.
+
+
+## October 12, 2026: shared decoder and source-save audit
+
+The KEYCONV runtime no longer owns a separate ad-hoc WorldSpecificKeys
+record decoder. `tests/staging/world_key_stock_view.hpp` provides the
+read-only bounded 8-byte LE `[chars, count]` native record decoder used
+both by the runtime and standalone unit tests:
+- 0..16 records; 0..99 keys; reject short/unaligned vectors;
+- original native COW world string length from `chars-12`; readable
+  terminator at exactly `chars+len`;
+- whitelist Egypt/Pirate/Cowboy/Future/Dark; reject unknown/duplicate names;
+- no calls to SpendWorldKeys, SetCoins, or raw save writes.
+`WorldKeyReadOnlyStockSnapshot` keeps all guest pointer checks and provides
+a string-reader callback only, while the shared decoder verifies every
+entry. `KEYCONV STOCK_PROFILE` still logs at the native active profile
+initialization, without requiring the user to win another key.
+
+V128 host persistence source audit:
+`v128_flush_file` serializes the writable guest user file into
+`host.tmp`, fflush/fsyncs the temp, and renames it over the host path.
+Guest fflush/fsync/fclose/close can independently trigger this operation.
+These are per-file atomic replacements, NOT a transactional bundle of
+SpendWorldKeys and SetCoins. Furthermore, the source does not fsync the
+containing directory after rename. Therefore crash/power-loss atomicity
+of a multi-operation migration is NOT established. Stock settlement
+remains strictly observation/planning-only pending a durable recovery
+protocol and iPad validation.
+
+CI: https://github.com/Puissantsy/PvZ2forIOS/actions/runs/38205300169
+succeeded:
+- 33 award policy assertions,
+- 7 gate-event snapshot assertions,
+- 13 read-only native stock decoder assertions (UBSan),
+- 37 existing stock reconciliation/interrupt assertions (UBSan),
+- source-wiring, ARM tail-call and fail-open regression checks.
+90 unit assertions + integration/static checks pass, no IPA produced.
