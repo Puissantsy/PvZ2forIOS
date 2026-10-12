@@ -67,6 +67,11 @@ need("WorldKeyConversionEnabled()" in state and
 need("KEYCONV STOCK_PROFILE id=" in state and
      "WorldKeyReadOnlyGateSnapshot(profile)" in state,
      "must snapshot stock at profile load without replaying rewards")
+need('if (!view) {' in state and
+     '"events=INVALID gates=UNKNOWN" +' in state and
+     '" " + WorldKeyReadOnlyStockSnapshot(profile)' in state,
+     "stock evidence must survive an invalid native gate vector")
+
 need("chars-12u" in state and
      "mem.Read8(chars+len)!=0u" in state and
      "wsk=INVALID(string)" in state and
