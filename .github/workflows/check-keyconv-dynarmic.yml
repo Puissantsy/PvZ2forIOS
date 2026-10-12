@@ -33,9 +33,11 @@ jobs:
             mkdir -p .deps
             echo "DYNARMIC_SOURCE_CACHE=MISS; anonymous probe of exact remote"
             # Fail clearly and quickly if the upstream is private or missing.
-            GIT_TERMINAL_PROMPT=0 timeout 90 git -c credential.helper= \
+            GIT_TERMINAL_PROMPT=0 git -c credential.helper= \
+              -c http.lowSpeedLimit=100 -c http.lowSpeedTime=45 \
               ls-remote "$URL" HEAD
-            GIT_TERMINAL_PROMPT=0 timeout 300 git -c credential.helper= \
+            GIT_TERMINAL_PROMPT=0 git -c credential.helper= \
+              -c http.lowSpeedLimit=100 -c http.lowSpeedTime=45 \
               clone "$URL" .deps/dynarmic
           else
             echo "DYNARMIC_SOURCE_CACHE=HIT"
