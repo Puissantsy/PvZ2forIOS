@@ -1,6 +1,6 @@
 # KEYCONV prelaunch two-image settlement — staged research implementation
 
-Status 2026-10-12: **offline transaction prototype in Python, 12/12 new
+Status 2026-10-12: **offline transaction prototype in Python, 13/13 new
 synthetic tests PASS on GitHub Actions; NOT wired into iOS and NOT yet
 accepted by a physical iPad as an automatic operation.**
 
@@ -22,15 +22,16 @@ prototype; it is deliberately not linked to the guest.
 
 - `tools/experimental_keyconv_prelaunch.py`: offline, opt-in,
   stopped-guest research prototype; never imported by iOS sources.
-- `tests/staging/test_keyconv_prelaunch.py`: 12 synthetic tests with
+- `tests/staging/test_keyconv_prelaunch.py`: 13 synthetic tests with
   interrupted preparation, first image replacement, second image
   replacement, committed-marker recovery, repeated load, divergent
   fallback values, closed gates, identity mismatch and corrupt journal.
 - `.github/workflows/verify-world-keys.yml`: runs the new tests and
   Python syntax check, without building an IPA.
 
-GitHub CI (SUCCESS):
-https://github.com/Puissantsy/PvZ2forIOS/actions/runs/38224463130
+GitHub CI (SUCCESS, latest after installing-byte verification and the
+pre-commit-marker interruption test):
+https://github.com/Puissantsy/PvZ2forIOS/actions/runs/38224910870
 
 The prototype also passed local interruption tests using *copies* of the
 private Oct 12 reference source, never using actual save bytes as public
