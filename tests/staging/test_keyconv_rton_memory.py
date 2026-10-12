@@ -56,7 +56,7 @@ class InMemoryRtonMutationTests(unittest.TestCase):
         self.assertEqual(info["coins_after"], 21380)
         decoded = IndexedRtonReader(changed).decode()
         self.assertEqual(decoded["objects"][0]["objdata"]["c"], 21380)
-        self.assertEqual(decoded["objects"][0]["objdata"]["wsk"][0]["k"], 0)
+        self.assertEqual(decoded["objects"][0]["objdata"]["wsk"][0]["kc"], 0)
 
     def test_integer_codec(self):
         self.assertEqual(encode_preserving_integer_tag(36, 1000),
