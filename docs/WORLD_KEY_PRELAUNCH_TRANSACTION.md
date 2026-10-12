@@ -373,3 +373,72 @@ branch source commits never trigger it. A one-time commit of
 `platform/ios/.keyconv-build-request` will request exactly one
 IPA build after this preflight; normal manual `workflow_dispatch`
 remains an alternative.
+
+
+## Single exact-source research IPA build — 2026-10-12 (SUCCESS)
+
+**Full iPadOS arm64 release build succeeded**, rather than only the
+isolated Objective-C++ compilation and syntax tests.
+
+- GitHub Actions run:
+  https://github.com/Puissantsy/PvZ2forIOS/actions/runs/38254470277
+- Exact build commit:
+  `b398de49b1e42adf8c1cba39ced4ee87f71173e9`
+- Artifact: `PvZ2forIOS-JIT-Probe-unsigned` (ZIP containing
+  `PvZ2forIOS-JIT-Probe-unsigned.ipa` and matching
+  `.ipa.sha256`).
+- GitHub artifact ID: `11750330187`
+- Dynarmic source: original c97c525e Git SHA and exact
+  `fd5b3ab282948fcdacc202ee11ee6d7aec339125` source tree, fetched
+  explicitly from the public `lioncash/dynarmic` origin. The proven
+  project iOS spinlock patch was applied. No guest/JIT allocator redesign
+  or revision substitution.
+- Build steps `Configure iOS project`, `Build unsigned arm64 app`,
+  `Inspect build`, `Package unsigned IPA` and
+  `Upload unsigned IPA`: **all SUCCESS**.
+- Prerequisite no-IPA security policy, source provenance, Apple sanitizer,
+  and iPadOS object compilation checks:
+  https://github.com/Puissantsy/PvZ2forIOS/actions/runs/38254346034
+  **all SUCCESS**.
+
+**Important:** building successfully does not prove runtime correctness.
+No automatic migration or crash-recovery scenario in this build has yet
+been physically accepted on the user's iPad. Keep main/production
+unchanged and test only with disposable research profiles.
+
+### Physical iPad acceptance plan for this artifact
+
+1. Preserve the known-good research IPA, the *original unconverted*
+   disposable `Save clé excédentaire.zip`, and the current converted
+   save separately. Do not overwrite the production app or personal
+   iCloud baseline.
+2. Sign/install the *research* IPA as usual. If it is installed as an
+   update, remember the existing isolated sandbox may already contain
+   the **converted** (0 key / 10,010 coin) state. It is deliberately not
+   an eligible source for an additional award.
+3. Unpack the untouched disposable original `save-...` snapshot
+   directory into the isolated Files-visible
+   `PvZ2 Keys Research/PvZ2RestoreInbox`. Force quit/restart,
+   explicitly accept the existing v165 `Restaurer` dialog.
+4. Confirm an integrity-verified `prelaunch` snapshot precedes any
+   migration prompt. For a *fresh unconverted* Egyptian profile 2 with
+   all five gates open, expect explicit
+   `KEYCONV — sauvegarde expérimentale` choices `Ignorer` and
+   `Convertir uniquement le profil 2`. Test Ignore first if desired:
+   startup must preserve the original wallet/key state.
+5. Restore the untouched original again for the conversion test;
+   choose only experimental **profil 2**. Expect 1→0 Egyptian keys,
+   9,010→10,010 PvZCoins, all five gates still unlocked and the
+   research gameplay/map rendered normally.
+6. Force quit/relaunch **without restoring** and check persistent
+   0 keys / 10,010 coins and no second +1,000 award or conversion prompt.
+   Check bounded `[KEYCONV PRELAUNCH]` log lines in
+   `pvz2forios-probe.log`. If any crash occurs, preserve the full
+   log plus iOS `.ips` report.
+7. **Later/isolated safety suite only:** controlled prelaunch process
+   interruption and journal-recovery tests on disposable saves. Avoid
+   force-killing a real account while a two-image write is underway.
+
+If the restore/preview is refused on-device, do not work around the
+fail-closed guard; inspect the full log, profile identity/slot and
+unmodified original archive before proposing any code changes.
