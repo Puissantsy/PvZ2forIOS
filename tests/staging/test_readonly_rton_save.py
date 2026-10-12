@@ -54,8 +54,8 @@ def sample(coins=7800, old_keys=6, opened=False):
                    ("E", b"\x12" + e.to_bytes(2, "little")),
                    ("S", number(3 if opened or e != 41 else 2))])
               for e in gates])
-    wsk = arr([obj([("w", direct("egypt")),
-                    ("k", number(old_keys))])])
+    wsk = arr([obj([("wn", direct("egypt")),
+                    ("kc", number(old_keys))])])
     player = obj([("objclass", direct("PlayerInfo")),
                   ("objdata", obj([
                       ("n", direct("PRIVATE_USERNAME_DO_NOT_EMIT")),
@@ -309,8 +309,8 @@ class ReadOnlyRtonSaveTests(unittest.TestCase):
     def test_unknown_key_inventory_does_not_guess(self):
         self.assertEqual(describe_world_keys([{"secret": 12}])["status"],
                          "unknown_schema")
-        self.assertEqual(describe_world_keys([{"w": "egypt", "k": 4},
-                                               {"w": "egypt", "k": 1}])["status"],
+        self.assertEqual(describe_world_keys([{"wn": "egypt", "kc": 4},
+                                               {"wn": "egypt", "kc": 1}])["status"],
                          "duplicate_world")
 
 
