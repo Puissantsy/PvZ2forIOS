@@ -8,6 +8,8 @@ on:
       - "tests/staging/test_world_key_*"
       - "tests/staging/test_readonly_rton_save.py"
       - "tools/inspect_pvz2_rton_save.py"
+      - "tests/staging/test_keyconv_rton_memory.py"
+      - "tools/experimental_keyconv_rton_memory.py"
       - "tools/verify_world_key_*"
       - "tools/verify_keyobs_restore_wiring.py"
       - "tools/verify_ios_dynarmic_wiring.py"
@@ -57,6 +59,9 @@ jobs:
       - name: Test read-only PvZ2 RTON save inspector (synthetic data only)
         run: |
           python3 -m unittest discover -s tests/staging -p test_readonly_rton_save.py -v
+      - name: Test isolated in-memory key-to-coin RTON token patch (no file writes)
+        run: |
+          python3 -m unittest discover -s tests/staging -p test_keyconv_rton_memory.py -v
       - name: Python syntax check (exact ELF stays private)
         run: |
           python3 -m py_compile tools/verify_world_key_arm.py tools/verify_world_key_award_coverage.py tools/verify_world_key_probe_wiring.py tools/verify_world_key_conversion_tailcall.py tools/inspect_pvz2_rton_save.py
