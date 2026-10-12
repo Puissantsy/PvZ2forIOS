@@ -2,7 +2,10 @@ name: Build iOS JIT Probe
 
 on:
   workflow_dispatch:
+  # Research branch updates run policy+Apple SDK checks, not full IPA builds.
+  # A single explicitly dispatched IPA build is permitted after all gates pass.
   push:
+    branches: [main]
     paths:
       - "platform/ios/**"
       - ".github/workflows/build-ios-probe.yml"
