@@ -24,7 +24,7 @@ class InMemoryRtonMutationTests(unittest.TestCase):
         self.assertEqual(report["coins_after"], 8800)
         p = IndexedRtonReader(changed).decode()["objects"][0]["objdata"]
         self.assertEqual(p["c"], 8800)
-        self.assertEqual(p["wsk"][0]["k"], 0)
+        self.assertEqual(p["wsk"][0]["kc"], 0)
         self.assertEqual(p["n"], "PRIVATE_USERNAME_DO_NOT_EMIT")
 
     def test_no_second_credit_after_first_conversion(self):
@@ -76,7 +76,7 @@ class InMemoryRtonMutationTests(unittest.TestCase):
         reader.decode()
         c = reader.integer_spans[("objects", 0, "objdata", "c")]
         k = reader.integer_spans[
-            ("objects", 0, "objdata", "wsk", 0, "k")]
+            ("objects", 0, "objdata", "wsk", 0, "kc")]
         self.assertEqual((c[2], c[3]), (36, 7800))
         self.assertEqual((k[2], k[3]), (36, 1))
 
