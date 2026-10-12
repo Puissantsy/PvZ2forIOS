@@ -23,12 +23,12 @@ def synthetic_zip(destination, *, opened=True, keys=1, coins=7800,
                   mirror_matches=True, correct_manifest=True):
     pp = sample(coins=coins, old_keys=keys, opened=opened)
     other = sample(coins=coins + 1, old_keys=keys, opened=opened)
-    local = (b"RTON\\x01\\x00\\x00\\x00" +
+    local = (b"RTON\x01\x00\x00\x00" +
              text("version") + number(1) +
              text("objects") + arr([
                  obj([("objclass", direct("PlayerInfoLocalSaveData")),
                       ("objdata", obj([("ProfileIndex", number(1790861459))]))])
-             ]) + b"\\xffDONE")
+             ]) + b"\xffDONE")
     members = {
         "UserData/No_Backup/pp.dat": pp,
         "UserData/No_Backup/snapshot2.dat": pp if mirror_matches else other,
