@@ -262,3 +262,70 @@ fail-closed startup UI on conflicts. Confirm all guest/JNI/V128 threads
 remain stopped through the whole transaction. Only then stage an iOS
 adapter and its source-wiring tests. Do not trigger multiple IPA builds:
 consolidate all changes and build the research IPA once after CI checks.
+
+
+## KEYCONV iOS startup integration + full Apple object compilation — 2026-10-12
+
+Research branch now wires the native stopped-guest journal into the **isolated**
+KEYOBS app. This is NOT an automatic/background modification of the original
+production PvZ2 installation.
+
+**Changed runtime components:**
+- `platform/ios/src/main.mm`: a guarded recovery barrier runs before the
+  existing v165 restore prompt. After user-approved restore, a verified
+  `prelaunch` snapshot is required before any migration offer. Read-only
+  eligibility is restricted to a specific native PlayerInfo slot, and the
+  user must choose either "Ignorer" or an explicit "Convertir uniquement le
+  profil N" action. An interrupted transaction is not re-applied in the
+  same startup; a conflicted journal blocks guest launch rather than
+  risking a partial save. The bounded prelaunch result is replayed after
+  the existing probe-log reset so iPad test evidence survives.
+- `platform/ios/src/keyconv_prelaunch_ios_adapter.{hpp,mm}`: explicit
+  KEYOBS bundle-ID gate, stopped-guest native journal recovery,
+  read-only native slot discovery, selected-slot settlement, bounded
+  user-facing errors, and no disclosure of native profile identifiers or
+  raw player data in diagnostics.
+- `platform/ios/CMakeLists.txt`: compiles the research Objective-C++
+  adapter with the staged C++20 RTON/journal headers. Existing Dynarmic
+  allocator/JIT remains UNMODIFIED.
+- `tools/verify_keyconv_ios_integration.py`: checks the ordering
+  recovery -> v165 restore -> backup -> preview -> selected-slot settle
+  -> guest startup, plus explicit opt-in and failed-transaction barriers.
+
+**Failure discovered and fixed in an independent Apple SDK check:**
+some pre-existing v165 and newly added Objective-C++ blocks used GNU-only
+`typeof(self)` declarations. The full `main.mm` arm64 iOS syntax check
+caught these; all were replaced with the explicit
+`__weak ProbeViewController *` /
+`__strong ProbeViewController *` types, preserving callback behavior.
+
+**Latest green CI, with real iPadOS arm64 object code (not merely syntax):**
+https://github.com/Puissantsy/PvZ2forIOS/actions/runs/38252464672
+
+- policy-only Linux/Ubuntu: passed.
+- Apple CommonCrypto native transaction/sanitizers: passed.
+- Apple iPhoneOS arm64 syntax checks: passed.
+- `clang++ -target arm64-apple-ios17.4 -c` built `main.mm`,
+  `save_backups.mm` and `keyconv_prelaunch_ios_adapter.mm`
+  into arm64 object files: passed.
+- **NO IPA produced**. The full IPA workflow failed *before compiling*
+  the app when the runner could not anonymously clone
+  `https://github.com/LiveContainer/dynarmic.git` at the exactly validated
+  `c97c525ec1432b1e5404ebf091027738005ec168`.
+  Its Git fetch reported `could not read Username ... terminal prompts
+  disabled`. No alternate Dynarmic revision has been substituted.
+
+The research branch's full IPA workflow now has an explicit manual
+`workflow_dispatch` gate; push-triggered IPA builds are limited to
+`main`. This prevents another IPA attempt on every research edit.
+Do not claim iPad runtime acceptance of the new KEYCONV flow until the
+full IPA can be built using the **identical** historically proven Dynarmic
+source and tested in the isolated app on the real device.
+
+**Next hard gate:** recover an independently verified copy of the exact
+historical Dynarmic commit (e.g. a trustworthy retained local checkout
+with matching full Git SHA, including submodules) or regain access to
+the original repository. If unavailable, do NOT silently select an
+alternative JIT. Once the exact source exists, run one manual IPA build,
+then test recovery/opt-in/profile selection and cold-restart persistence
+on disposable KEYOBS saves only.
