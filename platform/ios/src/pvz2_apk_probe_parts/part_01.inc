@@ -2569,7 +2569,7 @@
                 const std::uint32_t len=mem.Read32Guest(chars-12u);
                 if (len==0u || len>16u ||
                     mem.Ptr(chars,len+1u)==nullptr ||
-                    mem.Read8Guest(chars+len)!=0u) {
+                    mem.Read8(chars+len)!=0u) {
                     invalid_string=true;
                     return std::nullopt;
                 }
