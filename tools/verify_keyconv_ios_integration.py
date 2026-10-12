@@ -12,7 +12,7 @@ def location(snippet):
     assert snippet in launch, snippet
     return launch.index(snippet)
 assert location("PVZKeyconvRecoverBeforeRestore(&recoveryError)") < location("PVZSavePendingRestores()")
-assert location("PVZSaveRestoreSnapshot(snapshot, &restoreError)") < location('PVZSaveCreateSnapshot(')
+assert location("PVZSaveRestoreSnapshot(snapshot,&restoreError)") < location('PVZSaveCreateSnapshot(')
 assert location("PVZSaveCreateSnapshot(") < location("PVZKeyconvEligibleSlots(&previewError)")
 assert location("PVZKeyconvEligibleSlots(&previewError)") < location("PVZKeyconvSettleSelectedSlot(")
 assert location("PVZKeyconvSettleSelectedSlot(") < location("[self v130StartStoredRuntime]")
