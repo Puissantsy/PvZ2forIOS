@@ -12,6 +12,8 @@ on:
       - "tools/experimental_keyconv_rton_memory.py"
       - "tests/staging/test_keyconv_rton_archive.py"
       - "tools/experimental_keyconv_rton_archive.py"
+      - "tools/experimental_keyconv_prelaunch.py"
+      - "tests/staging/test_keyconv_prelaunch.py"
       - "tools/verify_keyconv_offline_export.py"
       - "tools/verify_world_key_*"
       - "tools/verify_keyobs_restore_wiring.py"
@@ -68,7 +70,7 @@ jobs:
       - name: Test disposable RTON ZIP experiment with manifest and no-overwrite guarantees
         run: |
           python3 -m unittest discover -s tests/staging -p test_keyconv_rton_archive.py -v
-      - name: Verify nonempty-key ABI and divergent snapshot export isolation
+      - name: Test stopped-guest prelaunch journal and crash injection (synthetic only)\n        run: python3 -m unittest discover -s tests/staging -p test_keyconv_prelaunch.py -v\n      - name: Verify nonempty-key ABI and divergent snapshot export isolation
         run: python3 tools/verify_keyconv_offline_export.py
       - name: Python syntax check (exact ELF stays private)
         run: |
