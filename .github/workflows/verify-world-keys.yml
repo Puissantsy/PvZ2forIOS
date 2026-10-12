@@ -103,3 +103,23 @@ jobs:
         run: python3 tools/verify_world_key_v128_observer.py
       - name: Check KEYCONV callback-memory startup fallback (no IPA)
         run: python3 tools/verify_world_key_dynarmic_compat.py
+
+  apple-native-smoke:
+    # Compile the *research-only* C++ core against the real iOS SDK.
+    # No app packaging, no code signing, no Dynarmic fetch, no IPA build.
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile and run native journal tests using Apple CommonCrypto
+        run: |
+          clang++ -std=c++20 -O1 -Wall -Wextra -Werror -pedantic \
+            -Itests/staging tests/staging/test_world_key_prelaunch_native.cpp \
+            -o /tmp/pvz2-keyconv-native-apple
+          /tmp/pvz2-keyconv-native-apple
+      - name: Syntax-check same C++ code for iPadOS arm64 (NO IPA)
+        run: |
+          SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
+          xcrun --sdk iphoneos clang++ -std=c++20 \
+            -target arm64-apple-ios17.4 -isysroot "$SDK" \
+            -fsyntax-only -Wall -Wextra -Werror -pedantic \
+            -Itests/staging tests/staging/test_world_key_prelaunch_native.cpp
