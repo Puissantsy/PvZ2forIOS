@@ -329,3 +329,28 @@ the original repository. If unavailable, do NOT silently select an
 alternative JIT. Once the exact source exists, run one manual IPA build,
 then test recovery/opt-in/profile selection and cold-restart persistence
 on disposable KEYOBS saves only.
+
+## Exact Dynarmic dependency recovered from original upstream — 2026-10-12
+
+The discontinued/missing clone endpoint `LiveContainer/dynarmic` is
+**not needed**: the exact physically proven commit is publicly available in
+the upstream repository `lioncash/dynarmic`, to which the former fork
+belonged. The public GitHub commit API resolves the **identical immutable
+Git SHA** `c97c525ec1432b1e5404ebf091027738005ec168`, with immutable **tree SHA**
+`fd5b3ab282948fcdacc202ee11ee6d7aec339125`, message `oaknut: fix a rare case to avoid hitting
+JIT26PrepareRegion`. GitHub also exposes the precise iOS RX-first,
+TXM/A14 and `vm_remap` implementation at that commit.
+
+The repository origin in the research build workflow and optional CMake
+fallback has been changed from the unreachable fork to its public upstream;
+**the Git commit SHA, full tree, original iOS spinlock patch, guest page-table
+wiring, and Dynarmic allocator logic are unchanged**. The workflow now
+requires SHA and tree identity before proceeding. A separate NO-IPA Linux
+preflight anonymously clones the upstream origin, checks both identities,
+verifies all historical memory-allocation markers and runs
+`git apply --check` against the existing patch. If any check fails, no IPA
+build may be dispatched.
+
+This is a transport/origin correction, not a Dynarmic update or
+recompilation of the JIT. A full IPA must still pass one explicit manual
+build and physical-iPad acceptance. DO NOT alter production.

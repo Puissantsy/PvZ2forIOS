@@ -81,10 +81,11 @@ elseif(PVZ2_DYNARMIC_SOURCE_DIR)
 else()
     include(FetchContent)
 
-    # Historical fallback. The same exact fork/revision is also staged by CI.
+    # Historical fallback: upstream lioncash origin contains the exact validated
+    # c97c commit+tree previously available through the LiveContainer fork.
     FetchContent_Declare(
         dynarmic
-        GIT_REPOSITORY https://github.com/LiveContainer/dynarmic.git
+        GIT_REPOSITORY https://github.com/lioncash/dynarmic.git
         GIT_TAG c97c525ec1432b1e5404ebf091027738005ec168
         GIT_SHALLOW TRUE
         PATCH_COMMAND git apply

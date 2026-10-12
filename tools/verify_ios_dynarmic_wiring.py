@@ -17,15 +17,16 @@ def need(ok,msg):
 
 old_url="https://github.com/johnny901901901/dynarmic.git"
 old_sha="f488f760c69c42a97331961e8e6c359b46ccc9e9"
-proven_url="https://github.com/LiveContainer/dynarmic.git"
+proven_url="https://github.com/lioncash/dynarmic.git"
 proven_sha="c97c525ec1432b1e5404ebf091027738005ec168"
+proven_tree="fd5b3ab282948fcdacc202ee11ee6d7aec339125"
 if proven_url in workflow:
     need(proven_sha in workflow and old_url not in workflow,
-         "KEYCONV must pin only physically proven LiveContainer c97c")
+         "KEYCONV must pin only physically proven Dynarmic c97c commit")
     need('git reset --hard "$DYN_SHA"' in workflow,
          "cached historical source must be reset before patching")
-    need("actions/cache@v4" in workflow and proven_sha+"-v1" in workflow,
-         "immutable historical checkout must be cached under exact SHA")
+    need("actions/cache@v4" in workflow and proven_sha+"-upstream-v2" in workflow,
+         "historical checkout must be cached under exact SHA")
     need('git apply --check "$GITHUB_WORKSPACE/platform/ios/patches/dynarmic-ios-nontxm.patch"' in workflow and
          'git apply "$GITHUB_WORKSPACE/platform/ios/patches/dynarmic-ios-nontxm.patch"' in workflow,
          "historical iOS spinlock patch is missing")
@@ -35,7 +36,10 @@ if proven_url in workflow:
          "if (DeviceHasTXM())" in workflow and
          "JIT26PrepareRegion(m_xmem, m_size)" in workflow,
          "historical RX-first dual-map/TXM allocator signatures missing")
-    source_name="verified LiveContainer c97c native allocator"
+    need(proven_tree in workflow, "actual immutable Dynarmic source tree not checked")
+    need("https://github.com/LiveContainer/dynarmic.git" not in workflow,
+         "missing old LiveContainer origin should not be cloned")
+    source_name="verified Dynarmic c97c commit and tree from public upstream"
 else:
     need(old_url in workflow and old_sha in workflow,
          "production must pin the exact public Applesauce Dynarmic gitlink")

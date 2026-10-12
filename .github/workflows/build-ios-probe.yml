@@ -21,7 +21,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # A successful source checkout is cached under the exact proven SHA.
+      # The upstream repository contains the SAME independently verified Git commit
+      # SHA+tree as the historical LiveContainer fork, now unavailable to CI.
+      # A successful checkout is cached under the exact proven SHA.
       # On cache hits reset to the *unpatched* commit before applying the
       # historical spinlock patch, preventing both drift and double-patching.
       - name: Cache exact historical Dynarmic checkout
@@ -29,13 +31,13 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .deps/dynarmic
-          key: ${{ runner.os }}-pvz2-livecontainer-dynarmic-c97c525ec1432b1e5404ebf091027738005ec168-v1
+          key: ${{ runner.os }}-pvz2-livecontainer-dynarmic-c97c525ec1432b1e5404ebf091027738005ec168-upstream-v2
 
       - name: Checkout exact proven LiveContainer Dynarmic revision
         shell: bash
         run: |
           set -euo pipefail
-          DYN_URL="https://github.com/LiveContainer/dynarmic.git"
+          DYN_URL="https://github.com/lioncash/dynarmic.git"
           DYN_SHA="c97c525ec1432b1e5404ebf091027738005ec168"
           if [ ! -d .deps/dynarmic/.git ]; then
             rm -rf .deps/dynarmic
@@ -51,6 +53,9 @@ jobs:
             git reset --hard "$DYN_SHA"
             git submodule update --init --recursive
             test "$(git rev-parse HEAD)" = "$DYN_SHA"
+          # A Git commit SHA also fixes its entire tree. Refuse unrelated forks.
+          test "$(git rev-parse HEAD^{tree})" = "fd5b3ab282948fcdacc202ee11ee6d7aec339125"
+          test ! -f .gitmodules
             test -f src/dynarmic/interface/A32/a32.h
             test -f src/dynarmic/interface/A32/config.h
 
@@ -76,7 +81,8 @@ jobs:
       - name: Check source provenance for reusable cache
         run: |
           test "$(git -C .deps/dynarmic rev-parse HEAD)" = "c97c525ec1432b1e5404ebf091027738005ec168"
-          echo "PVZ2_DYNARMIC_CACHE_KEY=exact-c97c525e"
+          test "$(git -C .deps/dynarmic rev-parse HEAD^{tree})" = "fd5b3ab282948fcdacc202ee11ee6d7aec339125"
+          echo "PVZ2_DYNARMIC_CACHE_KEY=exact-c97c525e-tree-fd5b3ab28294"
 
 
       - name: Verify KEYCONV historical Dynarmic wiring

@@ -38,9 +38,10 @@ need(begin < jit < end,
      "JIT diagnostics do not bracket full-load construction")
 
 sha="c97c525ec1432b1e5404ebf091027738005ec168"
-need("https://github.com/LiveContainer/dynarmic.git" in workflow,
-     "workflow is not cloning LiveContainer/dynarmic")
-need(sha in workflow and sha in cmake,
+need("https://github.com/lioncash/dynarmic.git" in workflow,
+     "workflow is not fetching the exact upstream c97c commit")
+need(sha in workflow and sha in cmake and
+     "fd5b3ab282948fcdacc202ee11ee6d7aec339125" in workflow,
      "historical Dynarmic SHA is not pinned consistently")
 need("johnny901901901/dynarmic" not in workflow,
      "replacement f488 Dynarmic still appears in active workflow")

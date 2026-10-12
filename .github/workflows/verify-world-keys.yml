@@ -109,6 +109,37 @@ jobs:
       - name: Check KEYCONV callback-memory startup fallback (no IPA)
         run: python3 tools/verify_world_key_dynarmic_compat.py
 
+  dynarmic-exact-source-preflight:
+    # Independent network/source preflight: NO iOS app compilation or IPA.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Retrieve exact public Dynarmic c97c Git commit and verify tree + historical patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          DYN_URL="https://github.com/lioncash/dynarmic.git"
+          DYN_SHA="c97c525ec1432b1e5404ebf091027738005ec168"
+          DYN_TREE="fd5b3ab282948fcdacc202ee11ee6d7aec339125"
+          GIT_TERMINAL_PROMPT=0 git -c credential.helper= clone --no-tags "$DYN_URL" /tmp/pvz2-dynarmic-exact
+          cd /tmp/pvz2-dynarmic-exact
+          git checkout --detach "$DYN_SHA"
+          git reset --hard "$DYN_SHA"
+          test "$(git rev-parse HEAD)" = "$DYN_SHA"
+          test "$(git rev-parse HEAD^{tree})" = "$DYN_TREE"
+          test ! -f .gitmodules
+          test -f src/dynarmic/interface/A32/a32.h
+          test -f src/dynarmic/interface/A32/config.h
+          DUAL=externals/oaknut/include/oaknut/dual_code_block.hpp
+          grep -Fq 'm_xmem = (std::uint32_t*)mmap(nullptr, size, PROT_READ | PROT_EXEC' "$DUAL"
+          grep -Fq 'vm_remap(mach_task_self(), &wmem' "$DUAL"
+          grep -Fq 'mprotect(m_wmem, size, PROT_READ | PROT_WRITE)' "$DUAL"
+          grep -Fq 'if (DeviceHasTXM())' "$DUAL"
+          grep -Fq 'JIT26PrepareRegion(m_xmem, m_size)' "$DUAL"
+          git apply --check "$GITHUB_WORKSPACE/platform/ios/patches/dynarmic-ios-nontxm.patch"
+          echo "PVZ2_DYNARMIC_EXACT_SOURCE_PREFLIGHT=PASS"
+          echo "PVZ2_DYNARMIC_SOURCE_TREE=$DYN_TREE"
+
   apple-native-smoke:
     # Test native C++ on macOS and syntax-check iPadOS arm64. NEVER build IPA.
     runs-on: macos-15
