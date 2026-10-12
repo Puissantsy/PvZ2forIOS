@@ -173,6 +173,19 @@ void TestFreshAppRecovery() {
           "Disabled research conversion cannot require a save yet");
     std::error_code ec; fs::remove_all(empty,ec);
 }
+void TestRecoveryNeverImmediatelyRecredits() {
+    Sandbox s;
+    try {Settle(s.root,0,true,true,CrashAt::PrimaryInstalled);}
+    catch(const Interrupted&) {}
+    const auto result=Settle(s.root,0,true,true);
+    Check(!result.changed && result.prior==Recovery::RolledBack,
+          "Uncommitted rollback must not auto-convert in same process");
+    Check(s.Read("pp.dat")==Player(7800) &&
+          s.Read("snapshot2.dat")==Player(7801),
+          "No immediate retry after interrupted conversion");
+    Check(Settle(s.root,0,true,true).changed,
+          "Next explicit clean-start conversion was blocked");
+}
 void TestSafetyBarriers() {
     {
         Sandbox s;
@@ -263,6 +276,7 @@ int main() {
         TestFreshAppRecovery();
         TestNormalAndNoRepeat();
         TestRecoveryFaults();
+        TestRecoveryNeverImmediatelyRecredits();
         TestSafetyBarriers();
         std::cout<<"PASS: "<<checks<<" native prelaunch SHA-256 transaction/recovery assertions\n";
         return 0;

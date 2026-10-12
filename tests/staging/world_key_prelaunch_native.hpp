@@ -65,6 +65,12 @@ inline void SafeDirectory(const fs::path& path) {
     Require(!ec && fs::is_directory(st) && !fs::is_symlink(st),
             "Unsafe or absent parent directory");
 }
+inline bool Present(const fs::path& path) {
+    struct stat st{};
+    if(::lstat(path.c_str(),&st)==0) return true;
+    Require(errno==ENOENT,"Cannot determine presence of a transaction path");
+    return false;
+}
 inline void SyncDirectory(const fs::path& path) {
     const int fd=::open(path.c_str(),O_RDONLY|O_CLOEXEC|O_NOFOLLOW);
     Require(fd>=0,"Cannot open directory for durable sync");
@@ -173,7 +179,7 @@ inline void CleanupDirectory(const fs::path& root,const fs::path& dir) {
 }
 inline void Finish(const fs::path& root) {
     const auto j=root/Journal,d=root/Done;
-    Require(!fs::exists(d) && !fs::is_symlink(d),
+    Require(!Present(d),
             "A previous finalization is incomplete");
     Require(::rename(j.c_str(),d.c_str())==0,
             "Cannot publish finalized transaction");
@@ -183,7 +189,7 @@ inline void Finish(const fs::path& root) {
 inline void AtomicInstall(const fs::path& journal,const fs::path& destination,
                           const std::string& image) {
     const auto temp=journal/("swap-"+destination.filename().string());
-    if(fs::exists(temp) || fs::is_symlink(temp)) {
+    if(Present(temp)) {
         RemoveRegular(temp); SyncDirectory(journal);
     }
     ExclusiveWrite(temp,image);
@@ -276,8 +282,8 @@ inline Recovery Recover(const fs::path& root,bool guest_stopped) {
     // BEFORE v165 offers its first restore or before the first game launch.
     SafeDirectory(root);
     const auto journal=root/Journal,done=root/Done;
-    const bool active=fs::exists(journal) || fs::is_symlink(journal);
-    const bool completed=fs::exists(done) || fs::is_symlink(done);
+    const bool active=Present(journal);
+    const bool completed=Present(done);
     Require(!(active&&completed),"Conflicting active/finalized journals");
     if(completed) {
         CleanupDirectory(root,done);
@@ -330,7 +336,11 @@ inline Settlement Settle(const fs::path& root,std::size_t slot,
     Require(guest_stopped,"Settlement requires stopped guest and V128");
     // Always resolve any previous journal before accepting NEW restorations.
     const auto prior=Recover(root,guest_stopped);
-    if(!explicit_opt_in) return Settlement{false,0,0,prior};
+    // A recovered interrupted transaction must NOT be silently re-applied
+    // during the same launch, even when the experiment opt-in was remembered.
+    // The user can opt in again on a subsequent clean start.
+    if(!explicit_opt_in || prior!=Recovery::NoJournal)
+        return Settlement{false,0,0,prior};
     const auto working=Working(root);
     const auto original_reg=ReadRegular(working/"local_profiles",MaxRegistry);
     std::array<std::string,2> original{},target{};
