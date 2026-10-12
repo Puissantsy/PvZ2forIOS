@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Synthetic tests only. Never commit a real player's RTON save or cloud ZIP."""
+import hashlib
 import io
 import json
+import plistlib
 import sys
 import unittest
 import zipfile
@@ -104,6 +106,91 @@ class ReadOnlyRtonSaveTests(unittest.TestCase):
         self.assertEqual(report["snapshot2_comparison"], "IDENTICAL")
         self.assertTrue(report["read_only"])
         self.assertEqual(before, storage.getvalue())
+
+    def test_valid_signed_inventory(self):
+        data = sample()
+        prefix = "a/"
+        members = {
+            "UserData/No_Backup/pp.dat": data,
+            "UserData/No_Backup/snapshot2.dat": data,
+        }
+        manifest = {
+            "format": "pvz2forios-save-v1",
+            "roots": ["UserData"],
+            "files": [
+                {"path": path, "size": len(blob),
+                 "sha256": hashlib.sha256(blob).hexdigest()}
+                for path, blob in members.items()
+            ],
+        }
+        archive = io.BytesIO()
+        with zipfile.ZipFile(archive, "w") as z:
+            for path, blob in members.items():
+                z.writestr(prefix + path, blob)
+            z.writestr(prefix + "snapshot-info.plist",
+                       plistlib.dumps(manifest))
+        result = inspect_archive(archive)
+        self.assertEqual(result["manifest"],
+                         {"status": "VERIFIED", "file_count": 2})
+
+    def test_manifest_hash_mismatch_is_refused(self):
+        data = sample()
+        prefix = "a/"
+        files = ["UserData/No_Backup/pp.dat",
+                 "UserData/No_Backup/snapshot2.dat"]
+        manifest = {
+            "format": "pvz2forios-save-v1",
+            "files": [{"path": p, "size": len(data),
+                       "sha256": "0" * 64} for p in files],
+        }
+        archive = io.BytesIO()
+        with zipfile.ZipFile(archive, "w") as z:
+            for path in files:
+                z.writestr(prefix + path, data)
+            z.writestr(prefix + "snapshot-info.plist",
+                       plistlib.dumps(manifest))
+        with self.assertRaisesRegex(RtonError, "SHA-256"):
+            inspect_archive(archive)
+
+    def test_manifest_path_traversal_is_refused(self):
+        data = sample()
+        files = ["UserData/No_Backup/pp.dat",
+                 "UserData/No_Backup/snapshot2.dat"]
+        manifest = {
+            "format": "pvz2forios-save-v1",
+            "files": [{"path": "../escape", "size": 4,
+                       "sha256": "0" * 64}] +
+                     [{"path": p, "size": len(data),
+                       "sha256": hashlib.sha256(data).hexdigest()}
+                      for p in files],
+        }
+        archive = io.BytesIO()
+        with zipfile.ZipFile(archive, "w") as z:
+            for path in files:
+                z.writestr("a/" + path, data)
+            z.writestr("a/snapshot-info.plist",
+                       plistlib.dumps(manifest))
+        with self.assertRaisesRegex(RtonError, "Unsafe"):
+            inspect_archive(archive)
+
+    def test_uninventoried_mirror_is_refused(self):
+        data = sample()
+        manifest = {
+            "format": "pvz2forios-save-v1",
+            "files": [
+                {"path": "UserData/No_Backup/pp.dat",
+                 "size": len(data),
+                 "sha256": hashlib.sha256(data).hexdigest()},
+            ],
+        }
+        archive = io.BytesIO()
+        with zipfile.ZipFile(archive, "w") as z:
+            for filename in ("pp.dat", "snapshot2.dat"):
+                z.writestr("a/UserData/No_Backup/" + filename, data)
+            z.writestr("a/snapshot-info.plist",
+                       plistlib.dumps(manifest))
+        with self.assertRaisesRegex(RtonError, "Missing critical"):
+            inspect_archive(archive)
 
     def test_different_mirror_detected(self):
         storage = io.BytesIO()
