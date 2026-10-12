@@ -417,3 +417,24 @@ https://github.com/Puissantsy/PvZ2forIOS/actions/runs/38175743041
 - all related static/wiring verification steps pass.
 A new IPA still cannot be produced until exact proven Dynarmic c97c
 checkout is available/cached. Do not switch to a different allocator.
+
+
+### Shared stock decoder integration — 2026-10-12
+
+The host-only stock parser is now the same code unit-tested on CI and
+instantiated by the active KEYCONV runtime.
+`tests/staging/world_key_stock_view.hpp` decodes bounded
+`[world:COW string pointer,count:u32]` entries; runtime
+`WorldKeyReadOnlyStockSnapshot` performs native COW header, readable
+terminator, vector bounds and profile checks before producing `wsk={...}`.
+The pure reader rejects duplicate, unknown and inconsistent native entries.
+No guest save or key balance mutation was enabled.
+
+Green no-IPA CI: https://github.com/Puissantsy/PvZ2forIOS/actions/runs/38205300169
+(33+7+13+37=90 unit assertions plus all static integration checks).
+The V128 save audit confirms that a native spend and native coin setter
+can independently trigger durable pp.dat flushes via guest close/fsync.
+Atomic file rename alone DOES NOT make both operations a transaction.
+A WAL/backed-up crash-safe commit remains necessary before active
+existing-key migration. No new IPA is built because the proven
+LiveContainer c97c dependency checkout is still unavailable.
