@@ -201,3 +201,50 @@ https://github.com/Puissantsy/PvZ2forIOS/actions/runs/38212259281
 
 **239 validations/checks** plus static checks pass, no iOS IPA was
 built and no real player file was modified.
+
+
+## Validated against the private October 12 native-key snapshot
+
+The user has supplied the preserved private `Save clé excédentaire.zip`
+through Project Sources. We inspected it **locally only**; this file,
+its names, profile IDs, hashes and bytes are not uploaded to this public
+repository, tests or GitHub Actions.
+
+The saved-key structure is no longer hypothetical:
+`PlayerInfo.objdata.wsk` is an array of exact `{wn, kc}` records;
+the supplied active player has one Egyptian key, all five Egyptian gate
+events are in native state 3, and the selected PlayerInfo native ID
+matches the corresponding local_profiles registry entry. The separate
+primary and fallback RTON images both confirm this key state.
+
+CRITICAL: `pp.dat` and `snapshot2.dat` are **different valid game
+states**, not duplicate images. The latter is an older progress snapshot:
+the two decoded trees differ in nine leaf fields, including the wallet
+and some native progression events. Both files are checksum-valid in the
+11-entry original snapshot manifest. Making them identical would erase
+the game's historical fallback state.
+
+Therefore the experimental exporter now:
+- parses and validates each RTON separately and requires the same
+  intended native profile ID, key quantity and fully opened Egypt gates;
+- patches precisely **each original image's own c and kc numeric tokens**,
+  preserving its prior wallet/progression difference;
+- updates each image's **own** manifest SHA-256 and size entry;
+- verifies all 11 original inventory files, all untouched ZIP files,
+  both patched RTON documents, and correct distinct mirror state;
+- refuses differing native key stock, missing/open-gate evidence, wrong
+  profile ID, unexpected token types or output overwrites.
+
+A private disposable ZIP was generated in the conversation workspace and
+verified after writing. Its original source was preserved byte-for-byte.
+This demonstrates an OFFLINE file transformation and does **NOT**
+establish that iPad's live runtime accepts/reloads the modified balance.
+
+**No real/private backup is committed or used as a CI fixture.**
+Standalone tests use fake profile names, fake native IDs, and synthetic
+RTON values. This feature remains *research-only*.
+
+On-device acceptance still requires a disposable research app profile,
+a preserved original iCloud backup, and a complete iPad restart+logs.
+Verify the Egyptian key is 0 and the +1000 coins persist; do not
+restore the experiment over the user's only good save.
