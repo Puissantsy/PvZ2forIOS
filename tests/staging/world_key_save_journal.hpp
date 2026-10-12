@@ -38,7 +38,7 @@ inline bool SaveRead(const fs::path& p,std::vector<std::uint8_t>& out) {
     if (!in) return false;
     out.assign(std::istreambuf_iterator<char>(in),
                std::istreambuf_iterator<char>());
-    return static_cast<bool>(in.eof()) && out.size()<=Max;
+    return !in.bad() && out.size()<=Max;
 }
 inline bool SaveSyncDirectory(const fs::path& p) {
     const int fd=::open(p.c_str(),O_RDONLY);
@@ -149,7 +149,11 @@ public:
         // Atomic replacement of this ONE file. The journal remains durably
         // present until recovery confirms either old or new contents.
         std::error_code ec;
-        fs::rename(journal/"next",save,ec);
+        std::vector<std::uint8_t> target;
+        if(!SaveRead(journal/"next",target) ||
+           !SaveWriteExclusive(journal/"install",target) ||
+           !SaveSyncDirectory(journal)) return false;
+        fs::rename(journal/"install",save,ec);
         if(ec) return false;
         if(fault==CommitFault::AfterRenameBeforeDirectorySync)
             return false; // simulate unexpected stop; leave journal intact
