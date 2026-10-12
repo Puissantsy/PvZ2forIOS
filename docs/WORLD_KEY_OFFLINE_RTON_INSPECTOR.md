@@ -277,3 +277,37 @@ The research iOS application and original source archives are unchanged.
 The next meaningful acceptance is restoration of the *disposable copy*
 into a separate iPad test profile, verifying coins and keys before
 and after a full process restart.
+
+
+## First real-iPad restore acceptance — 2026-10-12 (partial PASS)
+
+The user imported the separately generated **disposable** Egyptian surplus-key
+save into the isolated research application and provided a genuine iPad
+world-map screenshot and local runtime log. The game reaches a rendered,
+interactive Ancient Egypt map. On the **intended test profile**, the displayed
+Egyptian key counter is **0** and the PvZCoin wallet displays the expected
+**+1,000** over the untouched source profile. This is physical-device evidence
+that the offline-edited RTON state is usable by the original game at startup,
+not merely a successful Python decoder round trip.
+
+The runtime log reports V128 reads of *both* native player files, followed by
+normal game saves: `pp.dat` was loaded at 7,428 bytes, `snapshot2.dat` at
+7,404 bytes; the original game then flushed `snapshot2.dat` at 7,427 bytes
+and `pp.dat` again during the run. The guest rendered at least 1,200 frames.
+Differences in serialized sizes **do not establish** whether the fallback's
+content was overwritten, nor that every unrelated progression field persisted.
+No new-key `KEYCONV APPLY` callback is expected from this one-time *offline*
+stock conversion. The restoration itself is not separately logged by the
+FULLLOAD diagnostic stream; the in-game result plus loaded file paths provide
+the acceptance evidence.
+
+**Still required:** force-quit the isolated research app, start it **without
+restoring/importing the experimental ZIP a second time**, and verify that the
+same Egyptian key counter and credited wallet remain. Prefer a fresh full
+startup log and screenshot; optionally re-export the now-native save for an
+RTON diff, checking that no unrelated player progress was lost. This is the
+cold-start persistence and no-double-credit gate. Do **not** describe this
+single-session success as full persistence acceptance.
+
+No iOS binary, production branch, private archive, save bytes, profile
+identifiers or device paths were published or changed as part of this note.
