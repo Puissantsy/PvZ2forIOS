@@ -5,7 +5,10 @@ No modification, conversion, or re-encoding of a player's saves is performed.
 Only selected, non-identifying fields are returned; never upload saves to CI.
 """
 import argparse
+import hashlib
 import json
+import plistlib
+import re
 import struct
 import sys
 import zipfile
@@ -214,6 +217,64 @@ def summarize_player_save(data):
     return {"player_count": len(result), "players": result}
 
 
+
+def inspect_snapshot_manifest(archive, pp_path):
+    # The PvZ2forIOS backup system uses a SHA-256 inventory; reading only
+    # pp.dat is insufficient to establish a trustworthy restorable snapshot.
+    if "UserData/No_Backup/pp.dat" in pp_path:
+        prefix = pp_path.split("UserData/No_Backup/pp.dat")[0]
+    else:
+        prefix = pp_path.split("No_Backup/pp.dat")[0]
+    name = prefix + "snapshot-info.plist"
+    try:
+        info = archive.getinfo(name)
+    except KeyError:
+        return {"status": "MISSING", "file_count": 0}
+    if info.file_size > 1024 * 1024:
+        raise RtonError("Oversized save manifest")
+    try:
+        manifest = plistlib.loads(archive.read(info))
+    except (ValueError, TypeError) as exc:
+        raise RtonError("Malformed save manifest") from exc
+    if not isinstance(manifest, dict) or (
+            manifest.get("format") != "pvz2forios-save-v1"):
+        raise RtonError("Unsupported save manifest format")
+    entries = manifest.get("files")
+    if not isinstance(entries, list) or not (1 <= len(entries) <= 16384):
+        raise RtonError("Invalid save manifest inventory")
+    seen = set()
+    for item in entries:
+        if not isinstance(item, dict):
+            raise RtonError("Invalid manifest entry")
+        path = item.get("path")
+        length = item.get("size")
+        digest = item.get("sha256")
+        if (not isinstance(path, str) or
+                not re.fullmatch(r"[A-Za-z0-9_.\-/]+", path) or
+                path.startswith("/") or
+                ".." in path.split("/") or
+                "//" in path or
+                path in seen or
+                type(length) is not int or
+                not 0 <= length <= MAX_RTON or
+                not isinstance(digest, str) or
+                not re.fullmatch(r"[0-9a-f]{64}", digest)):
+            raise RtonError("Unsafe or duplicate manifest entry")
+        seen.add(path)
+        try:
+            member = archive.getinfo(prefix + path)
+        except KeyError as exc:
+            raise RtonError("Missing inventoried save member") from exc
+        if member.is_dir() or member.file_size != length:
+            raise RtonError("Inventoried save size mismatch")
+        if hashlib.sha256(archive.read(member)).hexdigest() != digest:
+            raise RtonError("Inventoried save SHA-256 mismatch")
+    if ("UserData/No_Backup/pp.dat" not in seen or
+            "UserData/No_Backup/snapshot2.dat" not in seen):
+        raise RtonError("Missing critical profile images in backup inventory")
+    return {"status": "VERIFIED", "file_count": len(seen)}
+
+
 def inspect_archive(path):
     with zipfile.ZipFile(path) as archive:
         matches = [info for info in archive.infolist()
@@ -234,8 +295,10 @@ def inspect_archive(path):
             if mirror_info.file_size > MAX_RTON:
                 raise RtonError("Oversized snapshot2.dat")
             mirror = "IDENTICAL" if archive.read(mirror_info) == pp else "DIFFERENT"
+        manifest = inspect_snapshot_manifest(archive, info.filename)
         result = summarize_player_save(pp)
         result["snapshot2_comparison"] = mirror
+        result["manifest"] = manifest
         result["read_only"] = True
         return result
 
