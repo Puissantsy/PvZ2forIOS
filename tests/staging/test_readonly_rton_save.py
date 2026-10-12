@@ -100,8 +100,7 @@ class ReadOnlyRtonSaveTests(unittest.TestCase):
             z.writestr(root + "pp.dat", data)
             z.writestr(root + "snapshot2.dat", data)
         before = storage.getvalue()
-        with unittest.mock.patch.object(zipfile, "ZipFile", wraps=zipfile.ZipFile):
-            report = inspect_archive(storage)
+        report = inspect_archive(storage)
         self.assertEqual(report["snapshot2_comparison"], "IDENTICAL")
         self.assertTrue(report["read_only"])
         self.assertEqual(before, storage.getvalue())
