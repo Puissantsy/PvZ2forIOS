@@ -69,14 +69,14 @@ int main() {
     // present, but cleanup did not finish before app termination.
     assert(journal.Prepare(changes,7));++checks;
     assert(!journal.Commit(7,3));++checks;
-    assert(SaveWriteExclusiveText(journal.journal/"committed","COMMITTED\\n"));
+    assert(SaveWriteExclusiveText(journal.journal/"committed","COMMITTED\n"));
     assert(journal.Recover(7)==SaveOutcome::CommittedRecovered);++checks;
     check(true);++checks;
     reset();
     // A corrupt marker is never treated as a successful transaction.
     assert(journal.Prepare(changes,7));++checks;
     assert(!journal.Commit(7,3));++checks;
-    assert(SaveWriteExclusiveText(journal.journal/"committed","WRONG\\n"));
+    assert(SaveWriteExclusiveText(journal.journal/"committed","WRONG\n"));
     assert(journal.Recover(7)==SaveOutcome::Conflict);++checks;
     check(true);++checks;
     fs::remove_all(journal.journal);
