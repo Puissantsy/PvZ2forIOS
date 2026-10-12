@@ -69,7 +69,7 @@ jobs:
           python3 -m unittest discover -s tests/staging -p test_keyconv_rton_archive.py -v
       - name: Python syntax check (exact ELF stays private)
         run: |
-          python3 -m py_compile tools/verify_world_key_arm.py tools/verify_world_key_award_coverage.py tools/verify_world_key_probe_wiring.py tools/verify_world_key_conversion_tailcall.py tools/inspect_pvz2_rton_save.py
+          python3 -m py_compile tools/verify_world_key_arm.py tools/verify_world_key_award_coverage.py tools/verify_world_key_probe_wiring.py tools/verify_world_key_conversion_tailcall.py tools/inspect_pvz2_rton_save.py tools/experimental_keyconv_rton_memory.py tools/experimental_keyconv_rton_archive.py
       - name: Check opt-in native probe integration (no IPA)
         run: python3 tools/verify_world_key_probe_wiring.py
       - name: Check active AddWorldKeys to native SetCoins tail-call (no IPA)
