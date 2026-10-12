@@ -248,3 +248,32 @@ On-device acceptance still requires a disposable research app profile,
 a preserved original iCloud backup, and a complete iPad restart+logs.
 Verify the Egyptian key is 0 and the +1000 coins persist; do not
 restore the experiment over the user's only good save.
+
+
+### Confirmed final isolated verification — 2026-10-12
+
+A private, disposable native snapshot was generated from the user's
+supplied project-only ZIP on a local container **without committing any
+save bytes**. The original package's SHA-256 is unchanged after export.
+Both RTON PlayerInfo documents were independently re-parsed after the
+precise Egyptian stock/count and wallet transformation, 11/11 manifest
+inventory SHA-256 entries passed, and all unrelated files matched
+their original bytes. The original primary/fallback divergence remains
+deliberately preserved. This is OFFLINE verification only, not an iPad
+runtime acceptance result.
+
+The strict public synthetic regression run is green:
+https://github.com/Puissantsy/PvZ2forIOS/actions/runs/38214199959
+
+- 197 isolated C++ checks;
+- 23 read-only RTON parsing / manifest tests;
+- 9 exact numeric token replacement tests;
+- 12 experimental ZIP export, diverged fallback and fail-closed tests;
+- static native saved-key ABI, no-overwrite, isolated journal,
+  V128 observer, guest JNI and Dynarmic configuration checks.
+
+That is **241** passing isolated checks/tests plus static verifiers.
+The research iOS application and original source archives are unchanged.
+The next meaningful acceptance is restoration of the *disposable copy*
+into a separate iPad test profile, verifying coins and keys before
+and after a full process restart.
