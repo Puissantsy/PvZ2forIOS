@@ -2170,6 +2170,8 @@ void PvZ2HostNotifyDirectFrame(
 @property(nonatomic, strong) NSString *keyconvStartupNote;
 @property(nonatomic, assign) BOOL keyconvLabRecoveryChecked;
 @property(nonatomic, strong) NSString *keyconvLabStartupNote;
+@property(nonatomic, assign) BOOL keyconvLabOfferChecked;
+@property(nonatomic, assign) BOOL keyconvLabPromptActive;
 
 @end
 
@@ -2398,10 +2400,175 @@ void PvZ2HostNotifyDirectFrame(
     [self presentViewController:alert animated:YES completion:nil];
 }
 
+// Optional laboratory controls are intentionally inaccessible during a
+// normal KEYOBS launch. The user must first place an exact request file in
+// this research app's Documents directory, then make TWO UI choices and type
+// a literal confirmation. Only hardcoded fake RTONs are ever used.
+- (void)v130KeyconvLabContinueGame {
+    self.keyconvLabPromptActive = NO;
+    [self v130ContinueLaunch];
+}
+
+- (void)v130KeyconvLabConfirmCrash:(NSString *)phase
+                             name:(NSString *)name {
+    UIAlertController *confirm=[UIAlertController
+        alertControllerWithTitle:@"ATTENTION — fermeture brutale de KEYOBS"
+        message:[NSString stringWithFormat:
+            @"Ce test va arrêter immédiatement l'application avec SIGKILL, uniquement pendant une transaction de sauvegardes FACTICES (%@). Aucune donnée du vrai jeu ne doit être utilisée.\n\nPour confirmer, tape exactement :\n%@",
+            name,PVZKeyconvLabConfirmationPhrase()]
+        preferredStyle:UIAlertControllerStyleAlert];
+    [confirm addTextFieldWithConfigurationHandler:^(UITextField *field) {
+        field.placeholder=@"Confirmation exacte du crash factice";
+        field.autocorrectionType=UITextAutocorrectionTypeNo;
+        field.autocapitalizationType=UITextAutocapitalizationTypeAllCharacters;
+    }];
+    __weak ProbeViewController *weakSelf=self;
+    [confirm addAction:[UIAlertAction
+        actionWithTitle:@"Annuler — lancer le jeu"
+        style:UIAlertActionStyleCancel
+        handler:^(__unused UIAlertAction *action) {
+            __strong ProbeViewController *strongSelf=weakSelf;
+            if(strongSelf)[strongSelf v130KeyconvLabContinueGame];
+        }]];
+    [confirm addAction:[UIAlertAction
+        actionWithTitle:@"CONFIRMER LE CRASH FACTICE"
+        style:UIAlertActionStyleDestructive
+        handler:^(__unused UIAlertAction *action) {
+            __strong ProbeViewController *strongSelf=weakSelf;
+            if(!strongSelf)return;
+            NSString *phrase=confirm.textFields.firstObject.text ?: @"";
+            NSError *error=nil;
+            BOOL ok=PVZKeyconvLabKillOnlySynthetic(
+                phase,phrase,
+                !strongSelf.jniRunning && !strongSelf.v130LaunchStarted,
+                &error);
+            // On an actual checkpoint, the process has already died here.
+            // If validation failed, do not silently retry or touch user saves.
+            UIAlertController *failed=[UIAlertController
+                alertControllerWithTitle:@"Crash factice refusé"
+                message:error.localizedDescription ?:
+                    @"Le processus n'a pas atteint un checkpoint contrôlé."
+                preferredStyle:UIAlertControllerStyleAlert];
+            (void)ok;
+            [failed addAction:[UIAlertAction actionWithTitle:@"Continuer le jeu"
+                style:UIAlertActionStyleCancel
+                handler:^(__unused UIAlertAction *finish) {
+                    [strongSelf v130KeyconvLabContinueGame];
+                }]];
+            [strongSelf presentViewController:failed animated:YES completion:nil];
+        }]];
+    [self presentViewController:confirm animated:YES completion:nil];
+}
+
+- (void)v130KeyconvLabChoosePoint {
+    UIAlertController *points=[UIAlertController
+        alertControllerWithTitle:@"Laboratoire KEYCONV — étape 2"
+        message:@"Sélectionne l'instant où interrompre l'écriture des deux RTON factices. Le prochain lancement réparera automatiquement le laboratoire, avant le jeu."
+        preferredStyle:UIAlertControllerStyleAlert];
+    __weak ProbeViewController *weakSelf=self;
+    NSArray<NSArray<NSString *> *> *choices=@[
+        @[@"Après pp.dat factice",@"primary-installed"],
+        @[@"Après snapshot2.dat factice",@"fallback-installed"],
+        @[@"Après committed.tmp factice",@"marker-prepared"],
+        @[@"Après commit publié",@"marker-published"]
+    ];
+    for(NSArray<NSString *> *choice in choices) {
+        NSString *title=choice[0],*phase=choice[1];
+        [points addAction:[UIAlertAction
+            actionWithTitle:title style:UIAlertActionStyleDefault
+            handler:^(__unused UIAlertAction *action) {
+                __strong ProbeViewController *strongSelf=weakSelf;
+                if(strongSelf)
+                    [strongSelf v130KeyconvLabConfirmCrash:phase name:title];
+            }]];
+    }
+    [points addAction:[UIAlertAction actionWithTitle:@"Annuler — lancer le jeu"
+        style:UIAlertActionStyleCancel
+        handler:^(__unused UIAlertAction *action) {
+            __strong ProbeViewController *strongSelf=weakSelf;
+            if(strongSelf)[strongSelf v130KeyconvLabContinueGame];
+        }]];
+    [self presentViewController:points animated:YES completion:nil];
+}
+
+- (void)v130KeyconvLabShowMenu {
+    UIAlertController *menu=[UIAlertController
+        alertControllerWithTitle:@"KEYCONV — laboratoire de crash FACTICE"
+        message:@"Mode volontaire activé par PvZ2CrashLabRequest.txt. Le laboratoire utilise ses propres RTON synthétiques dans Application Support, jamais les sauvegardes du jeu. Si tu n'as pas demandé cet essai, choisis Ignorer."
+        preferredStyle:UIAlertControllerStyleAlert];
+    __weak ProbeViewController *weakSelf=self;
+    [menu addAction:[UIAlertAction actionWithTitle:@"Ignorer — lancer le jeu"
+        style:UIAlertActionStyleCancel
+        handler:^(__unused UIAlertAction *action) {
+            __strong ProbeViewController *strongSelf=weakSelf;
+            if(strongSelf)[strongSelf v130KeyconvLabContinueGame];
+        }]];
+    [menu addAction:[UIAlertAction
+        actionWithTitle:@"Préparer et choisir un crash factice"
+        style:UIAlertActionStyleDefault
+        handler:^(__unused UIAlertAction *action) {
+            __strong ProbeViewController *strongSelf=weakSelf;
+            if(!strongSelf)return;
+            NSError *error=nil;
+            BOOL ok=PVZKeyconvLabPrepare(
+                !strongSelf.jniRunning && !strongSelf.v130LaunchStarted,
+                &error);
+            if(ok) {
+                AppendPersistentLog(@"[KEYCONV LAB] SYNTHETIC_ONLY_PREPARED");
+                [strongSelf v130KeyconvLabChoosePoint];
+                return;
+            }
+            UIAlertController *failed=[UIAlertController
+                alertControllerWithTitle:@"Laboratoire non préparé"
+                message:error.localizedDescription ?:
+                    @"Un laboratoire existe peut-être déjà. Ne recrée pas ses fichiers."
+                preferredStyle:UIAlertControllerStyleAlert];
+            [failed addAction:[UIAlertAction actionWithTitle:@"Continuer le jeu"
+                style:UIAlertActionStyleCancel
+                handler:^(__unused UIAlertAction *finish) {
+                    [strongSelf v130KeyconvLabContinueGame];
+                }]];
+            [strongSelf presentViewController:failed animated:YES completion:nil];
+        }]];
+    [menu addAction:[UIAlertAction
+        actionWithTitle:@"Voir et copier le rapport factice"
+        style:UIAlertActionStyleDefault
+        handler:^(__unused UIAlertAction *action) {
+            __strong ProbeViewController *strongSelf=weakSelf;
+            if(!strongSelf)return;
+            NSError *error=nil;
+            NSString *audit=PVZKeyconvLabReadAudit(&error);
+            NSString *body=audit ?: (error.localizedDescription ?:
+                @"Aucun rapport disponible.");
+            UIAlertController *report=[UIAlertController
+                alertControllerWithTitle:@"Audit local du laboratoire"
+                message:body.length>2500 ?
+                    [body substringFromIndex:body.length-2500] : body
+                preferredStyle:UIAlertControllerStyleAlert];
+            if(audit.length!=0u) {
+                [report addAction:[UIAlertAction
+                    actionWithTitle:@"Copier le rapport factice"
+                    style:UIAlertActionStyleDefault
+                    handler:^(__unused UIAlertAction *copyAction) {
+                        UIPasteboard.generalPasteboard.string=audit;
+                        [strongSelf v130KeyconvLabContinueGame];
+                    }]];
+            }
+            [report addAction:[UIAlertAction
+                actionWithTitle:@"Continuer le jeu"
+                style:UIAlertActionStyleCancel
+                handler:^(__unused UIAlertAction *finish) {
+                    [strongSelf v130KeyconvLabContinueGame];
+                }]];
+            [strongSelf presentViewController:report animated:YES completion:nil];
+        }]];
+    [self presentViewController:menu animated:YES completion:nil];
+}
+
 - (void)v130ContinueLaunch {
     if (self.v130LaunchStarted || self.jniRunning ||
         self.keyobsRestorePromptActive || self.keyconvPromptActive ||
-        self.keyconvFatalBlocked) {
+        self.keyconvLabPromptActive || self.keyconvFatalBlocked) {
         return;
     }
 
@@ -2419,6 +2586,23 @@ void PvZ2HostNotifyDirectFrame(
             self.keyconvLabStartupNote =
                 @"[KEYCONV LAB] LAB_ONLY_RECOVERY_REFUSED; game data untouched";
             AppendPersistentLog(self.keyconvLabStartupNote);
+        }
+    }
+
+    // No request file = no crash-lab UI, and no crash-capable function call.
+    // Even with the request, the user must prepare disposable synthetic saves,
+    // choose a fault phase, then type the exact separate confirmation.
+    if (!self.keyconvLabOfferChecked) {
+        self.keyconvLabOfferChecked = YES;
+        NSError *requestError = nil;
+        if (PVZKeyconvLabHasExplicitRequest(&requestError)) {
+            self.keyconvLabPromptActive = YES;
+            [self v130KeyconvLabShowMenu];
+            return;
+        }
+        if (requestError != nil) {
+            AppendPersistentLog(
+                @"[KEYCONV LAB] INVALID_REQUEST_IGNORED; game saves unaffected");
         }
     }
 
