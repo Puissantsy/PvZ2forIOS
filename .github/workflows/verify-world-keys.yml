@@ -94,6 +94,10 @@ jobs:
         run: |
           clang++ -std=c++20 -O1 -Wall -Wextra -Werror -pedantic -fsanitize=address,undefined -fno-sanitize-recover=all -Itests/staging tests/staging/test_world_key_prelaunch_native.cpp -lcrypto -o /tmp/keyconv_native_prelaunch
           /tmp/keyconv_native_prelaunch
+      - name: Test real SIGKILL and fresh-process journal recovery (synthetic only, NO IPA)
+        run: |
+          clang++ -std=c++20 -O1 -Wall -Wextra -Werror -pedantic -fsanitize=undefined -fno-sanitize-recover=all -Itests/staging tests/staging/test_world_key_prelaunch_process_kill.cpp -lcrypto -o /tmp/keyconv-native-sigkill
+          /tmp/keyconv-native-sigkill
       - name: Verify nonempty-key ABI and divergent snapshot export isolation
         run: python3 tools/verify_keyconv_offline_export.py
       - name: Python syntax check (exact ELF stays private)
@@ -165,6 +169,12 @@ jobs:
             -Itests/staging tests/staging/test_world_key_prelaunch_native.cpp \
             -o /tmp/pvz2-keyconv-native-apple
           ASAN_OPTIONS=detect_leaks=0 /tmp/pvz2-keyconv-native-apple
+      - name: Test real SIGKILL and fresh-process journal recovery using Apple CommonCrypto (NO IPA)
+        run: |
+          clang++ -std=c++20 -O1 -Wall -Wextra -Werror -pedantic \
+            -Itests/staging tests/staging/test_world_key_prelaunch_process_kill.cpp \
+            -o /tmp/pvz2-keyconv-native-apple-sigkill
+          /tmp/pvz2-keyconv-native-apple-sigkill
       - name: Compile check research-only ObjC++ KEYCONV adapter on macOS
         run: |
           clang++ -std=c++20 -fobjc-arc -x objective-c++ -fsyntax-only \
