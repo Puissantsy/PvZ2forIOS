@@ -50,6 +50,36 @@ NSString *Outcome(const lab::Report& r) {
 }
 } // namespace
 
+NSString *PVZKeyconvLabConfirmationPhrase(void) {
+    return @"JE CONFIRME LE CRASH FACTICE";
+}
+BOOL PVZKeyconvLabHasExplicitRequest(NSError **error) {
+    std::lock_guard<std::mutex> lock(gDisposableLabMutex);
+    if (!PVZKeyconvResearchIdentityIsAllowed()) {
+        if(error)*error=Failure(@"Demande de laboratoire réservée à KEYOBS.");
+        return NO;
+    }
+    try {
+        NSURL *documents=[[NSFileManager defaultManager]
+            URLsForDirectory:NSDocumentDirectory
+                  inDomains:NSUserDomainMask].firstObject;
+        if(documents==nil||documents.path==nil)
+            throw tx::Conflict("Documents directory absent");
+        const auto root=std::filesystem::path(documents.fileSystemRepresentation);
+        tx::SafeDirectory(root);
+        const auto request=root/"PvZ2CrashLabRequest.txt";
+        if(!tx::Present(request))return NO;
+        const auto text=tx::ReadRegular(request,128);
+        if(text!="ENABLE_PVZ2_KEYCONV_DISPOSABLE_LAB_V1\n")
+            throw tx::Conflict("Malformed synthetic crash-lab request");
+        return YES;
+    }catch(const std::exception&) {
+        if(error)*error=Failure(
+            @"Demande du laboratoire invalide (fichier attendu dans Documents).");
+        return NO;
+    }
+}
+
 NSString *PVZKeyconvLabRecoverOnLaunch(NSError **error) {
     std::lock_guard<std::mutex> lock(gDisposableLabMutex);
     if(!Allowed(true)) {
