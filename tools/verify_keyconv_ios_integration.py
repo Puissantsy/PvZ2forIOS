@@ -45,7 +45,7 @@ assert not (root/"platform/ios/src/world_key_prelaunch_native.hpp").exists()
 lab_bridge=(root/"platform/ios/src/keyconv_disposable_lab_ios_adapter.mm").read_text()
 lab_core=(root/"tests/staging/keyconv_disposable_crash_lab.hpp").read_text()
 request=(root/"tools/PvZ2CrashLabRequest.txt").read_text()
-assert request=="ENABLE_PVZ2_KEYCONV_DISPOSABLE_LAB_V1\\n".replace("\\\\n","\\n")
+assert request=="ENABLE_PVZ2_KEYCONV_DISPOSABLE_LAB_V1\n"
 assert "keyconv_disposable_lab_ios_adapter.mm" in cmake
 assert "PVZKeyconvLabRecoverOnLaunch(&labError)" in launch
 assert "PVZKeyconvLabHasExplicitRequest(&requestError)" in launch
