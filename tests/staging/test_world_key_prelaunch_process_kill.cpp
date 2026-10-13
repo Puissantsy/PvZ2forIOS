@@ -100,7 +100,8 @@ struct Sandbox {
 };
 int RunWorker(int argc,char** argv) {
     if(argc!=5) throw std::runtime_error("Worker arguments invalid");
-    const auto mode=std::string(argv[1]),root=fs::path(argv[2]);
+    const std::string mode=argv[1];
+    const fs::path root=argv[2];
     const int phase=std::stoi(argv[3]);
     const int expected=std::stoi(argv[4]);
     if(mode=="abort-settle") {
