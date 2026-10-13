@@ -41,9 +41,11 @@ constexpr std::array<std::string_view,2> Files={"pp.dat","snapshot2.dat"};
 
 struct Conflict:std::runtime_error { using std::runtime_error::runtime_error; };
 struct Interrupted:std::runtime_error { using std::runtime_error::runtime_error; };
-enum class CrashAt { None, DirectoryCreated, ImagesStaged, ManifestPublished,
-    PrimaryInstalled, FallbackInstalled, MarkerPrepared, MarkerPublished,
-    DonePublished };
+enum class CrashAt { None, DirectoryCreated,
+    OldPrimaryStaged, NewPrimaryStaged, OldFallbackStaged, NewFallbackStaged,
+    ImagesStaged, ManifestTempWritten, ManifestPublished,
+    PrimarySwapStaged, PrimaryInstalled, FallbackSwapStaged, FallbackInstalled,
+    MarkerPrepared, MarkerPublished, DonePublished, RollbackPrimaryInstalled };
 enum class Recovery { NoJournal, DiscardedUnpublished, RolledBack,
     Committed, CleanedDone };
 struct Settlement {
@@ -187,13 +189,16 @@ inline void Finish(const fs::path& root) {
     CleanupDirectory(root,d);
 }
 inline void AtomicInstall(const fs::path& journal,const fs::path& destination,
-                          const std::string& image) {
+                          const std::string& image,
+                          CrashAt fault=CrashAt::None,
+                          CrashAt staged_fault=CrashAt::None) {
     const auto temp=journal/("swap-"+destination.filename().string());
     if(Present(temp)) {
         RemoveRegular(temp); SyncDirectory(journal);
     }
     ExclusiveWrite(temp,image);
     SyncDirectory(journal);
+    if(staged_fault!=CrashAt::None) Crash(fault,staged_fault);
     Require(::rename(temp.c_str(),destination.c_str())==0,
             "Atomic image replacement failed");
     SyncDirectory(destination.parent_path());
@@ -276,7 +281,8 @@ inline std::array<std::string,4> ValidateImages(const fs::path& journal,
     }
     return images;
 }
-inline Recovery Recover(const fs::path& root,bool guest_stopped) {
+inline Recovery Recover(const fs::path& root,bool guest_stopped,
+                        CrashAt fault=CrashAt::None) {
     Require(guest_stopped,"Recovery requires stopped guest and V128");
     // A fresh app has no UserData yet: the recovery gate must be safe even
     // BEFORE v165 offers its first restore or before the first game launch.
@@ -324,8 +330,10 @@ inline Recovery Recover(const fs::path& root,bool guest_stopped) {
         return Recovery::Committed;
     }
     for(std::size_t i=0;i<2;++i) {
-        if(live[i]!=images[i*2])
+        if(live[i]!=images[i*2]) {
             AtomicInstall(journal,working/std::string(Files[i]),images[i*2]);
+            if(i==0) Crash(fault,CrashAt::RollbackPrimaryInstalled);
+        }
     }
     Finish(root);
     return Recovery::RolledBack;
@@ -364,7 +372,9 @@ inline Settlement Settle(const fs::path& root,std::size_t slot,
         m.files[i]={original[i].size(),target[i].size(),
                     SHA(original[i]),SHA(target[i])};
         ExclusiveWrite(journal/("old-"+name),original[i]);
+        Crash(fault,i==0?CrashAt::OldPrimaryStaged:CrashAt::OldFallbackStaged);
         ExclusiveWrite(journal/("new-"+name),target[i]);
+        Crash(fault,i==0?CrashAt::NewPrimaryStaged:CrashAt::NewFallbackStaged);
     }
     SyncDirectory(journal);
     Crash(fault,CrashAt::ImagesStaged);
@@ -372,6 +382,7 @@ inline Settlement Settle(const fs::path& root,std::size_t slot,
             "Native profile registry changed while staging");
     ExclusiveWrite(journal/"manifest.tmp",FormatManifest(m));
     SyncDirectory(journal);
+    Crash(fault,CrashAt::ManifestTempWritten);
     Require(::rename((journal/"manifest.tmp").c_str(),
                      (journal/"manifest").c_str())==0,
             "Cannot atomically publish manifest");
@@ -380,7 +391,9 @@ inline Settlement Settle(const fs::path& root,std::size_t slot,
     for(std::size_t i=0;i<2;++i) {
         Require(ReadRegular(working/std::string(Files[i]),MaxImage)==original[i],
                 "Live image changed while guest was expected to be stopped");
-        AtomicInstall(journal,working/std::string(Files[i]),target[i]);
+        AtomicInstall(journal,working/std::string(Files[i]),target[i],
+                      fault,i==0?CrashAt::PrimarySwapStaged:
+                                  CrashAt::FallbackSwapStaged);
         Crash(fault,i==0?CrashAt::PrimaryInstalled:CrashAt::FallbackInstalled);
     }
     Require(ReadRegular(working/"local_profiles",MaxRegistry)==original_reg,

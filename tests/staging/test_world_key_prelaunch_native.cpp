@@ -122,9 +122,12 @@ void TestNormalAndNoRepeat() {
 }
 void TestRecoveryFaults() {
     const std::array uncommitted={CrashAt::DirectoryCreated,
-        CrashAt::ImagesStaged,CrashAt::ManifestPublished,
-        CrashAt::PrimaryInstalled,CrashAt::FallbackInstalled,
-        CrashAt::MarkerPrepared};
+        CrashAt::OldPrimaryStaged,CrashAt::NewPrimaryStaged,
+        CrashAt::OldFallbackStaged,CrashAt::NewFallbackStaged,
+        CrashAt::ImagesStaged,CrashAt::ManifestTempWritten,
+        CrashAt::ManifestPublished,CrashAt::PrimarySwapStaged,
+        CrashAt::PrimaryInstalled,CrashAt::FallbackSwapStaged,
+        CrashAt::FallbackInstalled,CrashAt::MarkerPrepared};
     for(const auto phase:uncommitted) {
         Sandbox s;
         const auto original=s.Read("pp.dat"),fallback=s.Read("snapshot2.dat");
@@ -134,7 +137,12 @@ void TestRecoveryFaults() {
         Check(injected,"Expected injected interruption");
         const auto status=Recover(s.root,true);
         const auto expected=phase==CrashAt::DirectoryCreated ||
-            phase==CrashAt::ImagesStaged ?
+            phase==CrashAt::OldPrimaryStaged ||
+            phase==CrashAt::NewPrimaryStaged ||
+            phase==CrashAt::OldFallbackStaged ||
+            phase==CrashAt::NewFallbackStaged ||
+            phase==CrashAt::ImagesStaged ||
+            phase==CrashAt::ManifestTempWritten ?
             Recovery::DiscardedUnpublished:Recovery::RolledBack;
         Check(status==expected,"Wrong rollback classification");
         Check(s.Read("pp.dat")==original && s.Read("snapshot2.dat")==fallback,
