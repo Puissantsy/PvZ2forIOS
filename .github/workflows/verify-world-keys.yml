@@ -18,6 +18,8 @@ on:
       - "tests/staging/keyconv_rton_native_cli.cpp"
       - "tests/staging/keyconv_prelaunch_ios_adapter.hpp"
       - "tests/staging/keyconv_prelaunch_ios_adapter.mm"
+      - "tests/staging/keyconv_disposable_crash_lab.hpp"
+      - "tests/staging/test_keyconv_disposable_crash_lab.cpp"
       - "tests/staging/keyconv_research_identity_policy.hpp"
       - "tests/staging/test_keyconv_research_identity.cpp"
       - "platform/ios/Info.plist.in"
@@ -98,6 +100,10 @@ jobs:
         run: |
           clang++ -std=c++20 -O1 -Wall -Wextra -Werror -pedantic -fsanitize=undefined -fno-sanitize-recover=all -Itests/staging tests/staging/test_world_key_prelaunch_process_kill.cpp -lcrypto -o /tmp/keyconv-native-sigkill
           /tmp/keyconv-native-sigkill
+      - name: Test isolated synthetic iPad crash-lab boundaries under real SIGKILL (Linux, NO IPA)
+        run: |
+          clang++ -std=c++20 -O1 -Wall -Wextra -Werror -pedantic -fsanitize=undefined -fno-sanitize-recover=all -Itests/staging tests/staging/test_keyconv_disposable_crash_lab.cpp -lcrypto -o /tmp/keyconv-disposable-lab-linux
+          /tmp/keyconv-disposable-lab-linux
       - name: Verify nonempty-key ABI and divergent snapshot export isolation
         run: python3 tools/verify_keyconv_offline_export.py
       - name: Python syntax check (exact ELF stays private)
@@ -175,6 +181,12 @@ jobs:
             -Itests/staging tests/staging/test_world_key_prelaunch_process_kill.cpp \
             -o /tmp/pvz2-keyconv-native-apple-sigkill
           /tmp/pvz2-keyconv-native-apple-sigkill
+      - name: Test isolated synthetic iPad crash-lab boundaries under real SIGKILL (Apple, NO IPA)
+        run: |
+          clang++ -std=c++20 -O1 -Wall -Wextra -Werror -pedantic \
+            -Itests/staging tests/staging/test_keyconv_disposable_crash_lab.cpp \
+            -o /tmp/keyconv-disposable-lab-apple
+          /tmp/keyconv-disposable-lab-apple
       - name: Compile check research-only ObjC++ KEYCONV adapter on macOS
         run: |
           clang++ -std=c++20 -fobjc-arc -x objective-c++ -fsyntax-only \
