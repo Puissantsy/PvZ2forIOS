@@ -79,6 +79,10 @@ PVZKeyconvRecoveryResult MapRecovery(native::Recovery r) {
 }
 } // namespace
 
+BOOL PVZKeyconvResearchIdentityIsAllowed(void) {
+    return ResearchBundle() ? YES:NO;
+}
+
 PVZKeyconvRecoveryResult PVZKeyconvRecoverBeforeRestore(NSError **error) {
     std::lock_guard<std::mutex> lock(gKeyconvMutex);
     if (!ResearchBundle()) {

@@ -108,6 +108,7 @@ add_executable(PvZ2forIOS MACOSX_BUNDLE
     src/main.mm
     src/save_backups.mm
     src/keyconv_prelaunch_ios_adapter.mm
+    src/keyconv_disposable_lab_ios_adapter.mm
     src/dynarmic_smoke.cpp
     src/pvz2_apk_probe.cpp
     src/host_gles.mm

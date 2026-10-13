@@ -19,6 +19,8 @@ on:
       - "tests/staging/keyconv_prelaunch_ios_adapter.hpp"
       - "tests/staging/keyconv_prelaunch_ios_adapter.mm"
       - "tests/staging/keyconv_disposable_crash_lab.hpp"
+      - "platform/ios/src/keyconv_disposable_lab_ios_adapter.hpp"
+      - "platform/ios/src/keyconv_disposable_lab_ios_adapter.mm"
       - "tests/staging/test_keyconv_disposable_crash_lab.cpp"
       - "tests/staging/keyconv_research_identity_policy.hpp"
       - "tests/staging/test_keyconv_research_identity.cpp"
@@ -187,6 +189,12 @@ jobs:
             -Itests/staging tests/staging/test_keyconv_disposable_crash_lab.cpp \
             -o /tmp/keyconv-disposable-lab-apple
           /tmp/keyconv-disposable-lab-apple
+      - name: Compile-check isolated research crash-lab Objective-C++ bridge on macOS (NO IPA)
+        run: |
+          clang++ -std=c++20 -fobjc-arc -x objective-c++ -fsyntax-only \
+            -Wall -Wextra -Werror -pedantic \
+            -DPVZ2_KEYCONV_RESEARCH_BUILD=1 \
+            -Iplatform/ios/src -Itests/staging platform/ios/src/keyconv_disposable_lab_ios_adapter.mm
       - name: Compile check research-only ObjC++ KEYCONV adapter on macOS
         run: |
           clang++ -std=c++20 -fobjc-arc -x objective-c++ -fsyntax-only \
@@ -225,6 +233,17 @@ jobs:
               -o "/tmp/pvz2-keyconv-ios-objects/${base}.o"
             file "/tmp/pvz2-keyconv-ios-objects/${base}.o"
           done
+      - name: Compile real iPadOS arm64 crash-lab bridge object (NO IPA)
+        run: |
+          SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
+          xcrun --sdk iphoneos clang++ -std=c++20 -O1 \
+            -target arm64-apple-ios17.4 -isysroot "$SDK" \
+            -fobjc-arc -x objective-c++ -c \
+            -DPVZ2_KEYCONV_RESEARCH_BUILD=1 \
+            -Iplatform/ios/src -Itests/staging \
+            platform/ios/src/keyconv_disposable_lab_ios_adapter.mm \
+            -o /tmp/pvz2-keyconv-disposable-lab-bridge.o
+          file /tmp/pvz2-keyconv-disposable-lab-bridge.o
       - name: Syntax-check isolated KEYCONV Objective-C++ adapter for iPadOS arm64
         run: |
           SDK="$(xcrun --sdk iphoneos --show-sdk-path)"

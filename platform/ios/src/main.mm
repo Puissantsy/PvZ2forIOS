@@ -23,6 +23,7 @@
 #include "pvz2_apk_probe.hpp"
 #include "save_backups.hpp"
 #include "keyconv_prelaunch_ios_adapter.hpp"
+#include "keyconv_disposable_lab_ios_adapter.hpp"
 
 extern "C" int csops(pid_t pid, unsigned int ops, void *useraddr, size_t usersize);
 
@@ -2167,6 +2168,8 @@ void PvZ2HostNotifyDirectFrame(
 @property(nonatomic, assign) BOOL keyconvOfferChecked;
 @property(nonatomic, assign) BOOL keyconvPrelaunchBackupVerified;
 @property(nonatomic, strong) NSString *keyconvStartupNote;
+@property(nonatomic, assign) BOOL keyconvLabRecoveryChecked;
+@property(nonatomic, strong) NSString *keyconvLabStartupNote;
 
 @end
 
@@ -2400,6 +2403,23 @@ void PvZ2HostNotifyDirectFrame(
         self.keyobsRestorePromptActive || self.keyconvPromptActive ||
         self.keyconvFatalBlocked) {
         return;
+    }
+
+    // The lab is a distinct synthetic-only sibling directory. Its recovery
+    // is automatic but its SIGKILL operation is NEVER called by startup.
+    // A broken lab must not overwrite or block the real game save.
+    if (!self.keyconvLabRecoveryChecked) {
+        self.keyconvLabRecoveryChecked = YES;
+        NSError *labError = nil;
+        NSString *note = PVZKeyconvLabRecoverOnLaunch(&labError);
+        if (note.length != 0u) {
+            self.keyconvLabStartupNote = note;
+            AppendPersistentLog(note);
+        } else if (labError != nil) {
+            self.keyconvLabStartupNote =
+                @"[KEYCONV LAB] LAB_ONLY_RECOVERY_REFUSED; game data untouched";
+            AppendPersistentLog(self.keyconvLabStartupNote);
+        }
     }
 
     // Recovery runs with the guest stopped, BEFORE any v165 restore prompt.
@@ -3204,6 +3224,9 @@ void PvZ2HostNotifyDirectFrame(
     // prelaunch transaction outcome so iPad tests can confirm persistence.
     if (self.keyconvStartupNote.length != 0u) {
         AppendPersistentLog(self.keyconvStartupNote);
+    }
+    if (self.keyconvLabStartupNote.length != 0u) {
+        AppendPersistentLog(self.keyconvLabStartupNote);
     }
     self.logView.text = @"";
 

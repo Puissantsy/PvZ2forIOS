@@ -5,6 +5,8 @@
 #import <Foundation/Foundation.h>
 
 NS_ASSUME_NONNULL_BEGIN
+// The same research identity gate is shared by the disposable lab.
+FOUNDATION_EXPORT BOOL PVZKeyconvResearchIdentityIsAllowed(void);
 typedef NS_ENUM(NSInteger, PVZKeyconvRecoveryResult) {
     PVZKeyconvRecoveryFailed = -1,
     PVZKeyconvRecoveryNoJournal = 0,
