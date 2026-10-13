@@ -631,3 +631,72 @@ future research version, capture a distinct prelaunch transaction
 journal/probe artifact before the normal FULLLOAD log reset, while
 avoiding private save bytes, UUIDs, native profile identifiers or
 personally identifying paths. No new IPA built for this documentation.
+
+
+## Native SIGKILL process-crash recovery suite — 2026-10-13
+
+The real-iPad conversion + cold-restart idempotence remains **PASS**.
+After that, the remaining crash-recovery gate was strengthened **without
+building another IPA or importing personal saves**.
+
+### Research-only C++ journal fault-point expansion
+
+`tests/staging/world_key_prelaunch_native.hpp` now provides additional
+`CrashAt` injection points during:
+
+- each `old-pp.dat`, `new-pp.dat`, `old-snapshot2.dat` and
+  `new-snapshot2.dat` durable staging write;
+- creation of `manifest.tmp` before its published rename;
+- each fully fsynced `swap-*.dat` file before live-RTON rename;
+- initial and subsequent live image replacements;
+- `committed.tmp`, durable `committed`, `.done` finalization;
+- the first image restoration in a **rollback itself**.
+
+All fault points are optional test parameters. The normal KEYOBS app
+calls `Recover(...,true)` and `Settle(...,true,true)` with no fault
+injection. No production/gameplay/JIT change or unsigned IPA was built
+for these additions.
+
+### Actual process-termination tests (Linux and Apple)
+
+`tests/staging/test_world_key_prelaunch_process_kill.cpp` independently
+creates synthetic old RTON player images containing an Egyptian surplus
+key and deliberately **different** wallet balances for `pp.dat` and
+`snapshot2.dat`. It then uses `fork` + `exec` to run the native
+transaction in a new process, injects a checkpoint and calls real
+`SIGKILL` (no exception cleanup or destructors). Yet another new
+executable process executes the recovery gate, and another clean-start
+process verifies conversion/idempotence:
+
+- For an **uncommitted** settlement, every tested kill point produces
+  complete old-old state on recovery. A later clean start can convert
+  exactly once, preserving the distinct fallback wallet.
+- For a **committed** settlement, recovery preserves new-new state;
+  later starts never credit the same key twice.
+- A process killed **during an ongoing rollback**, after primary has
+  returned to old and fallback is still new, is safely recovered on
+  the next independent process to old-old.
+- The final recovery leaves no active `.pvz2-keyconv-native-journal`
+  or finalized `.done` directory.
+- All failures/reads/writes occur under disposable temporary synthetic
+  directories. None of the user's original saves are used in CI.
+
+**Latest CI:**
+https://github.com/Puissantsy/PvZ2forIOS/actions/runs/38356766023
+— all jobs **SUCCESS**, including **209 successful assertions per
+platform** in the process-level harness, **15 distinct
+settlement SIGKILL points** plus a separately interrupted rollback,
+and **106 existing native journal assertions**. Apple code was also
+compiled with CommonCrypto, and real iPadOS arm64 object builds + exact
+historical Dynarmic provenance preflight remain green.
+
+**Important limitations:** process `SIGKILL` confirms POSIX
+process-interruption recovery and restart ordering for the tested Linux
+and macOS filesystems. It does NOT prove iPadOS/APFS behavior during an
+actual device reboot, battery loss, or an interrupted `fsync` syscall.
+No controlled on-device fault test has yet been run. The existing
+physically tested KEYOBS IPA remains untouched. For any future iPad
+fault-injection test, use *only a disposable research profile*, a verified
+prelaunch backup, recorded recovery outcome **outside** the runtime's
+log reset, a recovery-before-restore guard, and explicit user opt-in.
+Do not inject faults into real PvZ2 save data.
