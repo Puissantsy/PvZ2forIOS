@@ -163,11 +163,15 @@ void TestKillAndRecover(const char* executable) {
         RecoverClean(executable,t.support);
         Check(lab::LiveImages(t.support)==pair,
               "Second lab recovery awarded keys again");
-        bool refused=false;
-        try {lab::SettleArmedForCrash(t.support,
-                                      tx::CrashAt::PrimaryInstalled);}
-        catch(const tx::Conflict&){refused=true;}
-        if(committed)Check(refused,"Already-converted lab allowed another crash");
+        if(committed) {
+            bool refused=false;
+            try {lab::SettleArmedForCrash(t.support,
+                                          tx::CrashAt::PrimaryInstalled);}
+            catch(const tx::Conflict&){refused=true;}
+            Check(refused,"Already-converted lab allowed another crash");
+        }
+        // After an UNCOMMITTED rollback, the old synthetic key is still
+        // eligible. Do not arm a new fault from the parent test process.
         t.Canary();
     }
 }
