@@ -100,11 +100,16 @@ inline std::array<std::string,2> Originals() {
 inline fs::path Root(const fs::path& support) {
     // Caller MUST provide NSApplicationSupportDirectory, NEVER V128 live root.
     tx::SafeDirectory(support);
-    tx::Require(support.filename()!="PvZ2forIOS" &&
-                support.filename()!="UserData" &&
-                support.filename()!="No_Backup",
-                "Crash lab must not be placed within the guest save tree");
-    return support/Directory;
+    const auto normalized=support.lexically_normal();
+    for(const auto& component:normalized) {
+        tx::Require(component!="PvZ2forIOS" &&
+                    component!="UserData" &&
+                    component!="No_Backup",
+                    "Crash lab must never be nested inside guest UserData");
+    }
+    tx::Require(normalized.is_absolute(),
+                "Crash lab support directory must be absolute");
+    return normalized/Directory;
 }
 inline bool Exists(const fs::path& support) {
     return tx::Present(Root(support));
