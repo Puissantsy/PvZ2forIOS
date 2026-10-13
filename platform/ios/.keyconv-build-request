@@ -1,7 +1,8 @@
-# One-time research IPA build request: re-signed KEYOBS identity fix (2026-10-12)
-# Prior iPad app blocked before touching save due to runtime bundleIdentifier mismatch.
-# This build carries explicit research compiler and Info.plist markers.
-# CI all-green: https://github.com/Puissantsy/PvZ2forIOS/actions/runs/38263388274
-# Exact proven Dynarmic: c97c525ec1432b1e5404ebf091027738005ec168
-# Immutable source tree: fd5b3ab282948fcdacc202ee11ee6d7aec339125
-# Research-only bundle, native profile+backup guards, no production mutation.
+# ONE research IPA build request: optional synthetic KEYCONV SIGKILL lab.
+# Date 2026-10-13, previous working IPA MUST remain intact.
+# No crash occurs on normal launches or without the exact Files opt-in file.
+# Double confirmation + exact typed phrase required for fake-only lab.
+# CI all jobs green: https://github.com/Puissantsy/PvZ2forIOS/actions/runs/38359330455
+# Exact Dynarmic SHA c97c525ec1432b1e5404ebf091027738005ec168
+# Exact tree SHA fd5b3ab282948fcdacc202ee11ee6d7aec339125
+# Only KEYOBS experiment; original PvZ2 saved game never used.

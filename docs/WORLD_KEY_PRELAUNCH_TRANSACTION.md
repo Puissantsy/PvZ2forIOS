@@ -700,3 +700,32 @@ fault-injection test, use *only a disposable research profile*, a verified
 prelaunch backup, recorded recovery outcome **outside** the runtime's
 log reset, a recovery-before-restore guard, and explicit user opt-in.
 Do not inject faults into real PvZ2 save data.
+
+## Opt-in synthetic iPad SIGKILL crash lab — 2026-10-13
+
+A fully isolated lab is staged on the research branch. It generates **fake**
+RTON player/registry bytes and journals those files only under sibling
+`Application Support/.pvz2-keyconv-disposable-lab/`; the live
+`Application Support/PvZ2forIOS/UserData` tree is not used or imported.
+The lab checks all root path components, requires its exact synthetic
+marker, and keeps a capped fsynced `lab-audit.log` outside the guest FULLLOAD
+log reset. A real SIGKILL is possible ONLY with the exact Files-visible
+`PvZ2CrashLabRequest.txt` file plus explicit selection of a fault stage
+and the typed phrase `JE CONFIRME LE CRASH FACTICE` while JNI/V128
+are stopped. If the file is absent, the normal game launches unchanged.
+
+Lab recovery runs on launch **before** the live v165 restore, but a lab
+error does not rewrite the real game data or block its existing recovery.
+Existing modified save files are never accepted as fake input and no
+spontaneous crash can occur.
+
+Full user and engineering protocol:
+[KEYCONV disposable crash lab](KEYCONV_DISPOSABLE_CRASH_LAB.md).
+Source verification CI:
+https://github.com/Puissantsy/PvZ2forIOS/actions/runs/38359330455 —
+**all green** including Linux/macOS SIGKILL+canary tests, native RTON
+journal tests, iPadOS arm64 objects and exact Dynarmic source check.
+
+The previous real-iPad native conversion + cold-restart success remains
+**PASS**. Physical iPad crash-lab recovery is **NOT YET TESTED** and
+SIGKILL does not prove actual power-cut durability.
