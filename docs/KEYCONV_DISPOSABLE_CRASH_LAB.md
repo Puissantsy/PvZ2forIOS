@@ -79,3 +79,15 @@ Les tests CI : `tests/staging/test_keyconv_disposable_crash_lab.cpp`,
 ObjC++ et compilation arm64 via `verify-world-keys.yml`. Ne produire
 qu'une **unique IPA de recherche** après tous les contrôles verts.
 L'IPA actuellement fonctionnelle reste conservée intacte.
+
+## Build de recherche unique du 13 octobre 2026
+
+- **IPA compilée avec succès** : [GitHub Actions #38359627207](https://github.com/Puissantsy/PvZ2forIOS/actions/runs/38359627207).
+- Commit exact du build : `ac83cbcf28524095a532a00f81a587ad79e82361`.
+- Artefact : `PvZ2forIOS-JIT-Probe-unsigned`, identifiant GitHub `11793343950`, archive ZIP avec IPA non signée et SHA-256.
+- `BUILD SUCCEEDED` confirmé par le log, plist inspecté : `CFBundleIdentifier=com.puissantsy.pvz2forios.keyobs`, `PVZ2KeyconvResearchBuild=true`.
+- Test complet sans IPA prérequis : [CI #38359330455](https://github.com/Puissantsy/PvZ2forIOS/actions/runs/38359330455), trois jobs verts.
+- Le fichier d'activation à copier sur iPad est aussi fourni via la conversation ChatGPT sous le nom `PvZ2CrashLabRequest.txt` avec les 38 octets exacts attendus.
+- **Aucune validation physique du laboratoire n'a encore eu lieu.** Ne jamais supprimer/remplacer la précédente IPA KEYOBS fonctionnelle ni utiliser la vraie progression pour les tests.
+
+**Test progressif demandé sur iPad :** installer/signer la nouvelle IPA *de recherche*, la lancer **sans** fichier d'activation et confirmer que le jeu fonctionne comme avant. Le test SIGKILL est **optionnel et volontaire** : seulement après vérification des sauvegardes et après copie explicite du fichier d'activation, deux confirmations et saisie de la phrase. La fermeture brutale qui suivra doit être considérée comme prévue. Au redémarrage, choisir `Voir et copier le rapport factice`, puis vérifier que la vraie progression n'a pas changé.
