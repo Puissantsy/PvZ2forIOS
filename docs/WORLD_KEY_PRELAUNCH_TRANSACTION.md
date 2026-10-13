@@ -563,3 +563,71 @@ test has been carried out on real hardware.
 Do not mark this as end-to-end crash-safe, change production, or
 create an IPA solely on the basis of a missing log. Keep research
 tests and backups isolated.
+
+
+## Native KEYCONV — accepted on physical iPad after true process restart (2026-10-13, PASS)
+
+**User-confirmed iPad test** of the corrected research IPA
+[run 38263681735](https://github.com/Puissantsy/PvZ2forIOS/actions/runs/38263681735):
+
+1. The prior bundle-ID / signed research-app rejection is gone.
+2. The actual iPad startup displayed the optional profile-selection UI.
+3. Choosing the Egyptian surplus key profile converted its 1 remaining
+   key to +1,000 PvZCoins (reference wallet 9,010 -> 10,010).
+4. The user fully exited the game and reopened it **without another
+   restore**. Their Egypt key count remained 0 and the +1,000 coins
+   were retained. No second +1,000 award occurred.
+
+**Status: PASS for user-visible native conversion, persistence and
+restart idempotency.** The older, separately verified offline ZIP
+conversion is not conflated with this in-app test.
+
+### Full uploaded iPad log recovered and inspected (822 lines)
+
+The missing Project Source is now accessible and was read completely:
+
+`pvz2forios-probe(20261012-152300).log`
+(file within this Project; private iPad host container location is not
+copied into this public document).
+
+This *FULLLOAD/JIT* log spans 2026-10-12 15:21:43–15:22:33 UTC:
+
+- `mode=RESEARCH_WORLD_KEYS_CONVERT`; `STEP 1 READY: CS_DEBUGGED
+  is YES`, real ARMv7 APK+OBB full startup.
+- Dynarmic c97c525e / Non-TXM A14 and exact JIT policy active.
+- `V128 USERFS LOAD` at 15:21:56–15:21:57 UTC:
+  `No_Backup/pp.dat` 7,406 bytes and `snapshot2.dat`
+  7,406 bytes, followed by `snapshot2.dat` **FLUSH**
+  of 7,405 bytes at guest frame 0.
+- `local_profiles` loaded (485 bytes). This log does NOT reveal
+  the numeric native profile slot, its wallet value, or key stock.
+- Guest `OfflineStore_CoinUiRefresh_SetCoins` led to a real
+  `pp.dat` **FLUSH** of 7,405 bytes at guest frame 1
+  (15:22:02 UTC). Another real `pp.dat` **FLUSH** was
+  recorded at frame 402 (15:22:13 UTC).
+- Real guest frames 1, 298, 402, 455, 600 and **1,200**
+  were reached; `V90 FRAME frame=1200` at 15:22:28 UTC.
+  No guest crash or fatal error is visible within the recorded range.
+
+**Logging limitation:** the 822-line log starts with a *FULLLOAD*
+diagnostic reset, and contains **zero** `[KEYCONV PRELAUNCH]`,
+`[KEYOBS SAVE]` or `[KEYOBS RESTORE]` entries, despite the
+on-device conversion success. The guest read/write events are real,
+but the log **does not itself show** the pre-guest SHA-256
+journal creation, two-image commit, exact `settled_slot=1`, prelaunch
+snapshot verification or the numeric 9,010->10,010 balance.
+Code currently resets the persistent log before guest startup and
+replays only the bounded `keyconvStartupNote` if present; a
+subsequent full restart may also have replaced an earlier log. These
+are diagnostic hypotheses, not facts established by this log.
+
+**Remaining separate test:** crash/power-loss atomicity under an
+interrupted two-image journal settlement on a disposable profile.
+Not yet physically validated. It must remain distinct from the
+completed functional/persistence milestone.
+
+Do not modify the known-good iPad IPA solely to add a log; for a
+future research version, capture a distinct prelaunch transaction
+journal/probe artifact before the normal FULLLOAD log reset, while
+avoiding private save bytes, UUIDs, native profile identifiers or
+personally identifying paths. No new IPA built for this documentation.
