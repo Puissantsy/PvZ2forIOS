@@ -22,3 +22,10 @@ jobs:
             tests/staging/test_world_key_auto_batch.cpp \
             -o /tmp/pvz2-auto-keyconv
           /tmp/pvz2-auto-keyconv
+      - name: Strict C++20 automatic stopped-guest native transaction and second-profile rollback (NO IPA)
+        run: |
+          if [ "${{ runner.os }}" = "Linux" ]; then LIBS="-lcrypto"; else LIBS=""; fi
+          clang++ -std=c++20 -O1 -Wall -Wextra -Werror -pedantic \
+            -Itests/staging tests/staging/test_world_key_auto_settlement.cpp \
+            $LIBS -o /tmp/pvz2-auto-keyconv-transaction
+          /tmp/pvz2-auto-keyconv-transaction
