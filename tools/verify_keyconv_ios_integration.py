@@ -71,4 +71,9 @@ assert "UserData" in lab_core and "No_Backup" in lab_core
 assert "LAB_SYNTHETIC_RTON_V1_ONLY" in lab_core
 assert "USER_CONFIRMED_SYNTHETIC_CRASH" in lab_core
 assert "RecoverAndVerify" in lab_core
+assert "PrepareOrRearm" in lab_core
+assert "lab::PrepareOrRearm(SupportPath())" in lab_bridge
+assert "REARMED_VERIFIED_OLD_OLD" in lab_core
+assert "RECOVERY_ROLLED_BACK" in lab_core
+assert "lab::Prepare(SupportPath())" not in lab_bridge
 print("PASS: KEYCONV live-save startup gates and opt-in Files request + typed fake-RTON SIGKILL lab verified")
