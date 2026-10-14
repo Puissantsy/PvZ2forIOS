@@ -1,8 +1,9 @@
-# ONE research IPA build request: optional synthetic KEYCONV SIGKILL lab.
-# Date 2026-10-13, previous working IPA MUST remain intact.
-# No crash occurs on normal launches or without the exact Files opt-in file.
-# Double confirmation + exact typed phrase required for fake-only lab.
-# CI all jobs green: https://github.com/Puissantsy/PvZ2forIOS/actions/runs/38359330455
-# Exact Dynarmic SHA c97c525ec1432b1e5404ebf091027738005ec168
-# Exact tree SHA fd5b3ab282948fcdacc202ee11ee6d7aec339125
-# Only KEYOBS experiment; original PvZ2 saved game never used.
+# One-time KEYOBS research IPA build: verified OLD_OLD synthetic crash-lab rearm
+# Date 2026-10-14; previous physical iPad crash test passed PRIMARY_ROLLBACK.
+# No production live pp.dat/snapshot2.dat modified.
+# Original KEYOBS iPad test save and past synthetic audit MUST remain untouched.
+# Policy/native/Apple/Dynarmic tests PASS https://github.com/Puissantsy/PvZ2forIOS/actions/runs/38533846060
+# Fakes only: recovered OLD_OLD, no journal, audit retained; NEVER rearm NEW_NEW.
+# Native Dynarmic remains c97c525ec1432b1e5404ebf091027738005ec168
+# Tree fd5b3ab282948fcdacc202ee11ee6d7aec339125
+# Single IPA build; lab requires opt-in file + explicit typed SIGKILL confirmation.
