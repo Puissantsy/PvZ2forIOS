@@ -727,5 +727,30 @@ https://github.com/Puissantsy/PvZ2forIOS/actions/runs/38359330455 —
 journal tests, iPadOS arm64 objects and exact Dynarmic source check.
 
 The previous real-iPad native conversion + cold-restart success remains
-**PASS**. Physical iPad crash-lab recovery is **NOT YET TESTED** and
+**PASS**. Physical iPad synthetic crash-lab recovery now **PASS (4/4 SIGKILL checkpoints, 2026-10-14)**; see the linked lab report. SIGKILL
 SIGKILL does not prove actual power-cut durability.
+
+## Final physical iPad KEYCONV crash-lab acceptance — 2026-10-14
+
+**Four out of four synthetic SIGKILL checkpoints PASS** on real iPadOS,
+using one persistent disposable RTON laboratory and its fsynced audit:
+
+| Checkpoint | Reported recovery | Pair verified |
+| --- | --- | --- |
+| After fake primary pp.dat | `RECOVERY_ROLLED_BACK` | `VERIFIED_OLD_OLD` |
+| After fake fallback snapshot2.dat | `RECOVERY_ROLLED_BACK` | `VERIFIED_OLD_OLD` |
+| After fake committed.tmp preparation | `RECOVERY_ROLLED_BACK` | `VERIFIED_OLD_OLD` |
+| After durable committed marker publication | `RECOVERY_COMMITTED` | `VERIFIED_NEW_NEW` |
+
+The historical audit lines for all checkpoints were preserved across the
+sequential crashes and `REARMED_VERIFIED_OLD_OLD` transitions. The lab
+now remains in committed `NEW_NEW` state and is deliberately not
+rearmable. Complete last physical-device user log:
+[KEYCONV disposable crash lab — 4/4 accepted](KEYCONV_DISPOSABLE_CRASH_LAB.md).
+
+No production save was supplied to this laboratory. This real-device
+acceptance is limited to synthetic files and process SIGKILL; it does not
+prove true power-loss/APFS durability, or the state of the real player's
+wallet after the four tests. The separate normal KEYCONV profile migration
+and normal cold-restart persistence were previously PASS on physical iPad.
+No new IPA built for this status update.
