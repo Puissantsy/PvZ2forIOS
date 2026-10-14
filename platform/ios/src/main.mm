@@ -2375,6 +2375,34 @@ void PvZ2HostNotifyDirectFrame(
 - (void)viewDidLoad {
     [super viewDidLoad];
 
+    // Side-by-side v170 test. Fail closed BEFORE runtime import and JIT.
+    NSBundle *qaBundle=NSBundle.mainBundle;
+    NSString *qaIdentifier=qaBundle.bundleIdentifier ?: @"";
+    id qaFlag=[qaBundle objectForInfoDictionaryKey:@"PVZ2StoreQAResearchBuild"];
+    id qaOrigin=[qaBundle objectForInfoDictionaryKey:@"PVZ2StoreQAOriginalIdentifier"];
+    BOOL qaMarked=[qaFlag isKindOfClass:[NSNumber class]] &&
+        [qaFlag boolValue] && [qaOrigin isKindOfClass:[NSString class]] &&
+        [qaOrigin isEqualToString:@"com.puissantsy.pvz2forios.storeqa"];
+    BOOL qaBlocked=qaIdentifier.length==0 ||
+        [qaIdentifier isEqualToString:@"com.puissantsy.pvz2forios"] ||
+        [qaIdentifier isEqualToString:@"com.puissantsy.pvz2forios.production"] ||
+        [qaIdentifier isEqualToString:@"com.puissantsy.pvz2forios.keyobs"] ||
+        [qaIdentifier isEqualToString:@"com.ea.game.pvz2_row"] ||
+        [qaIdentifier hasPrefix:@"com.ea.game.pvz2_row."];
+    if(!qaMarked || qaBlocked) {
+        self.view.backgroundColor=UIColor.blackColor;
+        UILabel *warning=[[UILabel alloc] initWithFrame:self.view.bounds];
+        warning.autoresizingMask=UIViewAutoresizingFlexibleWidth |
+            UIViewAutoresizingFlexibleHeight;
+        warning.numberOfLines=0;
+        warning.textAlignment=NSTextAlignmentCenter;
+        warning.textColor=UIColor.whiteColor;
+        warning.text=@"PvZ2 Store QA — identité isolée refusée. "
+                     @"Ne restaure aucune sauvegarde.";
+        [self.view addSubview:warning];
+        NSLog(@"[STOREQA] IDENTITY_REFUSED");
+        return;
+    }
     self.view.backgroundColor = UIColor.blackColor;
     self.v110SelectedUiModeIndex = 0;
 

@@ -5,11 +5,15 @@
     <key>CFBundleDevelopmentRegion</key>
     <string>en</string>
     <key>CFBundleDisplayName</key>
-    <string>PvZ2forIOS Probe</string>
+    <string>PvZ2 Store QA</string>
     <key>CFBundleExecutable</key>
     <string>PvZ2forIOS</string>
     <key>CFBundleIdentifier</key>
-    <string>com.puissantsy.pvz2forios</string>
+    <string>com.puissantsy.pvz2forios.storeqa</string>
+    <key>PVZ2StoreQAResearchBuild</key>
+    <true/>
+    <key>PVZ2StoreQAOriginalIdentifier</key>
+    <string>com.puissantsy.pvz2forios.storeqa</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>

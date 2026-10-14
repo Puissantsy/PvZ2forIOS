@@ -6,8 +6,8 @@ if(NOT IOS)
     message(FATAL_ERROR "This target is intended for iOS/iPadOS. Configure with -DCMAKE_SYSTEM_NAME=iOS.")
 endif()
 
-include(FetchContent)
-
+# Dedicated Store QA build: external exact historical Dynarmic c97c525e.
+set(PVZ2_DYNARMIC_SOURCE_DIR "" CACHE PATH "Exact historically verified Dynarmic")
 set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
 set(DYNARMIC_TESTS OFF CACHE BOOL "" FORCE)
 set(DYNARMIC_TESTS_USE_UNICORN OFF CACHE BOOL "" FORCE)
@@ -16,18 +16,15 @@ set(DYNARMIC_USE_BUNDLED_EXTERNALS ON CACHE BOOL "" FORCE)
 set(DYNARMIC_USE_LLVM OFF CACHE BOOL "" FORCE)
 set(DYNARMIC_USE_PRECOMPILED_HEADERS OFF CACHE BOOL "" FORCE)
 set(DYNARMIC_WARNINGS_AS_ERRORS OFF CACHE BOOL "" FORCE)
-
-# LiveContainer's Dynarmic fork already contains the Apple/iOS 26 dual-mapped
-# executable-memory path used by LiveExec32. Pin the exact revision that was
-# validated while bringing up this project.
-FetchContent_Declare(
-    dynarmic
-    GIT_REPOSITORY https://github.com/LiveContainer/dynarmic.git
-    GIT_TAG c97c525ec1432b1e5404ebf091027738005ec168
-    GIT_SHALLOW TRUE
-    PATCH_COMMAND git apply "${CMAKE_CURRENT_SOURCE_DIR}/patches/dynarmic-ios-nontxm.patch"
-)
-FetchContent_MakeAvailable(dynarmic)
+if(NOT PVZ2_DYNARMIC_SOURCE_DIR OR
+   NOT EXISTS "${PVZ2_DYNARMIC_SOURCE_DIR}/CMakeLists.txt" OR
+   NOT EXISTS "${PVZ2_DYNARMIC_SOURCE_DIR}/src/dynarmic/interface/A32/a32.h")
+    message(FATAL_ERROR "Exact staged c97c Dynarmic required for Store QA")
+endif()
+add_subdirectory("${PVZ2_DYNARMIC_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/_deps/dynarmic-build" EXCLUDE_FROM_ALL)
+if(NOT TARGET dynarmic)
+    message(FATAL_ERROR "Staged Dynarmic did not define target")
+endif()
 
 set(PVZ2_UI_RESOURCES
     resources/pvz17_fastforward_normal.png
@@ -51,7 +48,7 @@ add_executable(PvZ2forIOS MACOSX_BUNDLE
 
 set_target_properties(PvZ2forIOS PROPERTIES
     MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/Info.plist.in"
-    XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "com.puissantsy.pvz2forios"
+    XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "com.puissantsy.pvz2forios.storeqa"
     XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "1,2"
     XCODE_ATTRIBUTE_IPHONEOS_DEPLOYMENT_TARGET "17.4"
     XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED "NO"
