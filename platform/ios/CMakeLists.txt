@@ -6,8 +6,18 @@ if(NOT IOS)
     message(FATAL_ERROR "This target is intended for iOS/iPadOS. Configure with -DCMAKE_SYSTEM_NAME=iOS.")
 endif()
 
-include(FetchContent)
+# Dynarmic inputs:
+# - active CI clones the exact public Dynarmic gitlink proven by Applesauce
+#   ios-host and passes PVZ2_DYNARMIC_SOURCE_DIR;
+# - PVZ2_PREBUILT_DYNARMIC_ROOT remains an optional local escape hatch;
+# - the old FetchContent fork is historical local fallback only.
+set(PVZ2_PREBUILT_DYNARMIC_ROOT "" CACHE PATH
+    "Optional directory containing include/dynarmic and lib/libdynarmic.a")
 
+set(PVZ2_DYNARMIC_SOURCE_DIR "" CACHE PATH
+    "Optional already-cloned Dynarmic source tree to build as an iOS subproject")
+
+# Common Dynarmic options for source builds.
 set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
 set(DYNARMIC_TESTS OFF CACHE BOOL "" FORCE)
 set(DYNARMIC_TESTS_USE_UNICORN OFF CACHE BOOL "" FORCE)
@@ -17,17 +27,72 @@ set(DYNARMIC_USE_LLVM OFF CACHE BOOL "" FORCE)
 set(DYNARMIC_USE_PRECOMPILED_HEADERS OFF CACHE BOOL "" FORCE)
 set(DYNARMIC_WARNINGS_AS_ERRORS OFF CACHE BOOL "" FORCE)
 
-# LiveContainer's Dynarmic fork already contains the Apple/iOS 26 dual-mapped
-# executable-memory path used by LiveExec32. Pin the exact revision that was
-# validated while bringing up this project.
-FetchContent_Declare(
-    dynarmic
-    GIT_REPOSITORY https://github.com/LiveContainer/dynarmic.git
-    GIT_TAG c97c525ec1432b1e5404ebf091027738005ec168
-    GIT_SHALLOW TRUE
-    PATCH_COMMAND git apply "${CMAKE_CURRENT_SOURCE_DIR}/patches/dynarmic-ios-nontxm.patch"
-)
-FetchContent_MakeAvailable(dynarmic)
+if(PVZ2_PREBUILT_DYNARMIC_ROOT)
+    set(_pvz2_dynarmic_lib
+        "${PVZ2_PREBUILT_DYNARMIC_ROOT}/lib/libdynarmic.a")
+    set(_pvz2_dynarmic_include
+        "${PVZ2_PREBUILT_DYNARMIC_ROOT}/include")
+
+    if(NOT EXISTS "${_pvz2_dynarmic_lib}")
+        message(FATAL_ERROR
+            "PVZ2 prebuilt Dynarmic library missing: ${_pvz2_dynarmic_lib}")
+    endif()
+    if(NOT EXISTS
+       "${_pvz2_dynarmic_include}/dynarmic/interface/A32/a32.h")
+        message(FATAL_ERROR
+            "PVZ2 prebuilt Dynarmic headers missing/incompatible under: ${_pvz2_dynarmic_include}")
+    endif()
+
+    add_library(dynarmic STATIC IMPORTED GLOBAL)
+    set_target_properties(dynarmic PROPERTIES
+        IMPORTED_LOCATION "${_pvz2_dynarmic_lib}"
+        INTERFACE_INCLUDE_DIRECTORIES "${_pvz2_dynarmic_include}"
+    )
+    message(STATUS
+        "PvZ2: using externally staged prebuilt iOS Dynarmic bundle: ${PVZ2_PREBUILT_DYNARMIC_ROOT}")
+elseif(PVZ2_DYNARMIC_SOURCE_DIR)
+    if(NOT EXISTS "${PVZ2_DYNARMIC_SOURCE_DIR}/CMakeLists.txt" OR
+       NOT EXISTS "${PVZ2_DYNARMIC_SOURCE_DIR}/src/dynarmic/interface/A32/a32.h")
+        message(FATAL_ERROR
+            "PVZ2 Dynarmic source tree is missing/incompatible: ${PVZ2_DYNARMIC_SOURCE_DIR}")
+    endif()
+
+    # CI clones the exact Dynarmic gitlink used by Applesauce ios-host and all
+    # of its recursive externals before CMake runs. No network fetch happens
+    # through PvZ2's configure step.
+    add_subdirectory(
+        "${PVZ2_DYNARMIC_SOURCE_DIR}"
+        "${CMAKE_BINARY_DIR}/_deps/dynarmic-build"
+        EXCLUDE_FROM_ALL
+    )
+    if(NOT TARGET dynarmic)
+        message(FATAL_ERROR
+            "PVZ2 staged Dynarmic source did not define target 'dynarmic'")
+    endif()
+
+    # CI stages the exact LiveContainer Dynarmic revision that powered the
+    # already-proven PvZ2/KEYOBS iPad runtime, with only the project's historical
+    # iOS spinlock patch applied. Do not add allocator/JIT compatibility defines:
+    # c97c525e already owns the correct A14/TXM detection and RX->RW dual mapping.
+    message(STATUS
+        "PvZ2: building staged historical LiveContainer Dynarmic source: ${PVZ2_DYNARMIC_SOURCE_DIR}")
+    message(STATUS
+        "PvZ2: exact runtime dependency c97c525ec1432b1e5404ebf091027738005ec168; native iOS allocator policy preserved")
+else()
+    include(FetchContent)
+
+    # Historical fallback: upstream lioncash origin contains the exact validated
+    # c97c commit+tree previously available through the LiveContainer fork.
+    FetchContent_Declare(
+        dynarmic
+        GIT_REPOSITORY https://github.com/lioncash/dynarmic.git
+        GIT_TAG c97c525ec1432b1e5404ebf091027738005ec168
+        GIT_SHALLOW TRUE
+        PATCH_COMMAND git apply
+            "${CMAKE_CURRENT_SOURCE_DIR}/patches/dynarmic-ios-nontxm.patch"
+    )
+    FetchContent_MakeAvailable(dynarmic)
+endif()
 
 set(PVZ2_UI_RESOURCES
     resources/pvz17_fastforward_normal.png
@@ -42,6 +107,7 @@ set_source_files_properties(
 add_executable(PvZ2forIOS MACOSX_BUNDLE
     src/main.mm
     src/save_backups.mm
+    src/keyconv_prelaunch_ios_adapter.mm
     src/dynarmic_smoke.cpp
     src/pvz2_apk_probe.cpp
     src/host_gles.mm
@@ -61,6 +127,14 @@ set_target_properties(PvZ2forIOS PROPERTIES
 )
 
 target_compile_features(PvZ2forIOS PRIVATE cxx_std_20)
+# Compile-time isolation independent of sideload-modified bundle identifiers.
+target_compile_definitions(PvZ2forIOS PRIVATE PVZ2_KEYCONV_PROBE_BUILD=1)
+
+# Probe opt-in carries the already tested native RTON + durable journal headers.
+# No separate guest/V128 code is started by these pure C++20 modules.
+target_include_directories(PvZ2forIOS PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../tests/staging"
+)
 
 find_library(UIKIT_FRAMEWORK UIKit REQUIRED)
 find_library(FOUNDATION_FRAMEWORK Foundation REQUIRED)

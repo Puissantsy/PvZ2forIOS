@@ -10,6 +10,11 @@
     <string>PvZ2forIOS</string>
     <key>CFBundleIdentifier</key>
     <string>com.puissantsy.pvz2forios</string>
+    <!-- Marker separate from the signer-rewritable CFBundleIdentifier. -->
+    <key>PVZ2KeyconvProbeBuild</key>
+    <true/>
+    <key>PVZ2KeyconvOriginalIdentifier</key>
+    <string>com.puissantsy.pvz2forios</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>

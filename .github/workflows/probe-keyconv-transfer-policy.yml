@@ -1,0 +1,40 @@
+name: Probe KEYCONV transfer policy (NO IPA)
+on:
+  push:
+    branches: [integration/probe-keyconv-egypt]
+  pull_request:
+    branches: [v170-targeted-global-isolation-staging]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix: {os: [ubuntu-latest, macos-15]}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Strict C++20 Egypt auto preview and transaction
+        run: |
+          if [ "${{ runner.os }}" = "Linux" ]; then LIBS="-lcrypto"; else LIBS=""; fi
+          for name in test_world_key_rton_native_pair test_world_key_prelaunch_native test_world_key_prelaunch_process_kill test_world_key_auto_batch test_world_key_auto_settlement; do
+            clang++ -std=c++20 -O1 -Wall -Wextra -Werror -pedantic -Itests/staging "tests/staging/$name.cpp" $LIBS -o "/tmp/$name"
+            "/tmp/$name"
+          done
+  ios-source:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile real iOS launcher and adapter objects, NO IPA
+        run: |
+          SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
+          for unit in platform/ios/src/keyconv_prelaunch_ios_adapter.mm platform/ios/src/main.mm; do
+            xcrun --sdk iphoneos clang++ -std=c++20 -O1 -Wall -Wextra \
+              -target arm64-apple-ios17.4 -isysroot "$SDK" \
+              -fobjc-arc -x objective-c++ -c \
+              -DPVZ2_KEYCONV_PROBE_BUILD=1 -Iplatform/ios/src -Itests/staging \
+              "$unit" -o "/tmp/$(basename "$unit" .mm)-probe-keyconv.o"
+          done
+      - name: Static safety and build isolation
+        run: python3 tools/verify_probe_keyconv_transfer.py
