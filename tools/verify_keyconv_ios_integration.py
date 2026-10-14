@@ -95,3 +95,22 @@ assert 'ENABLE_EGYPT_AUTOMATIC_KEYCONV_RESEARCH_V1' in adapter
 assert 'PvZ2AutoKeyconvRequest.txt' in adapter
 assert 'SettleEligible(' in adapter
 print("PASS KEYCONV AUTO opt-in request, prelaunch backup/recovery and no double UI")
+# Imported v165 RTON may be valid for the original guest but not for the
+# strict KEYCONV auto planner. An explicit NO-WRITE bypass must exist.
+auto_core=(root/"tests/staging/world_key_auto_settlement.hpp").read_text()
+assert "struct ReadOnlyPreviewError" in auto_core
+assert "throw ReadOnlyPreviewError" in auto_core
+assert "Batch planned;" in auto_core
+assert auto_core.index("planned=Preview(") < auto_core.index("tx::Settle(root,profile.slot")
+assert "KEYCONVReadOnlyPreviewReason" in adapter
+assert "ReadOnlyPreviewError& preview" in adapter
+assert "errorWithDomain:kDomain code:2" in adapter
+assert "READONLY_PREVIEW_REFUSED" in launch
+assert "READONLY_BYPASS_ACCEPTED" in launch
+assert 'Lancer SANS convertir' in launch
+assert "TRANSACTION_OR_FILE_FAILURE fail_closed=YES" in launch
+assert "Rester bloqué" in launch
+assert launch.index("READONLY_PREVIEW_REFUSED") > auto_pay
+assert launch.index("READONLY_BYPASS_ACCEPTED") < normal
+print("PASS KEYCONV auto readonly preflight bypass is explicit; transaction errors still blocked")
+
