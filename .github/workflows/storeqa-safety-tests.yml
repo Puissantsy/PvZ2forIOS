@@ -1,0 +1,48 @@
+name: Isolated Store QA v170 policy and Apple launcher checks (no IPA)
+on:
+  push:
+    branches: [research/offline-store-qa]
+    paths:
+      - "platform/ios/CMakeLists.txt"
+      - "platform/ios/Info.plist.in"
+      - "platform/ios/src/main.mm"
+      - ".github/workflows/build-ios-probe.yml"
+      - ".github/workflows/storeqa-safety-tests.yml"
+      - "tools/verify_storeqa_isolation.py"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  storeqa-policy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify side-by-side bundle isolation and exact pin
+        run: python3 tools/verify_storeqa_isolation.py
+      - name: Verify v170 paid-owner original-global native save safeguards
+        run: python3 tools/verify_v170_source_structure.py
+      - name: Compile and test exact synthetic ownership journal
+        run: |
+          g++ -std=c++20 -O2 -Wall -Wextra -Werror -pedantic \
+            -Iplatform/ios/src -Itests/staging \
+            tests/staging/test_offline_global_transaction.cpp \
+            -o /tmp/pvz2-storeqa-transaction
+          /tmp/pvz2-storeqa-transaction
+  storeqa-apple:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check side-by-side Info.plist and research identity
+        run: |
+          plutil -lint platform/ios/Info.plist.in
+          python3 tools/verify_storeqa_isolation.py
+      - name: Compile actual iPadOS arm64 launcher without IPA
+        run: |
+          SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
+          for unit in platform/ios/src/main.mm platform/ios/src/save_backups.mm; do
+            xcrun --sdk iphoneos clang++ -std=c++20 -O1 \
+              -target arm64-apple-ios17.4 -isysroot "$SDK" \
+              -fobjc-arc -x objective-c++ -c \
+              -Iplatform/ios/src "$unit" \
+              -o "/tmp/storeqa-$(basename "$unit" .mm).o"
+          done
