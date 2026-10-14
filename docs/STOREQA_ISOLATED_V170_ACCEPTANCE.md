@@ -73,3 +73,7 @@ QA policy + Apple arm64 launcher object compilation must pass first.
 The iOS build workflow runs only when `platform/ios/.storeqa-build-request`
 is changed, or when manually dispatched. Build **once** for the grouped
 QA baseline, not one IPA per unsupported import.
+
+## First isolated QA build request
+
+Both the portable safety test and actual iPadOS arm64 launcher compilation passed: [Actions #38547531549](https://github.com/Puissantsy/PvZ2forIOS/actions/runs/38547531549). One explicit marker-based unsigned Store QA build is requested on this branch. Do not infer physical-device purchase success merely from the build passing. Retain the existing v170 original-global fail-closed interlock and v165 protected snapshot/restore; no user save is used in CI.

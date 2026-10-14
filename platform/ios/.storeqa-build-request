@@ -1,0 +1,8 @@
+# One isolated v170 Store QA unsigned iOS IPA build request.
+# 2026-10-14 (single build after both no-IPA jobs pass).
+# Required checks: https://github.com/Puissantsy/PvZ2forIOS/actions/runs/38547531549
+# Own app bundle: com.puissantsy.pvz2forios.storeqa. Fail if signed to main/KEYOBS/Android.
+# No APK/OBB/raw UserData/personal saves in GitHub.
+# Original v170 buyer-vs-claim functional fix still NOT verified on physical iPad.
+# Exact historical Dynarmic c97c525ec1432b1e5404ebf091027738005ec168
+# Exact tree fd5b3ab282948fcdacc202ee11ee6d7aec339125
