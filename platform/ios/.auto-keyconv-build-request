@@ -1,0 +1,11 @@
+# ONE REQUEST — experimental KEYOBS automatic Egypt saved key conversion IPA.
+# 2026-10-14. This does NOT modify the main game or the v170 store.
+# Strict Linux/macOS/Apple no-IPA policy PASS:
+# https://github.com/Puissantsy/PvZ2forIOS/actions/runs/38555122869
+# Signed research KEYOBS identity unchanged; all actual conversion REQUIRES
+# exact Files token + verified fresh prelaunch v165 snapshot + stopped guest.
+# Only Egypt gates W2=13,23,33,39,41; Pirate/Cowboy not enabled.
+# Old key already 0 => no double grant, no modification.
+# Shared exact historical Dynarmic SHA c97c525ec1432b1e5404ebf091027738005ec168
+# Tree fd5b3ab282948fcdacc202ee11ee6d7aec339125
+# Never upload APK, OBB, private saves, device secrets, signing info.
