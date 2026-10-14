@@ -36,5 +36,25 @@ jobs:
               -DPVZ2_KEYCONV_PROBE_BUILD=1 -Iplatform/ios/src -Itests/staging \
               "$unit" -o "/tmp/$(basename "$unit" .mm)-probe-keyconv.o"
           done
+      - name: Stage EXACT historical Dynarmic headers for Probe runtime preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          DYN_SHA=c97c525ec1432b1e5404ebf091027738005ec168
+          git clone https://github.com/lioncash/dynarmic.git .deps/dynarmic
+          (
+            cd .deps/dynarmic
+            git fetch origin "$DYN_SHA"
+            git checkout --detach "$DYN_SHA"
+            test "$(git rev-parse HEAD)" = "$DYN_SHA"
+            test "$(git rev-parse HEAD^{tree})" = fd5b3ab282948fcdacc202ee11ee6d7aec339125
+          )
+      - name: Compile complete PvZ2 C++ runtime (syntax only, NO IPA)
+        run: |
+          SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
+          xcrun --sdk iphoneos clang++ -std=c++20 -O0 -Wall -Wextra \
+            -target arm64-apple-ios17.4 -isysroot "$SDK" \
+            -fsyntax-only -I.deps/dynarmic/src -Iplatform/ios/src -Itests/staging \
+            platform/ios/src/pvz2_apk_probe.cpp
       - name: Static safety and build isolation
         run: python3 tools/verify_probe_keyconv_transfer.py
