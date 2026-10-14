@@ -115,9 +115,14 @@ int main(){
     {
         Scratch s;
         const auto origA=s.Read("pp.dat"),origB=s.Read("snapshot2.dat");
+        bool refusedRunningGuest=false;
+        try {
+            (void)ak::SettleEligible(s.root,false,true,true,true);
+        } catch(const tx::Conflict&) {refusedRunningGuest=true;}
+        Check(refusedRunningGuest,"Running guest must be rejected");
         for(unsigned gate=0;gate<3;++gate) {
-            const auto r=ak::SettleEligible(s.root,
-                gate!=0,true,true,gate!=2);
+            const auto r=ak::SettleEligible(s.root,true,
+                gate!=0,gate!=1,gate!=2);
             Check(r.deferred && r.profiles==0 && r.keys==0,
                   "Unsafe preflight executed a settlement");
             Check(s.Read("pp.dat")==origA && s.Read("snapshot2.dat")==origB,
