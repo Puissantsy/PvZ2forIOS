@@ -216,7 +216,21 @@ BOOL PVZKeyconvSettleAllEligible(BOOL guestStopped, BOOL verifiedBackup,
         if(totalProfiles)*totalProfiles=static_cast<NSUInteger>(outcome.profiles);
         if(totalKeys)*totalKeys=static_cast<NSUInteger>(outcome.keys);
         return YES;
+    }catch(const pvz2_key_study::auto_keyconv::ReadOnlyPreviewError& preview) {
+        // Safe and unambiguous: no Settle() or journal operation ran.
+        // The user may choose a one-shot "Launch WITHOUT conversion".
+        // Never log player IDs, raw RTON or file paths.
+        if(error)*error=[NSError errorWithDomain:kDomain code:2 userInfo:@{
+            NSLocalizedDescriptionKey:
+                @"KEYCONV : conversion non applicable à cette sauvegarde. "
+                 @"Les fichiers sont inchangés et le jeu peut démarrer sans conversion.",
+            @"KEYCONVReadOnlyPreviewReason":
+                [NSString stringWithUTF8String:preview.code.c_str()]
+        }];
+        return NO;
     }catch(const std::exception&) {
+        // Failing an actual transaction or a filesystem precondition remains
+        // fatal until a fresh startup successfully recovers the journal.
         if(error)*error=ErrorMessage(
             @"Conversion KEYCONV automatique interrompue ; démarrage bloqué afin de préserver le journal et les sauvegardes.");
         return NO;
