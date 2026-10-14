@@ -91,3 +91,19 @@ L'IPA actuellement fonctionnelle reste conservée intacte.
 - **Aucune validation physique du laboratoire n'a encore eu lieu.** Ne jamais supprimer/remplacer la précédente IPA KEYOBS fonctionnelle ni utiliser la vraie progression pour les tests.
 
 **Test progressif demandé sur iPad :** installer/signer la nouvelle IPA *de recherche*, la lancer **sans** fichier d'activation et confirmer que le jeu fonctionne comme avant. Le test SIGKILL est **optionnel et volontaire** : seulement après vérification des sauvegardes et après copie explicite du fichier d'activation, deux confirmations et saisie de la phrase. La fermeture brutale qui suivra doit être considérée comme prévue. Au redémarrage, choisir `Voir et copier le rapport factice`, puis vérifier que la vraie progression n'a pas changé.
+
+## Premier vrai test iPad — rollback du primaire (PASS)
+
+Le 14 octobre 2026, l'utilisateur a exécuté volontairement le scénario « Après pp.dat factice » sur iPad, puis redémarré et copié l'audit exact :
+
+```text
+PREPARED_ONLY_SYNTHETIC
+USER_CONFIRMED_SYNTHETIC_CRASH
+ARM_PRIMARY_RENAMED
+RECOVERY_ROLLED_BACK
+VERIFIED_OLD_OLD
+```
+
+**PASS sur vrai iPadOS pour ce scénario :** la reprise du journal a effectué un rollback et les deux fichiers RTON synthétiques ont été vérifiés dans leur état initial. `ARM_PRIMARY_RENAMED` est l'étiquette du checkpoint demandé, écrite avant l'injection ; la preuve du résultat de reprise se trouve dans `RECOVERY_ROLLED_BACK` et `VERIFIED_OLD_OLD`. Les sauvegardes réelles du jeu ne figurent pas dans ce laboratoire. Ce test n'est pas une panne d'alimentation.
+
+**Limitation de l'IPA testée :** le répertoire synthétique est volontairement conservé après récupération et la commande `Prepare` refuse de le remplacer. Ne pas demander à l'utilisateur de lancer les trois autres scénarios avec la même IPA ni de supprimer son application ou ses données pour recommencer. Un futur réarmement devra vérifier l'état `OLD_OLD`, conserver l'audit et ne pas toucher aux vraies sauvegardes, avant un seul nouveau build soigneusement testé.
