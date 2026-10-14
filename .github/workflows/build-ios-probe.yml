@@ -1,4 +1,4 @@
-name: Build iOS JIT Probe
+name: Build KEYCONV automatic Egypt research IPA
 
 on:
   workflow_dispatch:
@@ -7,9 +7,9 @@ on:
   push:
     # This research branch requires ONE explicit source-marker commit to build.
     # Production main keeps its independent default-branch workflow intact.
-    branches: [research/world-key-conversion-active]
+    branches: [research/keyconv-auto-batch]
     paths:
-      - "platform/ios/.keyconv-build-request"
+      - "platform/ios/.auto-keyconv-build-request"
 
 permissions:
   contents: read
@@ -140,15 +140,15 @@ jobs:
           cp -R "$APP" package/Payload/PvZ2forIOS.app
           (
             cd package
-            zip -qry ../PvZ2forIOS-JIT-Probe-unsigned.ipa Payload
+            zip -qry ../PvZ2forIOS-KeyAuto-unsigned.ipa Payload
           )
-          shasum -a 256 PvZ2forIOS-JIT-Probe-unsigned.ipa | tee PvZ2forIOS-JIT-Probe-unsigned.ipa.sha256
+          shasum -a 256 PvZ2forIOS-KeyAuto-unsigned.ipa | tee PvZ2forIOS-KeyAuto-unsigned.ipa.sha256
 
       - name: Upload unsigned IPA
         uses: actions/upload-artifact@v4
         with:
-          name: PvZ2forIOS-JIT-Probe-unsigned
+          name: PvZ2forIOS-KeyAuto-unsigned
           path: |
-            PvZ2forIOS-JIT-Probe-unsigned.ipa
-            PvZ2forIOS-JIT-Probe-unsigned.ipa.sha256
+            PvZ2forIOS-KeyAuto-unsigned.ipa
+            PvZ2forIOS-KeyAuto-unsigned.ipa.sha256
           if-no-files-found: error

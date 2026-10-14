@@ -11,6 +11,8 @@ on:
       - "platform/ios/src/keyconv_prelaunch_ios_adapter.mm"
       - "platform/ios/src/main.mm"
       - "tools/verify_keyconv_ios_integration.py"
+      - ".github/workflows/build-ios-probe.yml"
+      - "docs/KEYCONV_AUTO_EGYPT_STAGING.md"
       - ".github/workflows/keyconv-auto-policy.yml"
   workflow_dispatch:
 permissions:
@@ -52,3 +54,23 @@ jobs:
           done
       - name: Verify prelaunch runtime wiring (NO IPA)
         run: python3 tools/verify_keyconv_ios_integration.py
+  build-trigger-policy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Enforce research-only KEYOBS IPA build marker and fixed dynarmic
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          wf=Path(".github/workflows/build-ios-probe.yml").read_text()
+          plist=Path("platform/ios/Info.plist.in").read_text()
+          cmake=Path("platform/ios/CMakeLists.txt").read_text()
+          assert 'branches: [research/keyconv-auto-batch]' in wf
+          assert 'platform/ios/.auto-keyconv-build-request' in wf
+          assert 'platform/ios/.keyconv-build-request' not in wf
+          assert 'com.puissantsy.pvz2forios.keyobs' in plist
+          assert 'PVZ2KeyconvResearchBuild' in plist
+          assert 'PVZ2_KEYCONV_RESEARCH_BUILD=1' in cmake
+          assert 'c97c525ec1432b1e5404ebf091027738005ec168' in cmake
+          print("PASS: isolated automatic Egypt KEYCONV research build policy")
+          PY
