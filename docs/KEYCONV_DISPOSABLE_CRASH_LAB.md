@@ -182,3 +182,43 @@ et confirmer séparément son état si nécessaire.
 Ces deux scénarios confirment des interruptions de processus et ne
 simulent pas une panne matérielle ou une perte d'alimentation pendant
 un `fsync` APFS.
+
+## Troisième vrai test iPad — committed.tmp sans commit publié (PASS)
+
+Le 14 octobre 2026, sur la même IPA de laboratoire réarmable et sans effacement des fichiers précédents, l'utilisateur a déclenché le scénario **« Après committed.tmp factice »**, puis relancé l'application. L'audit complet reçu était :
+
+```text
+PREPARED_ONLY_SYNTHETIC
+USER_CONFIRMED_SYNTHETIC_CRASH
+ARM_PRIMARY_RENAMED
+RECOVERY_ROLLED_BACK
+VERIFIED_OLD_OLD
+RECOVERY_NO_JOURNAL
+VERIFIED_OLD_OLD
+RECOVERY_NO_JOURNAL
+VERIFIED_OLD_OLD
+RECOVERY_NO_JOURNAL
+VERIFIED_OLD_OLD
+RECOVERY_NO_JOURNAL
+VERIFIED_OLD_OLD
+RECOVERY_NO_JOURNAL
+VERIFIED_OLD_OLD
+RECOVERY_NO_JOURNAL
+VERIFIED_OLD_OLD
+REARMED_VERIFIED_OLD_OLD
+USER_CONFIRMED_SYNTHETIC_CRASH
+ARM_FALLBACK_RENAMED
+RECOVERY_ROLLED_BACK
+VERIFIED_OLD_OLD
+RECOVERY_NO_JOURNAL
+VERIFIED_OLD_OLD
+REARMED_VERIFIED_OLD_OLD
+USER_CONFIRMED_SYNTHETIC_CRASH
+ARM_COMMIT_TEMP
+RECOVERY_ROLLED_BACK
+VERIFIED_OLD_OLD
+```
+
+**PASS sur vrai iPad (3/4)** : une fois les images installées et `committed.tmp` écrit, mais **avant la publication de `committed`**, la récupération a annulé la transaction puis vérifié les deux fichiers RTON synthétiques `OLD_OLD`. Le précédent audit, les deux premiers tests et les lignes de récupération sans journal sont toujours conservés. `ARM_COMMIT_TEMP` est l'étiquette de la phase demandée, tandis que `RECOVERY_ROLLED_BACK` / `VERIFIED_OLD_OLD` confirment la reprise effective. La conservation de la progression réelle du jeu n'est pas établie par ce log synthétique seul.
+
+**Dernier checkpoint restant : « Après commit publié »**, à exécuter **en dernier** avec la même IPA et l'ancien laboratoire réarmé. Résultat attendu : `REARMED_VERIFIED_OLD_OLD` puis `USER_CONFIRMED_SYNTHETIC_CRASH`, `ARM_COMMIT_PUBLISHED`, `RECOVERY_COMMITTED` et `VERIFIED_NEW_NEW`. Après ce résultat, le réarmement sera volontairement refusé. Aucun nouveau build nécessaire. Ce protocole reste limité à un `SIGKILL` de processus, et ne simule pas une coupure d'alimentation iPadOS/APFS.
