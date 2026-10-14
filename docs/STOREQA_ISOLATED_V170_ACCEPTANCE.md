@@ -1,4 +1,4 @@
-# v170 — A/B Store QA isolated on iPad (NO IPA YET)
+# v170 — A/B Store QA isolated on iPad (unsigned IPA ready)
 
 Branch: `research/offline-store-qa`. Its gameplay/store engine derives from
 `v170-targeted-global-isolation-staging`, not production `main` or KEYOBS.
@@ -77,3 +77,17 @@ QA baseline, not one IPA per unsupported import.
 ## First isolated QA build request
 
 Both the portable safety test and actual iPadOS arm64 launcher compilation passed: [Actions #38547531549](https://github.com/Puissantsy/PvZ2forIOS/actions/runs/38547531549). One explicit marker-based unsigned Store QA build is requested on this branch. Do not infer physical-device purchase success merely from the build passing. Retain the existing v170 original-global fail-closed interlock and v165 protected snapshot/restore; no user save is used in CI.
+
+## Unsigned Store QA build ready — 2026-10-14
+
+**ONE completed IPA build after all source safety gates:** [Actions #38547720422](https://github.com/Puissantsy/PvZ2forIOS/actions/runs/38547720422), conclusion **SUCCESS**, build commit `8d95df07d90f00f6926f383f87765641efeeeeee`, job `115797800466`. Unsigned artifact **`PvZ2forIOS-StoreQA-v170-unsigned`** (GitHub artifact ID `11884953507`), containing the IPA and its `.ipa.sha256`. GitHub artifact **ZIP** digest is `sha256:3948af7126185e1cecbcfd4b8f77e7f7c968a07ab5a01d70deb2215f31a6f0c5`; this is NOT the inner IPA checksum. Use the bundled `.ipa.sha256` for the inner IPA.
+
+The **packaged actual Info.plist**, not just the source template, was checked in the CI log and contains:
+- `CFBundleDisplayName=PvZ2 Store QA`;
+- `CFBundleIdentifier=com.puissantsy.pvz2forios.storeqa`;
+- `PVZ2StoreQAResearchBuild=1`;
+- `PVZ2StoreQAOriginalIdentifier=com.puissantsy.pvz2forios.storeqa`.
+
+Initial acceptance **gate 1 only**: sign/install as a **third, separate QA application**, preserving KEYOBS and the main port. If the signer wants to replace or remove any existing app, do not proceed; capture installed bundle identity. On first opening, the QA app should have a fresh runtime-import prompt and no previously imported profiles or saves. Do not restore actual game profiles or make any premium purchase yet. Only after the user confirms this separate sandbox may we begin the documented A/B Snow Pea functional test on dummy profiles.
+
+**Current status: build/packaging PASS; first QA iPad launch and v170 functional claim fix NOT YET CONFIRMED.** Do not merge this branch to production/main. The test suite is [Actions #38547531549](https://github.com/Puissantsy/PvZ2forIOS/actions/runs/38547531549) (policy and Apple iPadOS arm64 jobs green).
