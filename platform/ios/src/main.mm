@@ -2753,6 +2753,52 @@ void PvZ2HostNotifyDirectFrame(
                 const BOOL succeeded=PVZKeyconvSettleAllEligible(
                     YES,YES,YES,&count,&keys,&migrationError);
                 if(!succeeded) {
+                    // The automatic planner can reject an imported snapshot
+                    // BEFORE any transaction starts. Do not brick the app:
+                    // offer a one-time guest launch with no conversion.
+                    // A journal/fsync/install failure remains fatal below.
+                    if([migrationError.domain isEqualToString:
+                            @"PvZ2forIOS.Keyconv.Prelaunch"] &&
+                       migrationError.code==2) {
+                        NSString *code=migrationError.userInfo[
+                            @"KEYCONVReadOnlyPreviewReason"] ?: @"UNKNOWN";
+                        AppendPersistentLog([NSString stringWithFormat:
+                            @"[KEYCONV AUTO] READONLY_PREVIEW_REFUSED reason=%@ writes=NONE",
+                            code]);
+                        self.keyconvPromptActive=YES;
+                        UIAlertController *declined=[UIAlertController
+                            alertControllerWithTitle:
+                                @"KEYCONV — sauvegarde non compatible"
+                            message:@"Cette sauvegarde restaurée ne passe pas la vérification des clés. Aucune conversion n'a été écrite. Tu peux lancer le jeu sans convertir ou conserver le blocage pour examiner la sauvegarde."
+                            preferredStyle:UIAlertControllerStyleAlert];
+                        __weak ProbeViewController *weakSelf=self;
+                        [declined addAction:[UIAlertAction
+                            actionWithTitle:@"Lancer SANS convertir"
+                            style:UIAlertActionStyleDefault
+                            handler:^(__unused UIAlertAction *action) {
+                                __strong ProbeViewController *strongSelf=weakSelf;
+                                if(!strongSelf)return;
+                                strongSelf.keyconvPromptActive=NO;
+                                AppendPersistentLog(
+                                    @"[KEYCONV AUTO] READONLY_BYPASS_ACCEPTED no_conversion=YES");
+                                [strongSelf v130ContinueLaunch];
+                            }]];
+                        [declined addAction:[UIAlertAction
+                            actionWithTitle:@"Rester bloqué"
+                            style:UIAlertActionStyleCancel
+                            handler:^(__unused UIAlertAction *action) {
+                                __strong ProbeViewController *strongSelf=weakSelf;
+                                if(!strongSelf)return;
+                                strongSelf.keyconvPromptActive=NO;
+                                [strongSelf v130KeyconvStopLaunch:
+                                    @"KEYCONV : sauvegarde refusée sans modification."];
+                            }]];
+                        [self presentViewController:declined
+                                         animated:YES completion:nil];
+                        return;
+                    }
+                    AppendPersistentLog(
+                        @"[KEYCONV AUTO] TRANSACTION_OR_FILE_FAILURE fail_closed=YES");
                     [self v130KeyconvStopLaunch:
                         migrationError.localizedDescription ?:
                         @"Migration automatique de test refusée."];
