@@ -132,6 +132,19 @@ jobs:
           echo "APP=$APP" >> "$GITHUB_ENV"
           file "$APP/PvZ2forIOS"
           plutil -p "$APP/Info.plist"
+          # Probe/KEYOBS share the executable name but must NEVER share
+          # bundle identity, application sandbox or opt-in activation marker.
+          python3 - "$APP/Info.plist" <<'PY'
+          import plistlib,sys
+          with open(sys.argv[1],"rb") as file:
+              p=plistlib.load(file)
+          assert p["CFBundleIdentifier"]=="com.puissantsy.pvz2forios"
+          assert p["CFBundleDisplayName"]=="PvZ2forIOS Probe"
+          assert p.get("PVZ2KeyconvProbeBuild") is True
+          assert p.get("PVZ2KeyconvOriginalIdentifier")=="com.puissantsy.pvz2forios"
+          assert "PVZ2KeyconvResearchBuild" not in p
+          print("PASS: signed metadata identifies the ORIGINAL PROBE, not KEYOBS")
+          PY
 
       - name: Package unsigned IPA
         run: |
