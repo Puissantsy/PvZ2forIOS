@@ -7,6 +7,10 @@ on:
       - "tests/staging/test_world_key_auto_batch.cpp"
       - "tests/staging/world_key_auto_settlement.hpp"
       - "tests/staging/test_world_key_auto_settlement.cpp"
+      - "platform/ios/src/keyconv_prelaunch_ios_adapter.hpp"
+      - "platform/ios/src/keyconv_prelaunch_ios_adapter.mm"
+      - "platform/ios/src/main.mm"
+      - "tools/verify_keyconv_ios_integration.py"
       - ".github/workflows/keyconv-auto-policy.yml"
   workflow_dispatch:
 permissions:
@@ -31,3 +35,20 @@ jobs:
             -Itests/staging tests/staging/test_world_key_auto_settlement.cpp \
             $LIBS -o /tmp/pvz2-auto-keyconv-transaction
           /tmp/pvz2-auto-keyconv-transaction
+  ios-research-preflight:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile real Objective-C++ adapter and launcher arm64 object (NO IPA)
+        run: |
+          SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
+          for unit in platform/ios/src/keyconv_prelaunch_ios_adapter.mm platform/ios/src/main.mm; do
+            xcrun --sdk iphoneos clang++ -std=c++20 -O1 -Wall -Wextra \
+              -target arm64-apple-ios17.4 -isysroot "$SDK" \
+              -fobjc-arc -x objective-c++ -c \
+              -DPVZ2_KEYCONV_RESEARCH_BUILD=1 \
+              -Iplatform/ios/src -Itests/staging \
+              "$unit" -o "/tmp/$(basename "$unit" .mm)-auto.o"
+          done
+      - name: Verify prelaunch runtime wiring (NO IPA)
+        run: python3 tools/verify_keyconv_ios_integration.py

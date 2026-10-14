@@ -1,5 +1,6 @@
 #import "keyconv_prelaunch_ios_adapter.hpp"
 #include "world_key_prelaunch_native.hpp"
+#include "world_key_auto_settlement.hpp"
 #include "keyconv_research_identity_policy.hpp"
 #include <cerrno>
 #include <mutex>
@@ -164,6 +165,60 @@ BOOL PVZKeyconvSettleSelectedSlot(NSUInteger slot, NSUInteger *recycledKeys,
     } catch (const std::exception&) {
         if (error) *error=ErrorMessage(
             @"La conversion a été interrompue ou refusée. Ne relance pas le jeu tant que la récupération du journal n'est pas terminée.");
+        return NO;
+    }
+}
+
+BOOL PVZKeyconvAutoResearchRequested(NSError **error) {
+    std::lock_guard<std::mutex> lock(gKeyconvMutex);
+    if(!ResearchBundle()) {
+        if(error)*error=ErrorMessage(@"Mode automatique réservé à KEYOBS.");
+        return NO;
+    }
+    try {
+        NSURL *documents=[[NSFileManager defaultManager]
+            URLsForDirectory:NSDocumentDirectory
+            inDomains:NSUserDomainMask].firstObject;
+        if(documents==nil || documents.path==nil)
+            throw native::Conflict("Missing isolated Documents");
+        const auto folder=std::filesystem::path(documents.fileSystemRepresentation);
+        native::SafeDirectory(folder);
+        const auto request=folder/"PvZ2AutoKeyconvRequest.txt";
+        if(!ExistsWithoutFollowing(request))return NO;
+        const auto contents=native::ReadRegular(request,128);
+        if(contents!="ENABLE_EGYPT_AUTOMATIC_KEYCONV_RESEARCH_V1\n")
+            throw native::Conflict("Invalid auto request");
+        return YES;
+    }catch(const std::exception&) {
+        if(error)*error=ErrorMessage(
+            @"Fichier d'activation KEYCONV automatique invalide ; aucune conversion.");
+        return NO;
+    }
+}
+
+BOOL PVZKeyconvSettleAllEligible(BOOL guestStopped, BOOL verifiedBackup,
+                                 BOOL recoveredClean,
+                                 NSUInteger *totalProfiles,NSUInteger *totalKeys,
+                                 NSError **error) {
+    std::lock_guard<std::mutex> lock(gKeyconvMutex);
+    if(!ResearchBundle() || !guestStopped || !verifiedBackup ||
+       !recoveredClean) {
+        if(error)*error=ErrorMessage(
+            @"Conversion automatique refusée : moteur actif, sauvegarde non vérifiée ou reprise en attente.");
+        return NO;
+    }
+    try {
+        const auto root=LiveRoot();
+        const auto outcome=pvz2_key_study::auto_keyconv::SettleEligible(
+            root,true,true,true,true);
+        if(outcome.deferred)
+            throw native::Conflict("Unexpected deferred automatic transaction");
+        if(totalProfiles)*totalProfiles=static_cast<NSUInteger>(outcome.profiles);
+        if(totalKeys)*totalKeys=static_cast<NSUInteger>(outcome.keys);
+        return YES;
+    }catch(const std::exception&) {
+        if(error)*error=ErrorMessage(
+            @"Conversion KEYCONV automatique interrompue ; démarrage bloqué afin de préserver le journal et les sauvegardes.");
         return NO;
     }
 }

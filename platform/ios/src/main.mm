@@ -2166,6 +2166,7 @@ void PvZ2HostNotifyDirectFrame(
 @property(nonatomic, assign) BOOL keyconvFatalBlocked;
 @property(nonatomic, assign) BOOL keyconvPromptActive;
 @property(nonatomic, assign) BOOL keyconvOfferChecked;
+@property(nonatomic, assign) BOOL keyconvAutoChecked;
 @property(nonatomic, assign) BOOL keyconvPrelaunchBackupVerified;
 @property(nonatomic, strong) NSString *keyconvStartupNote;
 @property(nonatomic, assign) BOOL keyconvLabRecoveryChecked;
@@ -2720,6 +2721,49 @@ void PvZ2HostNotifyDirectFrame(
         } else {
             AppendPersistentLog(
                 @"[KEYOBS SAVE] prelaunch no existing save to snapshot");
+        }
+    }
+
+    // Stopped-guest opt-in automatic Egypt-only saved-stock migration.
+    // The research request is exact and Files-visible; production behavior
+    // remains the unchanged manual picker unless the token is present.
+    // No guest JNI/V128 is running here and a verified prelaunch backup
+    // has been created before any candidate can be changed.
+    if (!self.keyconvAutoChecked) {
+        self.keyconvAutoChecked=YES;
+        NSError *requestError=nil;
+        const BOOL requested=PVZKeyconvAutoResearchRequested(&requestError);
+        if(requestError!=nil) {
+            self.keyconvOfferChecked=YES;
+            AppendPersistentLog(
+                @"[KEYCONV AUTO] invalid research request; no migration");
+        } else if(requested) {
+            self.keyconvOfferChecked=YES; // NEVER follow with manual picker.
+            if(!self.keyconvRecoveryWasClean ||
+               !self.keyconvPrelaunchBackupVerified) {
+                AppendPersistentLog(
+                    @"[KEYCONV AUTO] deferred; no verified backup or prior recovery");
+            } else if(self.jniRunning || self.v130LaunchStarted) {
+                [self v130KeyconvStopLaunch:
+                    @"KEYCONV auto refusé : moteur déjà actif."];
+                return;
+            } else {
+                NSUInteger count=0,keys=0;
+                NSError *migrationError=nil;
+                const BOOL succeeded=PVZKeyconvSettleAllEligible(
+                    YES,YES,YES,&count,&keys,&migrationError);
+                if(!succeeded) {
+                    [self v130KeyconvStopLaunch:
+                        migrationError.localizedDescription ?:
+                        @"Migration automatique de test refusée."];
+                    return;
+                }
+                self.keyconvStartupNote=[NSString stringWithFormat:
+                    @"[KEYCONV AUTO] completed=YES profiles=%lu keys=%lu coinsDelta=%lu scope=EGYPT_ONLY",
+                    (unsigned long)count,(unsigned long)keys,
+                    (unsigned long)(keys*1000u)];
+                AppendPersistentLog(self.keyconvStartupNote);
+            }
         }
     }
 

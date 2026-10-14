@@ -77,3 +77,21 @@ assert "REARMED_VERIFIED_OLD_OLD" in lab_core
 assert "RECOVERY_ROLLED_BACK" in lab_core
 assert "lab::Prepare(SupportPath())" not in lab_bridge
 print("PASS: KEYCONV live-save startup gates and opt-in Files request + typed fake-RTON SIGKILL lab verified")
+
+# Automation must run ONLY before guest start, AFTER recovery, restore,
+# and verified prelaunch backup; reject any false no-backup auto settlement.
+auto_gate=launch.index('PVZKeyconvAutoResearchRequested(&requestError)')
+auto_pay=launch.index('PVZKeyconvSettleAllEligible(')
+backup=launch.index('PVZSaveCreateSnapshot(')
+normal=launch.index('if (!V130RuntimeInstalled())')
+assert backup < auto_gate < auto_pay < normal
+assert 'self.keyconvOfferChecked=YES; // NEVER follow with manual picker.' in launch
+assert 'self.keyconvRecoveryWasClean' in launch[auto_gate:auto_pay]
+assert 'self.keyconvPrelaunchBackupVerified' in launch[auto_gate:auto_pay]
+adapter=(root/"platform/ios/src/keyconv_prelaunch_ios_adapter.mm").read_text()
+assert 'world_key_auto_settlement.hpp' in adapter
+assert 'PVZKeyconvAutoResearchRequested' in adapter
+assert 'ENABLE_EGYPT_AUTOMATIC_KEYCONV_RESEARCH_V1' in adapter
+assert 'PvZ2AutoKeyconvRequest.txt' in adapter
+assert 'SettleEligible(' in adapter
+print("PASS KEYCONV AUTO opt-in request, prelaunch backup/recovery and no double UI")

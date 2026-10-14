@@ -28,4 +28,16 @@ PVZKeyconvEligibleSlots(NSError * _Nullable * _Nullable error);
 FOUNDATION_EXPORT BOOL PVZKeyconvSettleSelectedSlot(
     NSUInteger slot, NSUInteger * _Nullable recycledKeys,
     NSError * _Nullable * _Nullable error);
+// Optional explicit research-file gate for unattended batch conversion.
+// Invalid token produces NO + error. Missing token => NO, no error.
+FOUNDATION_EXPORT BOOL
+PVZKeyconvAutoResearchRequested(NSError * _Nullable * _Nullable error);
+// Research-only: all eligible Egypt-only profiles, in order, through
+// the existing independently crash-safe per-profile SHA256 journal.
+// Caller MUST confirm guest stopped, verified backup and clean recovery.
+FOUNDATION_EXPORT BOOL PVZKeyconvSettleAllEligible(
+    BOOL guestStopped, BOOL verifiedBackup, BOOL recoveredClean,
+    NSUInteger * _Nullable totalProfiles,
+    NSUInteger * _Nullable totalKeys,
+    NSError * _Nullable * _Nullable error);
 NS_ASSUME_NONNULL_END
