@@ -2739,6 +2739,26 @@ void PvZ2HostNotifyDirectFrame(
                 @"[KEYCONV AUTO] invalid research request; no migration");
         } else if(requested) {
             self.keyconvOfferChecked=YES; // NEVER follow with manual picker.
+            // Host-side migration must not occur before StikDebug/JIT
+            // attaches: JIT often relaunches KEYOBS into a new process.
+            // Doing a native settlement BEFORE that relaunch may result in
+            // an unrelated v165 inbox restore being offered afterward.
+            // Keep the backup, never start guest, and reevaluate the exact
+            // research token after the runtime/JIT becomes ready.
+            if(!V130RuntimeInstalled()) {
+                self.keyconvAutoChecked=NO;
+                AppendPersistentLog(
+                    @"[KEYCONV AUTO] awaiting_runtime_import no_writes=YES");
+                [self v130PresentRuntimeImporter];
+                return;
+            }
+            if(!IsDebugged()) {
+                self.keyconvAutoChecked=NO;
+                AppendPersistentLog(
+                    @"[KEYCONV AUTO] awaiting_JIT no_writes=YES");
+                [self v130RequestJIT];
+                return;
+            }
             if(!self.keyconvRecoveryWasClean ||
                !self.keyconvPrelaunchBackupVerified) {
                 AppendPersistentLog(
