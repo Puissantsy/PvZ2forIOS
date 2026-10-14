@@ -118,11 +118,11 @@ BOOL PVZKeyconvLabPrepare(BOOL guestStopped,NSError **error) {
         return NO;
     }
     try {
-        lab::Prepare(SupportPath());
+        (void)lab::PrepareOrRearm(SupportPath());
         return YES;
     }catch(const std::exception&) {
         if(error)*error=Failure(
-            @"Création du laboratoire refusée : répertoire existant ou non sûr.");
+            @"Préparation refusée : laboratoire non récupéré, incomplet ou déjà converti. Aucun fichier n’a été supprimé.");
         return NO;
     }
 }
