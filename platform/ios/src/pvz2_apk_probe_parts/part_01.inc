@@ -2510,6 +2510,203 @@
         return ids;
     }
 
+    // Only used when the explicit Probe Egypt reward hook is armed.
+    std::uint32_t keyobs_grants_logged=0u;
+    // Snapshot native profile+0x24 world-map events; never parse unbounded
+    // guest pointers. Unknown/missing/duplicate gates stay NON-ELIGIBLE.
+    std::optional<std::vector<pvz2_key_study::WorldEvent>>
+    WorldKeyReadOnlyEvents(std::uint32_t profile) {
+        if (profile < kJniProbeHeapBase ||
+            static_cast<std::uint64_t>(profile-kJniProbeHeapBase) >=
+                mem.HeapCapacity() ||
+            mem.Ptr(profile+0x24u, 12u) == nullptr) {
+            return std::nullopt;
+        }
+
+        const std::uint32_t begin=mem.Read32Guest(profile+0x24u);
+        const std::uint32_t end=mem.Read32Guest(profile+0x28u);
+        const std::uint32_t cap=mem.Read32Guest(profile+0x2cu);
+        if (!begin || end<=begin || cap<end ||
+            ((end-begin)%pvz2_key_study::kNativeEventStride)!=0u ||
+            ((cap-begin)%pvz2_key_study::kNativeEventStride)!=0u ||
+            (end-begin)/pvz2_key_study::kNativeEventStride >
+                pvz2_key_study::kMaxNativeEvents ||
+            mem.Ptr(begin,end-begin)==nullptr) {
+            return std::nullopt;
+        }
+
+        const std::size_t bytes=static_cast<std::size_t>(end-begin);
+        const auto* ptr=mem.Ptr(begin,static_cast<std::uint32_t>(bytes));
+        return pvz2_key_study::DecodeNativeEventSnapshot(
+            std::span<const std::byte>(
+                reinterpret_cast<const std::byte*>(ptr),bytes));
+    }
+
+    static std::uint32_t WorldKeyWorldId(const std::string& world) {
+        if (world=="egypt") return 2u;
+        if (world=="pirate") return 3u;
+        if (world=="cowboy") return 4u;
+        if (world=="future") return 5u;
+        return 0u;
+    }
+
+    pvz2_key_study::Decision WorldKeyReadOnlyDecision(
+        std::uint32_t profile,
+        const std::string& world,
+        std::uint32_t key_count) {
+        // Probe integration supports only Egypt; all other worlds stay native.
+        if (world!="egypt")
+            return {pvz2_key_study::Reason::UnknownWorld,0u};
+        const std::uint32_t world_id=WorldKeyWorldId(world);
+        if (world_id==0u) {
+            return {pvz2_key_study::Reason::UnknownWorld,0u};
+        }
+        const auto events=WorldKeyReadOnlyEvents(profile);
+        if (!events) {
+            return {pvz2_key_study::Reason::IncompleteState,0u};
+        }
+        // Future stays deliberately disabled until this historical build's
+        // actual playable-world state is separately confirmed.
+        return pvz2_key_study::Evaluate(
+            world_id,key_count,*events,false);
+    }
+
+    static const char* WorldKeyDecisionReasonName(
+        pvz2_key_study::Reason reason) {
+        switch (reason) {
+            case pvz2_key_study::Reason::Convert: return "CONVERT";
+            case pvz2_key_study::Reason::UnknownWorld: return "UNKNOWN_WORLD";
+            case pvz2_key_study::Reason::InactiveWorld: return "INACTIVE_WORLD";
+            case pvz2_key_study::Reason::InvalidQuantity: return "INVALID_QUANTITY";
+            case pvz2_key_study::Reason::IncompleteState: return "INCOMPLETE_STATE";
+            case pvz2_key_study::Reason::DuplicateEvent: return "DUPLICATE_EVENT";
+            case pvz2_key_study::Reason::GateNotOpen: return "GATE_NOT_OPEN";
+        }
+        return "UNKNOWN";
+    }
+
+    // Read-only native profile+0x7c WorldSpecificKeys vector witness.
+    // Validation of entry quantities, known names and duplicate worlds is
+    // shared with the standalone unit tests. The callback only reads exact
+    // COW world strings from guest memory, never writes guest state.
+    std::string WorldKeyReadOnlyStockSnapshot(std::uint32_t profile) {
+        if (profile<kJniProbeHeapBase ||
+            static_cast<std::uint64_t>(profile-kJniProbeHeapBase)>=
+                mem.HeapCapacity() ||
+            mem.Ptr(profile+0x7cu,12u)==nullptr) {
+            return "wsk=UNKNOWN(profile)";
+        }
+        const std::uint32_t begin=mem.Read32Guest(profile+0x7cu);
+        const std::uint32_t end=mem.Read32Guest(profile+0x80u);
+        const std::uint32_t cap=mem.Read32Guest(profile+0x84u);
+        if (begin==0u && end==0u && cap==0u) return "wsk={}";
+        if (begin==0u || end<begin || cap<end ||
+            ((end-begin)%pvz2_key_study::kWorldKeyStockStride)!=0u ||
+            ((cap-begin)%pvz2_key_study::kWorldKeyStockStride)!=0u ||
+            (end-begin)/pvz2_key_study::kWorldKeyStockStride>
+                pvz2_key_study::kMaxWorldKeyStockSlots ||
+            (end!=begin && mem.Ptr(begin,end-begin)==nullptr)) {
+            return "wsk=INVALID(vector)";
+        }
+        const std::size_t bytes=end-begin;
+        std::span<const std::byte> snapshot;
+        if (bytes!=0u) {
+            snapshot=std::span<const std::byte>(
+                reinterpret_cast<const std::byte*>(
+                    mem.Ptr(begin,static_cast<std::uint32_t>(bytes))),
+                bytes);
+        }
+        bool invalid_string=false;
+        const auto parsed=pvz2_key_study::DecodeNativeWorldKeyStock(
+            snapshot,
+            [&](std::uint32_t chars)->std::optional<std::string> {
+                if (mem.Ptr(chars-12u,4u)==nullptr) {
+                    invalid_string=true;
+                    return std::nullopt;
+                }
+                const std::uint32_t len=mem.Read32Guest(chars-12u);
+                if (len==0u || len>16u ||
+                    mem.Ptr(chars,len+1u)==nullptr ||
+                    mem.Read8(chars+len)!=0u) {
+                    invalid_string=true;
+                    return std::nullopt;
+                }
+                const std::string world=mem.ReadCStringGuest(chars,len+1u);
+                if (world.size()!=len) {
+                    invalid_string=true;
+                    return std::nullopt;
+                }
+                return world;
+            });
+        if (!parsed) {
+            return invalid_string
+                ? "wsk=INVALID(string)"
+                : "wsk=INVALID(entry/world)";
+        }
+        std::ostringstream out;
+        out << "wsk={";
+        for (std::size_t i=0;i<parsed->size();++i) {
+            if (i!=0u) out << ",";
+            out << (*parsed)[i].world << ":" << (*parsed)[i].count;
+        }
+        out << "}";
+        return out.str();
+    }
+
+    std::string WorldKeyReadOnlyGateSnapshot(std::uint32_t profile) {
+        const auto view=WorldKeyReadOnlyEvents(profile);
+        if (!view) {
+            return "events=INVALID gates=UNKNOWN" +
+                (WorldKeyConversionEnabled()
+                    ? " " + WorldKeyReadOnlyStockSnapshot(profile)
+                    : std::string{});
+        }
+
+        std::ostringstream out;
+        out << "eventCount=" << view->size();
+        for (const auto& def : pvz2_key_study::worlds) {
+            out << " W" << def.id << "={";
+            bool first=true;
+            for (const auto gate : def.gates) {
+                if (!first) out << ",";
+                first=false;
+                unsigned matches=0u;
+                std::uint32_t state=0u;
+                for (const auto& e : *view) {
+                    if (e.world_id==def.id && e.event_id==gate) {
+                        ++matches;
+                        state=e.state;
+                    }
+                }
+                out << gate << ":";
+                if (matches==0u) out << "MISSING";
+                else if (matches>1u) out << "DUP";
+                else out << state;
+            }
+            out << "}";
+            const auto decision=pvz2_key_study::Evaluate(
+                def.id,1u,*view,false);
+            out << " eligible="
+                << (decision.convert() ? "YES" : "NO");
+        }
+        if (WorldKeyConversionEnabled()) {
+            out << " " << WorldKeyReadOnlyStockSnapshot(profile);
+        }
+        return out.str();
+    }
+
+    std::string WorldKeyReadOnlyWorldName(std::uint32_t string_object) {
+        // Original AddWorldKeys dereferences r1 as a pointer to
+        // the 32-bit libstdc++ std::string char pointer.
+        if (mem.Ptr(string_object,4u)==nullptr) return "UNKNOWN";
+        const std::uint32_t chars=mem.Read32Guest(string_object);
+        if (mem.Ptr(chars,1u)==nullptr) return "UNKNOWN";
+        const std::string world=mem.ReadCStringGuest(chars,16u);
+        if (world=="egypt" || world=="pirate" || world=="cowboy" ||
+            world=="future" || world=="dark") return world;
+        return "OTHER";
+    }
+
     std::uint32_t JniNewSyntheticObject() {
         return 0x55000000u +
             (next_synthetic_object++ * 0x100u);
@@ -3530,6 +3727,7 @@
     PvZ2DiagnosticMode diagnostic_mode =
         PvZ2DiagnosticMode::PassiveRegistry;
     std::uint64_t diagnostic_capabilities = 0u;
+    bool keyconv_reward_enabled = false;
 
     // v76 iOS GL-view-scale contract. The historical iOS driver stores the
     // scale on EAGLView.contentScaleFactor. Start at Android's old synthetic

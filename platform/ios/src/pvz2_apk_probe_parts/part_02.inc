@@ -780,6 +780,11 @@
     }
 
 
+    bool WorldKeyConversionEnabled() const {
+        return keyconv_reward_enabled &&
+            diagnostic_mode==PvZ2DiagnosticMode::V151ProductionQsortCompat;
+    }
+
     bool V151Enabled() const {
         return diagnostic_mode ==
             PvZ2DiagnosticMode::V151ProductionQsortCompat;
