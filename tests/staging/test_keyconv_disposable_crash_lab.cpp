@@ -175,6 +175,58 @@ void TestKillAndRecover(const char* executable) {
         t.Canary();
     }
 }
+void TestSequentialRearm(const char* executable) {
+    Temp t;
+    const auto original=lab::Originals();
+    Check(!lab::PrepareOrRearm(t.support),"Initial lab did not create fixture");
+    bool rejected=false;
+    try {lab::PrepareOrRearm(t.support);}
+    catch(const tx::Conflict&) {rejected=true;}
+    Check(rejected,"Prepared lab re-armed without recovery evidence");
+    const std::array stages={
+        tx::CrashAt::PrimaryInstalled,
+        tx::CrashAt::FallbackInstalled,
+        tx::CrashAt::MarkerPrepared,
+        tx::CrashAt::MarkerPublished
+    };
+    for(std::size_t i=0;i<stages.size();++i) {
+        if(i!=0) {
+            const auto before=lab::AuditText(t.support);
+            Check(lab::PrepareOrRearm(t.support),
+                  "Verified OLD_OLD could not rearm");
+            const auto after=lab::AuditText(t.support);
+            Check(after.starts_with(before) &&
+                  after.ends_with("REARMED_VERIFIED_OLD_OLD\n"),
+                  "Rearming destroyed older crash evidence");
+            Check(lab::LiveImages(t.support)==original,
+                  "Rearming rewrote synthetic RTON bytes");
+        }
+        t.Canary();
+        ExpectKilled(executable,t.support,stages[i]);
+        RecoverClean(executable,t.support);
+        const auto pair=lab::LiveImages(t.support);
+        const auto plan=lab::Planned(t.support);
+        const bool committed=(i+1==stages.size());
+        Check(pair==(committed?
+            std::array<std::string,2>{plan.primary,plan.fallback}:
+            original),"Sequential cold recovery left wrong RTON pair");
+        t.Canary();
+    }
+    const auto audit=lab::AuditText(t.support);
+    Check(audit.find("ARM_PRIMARY_RENAMED")!=std::string::npos &&
+          audit.find("ARM_FALLBACK_RENAMED")!=std::string::npos &&
+          audit.find("ARM_COMMIT_TEMP")!=std::string::npos &&
+          audit.find("ARM_COMMIT_PUBLISHED")!=std::string::npos &&
+          audit.find("RECOVERY_COMMITTED")!=std::string::npos &&
+          audit.ends_with("VERIFIED_NEW_NEW\n"),
+          "Sequential lab history lost fault or commit recovery");
+    rejected=false;
+    try {lab::PrepareOrRearm(t.support);}
+    catch(const tx::Conflict&) {rejected=true;}
+    Check(rejected,"Committed NEW_NEW lab was incorrectly re-armed");
+    t.Canary();
+}
+
 void TestTampering() {
     Temp t;
     lab::Prepare(t.support);
@@ -193,6 +245,7 @@ int main(int argc,char** argv) {
         if(argc>1)return Worker(argc,argv);
         TestBasicGuards();
         TestKillAndRecover(argv[0]);
+        TestSequentialRearm(argv[0]);
         TestTampering();
         std::cout<<"PASS: "<<checks
                  <<" research-only isolated synthetic crash-lab assertions"
