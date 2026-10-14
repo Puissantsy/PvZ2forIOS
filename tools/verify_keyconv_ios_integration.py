@@ -84,7 +84,14 @@ auto_gate=launch.index('PVZKeyconvAutoResearchRequested(&requestError)')
 auto_pay=launch.index('PVZKeyconvSettleAllEligible(')
 backup=launch.index('PVZSaveCreateSnapshot(')
 normal=launch.index('if (!V130RuntimeInstalled())')
-assert backup < auto_gate < auto_pay < normal
+# The initial physical launch at 14:40 automatically settled the key
+# BEFORE a StikDebug relaunch. Explicit gate prevents premature writes.
+auto_import=launch.index('if(!V130RuntimeInstalled())',auto_gate)
+auto_jit=launch.index('if(!IsDebugged())',auto_gate)
+assert backup < auto_gate < auto_import < auto_jit < auto_pay < normal
+assert 'self.keyconvAutoChecked=NO;' in launch[auto_gate:auto_pay]
+assert '[KEYCONV AUTO] awaiting_JIT no_writes=YES' in launch
+assert '[KEYCONV AUTO] awaiting_runtime_import no_writes=YES' in launch
 assert 'self.keyconvOfferChecked=YES; // NEVER follow with manual picker.' in launch
 assert 'self.keyconvRecoveryWasClean' in launch[auto_gate:auto_pay]
 assert 'self.keyconvPrelaunchBackupVerified' in launch[auto_gate:auto_pay]
