@@ -58,4 +58,6 @@ jobs:
             -fsyntax-only -I.deps/dynarmic/src -Iplatform/ios/src -Itests/staging \
             platform/ios/src/pvz2_apk_probe.cpp
       - name: Static safety and build isolation
-        run: python3 tools/verify_probe_keyconv_transfer.py
+        run: |
+          python3 tools/verify_probe_keyconv_transfer.py
+          python3 tools/verify_probe_dynarmic_compat.py

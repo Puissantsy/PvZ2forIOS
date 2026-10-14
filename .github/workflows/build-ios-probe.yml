@@ -93,7 +93,7 @@ jobs:
 
 
       - name: Verify KEYCONV historical Dynarmic wiring
-        run: python3 tools/verify_world_key_dynarmic_compat.py
+        run: python3 tools/verify_probe_dynarmic_compat.py
 
       - name: Show toolchain
         run: |
