@@ -2335,6 +2335,7 @@ void PvZ2HostNotifyDirectFrame(
 @property(nonatomic, assign) BOOL keyconvFatalBlocked;
 @property(nonatomic, assign) BOOL keyconvAutoChecked;
 @property(nonatomic, assign) BOOL keyconvPromptActive;
+@property(nonatomic, assign) BOOL keyconvRewardOptIn;
 - (void)v163OfferPendingRestore;
 - (void)v166OfferResetIntro;
 
@@ -2720,6 +2721,11 @@ void PvZ2HostNotifyDirectFrame(
         if (requestError != nil) {
             AppendPersistentLog(@"[KEYCONV PROBE] invalid opt-in ignored; no writes");
         } else if (requested) {
+            // Enables the independently gated Egypt-only AddWorldKeys
+            // conversion in V151 without changing the Probe's runtime mode.
+            self.keyconvRewardOptIn=self.keyconvRecoveryWasClean;
+            if (self.keyconvRewardOptIn)
+                AppendPersistentLog(@"[KEYCONV PROBE] native reward hook ARMED scope=EGYPT_ONLY");
             if (!self.keyconvRecoveryWasClean) {
                 AppendPersistentLog(@"[KEYCONV PROBE] deferred after recovery; no conversion this launch");
             } else if (!PVZSaveHasLocalSave()) {
@@ -2748,6 +2754,9 @@ void PvZ2HostNotifyDirectFrame(
                     if ([migrationError.domain isEqualToString:
                              @"PvZ2forIOS.Keyconv.Prelaunch"] &&
                         migrationError.code==2) {
+                        // The same unresolved save inconsistency also
+                        // disables live award interception this launch.
+                        self.keyconvRewardOptIn=NO;
                         NSString *reason=migrationError.userInfo[
                             @"KEYCONVReadOnlyPreviewReason"] ?: @"UNKNOWN";
                         AppendPersistentLog([NSString stringWithFormat:
@@ -3720,7 +3729,8 @@ void PvZ2HostNotifyDirectFrame(
                         }
                     },
                     diagnosticMode,
-                    liveFrameCallback);
+                    liveFrameCallback,
+                    self.keyconvRewardOptIn == YES);
 
             dispatch_async(
                 dispatch_get_main_queue(),

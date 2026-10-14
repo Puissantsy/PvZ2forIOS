@@ -22,6 +22,18 @@ tests={
  'Stable old v170 reset flow': 'v166OfferResetIntro' in main and 'PVZSaveResetForTest' in main,
  'Existing v170 store controls': 'v164PresentBackupMenu' in main
 }
+cpp=Path('platform/ios/src/pvz2_apk_probe.cpp').read_text()
+parts=[Path(f'platform/ios/src/pvz2_apk_probe_parts/part_{i:02d}.inc').read_text() for i in range(10)]
+tests.update({
+ 'Original V151 mode selected': 'PvZ2DiagnosticMode::V151ProductionQsortCompat' in parts[0] and 'kSelectableDiagnosticModes[]' in parts[0],
+ 'Opt-in passed to live runtime': 'keyconv_egypt_reward_opt_in' in Path('platform/ios/src/pvz2_apk_probe.hpp').read_text() and 'self.keyconvRewardOptIn == YES' in main,
+ 'Single exact ELF site trapped': '0x0042ccd0u,0xe1a0a000u,kJniProbeSvcWorldKeyAddObserve' in parts[8],
+ 'No research-mode replacement': 'ResearchWorldKeyConvert' not in parts[0],
+ 'Egypt-only reward policy': 'world=="egypt" && decision.convert()' in parts[4],
+ 'Bounded native gate event decoder': '#include "world_key_event_view.hpp"' in cpp,
+ 'Read-only incompatible state disables live hook': 'self.keyconvRewardOptIn=NO;' in main,
+ 'Opt-in before live interception': 'self.keyconvRewardOptIn=self.keyconvRecoveryWasClean' in main,
+})
 for label,ok in tests.items():
  print(('PASS' if ok else 'FAIL')+': '+label)
 assert all(tests.values()),'Unsafe/incomplete Probe KEYCONV integration'

@@ -18,7 +18,7 @@ jobs:
       - name: Strict C++20 Egypt auto preview and transaction
         run: |
           if [ "${{ runner.os }}" = "Linux" ]; then LIBS="-lcrypto"; else LIBS=""; fi
-          for name in test_world_key_rton_native_pair test_world_key_prelaunch_native test_world_key_prelaunch_process_kill test_world_key_auto_batch test_world_key_auto_settlement; do
+          for name in test_world_key_rton_native_pair test_world_key_prelaunch_native test_world_key_prelaunch_process_kill test_world_key_auto_batch test_world_key_auto_settlement test_world_key_conversion_policy test_world_key_event_view test_world_key_stock_view; do
             clang++ -std=c++20 -O1 -Wall -Wextra -Werror -pedantic -Itests/staging "tests/staging/$name.cpp" $LIBS -o "/tmp/$name"
             "/tmp/$name"
           done

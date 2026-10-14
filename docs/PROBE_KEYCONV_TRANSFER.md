@@ -14,7 +14,7 @@ Original KEYOBS was research-only and blocked in the production bundle via marke
 - Recovery first (before v163 restore/reset prompts); existing v170 restore and reset flows preserved. Conversion only after APK+OBB imported and StikDebug/JIT attached; never while JNI/V128 active.
 - Verified v165 prelaunch snapshot BEFORE transaction; preserves production backup container. Fatal filesystem/journal errors fail-closed, read-only preview mismatches offer explicit one-shot game launch **without** migration; never silently reconcile diverged stocks.
 - Probe Info.plist ID remains `com.puissantsy.pvz2forios`; specific compile+plist marker is required. KEYOBS's app ID and sandbox are not reused. Research crash laboratory is **not** included.
-- Native hook for future in-game key awards is **not** migrated by this patch: this stage covers the physically verified *already-saved* Egypt key conversion at next clean launch only. Do not claim feature parity with research until reward handling is reviewed separately.
+- The native reward hook is now staged as a separate opt-in flag in the **unchanged V151** runtime: the single AddWorldKeys+8 MOV r10,r0 site is signature-checked and replaced by a guarded SVC only when explicitly authorized. The recovered KEYOBS policy is restricted to Egypt, checks all five saved gate events before tail-calling the exact original SetCoins native function for 1–4 new keys. Missing/unsafe state falls back to native key award. Pirate/Cowboy/Future/Dark remain untouched. Physical validation is pending on Probe; no new grant tested yet.
 
 ## Source changes
 `platform/ios/src/main.mm`, `platform/ios/src/keyconv_prelaunch_ios_adapter.mm/.hpp`, `platform/ios/CMakeLists.txt`, `platform/ios/Info.plist.in`, the five unmodified transaction/RTON headers from KEYOBS and related synthetic C++ test files. Use exact historical Dynarmic c97c525e via its proven staged source/patch; do not modify allocator or guest store entitlement hooks. GitHub policy runs Linux/macOS synthetic interruption tests and iOS arm64 object compile **without producing an IPA**. Build workflow only on an explicit marker after ALL checks.
@@ -28,3 +28,12 @@ Original KEYOBS was research-only and blocked in the production bundle via marke
 6. Remove token to disable experiment. Never import KEYOBS's active save or overwrite a real 10010-coins profile as a fixture.
 
 STATUS: Source integration staged; NOT built as IPA, NOT validated on iPad, NOT merged into working Probe. The reported KEYOBS success does not establish production safety.
+
+
+## Native one-off hook safety gate
+- Explicit opt-in is mandatory; the exact Probe startup token gates both saved-stock conversion and new in-game awards.
+- V151 full feature path remains selected, including the v170 boutique/entitlement feature code; do not substitute research diagnostic modes.
+- Program bytes at AddWorldKeys+8 must match the exact original ARM `MOV r10,r0` signature; mismatch fails before any guest execution when enabled.
+- The handler emulates the original instruction if any precondition fails, including mismatched frame/LR, missing profile, unknown world, closed gates or currency overflow.
+- On a read-only RTON preview incompatibility, live reward interception is disabled for that entire launch; no writes were performed by the attempted prelaunch migration.
+- The historical KEYOBS runtime decoder/policy tests were copied into this branch and added to the no-IPA CI matrix.
