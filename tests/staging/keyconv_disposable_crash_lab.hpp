@@ -196,6 +196,31 @@ inline std::array<std::string,2> LiveImages(const fs::path& support) {
     return {tx::ReadRegular(live/"pp.dat",tx::MaxImage),
             tx::ReadRegular(live/"snapshot2.dat",tx::MaxImage)};
 }
+// The existing iPad laboratory stays in place after a successful rollback.
+// Re-arm ONLY a fully verified old-old synthetic state. Preserve both files
+// byte-for-byte, all prior audit evidence, and the live game tree. Deny
+// re-arm after a committed NEW_NEW recovery or unresolved journal.
+inline bool PrepareOrRearm(const fs::path& support) {
+    if(!Exists(support)) {
+        Prepare(support);
+        return false;
+    }
+    Validate(support);
+    const auto root=Root(support);
+    tx::Require(!tx::Present(root/tx::Journal) &&
+                !tx::Present(root/tx::Done),
+                "Crash lab journal must be recovered before re-arm");
+    tx::Require(LiveImages(support)==Originals(),
+                "Only original synthetic OLD_OLD pair may re-arm");
+    const auto audit=AuditText(support);
+    tx::Require(audit.starts_with("PREPARED_ONLY_SYNTHETIC\n") &&
+                audit.find("RECOVERY_ROLLED_BACK\n")!=std::string::npos &&
+                audit.ends_with("VERIFIED_OLD_OLD\n"),
+                "Missing complete previous synthetic rollback receipt");
+    Audit(root,"REARMED_VERIFIED_OLD_OLD");
+    return true;
+}
+
 inline Report RecoverAndVerify(const fs::path& support) {
     Report result;
     if(!Exists(support))return result;
