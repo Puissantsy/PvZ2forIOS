@@ -171,3 +171,43 @@ données utilisateur. Ne pas remplacer la progression personnelle de
 puis tester le parcours JIT avant écriture + auto-conversion après
 initialisation sur une **copie jetable**. Ne pas prétendre que le
 précédent résultat démontre la persistance au lancement du jeu.
+
+
+## Build KeyAuto corrigé — 14 octobre 2026
+
+**Une seule compilation iPadOS arm64 complète** après corrections JIT/restore,
+refus pré-écriture et diagnostics :
+[GitHub Actions #38567956344](https://github.com/Puissantsy/PvZ2forIOS/actions/runs/38567956344)
+**SUCCESS**, commit binaire `22db7ed4845f2ed77f191ade1f3f36dd913f43e0`.
+Artefact `PvZ2forIOS-KeyAuto-unsigned` (ID GitHub `11896063545`),
+archive ZIP de 1 453 808 octets avec IPA non signée + `.ipa.sha256`.
+Hash de l'archive ZIP ≠ hash de l'IPA intérieure.
+
+Le log de compilation contient `BUILD SUCCEEDED`,
+`CFBundleIdentifier=com.puissantsy.pvz2forios.keyobs`,
+`PVZ2KeyconvResearchBuild=1` et le nom `PvZ2 Keys Research` ;
+aucune erreur de compilation. Les 4 jobs Linux/macOS/Apple de sécurité
+étaient verts : [#38567597827](https://github.com/Puissantsy/PvZ2forIOS/actions/runs/38567597827).
+
+**Installation** : mettre à jour KEYOBS avec la même signature,
+**sans désinstaller et sans effacer la sandbox**, pour conserver
+`PvZ2Backups` et le journal du laboratoire 4/4. Le jeton
+`PvZ2AutoKeyconvRequest.txt` peut rester en place pour le test sur
+la copie égyptienne jetable. En cas de demande de restauration de
+`PvZ2RestoreInbox` après JIT, choisir `Ignorer` pour conserver les
+modifications converties. `Restaurer` doit être réservé à une
+copie jetable choisie explicitement qui doit remplacer la sauvegarde live.
+
+Avec la nouvelle IPA, `awaiting_JIT no_writes=YES` doit précéder
+tout `completed=YES` si le débogueur n'était pas attaché.
+Le refus d'un PREVIEW purement en mémoire doit proposer
+`Lancer SANS convertir` avec code stable ; un vrai journal
+interrompu continue de bloquer le démarrage (pas de bypass).
+Comparer clés/pièces et portes réelles en jeu, redémarrer et
+vérifier absence de deuxième crédit.
+
+**Statut :** build réussi en CI mais **cette version corrigée n'a pas
+encore été testée sur le vrai iPad**. La conversion initiale
+avait terminé à 14:40:57 avant que l'iPad redemande le JIT puis
+restaure une autre sauvegarde, ce qui ne démontre pas la
+persistance du résultat sur ce scénario.
