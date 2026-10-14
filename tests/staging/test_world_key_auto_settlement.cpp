@@ -167,6 +167,74 @@ int main(){
         const auto zero=ak::SettleEligible(s.root,true,true,true,true);
         Check(zero.profiles==0,"Second subsequent launch double-credited");
     }
+    // A v165 snapshot can be internally valid and still fail the
+    // strict KEYCONV pair preview. No transaction may be started then.
+    {
+        Scratch s;
+        const auto before=s.Read("pp.dat");
+        const auto patched=pvz2_key_study::rton_native::ConvertEgypt(
+            s.Read("snapshot2.dat"),0);
+        Check(patched.changed,"Synthetic mismatch fixture was not generated");
+        Write(tx::Working(s.root)/"snapshot2.dat",patched.data);
+        const auto fallback=s.Read("snapshot2.dat");
+        bool rejected=false;
+        try {
+            (void)ak::SettleEligible(s.root,true,true,true,true);
+        }catch(const ak::ReadOnlyPreviewError& e) {
+            rejected=e.code=="KEY_STOCKS_DIVERGE";
+        }
+        Check(rejected,"Divergent key stock did not report read-only category");
+        Check(s.Read("pp.dat")==before &&
+              s.Read("snapshot2.dat")==fallback,
+              "Failed preview changed real RTON pair");
+        Check(!tx::Present(s.root/tx::Journal) &&
+              !tx::Present(s.root/tx::Done),
+              "Readonly refusal created a journal");
+    }
+    {
+        Scratch s;
+        const auto before=s.Read("pp.dat");
+        // The second slot has an unopened gate in the fallback only.
+        Write(tx::Working(s.root)/"snapshot2.dat",Save({7750,490},false));
+        const auto fallback=s.Read("snapshot2.dat");
+        bool refused=false;
+        try {
+            (void)ak::SettleEligible(s.root,true,true,true,true);
+        }catch(const ak::ReadOnlyPreviewError& e) {
+            refused=e.code=="GATE_STATES_DIVERGE";
+        }
+        Check(refused,"Gate disagreement was not classified pre-write");
+        Check(s.Read("pp.dat")==before && s.Read("snapshot2.dat")==fallback,
+              "Gate mismatch changed original saves");
+        Check(!tx::Present(s.root/tx::Journal),"Readonly mismatch left a journal");
+    }
+    {
+        Scratch s;
+        fs::create_directory(s.root/tx::Journal);
+        bool fatal=false;
+        try {
+            (void)ak::SettleEligible(s.root,true,true,true,true);
+        }catch(const ak::ReadOnlyPreviewError&) {
+            throw std::runtime_error("Unsafe pending journal misclassified readonly");
+        }catch(const tx::Conflict&) {fatal=true;}
+        Check(fatal,"Pending journal must remain hard-blocked");
+    }
+    {
+        Scratch s;
+        // A crash after the first profile checkpoint is never a safe
+        // preflight refusal; it needs the existing journal rollback.
+        bool fatal=false;
+        try {
+            (void)ak::SettleEligible(s.root,true,true,true,true,
+                                    tx::CrashAt::PrimaryInstalled,0);
+        }catch(const ak::ReadOnlyPreviewError&) {
+            throw std::runtime_error("Actual transaction mislabeled readonly");
+        }catch(const tx::Interrupted&) {fatal=true;}
+        Check(fatal && tx::Present(s.root/tx::Journal),
+              "Transaction interruption lost its fail-closed journal");
+        Check(tx::Recover(s.root,true)==tx::Recovery::RolledBack,
+              "Interrupted transaction was not recovered");
+    }
     std::cout<<"PASS: "<<assertions
              <<" auto KEYCONV SHA-256 journal assertions; profiles 2,"
              <<" closed gates, original other world keys, restart idempotence,"
