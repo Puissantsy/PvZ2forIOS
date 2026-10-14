@@ -2390,7 +2390,7 @@ void PvZ2HostNotifyDirectFrame(
     AppendPersistentLog(
         @"[KEYCONV PRELAUNCH] FAIL_CLOSED; guest launch prohibited");
     [self v130SetStatus:
-        @"KEYCONV : sauvegarde non vérifiée. Lancement bloqué."];
+        @"KEYCONV : démarrage protégé après erreur. Consulte le diagnostic."];
     UIAlertController *alert = [UIAlertController
         alertControllerWithTitle:@"KEYCONV — démarrage interrompu"
         message:(reason != nil ? reason :
@@ -2644,7 +2644,7 @@ void PvZ2HostNotifyDirectFrame(
             UIAlertController *alert = [UIAlertController
                 alertControllerWithTitle:@"Restaurer dans KEYOBS ?"
                 message:[NSString stringWithFormat:
-                    @"Copie de : %@\n\nSeules les données de PvZ2 Keys Research seront remplacées. Une copie de sécurité sera créée si KEYOBS contient déjà une progression. L'application PvZ2 principale reste intacte.",
+                    @"Copie de : %@\n\nSeules les données de PvZ2 Keys Research seront remplacées. Une copie de sécurité sera créée si KEYOBS contient déjà une progression. L'application PvZ2 principale reste intacte. ATTENTION : Restaurer remplace aussi les clés et pièces déjà converties dans KEYOBS. Après un redémarrage StikDebug/JIT, choisir Ignorer pour conserver la conversion précédente.",
                     snapshot.lastPathComponent]
                 preferredStyle:UIAlertControllerStyleAlert];
             __weak ProbeViewController *weakSelf = self;
