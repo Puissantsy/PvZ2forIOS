@@ -1,0 +1,9 @@
+PVZ2 PROBE KEYCONV EGYPT — SINGLE IPA GATE
+Date: 2026-10-14
+Reviewed source HEAD: 832a02975d92bca07afe51bad8daf6b2036c53f7
+Base: v170-targeted-global-isolation-staging
+JIT: historical c97c525e, verified tree fd5b3ab28294
+Scope: only saved and newly awarded Egypt keys, only after opt-in
+No data erase; Probe CFBundleIdentifier unchanged
+CI: 38603022793 full policy success; 38603022756 v170 PASS; 38603481607 iOS C++ full syntax PASS
+Unique packaging request after grouped changes. iPad still required.
