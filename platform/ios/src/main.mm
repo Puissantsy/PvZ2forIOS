@@ -2504,7 +2504,7 @@ void PvZ2HostNotifyDirectFrame(
             if(strongSelf)[strongSelf v130KeyconvLabContinueGame];
         }]];
     [menu addAction:[UIAlertAction
-        actionWithTitle:@"Préparer et choisir un crash factice"
+        actionWithTitle:@"Préparer / reprendre le laboratoire factice"
         style:UIAlertActionStyleDefault
         handler:^(__unused UIAlertAction *action) {
             __strong ProbeViewController *strongSelf=weakSelf;
@@ -2521,7 +2521,7 @@ void PvZ2HostNotifyDirectFrame(
             UIAlertController *failed=[UIAlertController
                 alertControllerWithTitle:@"Laboratoire non préparé"
                 message:error.localizedDescription ?:
-                    @"Un laboratoire existe peut-être déjà. Ne recrée pas ses fichiers."
+                    @"Le laboratoire doit être récupéré en état OLD_OLD. Aucune donnée ne sera effacée."
                 preferredStyle:UIAlertControllerStyleAlert];
             [failed addAction:[UIAlertAction actionWithTitle:@"Continuer le jeu"
                 style:UIAlertActionStyleCancel
