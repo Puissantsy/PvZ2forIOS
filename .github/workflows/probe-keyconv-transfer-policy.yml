@@ -41,6 +41,7 @@ jobs:
         run: |
           set -euo pipefail
           DYN_SHA=c97c525ec1432b1e5404ebf091027738005ec168
+          mkdir -p .deps
           git clone https://github.com/lioncash/dynarmic.git .deps/dynarmic
           (
             cd .deps/dynarmic
