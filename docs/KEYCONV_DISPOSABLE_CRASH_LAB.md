@@ -107,3 +107,15 @@ VERIFIED_OLD_OLD
 **PASS sur vrai iPadOS pour ce scénario :** la reprise du journal a effectué un rollback et les deux fichiers RTON synthétiques ont été vérifiés dans leur état initial. `ARM_PRIMARY_RENAMED` est l'étiquette du checkpoint demandé, écrite avant l'injection ; la preuve du résultat de reprise se trouve dans `RECOVERY_ROLLED_BACK` et `VERIFIED_OLD_OLD`. Les sauvegardes réelles du jeu ne figurent pas dans ce laboratoire. Ce test n'est pas une panne d'alimentation.
 
 **Limitation de l'IPA testée :** le répertoire synthétique est volontairement conservé après récupération et la commande `Prepare` refuse de le remplacer. Ne pas demander à l'utilisateur de lancer les trois autres scénarios avec la même IPA ni de supprimer son application ou ses données pour recommencer. Un futur réarmement devra vérifier l'état `OLD_OLD`, conserver l'audit et ne pas toucher aux vraies sauvegardes, avant un seul nouveau build soigneusement testé.
+
+## Réarmement sûr du laboratoire existant
+
+Le premier test sur iPad a été validé avec les cinq lignes d'audit : `PREPARED_ONLY_SYNTHETIC`, `USER_CONFIRMED_SYNTHETIC_CRASH`, `ARM_PRIMARY_RENAMED`, `RECOVERY_ROLLED_BACK`, `VERIFIED_OLD_OLD`.
+
+Le laboratoire ne supprime ni ses RTON synthétiques ni son historique après récupération. Une nouvelle méthode `PrepareOrRearm` permet donc de reprendre la **même expérience** seulement si les deux RTON sont exactement égaux à leurs originaux synthétiques (`OLD_OLD`), le journal actif et `.done` sont absents, le marqueur et le registre factices sont intacts, et l'audit commence par `PREPARED_ONLY_SYNTHETIC`, contient `RECOVERY_ROLLED_BACK` et se termine par `VERIFIED_OLD_OLD`. Le réarmement ajoute uniquement `REARMED_VERIFIED_OLD_OLD` à l'audit ; aucune donnée préexistante du jeu ou du laboratoire n'est supprimée.
+
+Le nouveau bouton s'appelle **Préparer / reprendre le laboratoire factice**. S'il reste un journal incohérent ou si le résultat est déjà `NEW_NEW`, il refuse l'opération, sans réparation forcée. Les tests CI enchaînent les quatre étapes et vérifient la conservation des anciennes lignes.
+
+Après la future installation de l'IPA intégrant ce réarmement, **dans la même application KEYOBS sans désinstallation ni effacement de données** : garder le fichier de demande à la racine de Documents ; choisir successivement `Après snapshot2.dat factice`, puis `Après committed.tmp factice`, et **en dernier** `Après commit publié`. Pour chaque choix : confirmer la phrase, constater la fermeture attendue, rouvrir, lire/copier l'audit complet, vérifier la progression du jeu inchangée. Résultat attendu : `RECOVERY_ROLLED_BACK` + `VERIFIED_OLD_OLD` pour les deux premières étapes ; `RECOVERY_COMMITTED` + `VERIFIED_NEW_NEW` pour la dernière. Aucun redémarrage ne doit doubler un crédit du vrai jeu.
+
+Cette version du laboratoire reste distincte de la validation antérieure de la conversion automatique et ne prouve pas la durabilité lors d'une coupure d'alimentation iPad.
