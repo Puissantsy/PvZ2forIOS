@@ -5,6 +5,8 @@ on:
     paths:
       - "tests/staging/world_key_auto_batch.hpp"
       - "tests/staging/test_world_key_auto_batch.cpp"
+      - "tests/staging/world_key_auto_settlement.hpp"
+      - "tests/staging/test_world_key_auto_settlement.cpp"
       - ".github/workflows/keyconv-auto-policy.yml"
   workflow_dispatch:
 permissions:
