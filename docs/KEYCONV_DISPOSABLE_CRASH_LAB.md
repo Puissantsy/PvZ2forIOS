@@ -222,3 +222,52 @@ VERIFIED_OLD_OLD
 **PASS sur vrai iPad (3/4)** : une fois les images installées et `committed.tmp` écrit, mais **avant la publication de `committed`**, la récupération a annulé la transaction puis vérifié les deux fichiers RTON synthétiques `OLD_OLD`. Le précédent audit, les deux premiers tests et les lignes de récupération sans journal sont toujours conservés. `ARM_COMMIT_TEMP` est l'étiquette de la phase demandée, tandis que `RECOVERY_ROLLED_BACK` / `VERIFIED_OLD_OLD` confirment la reprise effective. La conservation de la progression réelle du jeu n'est pas établie par ce log synthétique seul.
 
 **Dernier checkpoint restant : « Après commit publié »**, à exécuter **en dernier** avec la même IPA et l'ancien laboratoire réarmé. Résultat attendu : `REARMED_VERIFIED_OLD_OLD` puis `USER_CONFIRMED_SYNTHETIC_CRASH`, `ARM_COMMIT_PUBLISHED`, `RECOVERY_COMMITTED` et `VERIFIED_NEW_NEW`. Après ce résultat, le réarmement sera volontairement refusé. Aucun nouveau build nécessaire. Ce protocole reste limité à un `SIGKILL` de processus, et ne simule pas une coupure d'alimentation iPadOS/APFS.
+
+## Quatrième vrai test iPad — commit publié conservé (PASS 4/4)
+
+Le 14 octobre 2026, l'utilisateur a exécuté **« Après commit publié »**, quatrième et dernier scénario, sur la même IPA KEYOBS et dans le même laboratoire synthétique (les trois historiques précédents restant présents). L'audit complet transmis est :
+
+```text
+PREPARED_ONLY_SYNTHETIC
+USER_CONFIRMED_SYNTHETIC_CRASH
+ARM_PRIMARY_RENAMED
+RECOVERY_ROLLED_BACK
+VERIFIED_OLD_OLD
+RECOVERY_NO_JOURNAL
+VERIFIED_OLD_OLD
+RECOVERY_NO_JOURNAL
+VERIFIED_OLD_OLD
+RECOVERY_NO_JOURNAL
+VERIFIED_OLD_OLD
+RECOVERY_NO_JOURNAL
+VERIFIED_OLD_OLD
+RECOVERY_NO_JOURNAL
+VERIFIED_OLD_OLD
+RECOVERY_NO_JOURNAL
+VERIFIED_OLD_OLD
+REARMED_VERIFIED_OLD_OLD
+USER_CONFIRMED_SYNTHETIC_CRASH
+ARM_FALLBACK_RENAMED
+RECOVERY_ROLLED_BACK
+VERIFIED_OLD_OLD
+RECOVERY_NO_JOURNAL
+VERIFIED_OLD_OLD
+REARMED_VERIFIED_OLD_OLD
+USER_CONFIRMED_SYNTHETIC_CRASH
+ARM_COMMIT_TEMP
+RECOVERY_ROLLED_BACK
+VERIFIED_OLD_OLD
+RECOVERY_NO_JOURNAL
+VERIFIED_OLD_OLD
+REARMED_VERIFIED_OLD_OLD
+USER_CONFIRMED_SYNTHETIC_CRASH
+ARM_COMMIT_PUBLISHED
+RECOVERY_COMMITTED
+VERIFIED_NEW_NEW
+```
+
+**PASS sur vrai iPad (4/4 points d'interruption)**. Cette fois, la transaction factice a été interrompue **après publication du marqueur de commit**. Au lancement suivant, la récupération `RECOVERY_COMMITTED` a conservé les nouvelles versions des deux images et vérifié la paire exacte `VERIFIED_NEW_NEW`, contrairement aux trois scénarios précédents qui avaient produit `RECOVERY_ROLLED_BACK` et `VERIFIED_OLD_OLD`. L'historique append-only contient les quatre checkpoints. L'étiquette `ARM_COMMIT_PUBLISHED` enregistre la demande du point d'injection, et le verdict de reprise repose sur les lignes `RECOVERY_COMMITTED` et `VERIFIED_NEW_NEW`.
+
+Le laboratoire est désormais **en état NEW_NEW et ne doit pas être réarmé** ; le contrôle de refus a réussi dans les tests Linux/macOS, mais aucun clic de refus sur le véritable iPad n'a été fourni. Ne pas supprimer l'application ni réinitialiser la sauvegarde pour refaire des expériences déjà validées.
+
+**Frontière de preuve :** ces quatre expériences portent uniquement sur les deux RTON synthétiques et un `SIGKILL` du processus iOS ; elles ne valident pas une coupure d'alimentation ni une perte de durabilité lors d'un `fsync` APFS. Elles ne vérifient pas non plus, à elles seules, les valeurs des clés/PvZCoins du profil réel après cette série. L'ancien test séparé avait confirmé la conversion native + sa persistance lors d'un redémarrage normal. Aucun nouveau build IPA n'a été réalisé pour le quatrième test.
