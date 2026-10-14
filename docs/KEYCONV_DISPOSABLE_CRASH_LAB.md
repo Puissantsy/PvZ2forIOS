@@ -128,3 +128,57 @@ Cette version du laboratoire reste distincte de la validation antérieure de la 
 **Plan iPad :** signer et installer en **mise à jour** de KEYOBS, **sans désinstaller ni nettoyer Documents ou Application Support**. Conserver l'ancienne IPA et les sauvegardes de sécurité à part. Garder `PvZ2CrashLabRequest.txt` à la racine de Documents. Au redémarrage, la récupération du laboratoire se fait avant le jeu ; choisir le bouton **Préparer / reprendre le laboratoire factice**, puis **Après snapshot2.dat factice**. Saisir la même phrase explicite, accepter le SIGKILL, redémarrer puis partager le rapport complet. Résultat attendu pour ce deuxième test : ligne `REARMED_VERIFIED_OLD_OLD`, ligne `ARM_FALLBACK_RENAMED`, puis `RECOVERY_ROLLED_BACK` et `VERIFIED_OLD_OLD`. Ne pas faire `Après commit publié` avant les scénarios non committés : celui-ci produit `NEW_NEW` et verrouille la réutilisation.
 
 **Limite :** aucun test sur le vrai iPad avec cette nouvelle IPA n'a encore été réalisé ; les validations de construction/CI ne prouvent pas la reprise iPad de la nouvelle branche. Signer avec la même méthode et identité pour conserver la sandbox. Si l'outil propose de supprimer KEYOBS pour installer la mise à jour, **ne pas accepter** : cela effacerait le laboratoire et ses preuves. Le test de coupure d'alimentation/APFS reste hors champ.
+
+
+## Deuxième vrai test iPad — fallback et réarmement (PASS)
+
+Le 14 octobre 2026, l'utilisateur a installé en mise à jour l'IPA avec réarmement
+[Actions #38534051726](https://github.com/Puissantsy/PvZ2forIOS/actions/runs/38534051726)
+et exécuté le **deuxième** test d'interruption volontaire : **Après snapshot2.dat factice**.
+Le rapport transmis directement dans le chat est reproduit intégralement ci-dessous :
+
+```text
+PREPARED_ONLY_SYNTHETIC
+USER_CONFIRMED_SYNTHETIC_CRASH
+ARM_PRIMARY_RENAMED
+RECOVERY_ROLLED_BACK
+VERIFIED_OLD_OLD
+RECOVERY_NO_JOURNAL
+VERIFIED_OLD_OLD
+RECOVERY_NO_JOURNAL
+VERIFIED_OLD_OLD
+RECOVERY_NO_JOURNAL
+VERIFIED_OLD_OLD
+RECOVERY_NO_JOURNAL
+VERIFIED_OLD_OLD
+RECOVERY_NO_JOURNAL
+VERIFIED_OLD_OLD
+REARMED_VERIFIED_OLD_OLD
+USER_CONFIRMED_SYNTHETIC_CRASH
+ARM_FALLBACK_RENAMED
+RECOVERY_ROLLED_BACK
+VERIFIED_OLD_OLD
+```
+
+**PASS sur vrai iPad** : le laboratoire existant a été réarmé **sans
+effacement de son ancien historique**, a enregistré la demande du
+checkpoint fallback, puis au lancement suivant a exécuté
+`RECOVERY_ROLLED_BACK` et vérifié les deux RTON factices en
+`VERIFIED_OLD_OLD`. Les cinq paires intermédiaires
+`RECOVERY_NO_JOURNAL` / `VERIFIED_OLD_OLD` correspondent à des
+récupérations sans journal actif ; ce n'est ni une erreur ni un double crédit.
+L'étiquette `ARM_FALLBACK_RENAMED` précède le SIGKILL ; l'état vérifié
+à la reprise fournit la preuve de restauration cohérente.
+
+**Statut d'acceptation physique : 2/4 checkpoints PASS.** Il reste
+`Après committed.tmp factice` (rollback `OLD_OLD` attendu) puis
+`Après commit publié` (commit `NEW_NEW` attendu), à exécuter en
+dernier car le laboratoire refusera ensuite tout réarmement.
+Aucun nouveau build n'est nécessaire pour ces deux tests dans
+l'IPA déjà installée. Le comportement du vrai jeu (clés/pièces) n'est
+pas mesuré par ce rapport synthétique ; conserver la sauvegarde réelle
+et confirmer séparément son état si nécessaire.
+
+Ces deux scénarios confirment des interruptions de processus et ne
+simulent pas une panne matérielle ou une perte d'alimentation pendant
+un `fsync` APFS.
