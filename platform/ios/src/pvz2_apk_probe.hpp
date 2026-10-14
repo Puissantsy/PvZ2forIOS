@@ -751,4 +751,5 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
     PvZ2ProbeProgress progress = {},
     PvZ2DiagnosticMode diagnostic_mode =
         PvZ2DiagnosticMode::PassiveRegistry,
-    PvZ2LiveFrameCallback live_frame = {});
+    PvZ2LiveFrameCallback live_frame = {},
+    bool keyconv_egypt_reward_opt_in = false);
