@@ -1,0 +1,24 @@
+name: KEYCONV automatic batch planning (NO IPA)
+on:
+  push:
+    branches: [research/keyconv-auto-batch]
+    paths:
+      - "tests/staging/world_key_auto_batch.hpp"
+      - "tests/staging/test_world_key_auto_batch.cpp"
+      - ".github/workflows/keyconv-auto-policy.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  policy:
+    strategy:
+      matrix: {os: [ubuntu-latest, macos-15]}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Strict C++20 multi-profile batch, original RTON semantic-diff and idempotence
+        run: |
+          clang++ -std=c++20 -O1 -Wall -Wextra -Werror -pedantic -Itests/staging \
+            tests/staging/test_world_key_auto_batch.cpp \
+            -o /tmp/pvz2-auto-keyconv
+          /tmp/pvz2-auto-keyconv
