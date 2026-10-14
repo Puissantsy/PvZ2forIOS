@@ -727,8 +727,7 @@ https://github.com/Puissantsy/PvZ2forIOS/actions/runs/38359330455 —
 journal tests, iPadOS arm64 objects and exact Dynarmic source check.
 
 The previous real-iPad native conversion + cold-restart success remains
-**PASS**. Physical iPad synthetic crash-lab recovery now **PASS (4/4 SIGKILL checkpoints, 2026-10-14)**; see the linked lab report. SIGKILL
-SIGKILL does not prove actual power-cut durability.
+**PASS**. Physical iPad synthetic crash-lab recovery now **PASS (4/4 SIGKILL checkpoints, 2026-10-14)**; see the linked lab report. SIGKILL does not prove actual power-cut durability.
 
 ## Final physical iPad KEYCONV crash-lab acceptance — 2026-10-14
 
