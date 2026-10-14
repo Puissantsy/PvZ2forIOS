@@ -95,3 +95,11 @@ seulement APRÈS preuve iPad sur la version auto de KEYOBS.
 Après la clôture de KEYCONV, la priorité choisie par l'utilisateur est
 la performance en combat avec beaucoup de plantes/projectiles/zombies,
 en particulier aux vitesses x1.5 et x2.
+
+## Première IPA automatique KEYOBS — build unique du 14 octobre 2026
+
+**Compilation iPadOS arm64 SUCCESS** : [GitHub Actions #38555269276](https://github.com/Puissantsy/PvZ2forIOS/actions/runs/38555269276), commit exact `2b311afabb8f06aa0cc70cc15ace8e6c19f16722`. L'artefact `PvZ2forIOS-KeyAuto-unsigned` est disponible (ID GitHub `11890551010`) et contient l'IPA non signée et son fichier `.ipa.sha256`. Le digest `sha256:fbc5fca8b751f76c80933eeee9cb1b139ebe2a6d6f788fdd427fda9d90ca68ac` correspond **à l'archive d'artefact GitHub**, pas nécessairement aux octets de l'IPA intérieure. Vérifier le hash intérieur via le fichier fourni si besoin.
+
+Le log de build confirme `** BUILD SUCCEEDED **`, l'identité compilée `CFBundleIdentifier=com.puissantsy.pvz2forios.keyobs`, l'affichage `PvZ2 Keys Research` et les marqueurs `PVZ2KeyconvResearchBuild=1` et `PVZ2KeyconvOriginalIdentifier=com.puissantsy.pvz2forios.keyobs`. Aucune erreur de compilation. Les **4 jobs sans IPA** Linux/macOS/Apple sont verts : [#38555122869](https://github.com/Puissantsy/PvZ2forIOS/actions/runs/38555122869).
+
+**Statut : build prêt, AUTOMATISATION NON ENCORE VALIDÉE SUR LE VRAI IPAD.** Installer seulement comme mise à jour du KEYOBS de recherche, sans désinstaller ni effacer son conteneur et son audit de laboratoire 4/4. Le fichier d'activation `tools/PvZ2AutoKeyconvRequest.txt` doit être copié explicitement dans la racine Documents de KEYOBS sur une **sauvegarde jetable et non convertie**. Ne JAMAIS restaurer la sauvegarde utilisateur 10 010 pièces pour obtenir artificiellement une clé. Au lancement, sans le fichier, comportement manuel précédent inchangé ; avec le fichier et backup vérifié, tous les profils Egypt éligibles sont convertis avant le moteur. Vérifier le nombre exact de clés/pièces et un second démarrage sans crédit supplémentaire. La suite de l'intégration production n'intervient qu'après cette validation.
