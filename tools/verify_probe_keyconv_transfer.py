@@ -33,6 +33,10 @@ tests.update({
  'Bounded native gate event decoder': '#include "world_key_event_view.hpp"' in cpp,
  'Read-only incompatible state disables live hook': 'self.keyconvRewardOptIn=NO;' in main,
  'Opt-in before live interception': 'self.keyconvRewardOptIn=self.keyconvRecoveryWasClean' in main,
+ 'Always classify absent opt-in': 'OPT_IN_ABSENT conversion=DISABLED reward_hook=DISABLED' in main,
+ 'Always classify invalid token': 'OPT_IN_INVALID writes=NONE' in main,
+ 'Replay early KEYCONV logs after reset': main.index('ResetPersistentLog();') < main.index('build_marker=PROBE_KEYCONV_V1') and 'AppendPersistentLog(self.keyconvOptInStatus' in main,
+ 'No-op success preserved': 'self.keyconvPrelaunchResult=[NSString stringWithFormat:' in main and 'completed=YES profiles=%lu keys=%lu' in main,
 })
 for label,ok in tests.items():
  print(('PASS' if ok else 'FAIL')+': '+label)

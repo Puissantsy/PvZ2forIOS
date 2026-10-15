@@ -2336,6 +2336,9 @@ void PvZ2HostNotifyDirectFrame(
 @property(nonatomic, assign) BOOL keyconvAutoChecked;
 @property(nonatomic, assign) BOOL keyconvPromptActive;
 @property(nonatomic, assign) BOOL keyconvRewardOptIn;
+// Existing ResetPersistentLog() must never erase KEYCONV prelaunch evidence.
+@property(nonatomic, copy) NSString *keyconvOptInStatus;
+@property(nonatomic, copy) NSString *keyconvPrelaunchResult;
 - (void)v163OfferPendingRestore;
 - (void)v166OfferResetIntro;
 
@@ -2719,8 +2722,14 @@ void PvZ2HostNotifyDirectFrame(
         NSError *requestError=nil;
         const BOOL requested=PVZKeyconvAutoResearchRequested(&requestError);
         if (requestError != nil) {
-            AppendPersistentLog(@"[KEYCONV PROBE] invalid opt-in ignored; no writes");
-        } else if (requested) {
+            self.keyconvOptInStatus=@"[KEYCONV PROBE] OPT_IN_INVALID writes=NONE";
+            AppendPersistentLog(self.keyconvOptInStatus);
+        } else if (!requested) {
+            self.keyconvOptInStatus=@"[KEYCONV PROBE] OPT_IN_ABSENT conversion=DISABLED reward_hook=DISABLED";
+            AppendPersistentLog(self.keyconvOptInStatus);
+        } else {
+            self.keyconvOptInStatus=@"[KEYCONV PROBE] OPT_IN_PRESENT verification=PASS";
+            AppendPersistentLog(self.keyconvOptInStatus);
             // Enables the independently gated Egypt-only AddWorldKeys
             // conversion in V151 without changing the Probe's runtime mode.
             self.keyconvRewardOptIn=self.keyconvRecoveryWasClean;
@@ -2759,8 +2768,9 @@ void PvZ2HostNotifyDirectFrame(
                         self.keyconvRewardOptIn=NO;
                         NSString *reason=migrationError.userInfo[
                             @"KEYCONVReadOnlyPreviewReason"] ?: @"UNKNOWN";
-                        AppendPersistentLog([NSString stringWithFormat:
-                            @"[KEYCONV PROBE] READONLY_PREVIEW_REFUSED reason=%@ writes=NONE",reason]);
+                        self.keyconvPrelaunchResult=[NSString stringWithFormat:
+                            @"[KEYCONV PROBE] READONLY_PREVIEW_REFUSED reason=%@ writes=NONE",reason];
+                        AppendPersistentLog(self.keyconvPrelaunchResult);
                         self.keyconvPromptActive=YES;
                         UIAlertController *dialog=[UIAlertController
                             alertControllerWithTitle:@"KEYCONV — sauvegarde non compatible"
@@ -2795,10 +2805,11 @@ void PvZ2HostNotifyDirectFrame(
                         migrationError.localizedDescription ?: @"Transaction KEYCONV interrompue."];
                     return;
                 }
-                AppendPersistentLog([NSString stringWithFormat:
+                self.keyconvPrelaunchResult=[NSString stringWithFormat:
                     @"[KEYCONV PROBE] completed=YES profiles=%lu keys=%lu coinsDelta=%lu scope=EGYPT_ONLY",
                     (unsigned long)profiles,(unsigned long)keys,
-                    (unsigned long)(keys*1000u)]);
+                    (unsigned long)(keys*1000u)];
+                AppendPersistentLog(self.keyconvPrelaunchResult);
             }
         }
     }
@@ -3407,6 +3418,19 @@ void PvZ2HostNotifyDirectFrame(
         AppendPersistentLog(self.v165PrelaunchSnapshotStatus);
         self.v165PrelaunchSnapshotStatus = nil;
     }
+    // The legacy diagnostic-start reset formerly erased all KEYCONV
+    // prelaunch entries, making opt-in absence indistinguishable from a
+    // failed migration in exported iPad logs. Carry bounded status only;
+    // no raw save bytes, profile IDs or filesystem paths are duplicated.
+    AppendPersistentLog(@"[KEYCONV PROBE] build_marker=PROBE_KEYCONV_V1");
+    AppendPersistentLog(self.keyconvOptInStatus ?:
+        @"[KEYCONV PROBE] OPT_IN_NOT_CHECKED");
+    if (self.keyconvPrelaunchResult.length != 0u)
+        AppendPersistentLog(self.keyconvPrelaunchResult);
+    AppendPersistentLog([NSString stringWithFormat:
+        @"[KEYCONV PROBE] runtime_reward_hook=%@ recovery_clean=%@",
+        self.keyconvRewardOptIn ? @"ARMED" : @"DISABLED",
+        self.keyconvRecoveryWasClean ? @"YES" : @"NO"]);
 
     [self
         appendUI:
