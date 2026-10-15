@@ -1,11 +1,15 @@
-name: Build iOS JIT Probe
+name: Build PvZ2 Probe KEYCONV Egypt unsigned IPA
 
 on:
   workflow_dispatch:
+  # Research branch updates run policy+Apple SDK checks, not full IPA builds.
+  # A single explicitly dispatched IPA build or build-request marker is permitted after all gates pass.
   push:
+    # This research branch requires ONE explicit source-marker commit to build.
+    # Production main keeps its independent default-branch workflow intact.
+    branches: [integration/probe-keyconv-egypt]
     paths:
-      - "platform/ios/**"
-      - ".github/workflows/build-ios-probe.yml"
+      - "platform/ios/.probe-keyconv-build-request"
 
 permissions:
   contents: read
@@ -17,6 +21,79 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      # The upstream repository contains the SAME independently verified Git commit
+      # SHA+tree as the historical LiveContainer fork, now unavailable to CI.
+      # A successful checkout is cached under the exact proven SHA.
+      # On cache hits reset to the *unpatched* commit before applying the
+      # historical spinlock patch, preventing both drift and double-patching.
+      - name: Cache exact historical Dynarmic checkout
+        id: dynarmic-exact-source
+        uses: actions/cache@v4
+        with:
+          path: .deps/dynarmic
+          key: ${{ runner.os }}-pvz2-livecontainer-dynarmic-c97c525ec1432b1e5404ebf091027738005ec168-upstream-v2
+
+      - name: Checkout exact proven LiveContainer Dynarmic revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          DYN_URL="https://github.com/lioncash/dynarmic.git"
+          DYN_SHA="c97c525ec1432b1e5404ebf091027738005ec168"
+          if [ ! -d .deps/dynarmic/.git ]; then
+            rm -rf .deps/dynarmic
+            mkdir -p .deps
+            GIT_TERMINAL_PROMPT=0 git -c credential.helper= clone \
+              "$DYN_URL" .deps/dynarmic
+          else
+            echo "PVZ2_DYNARMIC_SOURCE_CACHE=HIT"
+          fi
+          (
+            cd .deps/dynarmic
+            test "$(git remote get-url origin)" = "$DYN_URL"
+            # Upstream still holds c97c, but its current cloned refs do not.
+            # Explicit fetch retrieves the verified historical Git object.
+            if ! git cat-file -e "$DYN_SHA^{commit}" 2>/dev/null; then
+              GIT_TERMINAL_PROMPT=0 git -c credential.helper= fetch origin "$DYN_SHA"
+            fi
+            git checkout --detach "$DYN_SHA"
+            git reset --hard "$DYN_SHA"
+            git submodule update --init --recursive
+            test "$(git rev-parse HEAD)" = "$DYN_SHA"
+          # A Git commit SHA also fixes its entire tree. Refuse unrelated forks.
+          test "$(git rev-parse HEAD^{tree})" = "fd5b3ab282948fcdacc202ee11ee6d7aec339125"
+          test ! -f .gitmodules
+            test -f src/dynarmic/interface/A32/a32.h
+            test -f src/dynarmic/interface/A32/config.h
+
+            # Match the already-proven KEYOBS/production dependency exactly:
+            # LiveContainer c97c525e plus the project's historical iOS spinlock
+            # patch. Do not patch its executable-memory allocator.
+            git apply --check "$GITHUB_WORKSPACE/platform/ios/patches/dynarmic-ios-nontxm.patch"
+            git apply "$GITHUB_WORKSPACE/platform/ios/patches/dynarmic-ios-nontxm.patch"
+
+            DUAL=externals/oaknut/include/oaknut/dual_code_block.hpp
+            grep -q 'm_xmem = (std::uint32_t\*)mmap(nullptr, size, PROT_READ | PROT_EXEC' "$DUAL"
+            grep -q 'vm_remap(mach_task_self(), &wmem' "$DUAL"
+            grep -q 'mprotect(m_wmem, size, PROT_READ | PROT_WRITE)' "$DUAL"
+            grep -q 'if (DeviceHasTXM())' "$DUAL"
+            grep -q 'JIT26PrepareRegion(m_xmem, m_size)' "$DUAL"
+
+            echo "DYNARMIC_HEAD=$(git rev-parse HEAD)"
+            echo "DYNARMIC_PVZ2_HISTORICAL_SOURCE=exact"
+            echo "DYNARMIC_PVZ2_SPINLOCK_PATCH=applied"
+          )
+          echo "PVZ2_DYNARMIC_SOURCE_DIR=$GITHUB_WORKSPACE/.deps/dynarmic" >> "$GITHUB_ENV"
+
+      - name: Check source provenance for reusable cache
+        run: |
+          test "$(git -C .deps/dynarmic rev-parse HEAD)" = "c97c525ec1432b1e5404ebf091027738005ec168"
+          test "$(git -C .deps/dynarmic rev-parse HEAD^{tree})" = "fd5b3ab282948fcdacc202ee11ee6d7aec339125"
+          echo "PVZ2_DYNARMIC_CACHE_KEY=exact-c97c525e-tree-fd5b3ab28294"
+
+
+      - name: Verify KEYCONV historical Dynarmic wiring
+        run: python3 tools/verify_probe_dynarmic_compat.py
 
       - name: Show toolchain
         run: |
@@ -35,6 +112,7 @@ jobs:
             -DCMAKE_OSX_ARCHITECTURES=arm64 \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+            -DPVZ2_DYNARMIC_SOURCE_DIR="$PVZ2_DYNARMIC_SOURCE_DIR" \
             -DBoost_INCLUDE_DIR="$(brew --prefix boost)/include"
 
       - name: Build unsigned arm64 app
@@ -54,6 +132,19 @@ jobs:
           echo "APP=$APP" >> "$GITHUB_ENV"
           file "$APP/PvZ2forIOS"
           plutil -p "$APP/Info.plist"
+          # Probe/KEYOBS share the executable name but must NEVER share
+          # bundle identity, application sandbox or opt-in activation marker.
+          python3 - "$APP/Info.plist" <<'PY'
+          import plistlib,sys
+          with open(sys.argv[1],"rb") as file:
+              p=plistlib.load(file)
+          assert p["CFBundleIdentifier"]=="com.puissantsy.pvz2forios"
+          assert p["CFBundleDisplayName"]=="PvZ2forIOS Probe"
+          assert p.get("PVZ2KeyconvProbeBuild") is True
+          assert p.get("PVZ2KeyconvOriginalIdentifier")=="com.puissantsy.pvz2forios"
+          assert "PVZ2KeyconvResearchBuild" not in p
+          print("PASS: signed metadata identifies the ORIGINAL PROBE, not KEYOBS")
+          PY
 
       - name: Package unsigned IPA
         run: |
@@ -62,15 +153,15 @@ jobs:
           cp -R "$APP" package/Payload/PvZ2forIOS.app
           (
             cd package
-            zip -qry ../PvZ2forIOS-v170-OfflineGlobal-unsigned.ipa Payload
+            zip -qry ../PvZ2forIOS-Probe-Keyconv-unsigned.ipa Payload
           )
-          shasum -a 256 PvZ2forIOS-v170-OfflineGlobal-unsigned.ipa | tee PvZ2forIOS-v170-OfflineGlobal-unsigned.ipa.sha256
+          shasum -a 256 PvZ2forIOS-Probe-Keyconv-unsigned.ipa | tee PvZ2forIOS-Probe-Keyconv-unsigned.ipa.sha256
 
       - name: Upload unsigned IPA
         uses: actions/upload-artifact@v4
         with:
-          name: PvZ2forIOS-v170-OfflineGlobal-unsigned
+          name: PvZ2forIOS-Probe-Keyconv-unsigned
           path: |
-            PvZ2forIOS-v170-OfflineGlobal-unsigned.ipa
-            PvZ2forIOS-v170-OfflineGlobal-unsigned.ipa.sha256
+            PvZ2forIOS-Probe-Keyconv-unsigned.ipa
+            PvZ2forIOS-Probe-Keyconv-unsigned.ipa.sha256
           if-no-files-found: error

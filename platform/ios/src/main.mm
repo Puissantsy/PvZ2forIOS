@@ -4,6 +4,7 @@
 #import <OpenGLES/EAGLDrawable.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import "save_backups.hpp"
+#import "keyconv_prelaunch_ios_adapter.hpp"
 
 #include <dlfcn.h>
 #include <sys/types.h>
@@ -2328,6 +2329,16 @@ void PvZ2HostNotifyDirectFrame(
     BOOL v166ResetFailurePaused;
 @property(nonatomic, copy)
     NSString *v166ResetLogStatus;
+// Egypt-only prelaunch KEYCONV; disabled unless an explicit Probe token exists.
+@property(nonatomic, assign) BOOL keyconvRecoveryChecked;
+@property(nonatomic, assign) BOOL keyconvRecoveryWasClean;
+@property(nonatomic, assign) BOOL keyconvFatalBlocked;
+@property(nonatomic, assign) BOOL keyconvAutoChecked;
+@property(nonatomic, assign) BOOL keyconvPromptActive;
+@property(nonatomic, assign) BOOL keyconvRewardOptIn;
+// Existing ResetPersistentLog() must never erase KEYCONV prelaunch evidence.
+@property(nonatomic, copy) NSString *keyconvOptInStatus;
+@property(nonatomic, copy) NSString *keyconvPrelaunchResult;
 - (void)v163OfferPendingRestore;
 - (void)v166OfferResetIntro;
 
@@ -2456,7 +2467,7 @@ void PvZ2HostNotifyDirectFrame(
     UIAlertController *alert = [UIAlertController
         alertControllerWithTitle:@"Restaurer une sauvegarde ?"
         message:[NSString stringWithFormat:
-            @"Copie détectée dans PvZ2RestoreInbox : %@. Avant toute modification, la sauvegarde actuelle sera protégée.",
+            @"Copie détectée dans PvZ2RestoreInbox : %@. Avant toute modification, la sauvegarde actuelle sera protégée. ATTENTION : restaurer remplace aussi les clés et pièces précédemment converties. Après un relancement StikDebug/JIT, choisis Conserver la partie actuelle si tu ne veux pas revenir à un ancien état.",
             candidate.lastPathComponent]
         preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"Conserver la partie actuelle"
@@ -2654,9 +2665,39 @@ void PvZ2HostNotifyDirectFrame(
         didPickDocumentsAtURLs:@[apk, obb]];
 }
 
+// Never let V128 load a potentially partially settled save.
+- (void)v130KeyconvStopLaunch:(NSString *)reason {
+    if (self.keyconvFatalBlocked) return;
+    self.keyconvFatalBlocked=YES;
+    AppendPersistentLog(@"[KEYCONV PROBE] FAIL_CLOSED; guest launch prohibited");
+    [self v130SetStatus:@"KEYCONV : démarrage protégé après erreur."];
+    UIAlertController *alert=[UIAlertController
+        alertControllerWithTitle:@"KEYCONV — lancement protégé"
+        message:reason ?: @"Une transaction ou sa récupération nécessite une vérification. Sauvegardes conservées."
+        preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Fermer"
+        style:UIAlertActionStyleCancel handler:nil]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
 - (void)v130ContinueLaunch {
-    if (self.v130LaunchStarted || self.jniRunning) {
-        return;
+    if (self.v130LaunchStarted || self.jniRunning ||
+        self.keyconvPromptActive || self.keyconvFatalBlocked) return;
+
+    // Recovery is mandatory before restoration and even if the opt-in file
+    // has since been removed. No guest JNI/V128 is running at this point.
+    if (!self.keyconvRecoveryChecked) {
+        self.keyconvRecoveryChecked=YES;
+        NSError *err=nil;
+        PVZKeyconvRecoveryResult status=PVZKeyconvRecoverBeforeRestore(&err);
+        if (status==PVZKeyconvRecoveryFailed) {
+            [self v130KeyconvStopLaunch:err.localizedDescription]; return;
+        }
+        self.keyconvRecoveryWasClean=(status==PVZKeyconvRecoveryNoJournal);
+        if (!self.keyconvRecoveryWasClean)
+            AppendPersistentLog([NSString stringWithFormat:
+                @"[KEYCONV PROBE] recovered=%ld conversion_deferred_this_launch=YES",
+                (long)status]);
     }
 
     if (!self.v163RestorePromptShown) [self v163OfferPendingRestore];
@@ -2671,6 +2712,106 @@ void PvZ2HostNotifyDirectFrame(
     if (!IsDebugged()) {
         [self v130RequestJIT];
         return;
+    }
+
+    // The normal Probe is unaffected unless the exact, separate opt-in token
+    // exists in THIS app's Documents. Runtime import and JIT MUST be ready
+    // before any conversion; StikDebug can relaunch the process.
+    if (!self.keyconvAutoChecked) {
+        self.keyconvAutoChecked=YES;
+        NSError *requestError=nil;
+        const BOOL requested=PVZKeyconvAutoResearchRequested(&requestError);
+        if (requestError != nil) {
+            self.keyconvOptInStatus=@"[KEYCONV PROBE] OPT_IN_INVALID writes=NONE";
+            AppendPersistentLog(self.keyconvOptInStatus);
+        } else if (!requested) {
+            self.keyconvOptInStatus=@"[KEYCONV PROBE] OPT_IN_ABSENT conversion=DISABLED reward_hook=DISABLED";
+            AppendPersistentLog(self.keyconvOptInStatus);
+        } else {
+            self.keyconvOptInStatus=@"[KEYCONV PROBE] OPT_IN_PRESENT verification=PASS";
+            AppendPersistentLog(self.keyconvOptInStatus);
+            // Enables the independently gated Egypt-only AddWorldKeys
+            // conversion in V151 without changing the Probe's runtime mode.
+            self.keyconvRewardOptIn=self.keyconvRecoveryWasClean;
+            if (self.keyconvRewardOptIn)
+                AppendPersistentLog(@"[KEYCONV PROBE] native reward hook ARMED scope=EGYPT_ONLY");
+            if (!self.keyconvRecoveryWasClean) {
+                AppendPersistentLog(@"[KEYCONV PROBE] deferred after recovery; no conversion this launch");
+            } else if (!PVZSaveHasLocalSave()) {
+                AppendPersistentLog(@"[KEYCONV PROBE] no existing save; no conversion");
+            } else {
+                // Preserve the entire current v170 save set in a verified
+                // v165 snapshot before touching pp.dat or snapshot2.dat.
+                if (!self.v163PrelaunchSnapshotTaken) {
+                    self.v163PrelaunchSnapshotTaken=YES;
+                    NSError *backupError=nil;
+                    NSURL *backup=PVZSaveCreateSnapshot(@"prelaunch",&backupError);
+                    self.v165PrelaunchSnapshotStatus=
+                        V165SnapshotLogLine(@"prelaunch",backup,backupError);
+                    AppendPersistentLog(self.v165PrelaunchSnapshotStatus);
+                    if (backup==nil) {
+                        [self v130KeyconvStopLaunch:
+                            @"Sauvegarde de sécurité non vérifiée : aucune conversion effectuée."];
+                        return;
+                    }
+                }
+                NSUInteger profiles=0,keys=0;
+                NSError *migrationError=nil;
+                BOOL settled=PVZKeyconvSettleAllEligible(
+                    YES,YES,YES,&profiles,&keys,&migrationError);
+                if (!settled) {
+                    if ([migrationError.domain isEqualToString:
+                             @"PvZ2forIOS.Keyconv.Prelaunch"] &&
+                        migrationError.code==2) {
+                        // The same unresolved save inconsistency also
+                        // disables live award interception this launch.
+                        self.keyconvRewardOptIn=NO;
+                        NSString *reason=migrationError.userInfo[
+                            @"KEYCONVReadOnlyPreviewReason"] ?: @"UNKNOWN";
+                        self.keyconvPrelaunchResult=[NSString stringWithFormat:
+                            @"[KEYCONV PROBE] READONLY_PREVIEW_REFUSED reason=%@ writes=NONE",reason];
+                        AppendPersistentLog(self.keyconvPrelaunchResult);
+                        self.keyconvPromptActive=YES;
+                        UIAlertController *dialog=[UIAlertController
+                            alertControllerWithTitle:@"KEYCONV — sauvegarde non compatible"
+                            message:@"Des stocks, portes ou profils sont incohérents entre les sauvegardes. Aucune conversion n'a été écrite. Le jeu peut démarrer sans convertir."
+                            preferredStyle:UIAlertControllerStyleAlert];
+                        __weak ProbeViewController *weakSelf=self;
+                        [dialog addAction:[UIAlertAction
+                            actionWithTitle:@"Lancer SANS convertir"
+                            style:UIAlertActionStyleDefault
+                            handler:^(__unused UIAlertAction *action) {
+                                __strong ProbeViewController *strongSelf=weakSelf;
+                                if (!strongSelf) return;
+                                strongSelf.keyconvPromptActive=NO;
+                                AppendPersistentLog(@"[KEYCONV PROBE] READONLY_BYPASS_ACCEPTED no_conversion=YES");
+                                [strongSelf v130ContinueLaunch];
+                            }]];
+                        [dialog addAction:[UIAlertAction
+                            actionWithTitle:@"Rester bloqué"
+                            style:UIAlertActionStyleCancel
+                            handler:^(__unused UIAlertAction *action) {
+                                __strong ProbeViewController *strongSelf=weakSelf;
+                                if (!strongSelf) return;
+                                strongSelf.keyconvPromptActive=NO;
+                                [strongSelf v130KeyconvStopLaunch:
+                                    @"Incompatibilité KEYCONV avant transaction; fichiers préservés."];
+                            }]];
+                        [self presentViewController:dialog animated:YES completion:nil];
+                        return;
+                    }
+                    AppendPersistentLog(@"[KEYCONV PROBE] TRANSACTION_OR_FILE_FAILURE fail_closed=YES");
+                    [self v130KeyconvStopLaunch:
+                        migrationError.localizedDescription ?: @"Transaction KEYCONV interrompue."];
+                    return;
+                }
+                self.keyconvPrelaunchResult=[NSString stringWithFormat:
+                    @"[KEYCONV PROBE] completed=YES profiles=%lu keys=%lu coinsDelta=%lu scope=EGYPT_ONLY",
+                    (unsigned long)profiles,(unsigned long)keys,
+                    (unsigned long)(keys*1000u)];
+                AppendPersistentLog(self.keyconvPrelaunchResult);
+            }
+        }
     }
 
     [self v130StartStoredRuntime];
@@ -3277,6 +3418,19 @@ void PvZ2HostNotifyDirectFrame(
         AppendPersistentLog(self.v165PrelaunchSnapshotStatus);
         self.v165PrelaunchSnapshotStatus = nil;
     }
+    // The legacy diagnostic-start reset formerly erased all KEYCONV
+    // prelaunch entries, making opt-in absence indistinguishable from a
+    // failed migration in exported iPad logs. Carry bounded status only;
+    // no raw save bytes, profile IDs or filesystem paths are duplicated.
+    AppendPersistentLog(@"[KEYCONV PROBE] build_marker=PROBE_KEYCONV_V1");
+    AppendPersistentLog(self.keyconvOptInStatus ?:
+        @"[KEYCONV PROBE] OPT_IN_NOT_CHECKED");
+    if (self.keyconvPrelaunchResult.length != 0u)
+        AppendPersistentLog(self.keyconvPrelaunchResult);
+    AppendPersistentLog([NSString stringWithFormat:
+        @"[KEYCONV PROBE] runtime_reward_hook=%@ recovery_clean=%@",
+        self.keyconvRewardOptIn ? @"ARMED" : @"DISABLED",
+        self.keyconvRecoveryWasClean ? @"YES" : @"NO"]);
 
     [self
         appendUI:
@@ -3599,7 +3753,8 @@ void PvZ2HostNotifyDirectFrame(
                         }
                     },
                     diagnosticMode,
-                    liveFrameCallback);
+                    liveFrameCallback,
+                    self.keyconvRewardOptIn == YES);
 
             dispatch_async(
                 dispatch_get_main_queue(),

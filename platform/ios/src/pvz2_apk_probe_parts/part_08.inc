@@ -1482,6 +1482,18 @@ bool JniProbePrepareRuntime(
             return true;
         };
 
+    // Cold production Probe V151 reward hook; installs only when the
+    // current guest session is explicitly opt-in. Never alter base modes.
+    if (callbacks.WorldKeyConversionEnabled()) {
+        if (!patch_resource_native_miss(
+                0x0042ccd0u,0xe1a0a000u,kJniProbeSvcWorldKeyAddObserve)) {
+            error="KEYCONV Probe AddWorldKeys exact native signature mismatch.";
+            return false;
+        }
+        callbacks.AppendDiagnostic(
+            "KEYCONV PROBE reward hook installed=YES scope=EGYPT_ONLY mode=V151");
+    }
+
     // v85 keeps only the functional resource-registry/wrapper traps from
     // this old combined block. Startup/GameState/registry probes are skipped.
     if (!patch_resource_native_miss(
@@ -2941,7 +2953,8 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
     std::size_t obb_size,
     PvZ2ProbeProgress progress,
     PvZ2DiagnosticMode diagnostic_mode,
-    PvZ2LiveFrameCallback live_frame) {
+    PvZ2LiveFrameCallback live_frame,
+    bool keyconv_egypt_reward_opt_in) {
 
     PvZ2JniProbeResult result;
     result.diagnostic_mode =
@@ -3028,6 +3041,14 @@ PvZ2JniProbeResult RunPvZ2FullLoadProbe(
             obb_data,
             obb_size,
             diagnostic_mode);
+        callbacks.keyconv_reward_enabled=
+            keyconv_egypt_reward_opt_in &&
+            diagnostic_mode==PvZ2DiagnosticMode::V151ProductionQsortCompat;
+        if (keyconv_egypt_reward_opt_in)
+            callbacks.AppendDiagnostic(
+                callbacks.keyconv_reward_enabled
+                    ? "KEYCONV PROBE reward hook requested=YES mode=V151"
+                    : "KEYCONV PROBE reward hook REFUSED mode mismatch");
 
         if (callbacks.V95Enabled()) {
             const bool config_ok =

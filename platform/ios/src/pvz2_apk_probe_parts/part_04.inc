@@ -4241,6 +4241,119 @@
             return;
         }
 
+        if (WorldKeyConversionEnabled() &&
+            swi == kJniProbeSvcWorldKeyAddObserve) {
+            // Hook point is exact original @0x1042ccd0: MOV r10,r0.
+            // Push {r4-r11,lr} and SUB sp,#20 have already executed.
+            const std::uint32_t profile=regs[0];
+            const std::uint32_t world_object=regs[1];
+            const std::uint32_t original_amount=regs[2];
+            const std::uint32_t caller_lr=regs[14];
+            const std::string world=
+                WorldKeyReadOnlyWorldName(world_object);
+            const bool profile_readable=
+                profile>=kJniProbeHeapBase &&
+                static_cast<std::uint64_t>(
+                    profile-kJniProbeHeapBase)<mem.HeapCapacity() &&
+                mem.Ptr(profile+0x14u,4u)!=nullptr;
+            const std::uint32_t coins_before=
+                profile_readable ? mem.Read32Guest(profile+0x14u) : 0u;
+            const auto decision=WorldKeyReadOnlyDecision(
+                profile,world,original_amount);
+
+            if (keyobs_grants_logged < 64u) {
+                AppendDiagnostic(
+                    std::string{
+                        WorldKeyConversionEnabled()
+                            ? "KEYCONV GRANT_PRE sourceLR=0x"
+                            : "KEYOBS GRANT_PRE sourceLR=0x"}+
+                    JniProbeHex(caller_lr)+
+                    " tid="+std::to_string(current_probe_thread_id)+
+                    " world="+world+
+                    " amount="+std::to_string(original_amount)+
+                    " coinsBefore="+
+                        (profile_readable
+                            ? std::to_string(coins_before)
+                            : std::string{"UNKNOWN"})+
+                    " decision="+WorldKeyDecisionReasonName(
+                        decision.reason)+
+                    " "+WorldKeyReadOnlyGateSnapshot(profile));
+            } else if (keyobs_grants_logged == 64u) {
+                AppendDiagnostic(
+                    WorldKeyConversionEnabled()
+                        ? "KEYCONV GRANT_PRE capped at 64 events"
+                        : "KEYOBS GRANT_PRE capped at 64 events");
+            }
+            ++keyobs_grants_logged;
+
+            if (WorldKeyConversionEnabled() &&
+                world=="egypt" && decision.convert()) {
+                // Fail closed toward ORIGINAL key behavior unless the whole
+                // immediate replacement can be proven safe.
+                constexpr std::uint32_t kSetCoins=
+                    kGuestBase+0x0042e5acu;
+                constexpr std::uint32_t kAddWorldKeysFrameBytes=56u;
+                constexpr std::uint32_t kSavedRegsOffset=20u;
+                constexpr std::uint32_t kSavedLrOffset=52u;
+                const std::uint32_t sp=regs[13];
+                const auto credit=pvz2_key_study::PlanCoinCredit(
+                    coins_before,decision.coins);
+                const bool stack_readable=
+                    mem.Ptr(sp,kAddWorldKeysFrameBytes)!=nullptr;
+                const bool wallet_safe=
+                    profile_readable && credit.apply;
+
+                if (stack_readable && wallet_safe) {
+                    const std::uint32_t saved_lr=
+                        mem.Read32Guest(sp+kSavedLrOffset);
+
+                    // At +0x8 no nested call has run, so live LR and the
+                    // prologue-saved LR must agree. Otherwise preserve the key.
+                    if (saved_lr==caller_lr &&
+                        (saved_lr&1u)==0u) {
+                        for (std::uint32_t i=0u;i<8u;++i) {
+                            regs[4u+i]=mem.Read32Guest(
+                                sp+kSavedRegsOffset+i*4u);
+                        }
+                        regs[13]=sp+kAddWorldKeysFrameBytes;
+                        regs[0]=profile;
+                        regs[1]=credit.after;
+                        regs[14]=saved_lr;
+                        regs[15]=kSetCoins;
+
+                        AppendDiagnostic(
+                            "KEYCONV APPLY world="+world+
+                            " keys="+std::to_string(original_amount)+
+                            " coinsDelta="+
+                                std::to_string(decision.coins)+
+                            " coins="+std::to_string(coins_before)+
+                            "->"+std::to_string(
+                                credit.after)+
+                            " via=SetCoins@0x1042e5ac returnLR=0x"+
+                                JniProbeHex(saved_lr));
+                        return;
+                    }
+                }
+
+                AppendCritical(
+                    "KEYCONV FAIL_OPEN preserve original key world="+
+                    world+
+                    " amount="+std::to_string(original_amount)+
+                    " profileReadable="+
+                        (profile_readable ? "YES" : "NO")+
+                    " stackReadable="+
+                        (stack_readable ? "YES" : "NO")+
+                    " walletSafe="+
+                        (wallet_safe ? "YES" : "NO")+
+                    " callerLR=0x"+JniProbeHex(caller_lr));
+            }
+
+            // Ordinary/noneligible/fail-open path: reproduce the original
+            // instruction and let native AddWorldKeys run completely.
+            regs[10]=regs[0];
+            return;
+        }
+
         if (swi == kJniProbeSvcGetEnv) {
             const std::uint32_t output_address = regs[1];
             const std::uint32_t version = regs[2];

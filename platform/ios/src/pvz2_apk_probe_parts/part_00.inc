@@ -1650,6 +1650,10 @@ constexpr std::uint32_t kJniProbeSvcV150PowerupIgnoreCost = 0x00f0d5u;
 // Handler emulates the VMOV and may add speed-dependent pitch to non-music PBI.
 constexpr std::uint32_t kJniProbeSvcV155SfxPitch = 0x00f0d6u;
 
+// Preserves exact original MOV r10,r0 unless the Egypt-only Probe opt-in
+// is enabled, and the historical ARM instruction signature matches.
+constexpr std::uint32_t kJniProbeSvcWorldKeyAddObserve=0x00f180u;
+
 constexpr std::uint32_t kJniProbeSvcUnsupportedJniBase = 0x00e000u;
 constexpr std::uint32_t kJniProbeJniSlotCount = 256u;
 

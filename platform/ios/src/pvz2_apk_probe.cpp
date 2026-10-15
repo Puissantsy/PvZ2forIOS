@@ -4,6 +4,9 @@
 #include "offline_global_entitlement_policy.hpp"
 #include "offline_global_compaction.hpp"
 #include "offline_global_transaction.hpp"
+#include "world_key_conversion_policy.hpp"
+#include "world_key_event_view.hpp"
+#include "world_key_stock_view.hpp"
 #include "host_gles.hpp"
 #include "host_audio.hpp"
 
